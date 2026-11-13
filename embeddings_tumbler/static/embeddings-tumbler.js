@@ -2559,6 +2559,1303 @@ ET.renderer = (function () {
     create: create,
   };
 })();
+// ---------------------------------------------------------------------------
+// 39-modes.js: the mode interface and registry (ET.modes).
+//
+// A mode owns its motion and its draw parameters and nothing else. It never
+// touches WebGL or the DOM. Given the loaded set, a seed and the time in the
+// mode, it answers a frame (three orthonormal rows of length D), a centre, a
+// plain draw-parameter object for ET.renderer.draw, optional wires (index
+// pairs) and a one-line plain-text status. The viewer owns the renderer, the
+// clock, the data and the DOM.
+//
+// The three shipped modes live in 40-mode-tumble.js, 41-mode-lattice.js and
+// 42-mode-wander.js and register themselves here. A fourth mode registers the
+// same way, without touching them or the data contract.
+//
+// Documented in js/api/40-modes.md.
+// ---------------------------------------------------------------------------
+ET.modes = (function () {
+  // Members every mode instance must have (see js/api/40-modes.md).
+  var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
+  var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+  var registry = [];
+
+  function copyDef(def) {
+    return { id: def.id, title: def.title, summary: def.summary, create: def.create };
+  }
+
+  // register({ id, title, summary, create(options) -> instance })
+  function register(def) {
+    if (!def || typeof def !== "object") throw new TypeError("a mode definition must be an object");
+    if (typeof def.id !== "string" || !ID_PATTERN.test(def.id)) {
+      throw new TypeError("a mode id must be lower-case letters, digits and hyphens, starting with a letter");
+    }
+    if (typeof def.title !== "string" || def.title.length === 0) throw new TypeError("a mode needs a title");
+    if (typeof def.summary !== "string") throw new TypeError("a mode needs a summary string");
+    if (typeof def.create !== "function") throw new TypeError("a mode needs a create(options) function");
+    for (var i = 0; i < registry.length; i++) {
+      if (registry[i].id === def.id) throw new Error("mode '" + def.id + "' is already registered");
+    }
+    registry.push(copyDef(def));
+  }
+
+  function find(id) {
+    for (var i = 0; i < registry.length; i++) if (registry[i].id === id) return registry[i];
+    return null;
+  }
+
+  function get(id) {
+    var d = find(id);
+    return d ? copyDef(d) : null;
+  }
+
+  function list() {
+    return registry.map(copyDef);
+  }
+
+  function ids() {
+    return registry.map(function (d) {
+      return d.id;
+    });
+  }
+
+  // Names of interface members the instance lacks ([] when it conforms).
+  function check(instance) {
+    if (!instance || typeof instance !== "object") return INTERFACE.slice();
+    return INTERFACE.filter(function (name) {
+      return typeof instance[name] !== "function";
+    });
+  }
+
+  function create(id, options) {
+    var d = find(id);
+    if (!d) throw new RangeError("no mode is registered as '" + id + "'");
+    var inst = d.create(options || {});
+    var missing = check(inst);
+    if (missing.length) throw new TypeError("mode '" + id + "' is missing " + missing.join(", "));
+    return inst;
+  }
+
+  // ----- bounded preparation ------------------------------------------------
+
+  function now() {
+    if (typeof performance !== "undefined" && performance && typeof performance.now === "function") {
+      return performance.now();
+    }
+    return Date.now();
+  }
+
+  // A stepper over tasks { run() -> done, required?, weight?, progress?() }.
+  // Each run() call does one bounded unit of work. step(budgetMs) runs units
+  // until the budget is spent (always at least one); step() with no budget runs
+  // everything. The clock only decides how much work happens per call, never
+  // what the work computes.
+  function stepper(tasks) {
+    var list = tasks.slice();
+    var units = list.map(function () {
+      return 0;
+    });
+    var finished = list.map(function () {
+      return false;
+    });
+    var api = { done: false, ready: false, progress: 0, step: step };
+
+    function refresh() {
+      var total = 0;
+      var got = 0;
+      var ready = true;
+      var done = true;
+      for (var i = 0; i < list.length; i++) {
+        var w = list[i].weight === undefined ? 1 : list[i].weight;
+        total += w;
+        var p;
+        if (finished[i]) p = 1;
+        else if (typeof list[i].progress === "function") p = Math.max(0, Math.min(0.999, list[i].progress()));
+        else p = 1 - 1 / (1 + units[i]);
+        got += w * p;
+        if (!finished[i]) {
+          done = false;
+          if (list[i].required) ready = false;
+        }
+      }
+      api.done = done;
+      api.ready = ready;
+      api.progress = done ? 1 : total > 0 ? got / total : 1;
+    }
+
+    function step(budgetMs) {
+      var limit = budgetMs === undefined ? Infinity : budgetMs;
+      var start = now();
+      var first = true;
+      while (!api.done && (first || now() - start < limit)) {
+        first = false;
+        for (var i = 0; i < list.length; i++) {
+          if (finished[i]) continue;
+          units[i]++;
+          if (list[i].run()) finished[i] = true;
+          break;
+        }
+        refresh();
+      }
+      return api.done;
+    }
+
+    refresh();
+    return api;
+  }
+
+  // ----- set statistics (mean, spread), cached per set and extended on append
+
+  var statsCache = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function addRows(st, X, from, to, D) {
+    for (var i = from; i < to; i++) {
+      var o = i * D;
+      for (var d = 0; d < D; d++) {
+        var x = X[o + d];
+        st.sum[d] += x;
+        st.sumSq += x * x;
+      }
+    }
+    st.count = to;
+    finishStats(st, D);
+  }
+
+  function finishStats(st, D) {
+    var n = st.count;
+    var m2 = 0;
+    for (var d = 0; d < D; d++) {
+      var m = n > 0 ? st.sum[d] / n : 0;
+      st.mean[d] = m;
+      m2 += m * m;
+    }
+    var tv = n > 0 ? st.sumSq / n - m2 : 0;
+    st.totalVariance = tv > 0 ? tv : 0;
+    // Root mean squared distance from the mean: the cloud's typical radius.
+    st.radius = Math.sqrt(st.totalVariance) || 1;
+  }
+
+  // stats(set) -> { count, dimension, mean: Float32Array(D), radius, totalVariance }.
+  // O(N * D) the first time for a set; an appended set built from a set seen
+  // before (pass it as `previous`) costs O(k * D) for the k new rows.
+  function stats(set, previous) {
+    if (statsCache && statsCache.has(set)) return statsCache.get(set);
+    var D = set.dimension;
+    var st;
+    var prev = previous && statsCache ? statsCache.get(previous) : null;
+    if (prev && prev.dimension === D && prev.count <= set.count) {
+      st = { count: prev.count, dimension: D, sum: Float64Array.from(prev.sum), sumSq: prev.sumSq, mean: new Float32Array(D) };
+      addRows(st, set.vectors, prev.count, set.count, D);
+    } else {
+      st = { count: 0, dimension: D, sum: new Float64Array(D), sumSq: 0, mean: new Float32Array(D) };
+      addRows(st, set.vectors, 0, set.count, D);
+    }
+    if (statsCache) statsCache.set(set, st);
+    return st;
+  }
+
+  // ----- shared motion helpers ------------------------------------------------
+
+  // A centre that glides exponentially (time constant tau seconds) from where it
+  // is toward a target; retarget(t, target) starts a new segment at time t from
+  // wherever the glide is then, so a moved target never makes it jump. Pure in t
+  // for a fixed list of retargets.
+  function makeGlide(start, target, tau, D) {
+    var segs = [{ t0: 0, from: Float64Array.from(start), to: Float64Array.from(target) }];
+    function segFor(t) {
+      var s = segs[0];
+      for (var i = 1; i < segs.length; i++) if (segs[i].t0 <= t) s = segs[i];
+      return s;
+    }
+    function at(t, out) {
+      var res = out || new Float32Array(D);
+      var s = segFor(t);
+      var dt = t - s.t0;
+      var k = dt <= 0 ? 1 : Math.exp(-dt / tau);
+      for (var d = 0; d < D; d++) res[d] = s.to[d] + (s.from[d] - s.to[d]) * k;
+      return res;
+    }
+    function retarget(t, newTarget) {
+      var here = Float64Array.from(at(t));
+      // drop segments that start after t: they belonged to a future that changed
+      segs = segs.filter(function (s) {
+        return s.t0 <= t;
+      });
+      segs.push({ t0: t, from: here, to: Float64Array.from(newTarget) });
+    }
+    return { at: at, retarget: retarget };
+  }
+
+  // The permutation and signs that alignTo applied to `target` to match `ref`,
+  // so the same relabelling of axes can be applied to later frames.
+  function alignment(target, ref, D) {
+    var aligned = ET.math.alignTo(target, ref, D);
+    var perm = [0, 1, 2];
+    var sign = [1, 1, 1];
+    for (var j = 0; j < 3; j++) {
+      var best = 0;
+      var bestAbs = -1;
+      var bestDot = 0;
+      for (var i = 0; i < 3; i++) {
+        var dp = 0;
+        for (var d = 0; d < D; d++) dp += aligned[j * D + d] * target[i * D + d];
+        if (Math.abs(dp) > bestAbs) {
+          bestAbs = Math.abs(dp);
+          best = i;
+          bestDot = dp;
+        }
+      }
+      perm[j] = best;
+      sign[j] = bestDot < 0 ? -1 : 1;
+    }
+    return { perm: perm, sign: sign };
+  }
+
+  function applyAlignment(frame, al, D, out) {
+    var res = out || new Float32Array(3 * D);
+    for (var j = 0; j < 3; j++) {
+      var src = al.perm[j] * D;
+      var s = al.sign[j];
+      for (var d = 0; d < D; d++) res[j * D + d] = s * frame[src + d];
+    }
+    return res;
+  }
+
+  // Copy of an entry state handed to enter({ from }), or null.
+  function entryFrom(from, D) {
+    if (!from || !from.frame || from.frame.length !== 3 * D) return null;
+    var e = { frame: new Float32Array(from.frame), centre: null, draw: {} };
+    ET.math.orthonormalize(e.frame, 3, D);
+    if (from.centre && from.centre.length === D) e.centre = new Float32Array(from.centre);
+    if (from.draw && typeof from.draw === "object") {
+      for (var k in from.draw) {
+        if (Object.prototype.hasOwnProperty.call(from.draw, k) && typeof from.draw[k] === "number" && isFinite(from.draw[k])) {
+          e.draw[k] = from.draw[k];
+        }
+      }
+    }
+    return e;
+  }
+
+  // Blend numeric draw parameters from the entry's toward the mode's own over
+  // `duration` seconds (smoothstep). Keys the entry lacks are the mode's at once.
+  function blendDraw(draw, entry, t, duration) {
+    if (!entry || !(t < duration)) return draw;
+    var e = ET.math.smoothstep(t / duration);
+    for (var k in draw) {
+      if (Object.prototype.hasOwnProperty.call(entry.draw, k)) draw[k] = entry.draw[k] + (draw[k] - entry.draw[k]) * e;
+    }
+    return draw;
+  }
+
+  // A deterministic starting frame for a mode entered with no previous view.
+  var SALT_START = 0x5157a7;
+  function startFrame(D, seed) {
+    return ET.math.randomFrame(D, ET.math.makeRandom(ET.math.mixSeed(seed, SALT_START)));
+  }
+
+  // The reference's auto-framing: zoom = 0.78 / rms of the projected coordinates
+  // of a fixed sample (the first `sample` points, 512 by default; fixed so an
+  // append past it does not change the framing).
+  function autoZoom(X, N, D, frame, centre, sample) {
+    var n = Math.min(N, sample || 512);
+    if (n <= 0) return 1;
+    var sq = 0;
+    for (var i = 0; i < n; i++) {
+      var o = i * D;
+      var a = 0;
+      var b = 0;
+      var c = 0;
+      for (var d = 0; d < D; d++) {
+        var x = X[o + d] - centre[d];
+        a += x * frame[d];
+        b += x * frame[D + d];
+        c += x * frame[2 * D + d];
+      }
+      sq += a * a + b * b + c * c;
+    }
+    var rms = Math.sqrt(sq / n);
+    return rms > 0 ? 0.78 / rms : 1;
+  }
+
+  // The sample set's typical radius (root mean squared distance from the mean,
+  // measured: 0.963 at 384-d and 0.968 at 1024-d). The reference's distances
+  // (fog, Wander's zoom) were tuned by eye at this scale; modes scale them by
+  // radius / REFERENCE_RADIUS so other data looks the same.
+  var REFERENCE_RADIUS = 0.963;
+
+  // "12,345": a fixed thousands separator (no locale dependence).
+  function thousands(n) {
+    var s = String(Math.round(n));
+    var neg = s.charAt(0) === "-";
+    if (neg) s = s.slice(1);
+    var out = "";
+    while (s.length > 3) {
+      out = "," + s.slice(-3) + out;
+      s = s.slice(0, -3);
+    }
+    return (neg ? "-" : "") + s + out;
+  }
+
+  // A point is labelled when its label is non-empty and is not just its id
+  // (a labels-only set repeats the id as the label).
+  function isLabelled(p) {
+    return !!p && typeof p.label === "string" && p.label.trim() !== "" && p.label !== p.id;
+  }
+
+  function checkTime(t) {
+    if (typeof t !== "number" || !isFinite(t)) throw new RangeError("time must be a finite number");
+    return t < 0 ? 0 : t;
+  }
+
+  return {
+    INTERFACE: INTERFACE.slice(),
+    register: register,
+    get: get,
+    list: list,
+    ids: ids,
+    check: check,
+    create: create,
+    stepper: stepper,
+    stats: stats,
+    makeGlide: makeGlide,
+    alignment: alignment,
+    applyAlignment: applyAlignment,
+    entryFrom: entryFrom,
+    blendDraw: blendDraw,
+    startFrame: startFrame,
+    autoZoom: autoZoom,
+    REFERENCE_RADIUS: REFERENCE_RADIUS,
+    thousands: thousands,
+    isLabelled: isLabelled,
+    checkTime: checkTime,
+  };
+})();
+// ---------------------------------------------------------------------------
+// 40-mode-tumble.js: Tumble, the guided tour (registered as ET.modes "tumble").
+//
+// The frame turns inside the span of the data's strongest principal directions
+// (ET.math.guidedTour). The frame at time t is the tour's closed-form
+// frameAt(t): it depends only on the data, the seed and t. The share of total
+// variance those directions hold is reported as a number and in the status
+// line. See js/api/40-modes.md.
+// ---------------------------------------------------------------------------
+(function () {
+  var M = ET.modes;
+
+  var DEFAULTS = {
+    subspace: 8, // directions the tour moves through
+    speed: 0.42, // rad/s, the reference's rate
+    transition: 1.5, // seconds to blend in from the previous view
+    fitRows: 4096, // fit the directions on at most this many rows (shares stay exact)
+    centreTau: 0.7, // seconds: the camera glides to the data's mean (the reference's)
+    zoomSample: 512, // points used for auto-framing
+  };
+
+  function create(options) {
+    var opt = {};
+    for (var k in DEFAULTS) opt[k] = options && options[k] !== undefined ? options[k] : DEFAULTS[k];
+
+    var self = {
+      time: 0,
+      varianceShare: null,
+      enter: enter,
+      prepare: prepare,
+      isReady: isReady,
+      stateAt: stateAt,
+      step: step,
+      status: status,
+      dataChanged: dataChanged,
+      describe: describe,
+      refit: refit,
+      leave: leave,
+    };
+
+    var set = null;
+    var D = 0;
+    var seed = 0;
+    var entry = null;
+    var st = null; // set statistics (mean, radius)
+    var glide = null;
+    var tours = []; // [{ tour, al (alignment or null), t0 }]
+    var fittedCount = 0;
+    var pending = null; // a refit waiting for its switch time
+    var refitting = false;
+    var progress = 0;
+    var hold = null;
+    var out = null;
+
+    function enter(s, opts) {
+      var o = opts || {};
+      set = s;
+      D = s.dimension;
+      seed = o.seed === undefined ? 0 : o.seed;
+      entry = M.entryFrom(o.from, D);
+      st = null;
+      glide = null;
+      tours = [];
+      pending = null;
+      refitting = false;
+      progress = 0;
+      fittedCount = 0;
+      self.time = 0;
+      self.varianceShare = null;
+      hold = entry ? entry.frame : M.startFrame(D, seed);
+      out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
+    }
+
+    function fit(onDone) {
+      var Y = null;
+      var fitSet = null;
+      return [
+        {
+          required: true,
+          weight: 1,
+          run: function () {
+            fitSet = set;
+            Y = ET.math.centre(fitSet.vectors, fitSet.count, D).data;
+            return true;
+          },
+        },
+        {
+          required: true,
+          weight: 8,
+          run: function () {
+            var tour = ET.math.guidedTour(Y, fitSet.count, D, {
+              seed: seed,
+              subspace: opt.subspace,
+              speed: opt.speed,
+              sampleRows: fitSet.count > opt.fitRows ? opt.fitRows : undefined,
+            });
+            Y = null; // the centred copy is not kept
+            onDone(tour, fitSet.count);
+            return true;
+          },
+        },
+      ];
+    }
+
+    function prepare() {
+      var tasks = [
+        {
+          required: true,
+          weight: 1,
+          run: function () {
+            st = M.stats(set);
+            var start = entry && entry.centre ? entry.centre : st.mean;
+            glide = M.makeGlide(start, st.mean, opt.centreTau, D);
+            return true;
+          },
+        },
+      ].concat(
+        fit(function (tour, count) {
+          var al = entry ? M.alignment(tour.frameAt(0), entry.frame, D) : null;
+          tours = [{ tour: tour, al: al, t0: -Infinity }];
+          fittedCount = count;
+          self.varianceShare = tour.varianceShare;
+        }),
+      );
+      var stp = M.stepper(tasks);
+      var inner = stp.step;
+      stp.step = function (budget) {
+        var r = inner(budget);
+        progress = stp.progress;
+        return r;
+      };
+      return stp;
+    }
+
+    function isReady() {
+      return tours.length > 0 && glide !== null;
+    }
+
+    function tourFrame(entryT, t, res) {
+      var f = entryT.tour.frameAt(t, res);
+      if (entryT.al) M.applyAlignment(new Float32Array(f), entryT.al, D, f);
+      return f;
+    }
+
+    function frameAt(t, res) {
+      var i = tours.length - 1;
+      while (i > 0 && tours[i].t0 > t) i--;
+      var cur = tours[i];
+      tourFrame(cur, t, res);
+      if (i > 0 && t - cur.t0 < opt.transition) {
+        var prev = tourFrame(tours[i - 1], t, new Float32Array(3 * D));
+        ET.math.blendFrames(prev, res, ET.math.smoothstep((t - cur.t0) / opt.transition), D, res);
+      }
+      return res;
+    }
+
+    function drawFor(frame, centre, t) {
+      var sc = st.radius / M.REFERENCE_RADIUS;
+      var draw = {
+        zoom: M.autoZoom(set.vectors, set.count, D, frame, centre, opt.zoomSample),
+        wires: 0,
+        dim: 1,
+        trails: 0.17,
+        fog: 0,
+        fogNear: 1.2 * sc,
+        fogWidth: 0.8 * sc,
+        twinkle: 0.18,
+        depthOfField: 1.1,
+      };
+      return M.blendDraw(draw, entry, t, opt.transition);
+    }
+
+    function stateAt(time) {
+      var t = M.checkTime(time);
+      out.t = t;
+      if (!isReady()) {
+        out.frame.set(hold);
+        if (entry && entry.centre) out.centre.set(entry.centre);
+        out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0, fog: 0 };
+        out.status = status(t);
+        return out;
+      }
+      if (pending) {
+        var curNow = frameAt(t, new Float32Array(3 * D));
+        var al = M.alignment(pending.tour.frameAt(t), curNow, D);
+        tours = tours.filter(function (x) {
+          return x.t0 <= t;
+        });
+        tours.push({ tour: pending.tour, al: al, t0: t });
+        fittedCount = pending.count;
+        self.varianceShare = pending.tour.varianceShare;
+        pending = null;
+        refitting = false;
+      }
+      frameAt(t, out.frame);
+      if (entry && t < opt.transition) {
+        ET.math.blendFrames(entry.frame, out.frame, ET.math.smoothstep(t / opt.transition), D, out.frame);
+      }
+      glide.at(t, out.centre);
+      out.draw = drawFor(out.frame, out.centre, t);
+      out.status = status(t);
+      return out;
+    }
+
+    function step(dt) {
+      self.time += dt;
+      return stateAt(self.time);
+    }
+
+    function pct(x) {
+      return (x * 100).toFixed(1) + "%";
+    }
+
+    function status() {
+      if (!isReady()) {
+        return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
+      }
+      var m = tours[tours.length - 1].tour.subspace;
+      var s = "tour through the " + m + " strongest directions, which hold " + pct(self.varianceShare) + " of the variance";
+      var since = set.count - fittedCount;
+      if (since > 0) s += " (measured before " + M.thousands(since) + " appended points)";
+      if (refitting) s += " · refitting …";
+      return s;
+    }
+
+    // Append: keep the tour (no jump); the camera glides to the new mean; the
+    // reported share is marked stale until refit(). Replace: start over.
+    function dataChanged(newSet, info) {
+      var i = info || {};
+      var t = i.t === undefined ? self.time : M.checkTime(i.t);
+      if (i.op !== "append" || newSet.dimension !== D || !isReady()) {
+        var from = isReady() ? snapshot(t) : entry;
+        enter(newSet, { seed: seed, from: from });
+        return prepare();
+      }
+      var old = set;
+      set = newSet;
+      st = M.stats(newSet, old);
+      glide.retarget(t, st.mean);
+      return null;
+    }
+
+    function snapshot(t) {
+      var s = stateAt(t);
+      return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) };
+    }
+
+    // Fit the directions again on the current data. Returns a stepper; when it
+    // is done, the next stateAt(t) switches to the new tour, blending over
+    // `transition` seconds from the old one.
+    function refit() {
+      if (!isReady()) return prepare();
+      refitting = true;
+      return M.stepper(
+        fit(function (tour, count) {
+          pending = { tour: tour, count: count };
+        }),
+      );
+    }
+
+    function describe() {
+      var tour = tours.length ? tours[tours.length - 1].tour : null;
+      return {
+        id: "tumble",
+        projection: "linear: a guided tour, a turning orthonormal 3-frame inside the span of the strongest principal directions",
+        seed: seed,
+        subspace: tour ? tour.subspace : opt.subspace,
+        speed: opt.speed,
+        varianceShare: self.varianceShare,
+        varianceShareStale: isReady() ? set.count !== fittedCount : false,
+        pointsSinceFit: isReady() ? set.count - fittedCount : 0,
+        fittedRows: tour && tour.pca ? tour.pca.sampledRows : 0,
+        method: tour && tour.pca ? tour.pca.method : null,
+      };
+    }
+
+    function leave() {
+      tours = [];
+      pending = null;
+      set = null;
+      st = null;
+      glide = null;
+    }
+
+    return self;
+  }
+
+  M.register({
+    id: "tumble",
+    title: "Tumble",
+    summary: "The window turns through the strongest directions of the space on a guided tour.",
+    create: create,
+  });
+})();
+// ---------------------------------------------------------------------------
+// 41-mode-lattice.js: Lattice (registered as ET.modes "lattice").
+//
+// Points are wired to their true nearest neighbours, measured in the full
+// space (ET.math.makeKnn, run in bounded slices). One visible axis at a time
+// is turned a quarter turn into a hidden direction (ET.math.makeSwapTour), so
+// the frame at time t depends only on the starting frame, the seed and t; the
+// wires are drawn in addition as soon as they are measured and never change
+// the frame. See js/api/40-modes.md.
+// ---------------------------------------------------------------------------
+(function () {
+  var M = ET.modes;
+
+  var DEFAULTS = {
+    period: 3.4, // seconds per axis swap (the reference's)
+    neighbourLimit: 1000, // only the first this-many points get neighbours (the reference's 1,000)
+    wireNeighbours: 3, // wires per point (the reference's 3)
+    sliceRows: 16, // query rows per unit of neighbour work (the reference's 16)
+    transition: 1.2, // seconds to blend draw parameters in from the previous view
+    wireFade: 1.2, // seconds for the wires to fade in once measured
+    centreTau: 0.7, // seconds: the camera glides to the data's mean
+    zoomSample: 512, // points used for auto-framing
+  };
+
+  function create(options) {
+    var opt = {};
+    for (var k in DEFAULTS) opt[k] = options && options[k] !== undefined ? options[k] : DEFAULTS[k];
+
+    var self = {
+      time: 0,
+      enter: enter,
+      prepare: prepare,
+      isReady: isReady,
+      stateAt: stateAt,
+      step: step,
+      status: status,
+      dataChanged: dataChanged,
+      describe: describe,
+      leave: leave,
+    };
+
+    var set = null;
+    var D = 0;
+    var seed = 0;
+    var entry = null;
+    var st = null;
+    var glide = null;
+    var swap = null;
+    var knn = null; // the stepper in progress (or finished)
+    var wires = null; // { pairs, lengths, version }
+    var version = 0;
+    var wiresSeenAt = null; // mode time when the wires were first drawn
+    var queried = false; // has stateAt been called since enter?
+    var out = null;
+
+    function enter(s, opts) {
+      var o = opts || {};
+      set = s;
+      D = s.dimension;
+      seed = o.seed === undefined ? 0 : o.seed;
+      entry = M.entryFrom(o.from, D);
+      st = null;
+      glide = null;
+      knn = null;
+      wires = null;
+      wiresSeenAt = null;
+      queried = false;
+      self.time = 0;
+      var frame0 = entry ? entry.frame : M.startFrame(D, seed);
+      swap = ET.math.makeSwapTour(frame0, D, { seed: seed, period: opt.period });
+      out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
+    }
+
+    function statsTask() {
+      return {
+        required: true,
+        weight: 1,
+        run: function () {
+          st = M.stats(set);
+          var start = entry && entry.centre ? entry.centre : st.mean;
+          glide = M.makeGlide(start, st.mean, opt.centreTau, D);
+          return true;
+        },
+      };
+    }
+
+    // Neighbour measurement over the current set, then the wire list.
+    function knnTask() {
+      var s = set;
+      var stepper = ET.math.makeKnn(s.vectors, s.count, D, opt.wireNeighbours, { limit: opt.neighbourLimit });
+      knn = stepper;
+      return {
+        required: false,
+        weight: 8,
+        progress: function () {
+          return stepper.count ? stepper.next / stepper.count : 1;
+        },
+        run: function () {
+          if (knn !== stepper) return true; // superseded by a newer measurement
+          if (!stepper.step(opt.sliceRows)) return false;
+          buildWires(s, stepper);
+          return true;
+        },
+      };
+    }
+
+    // Each point's first `wireNeighbours` neighbours, deduplicated. Points with no
+    // group get no wires of their own when the pool has groups (the reference
+    // leaves its unstructured halo unwired); they can still be another point's
+    // neighbour.
+    function buildWires(s, kn) {
+      var S = kn.count;
+      var K = kn.k;
+      var anyGroup = false;
+      for (var i = 0; i < S && !anyGroup; i++) anyGroup = !!s.points[i].group;
+      var pairs = [];
+      var lengths = [];
+      var seen = {};
+      for (var a = 0; a < S; a++) {
+        if (anyGroup && !s.points[a].group) continue;
+        for (var q = 0; q < K; q++) {
+          var b = kn.indices[a * K + q];
+          var key = a < b ? a * S + b : b * S + a;
+          if (seen[key]) continue;
+          seen[key] = 1;
+          pairs.push(a, b);
+          lengths.push(kn.distances[a * K + q]);
+        }
+      }
+      version++;
+      var first = wires === null;
+      wires = { pairs: new Uint32Array(pairs), lengths: new Float32Array(lengths), version: version };
+      // Measured before the clock started: fade in with the mode from t = 0. A
+      // replacement list (after an append) is shown at full strength at once.
+      if (first) wiresSeenAt = queried ? null : 0;
+    }
+
+    function prepare() {
+      return M.stepper([statsTask(), knnTask()]);
+    }
+
+    function isReady() {
+      return glide !== null;
+    }
+
+    function wireOpacity(t) {
+      if (!wires) return 0;
+      if (wiresSeenAt === null) wiresSeenAt = t;
+      return ET.math.smoothstep((t - wiresSeenAt) / opt.wireFade);
+    }
+
+    function stateAt(time) {
+      var t = M.checkTime(time);
+      out.t = t;
+      swap.frameAt(t, out.frame);
+      if (glide) glide.at(t, out.centre);
+      else if (entry && entry.centre) out.centre.set(entry.centre);
+      var sc = st ? st.radius / M.REFERENCE_RADIUS : 1;
+      var draw = {
+        zoom: M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample),
+        wires: wireOpacity(t),
+        dim: 0.55,
+        trails: 0.1,
+        fog: 0,
+        fogNear: 1.2 * sc,
+        fogWidth: 0.8 * sc,
+        twinkle: 0.18,
+        depthOfField: 1.1,
+      };
+      // the wire fade-in is its own ramp, not part of the entry blend
+      var w = draw.wires;
+      out.draw = M.blendDraw(draw, entry, t, opt.transition);
+      out.draw.wires = w;
+      queried = true;
+      out.wires = wires;
+      out.status = status(t);
+      return out;
+    }
+
+    function step(dt) {
+      self.time += dt;
+      return stateAt(self.time);
+    }
+
+    function status(time) {
+      var t = M.checkTime(time === undefined ? self.time : time);
+      var s = swap.stateAt(t);
+      var pctSwap = String(Math.round(Math.min(1, s.u) * 100));
+      while (pctSwap.length < 3) pctSwap = " " + pctSwap;
+      var line = "swap " + (s.cycle + 1) + " · axis " + "XYZ".charAt(s.axis) + " trading for a hidden direction · " + pctSwap + "%";
+      var measuring = knn && !knn.done;
+      if (wires && !measuring) {
+        line += " · " + M.thousands(wires.pairs.length / 2) + " wires";
+      } else if (knn) {
+        line += " · measuring true neighbours in " + D + "-d … " + Math.round((knn.next / Math.max(1, knn.count)) * 100) + "%";
+        if (wires) line += " (" + M.thousands(wires.pairs.length / 2) + " wires shown)";
+      } else {
+        line += " · no wires yet";
+      }
+      return line;
+    }
+
+    // Append: the swap tour goes on unchanged and the camera glides to the new
+    // mean. If new points fall inside the neighbour limit, neighbours are
+    // measured again (the old wires stay until the new ones are ready).
+    function dataChanged(newSet, info) {
+      var i = info || {};
+      var t = i.t === undefined ? self.time : M.checkTime(i.t);
+      if (i.op !== "append" || newSet.dimension !== D) {
+        var s = stateAt(t);
+        enter(newSet, {
+          seed: seed,
+          from: { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) },
+        });
+        return prepare();
+      }
+      var old = set;
+      set = newSet;
+      if (!glide) return null; // preparation not started: it will read the new set
+      st = M.stats(newSet, old);
+      glide.retarget(t, st.mean);
+      if (old.count < opt.neighbourLimit) return M.stepper([knnTask()]);
+      return null;
+    }
+
+    function describe() {
+      return {
+        id: "lattice",
+        projection: "linear: an orthonormal 3-frame; one axis at a time turns a quarter turn into a hidden direction",
+        seed: seed,
+        period: opt.period,
+        neighbourLimit: opt.neighbourLimit,
+        wireNeighbours: opt.wireNeighbours,
+        wires: wires ? wires.pairs.length / 2 : 0,
+        neighboursMeasured: !!(knn && knn.done),
+        varianceShare: null,
+      };
+    }
+
+    function leave() {
+      knn = null;
+      wires = null;
+      set = null;
+    }
+
+    return self;
+  }
+
+  M.register({
+    id: "lattice",
+    title: "Lattice",
+    summary: "True neighbours wired together, one axis swapped at a time.",
+    create: create,
+  });
+})();
+// ---------------------------------------------------------------------------
+// 42-mode-wander.js: Wander (registered as ET.modes "wander").
+//
+// The camera flies from labelled point to labelled point. At every stop the
+// three axes are fitted again to that point's 24 true nearest neighbours
+// (ET.math.localFrame), aligned to the previous axes (ET.math.alignTo) so the
+// flight twists as little as possible, and blended in (ET.math.blendFrames).
+// Each hop travels for 2.8 s and dwells for 2.0 s; every fifth hop leaps to
+// another group. The route is drawn from the seed and the data only, hop by
+// hop from its own random stream, so the frame at time t depends only on the
+// data, the seed, the entry view and t. See js/api/40-modes.md.
+// ---------------------------------------------------------------------------
+(function () {
+  var M = ET.modes;
+  var SALT_WANDER = 0x3a7d3e;
+
+  var DEFAULTS = {
+    neighbours: 24, // neighbours a local frame is fitted to (the reference's K)
+    neighbourLimit: 1000, // neighbours are searched among the first this-many points, plus every labelled point
+    travel: 2.8, // seconds of flight per hop (the reference's)
+    dwell: 2.0, // seconds at each stop (the reference's)
+    leapEvery: 5, // every n-th hop leaps to another group (the reference's 5)
+    nearChoices: 6, // a near hop picks among the first this-many labelled neighbours
+    recent: 16, // stops not revisited within this many hops
+    transition: 1.0, // seconds to blend draw parameters in from the previous view
+    zoom: 2.7, // the reference's fixed zoom, at the reference's scale
+    spokes: 6, // labelled neighbours listed in `focus` for the viewer's spokes
+  };
+
+  function create(options) {
+    var opt = {};
+    for (var k in DEFAULTS) opt[k] = options && options[k] !== undefined ? options[k] : DEFAULTS[k];
+    var cycle = opt.travel + opt.dwell;
+
+    var self = {
+      time: 0,
+      enter: enter,
+      prepare: prepare,
+      isReady: isReady,
+      stateAt: stateAt,
+      step: step,
+      status: status,
+      dataChanged: dataChanged,
+      describe: describe,
+      route: route,
+      neighboursOf: neighboursOf,
+      leave: leave,
+    };
+
+    var set = null;
+    var D = 0;
+    var seed = 0;
+    var seedU = 0;
+    var entry = null;
+    var startFrame = null;
+    var startCentre = null;
+    var scale = 1;
+    var ready = false;
+    var visit = null; // Int32Array: points the route may stop at
+    var labelledCount = 0;
+    var inVisit = null; // Uint8Array(N): 1 when the point is a visit candidate
+    var pool = null; // Int32Array: points searched for neighbours
+    var nbrCache = {};
+    var targets = []; // stop of hop h
+    var toFrames = []; // aligned local frame of hop h
+    var out = null;
+    var tmpC = null;
+
+    function enter(s, opts) {
+      var o = opts || {};
+      set = s;
+      D = s.dimension;
+      seed = o.seed === undefined ? 0 : o.seed;
+      seedU = ET.math.toSeed(seed);
+      entry = M.entryFrom(o.from, D);
+      startFrame = entry ? entry.frame : M.startFrame(D, seed);
+      startCentre = null;
+      ready = false;
+      nbrCache = {};
+      targets = [];
+      toFrames = [];
+      self.time = 0;
+      out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
+      tmpC = new Float64Array(D);
+    }
+
+    // Visit candidates (labelled points, or every pooled point when fewer than
+    // two are labelled) and the neighbour pool. O(N).
+    function buildPool() {
+      var N = set.count;
+      var lab = [];
+      for (var i = 0; i < N; i++) if (M.isLabelled(set.points[i])) lab.push(i);
+      labelledCount = lab.length;
+      var limit = Math.min(N, opt.neighbourLimit);
+      var p = [];
+      var mark = new Uint8Array(N);
+      for (var a = 0; a < limit; a++) {
+        p.push(a);
+        mark[a] = 1;
+      }
+      for (var b = 0; b < lab.length; b++) {
+        if (!mark[lab[b]]) {
+          p.push(lab[b]);
+          mark[lab[b]] = 1;
+        }
+      }
+      pool = Int32Array.from(p);
+      visit = lab.length >= 2 ? Int32Array.from(lab) : Int32Array.from(p);
+      inVisit = new Uint8Array(N);
+      for (var c = 0; c < visit.length; c++) inVisit[visit[c]] = 1;
+    }
+
+    function prepare() {
+      return M.stepper([
+        {
+          required: true,
+          weight: 1,
+          run: function () {
+            var st = M.stats(set);
+            scale = st.radius / M.REFERENCE_RADIUS;
+            startCentre = entry && entry.centre ? new Float32Array(entry.centre) : new Float32Array(st.mean);
+            buildPool();
+            ready = true;
+            return true;
+          },
+        },
+      ]);
+    }
+
+    function isReady() {
+      return ready;
+    }
+
+    // The point's `neighbours` nearest points in the pool, in the full space,
+    // nearest first, ties to the lower index. O(pool * D), cached per point.
+    function nearest(j) {
+      if (nbrCache[j]) return nbrCache[j];
+      var X = set.vectors;
+      var K = Math.min(opt.neighbours, pool.length - 1);
+      var bestD = new Float64Array(K);
+      var bestI = new Int32Array(K);
+      var filled = 0;
+      var oj = j * D;
+      for (var q = 0; q < pool.length; q++) {
+        var i = pool[q];
+        if (i === j) continue;
+        var oi = i * D;
+        var s = 0;
+        for (var d = 0; d < D; d++) {
+          var x = X[oi + d] - X[oj + d];
+          s += x * x;
+        }
+        if (filled === K && (s > bestD[K - 1] || (s === bestD[K - 1] && i > bestI[K - 1]))) continue;
+        var pos = filled < K ? filled : K - 1;
+        while (pos > 0 && (bestD[pos - 1] > s || (bestD[pos - 1] === s && bestI[pos - 1] > i))) {
+          bestD[pos] = bestD[pos - 1];
+          bestI[pos] = bestI[pos - 1];
+          pos--;
+        }
+        bestD[pos] = s;
+        bestI[pos] = i;
+        if (filled < K) filled++;
+      }
+      nbrCache[j] = bestI.subarray(0, filled);
+      return nbrCache[j];
+    }
+
+    function nearVisits(i, max) {
+      var nb = nearest(i);
+      var res = [];
+      for (var q = 0; q < nb.length && res.length < max; q++) if (inVisit[nb[q]]) res.push(nb[q]);
+      return res;
+    }
+
+    function groupOf(i) {
+      return i >= 0 && set.points[i] ? set.points[i].group || "" : "";
+    }
+
+    // The stop of hop h, from hop h's own random stream (the reference's rules).
+    function pick(h) {
+      var rng = ET.math.makeRandom(ET.math.mixSeed(seedU ^ SALT_WANDER, h));
+      var i = h > 0 ? targets[h - 1] : -1;
+      var recent = targets.slice(Math.max(0, h - opt.recent), h);
+      var hopNo = h + 1;
+      if (i >= 0 && hopNo % opt.leapEvery !== 0) {
+        var near = nearVisits(i, opt.neighbours).filter(function (j) {
+          return recent.indexOf(j) < 0;
+        });
+        if (near.length) return near[Math.floor(rng.next() * Math.min(near.length, opt.nearChoices))];
+      }
+      var gi = groupOf(i);
+      for (var tries = 0; tries < 40; tries++) {
+        var j = visit[Math.floor(rng.next() * visit.length)];
+        if (j !== i && recent.indexOf(j) < 0 && (gi === "" || groupOf(j) !== gi)) return j;
+      }
+      var idx = Math.floor(rng.next() * visit.length);
+      if (visit[idx] === i && visit.length > 1) idx = (idx + 1) % visit.length;
+      return visit[idx];
+    }
+
+    function ensure(h) {
+      while (targets.length <= h) {
+        var n = targets.length;
+        var j = pick(n);
+        targets.push(j);
+        var ids = [j].concat(Array.prototype.slice.call(nearest(j)));
+        var lf = ET.math.localFrame(set.vectors, set.count, D, ids);
+        toFrames.push(ET.math.alignTo(lf, n > 0 ? toFrames[n - 1] : startFrame, D));
+      }
+    }
+
+    function hopAt(t) {
+      var h = Math.floor(t / cycle);
+      return { h: h, local: t - h * cycle };
+    }
+
+    function stateAt(time) {
+      var t = M.checkTime(time);
+      out.t = t;
+      if (!ready) {
+        out.frame.set(startFrame);
+        if (entry && entry.centre) out.centre.set(entry.centre);
+        out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0 };
+        out.focus = null;
+        out.status = status(t);
+        return out;
+      }
+      var hp = hopAt(t);
+      var h = hp.h;
+      ensure(h);
+      var j = targets[h];
+      var fromF = h > 0 ? toFrames[h - 1] : startFrame;
+      var X = set.vectors;
+      var oj = j * D;
+      var phase;
+      var e;
+      if (hp.local < opt.travel) {
+        phase = "travel";
+        e = ET.math.smoothstep(hp.local / opt.travel);
+        var oc = h > 0 ? targets[h - 1] * D : -1;
+        for (var d = 0; d < D; d++) {
+          var a = oc >= 0 ? X[oc + d] : startCentre[d];
+          tmpC[d] = a + (X[oj + d] - a) * e;
+        }
+        for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
+        ET.math.blendFrames(fromF, toFrames[h], e, D, out.frame);
+      } else {
+        phase = "dwell";
+        e = 1;
+        for (var d3 = 0; d3 < D; d3++) out.centre[d3] = X[oj + d3];
+        ET.math.blendFrames(fromF, toFrames[h], 1, D, out.frame);
+      }
+      out.focus = {
+        phase: phase,
+        from: h > 0 ? targets[h - 1] : -1,
+        to: j,
+        e: e,
+        neighbours: Int32Array.from(nearVisits(j, opt.spokes)),
+      };
+      var draw = {
+        zoom: opt.zoom / scale,
+        wires: 0,
+        dim: 1,
+        trails: 0.17,
+        fog: 1,
+        fogNear: 1.2 * scale,
+        fogWidth: 0.8 * scale,
+        twinkle: 0.18,
+        depthOfField: 1.1,
+      };
+      out.draw = M.blendDraw(draw, entry, t, opt.transition);
+      out.status = status(t);
+      return out;
+    }
+
+    function nameOf(i) {
+      var p = set.points[i];
+      return M.isLabelled(p) ? p.label : p.id;
+    }
+
+    function describeStop(h, phase) {
+      var j = targets[h];
+      if (phase === "dwell") {
+        var g = groupOf(j);
+        return 'at "' + nameOf(j) + '"' + (g ? " · " + g : "") + " · stop " + (h + 1);
+      }
+      var i = h > 0 ? targets[h - 1] : -1;
+      var gj = groupOf(j);
+      var far = i >= 0 && gj !== "" && groupOf(i) !== gj;
+      return (i >= 0 ? '"' + nameOf(i) + '" → ' : "heading to ") + '"' + nameOf(j) + '"' + (far ? " · long leap to " + gj : "");
+    }
+
+    function step(dt) {
+      self.time += dt;
+      return stateAt(self.time);
+    }
+
+    function status(time) {
+      var t = M.checkTime(time === undefined ? self.time : time);
+      if (!ready) return "getting ready to wander …";
+      var hp = hopAt(t);
+      ensure(hp.h);
+      return describeStop(hp.h, hp.local < opt.travel ? "travel" : "dwell");
+    }
+
+    // Append: the hops up to the one in progress at time t are kept (so the view
+    // does not jump); later hops are chosen again with the new points, which can
+    // become stops and neighbours. Replace: start over from the current view.
+    function dataChanged(newSet, info) {
+      var i = info || {};
+      var t = i.t === undefined ? self.time : M.checkTime(i.t);
+      if (i.op !== "append" || newSet.dimension !== D || !ready) {
+        var from = null;
+        if (ready) {
+          var s = stateAt(t);
+          from = { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) };
+        } else {
+          from = entry;
+        }
+        enter(newSet, { seed: seed, from: from });
+        return prepare();
+      }
+      var h = hopAt(t).h;
+      ensure(h);
+      targets.length = h + 1;
+      toFrames.length = h + 1;
+      set = newSet;
+      nbrCache = {};
+      buildPool();
+      return null;
+    }
+
+    function route(n) {
+      if (!ready) return new Int32Array(0);
+      if (n > 0) ensure(n - 1);
+      return Int32Array.from(targets.slice(0, n));
+    }
+
+    function neighboursOf(j) {
+      return ready ? Int32Array.from(nearest(j)) : new Int32Array(0);
+    }
+
+    function describe() {
+      return {
+        id: "wander",
+        projection: "linear: an orthonormal 3-frame fitted to each stop's neighbourhood (its top three principal directions)",
+        seed: seed,
+        neighbours: opt.neighbours,
+        neighbourLimit: opt.neighbourLimit,
+        travel: opt.travel,
+        dwell: opt.dwell,
+        labelled: labelledCount,
+        visiting: labelledCount >= 2 ? "labelled points" : "any point",
+        varianceShare: null,
+      };
+    }
+
+    function leave() {
+      set = null;
+      nbrCache = {};
+      targets = [];
+      toFrames = [];
+      ready = false;
+    }
+
+    return self;
+  }
+
+  M.register({
+    id: "wander",
+    title: "Wander",
+    summary: "Fly through the space, hopping from neighbour to neighbour.",
+    create: create,
+  });
+})();
 
   // Export. Public API only; ET is reachable as api._internal for tests.
   var api = ET.api;
