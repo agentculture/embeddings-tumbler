@@ -27,12 +27,17 @@ As of 2026-11-13 no repository surveyed for this work (`embeddings-lens`,
 viewer; the only one was a demo page whose data is generated in the page. That
 page is the reference: `docs/specs/reference/embedding-tumbler-demo.html`.
 
-## Current state: planned, not built
+## Current state: being built
 
-**Nothing of the viewer exists in this repo yet.** The package is still the
-agent-first CLI scaffold from `culture-agent-template` (`whoami`, `learn`,
-`explain`, `overview`, `doctor`, `cli overview`). What exists is the converged
-spec, the converged plan, and a working reference demo:
+The viewer is being built from the converged spec and plan by a workforce run.
+Landed so far: the data contract and its fixtures (`docs/data-contract.md`,
+`tests/fixtures/contract/`), the JavaScript layout and assembler (`js/`,
+`scripts/assemble.py`), the contract loader (`js/src/20-contract.js`), the
+mathematics module (`js/src/10-math.js`) and the `viewer write` / `viewer
+serve` CLI verbs. Not landed yet: the renderer, the three modes, the viewer
+API (`mount` / `update` / `destroy`), the two shells, packaging for npm and
+the browser harness. `js/README.md` is the module convention and `js/api/`
+documents each module's interface.
 
 | What | Where |
 |------|-------|
@@ -102,8 +107,8 @@ markdownlint-cli2 "**/*.md"
 python3 scripts/scan-secrets.py          # committed secrets + non-localhost endpoints
 uv run teken cli doctor . --strict       # the agent-first rubric gate CI runs
 
-node --test                              # (planned) JavaScript unit tests, no dependencies
-python3 scripts/assemble.py              # (planned) rebuild the single core file
+node --test                              # JavaScript unit tests, no dependencies
+python3 scripts/assemble.py              # rebuild the single core file (--check fails when stale)
 ```
 
 ## The CLI contract

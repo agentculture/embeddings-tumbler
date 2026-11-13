@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-13T19:46:11Z",
+  "updated": "2026-11-13T19:48:26Z",
   "claims": [
     {
       "id": "c1",
@@ -976,6 +976,28 @@
       "skipped_check": "committed cross-version map test; real-vector run (t16)",
       "refs": [
         "t15"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l7",
+      "code": "n-below-claim",
+      "what": "t4: module written before its tests (test-first not followed; a mutation check covers criteria 3 and 4 only); the guided-versus-random margin (asserted 0.25, observed about 0.44) is measured on one synthetic fixture with one tour seed and one random seed, no seed sweep; a test's noise level was lowered on reasoning about the noise spectrum, not a measurement; cross-browser bit-identity of the tour is unverified (Math.sin/cos); principal-direction convergence is unverified on real vectors.",
+      "skipped_check": "seed sweep for the separation margin; browser run of the determinism test; real-vector run (t16)",
+      "refs": [
+        "t4"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l8",
+      "code": "assumption-for-measurement",
+      "what": "t6: no side-by-side comparison with the reference page (one screenshot looked at); twinkle has no assertion and was not checked by eye; wires are drawn in the browser test but not asserted separately; the no-HDR fallback was exercised only through the hdr:false option, never on a GPU without float render targets; SwiftShader timings are noisy (first page about 4x slower, attributed to warm-up without measurement); whether the browser test skips cleanly on CI is unconfirmed. Main agent loaded the demo in headless Chromium on the Radeon 760M: 60.0 fps at 5,000 x 1024-d, zero console errors; trails look streaky.",
+      "skipped_check": "side-by-side with the reference; twinkle and wire assertions; CI run of the browser test",
+      "refs": [
+        "t6"
       ],
       "origin": "llm",
       "status": "proposed"

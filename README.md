@@ -140,6 +140,9 @@ uv run teken cli doctor . --strict    # the agent-first rubric gate CI runs
 | `overview` | Read-only descriptive snapshot of the agent. |
 | `doctor` | Check the agent-identity invariants (prompt-file-present, backend-consistency). |
 | `cli overview` | Describe the CLI surface itself. |
+| `viewer overview` | Describe the viewer files this package ships. |
+| `viewer write <folder>` | Copy the viewer files into a host folder. Previews by default; writes with `--apply`; refuses existing files without `--force`. |
+| `viewer serve <folder>` | Serve a folder of static files on loopback for local testing. |
 
 Every command supports `--json`. Results go to stdout, errors/diagnostics to
 stderr (never mixed). Exit codes: `0` success, `1` user error, `2` environment
