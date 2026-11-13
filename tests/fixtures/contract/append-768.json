@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "embeddings-tumbler/data",
+  "op": "append",
+  "model": "fixture/model-a",
+  "dimension": 768,
+  "count": 1,
+  "text_included": true,
+  "vectors": {
+    "file": "append-768.f32",
+    "dtype": "float32",
+    "byte_order": "little",
+    "byte_length": 3072
+  },
+  "points": [
+    {
+      "id": "e-01",
+      "label": "a 768-d point",
+      "group": "epsilon"
+    }
+  ]
+}

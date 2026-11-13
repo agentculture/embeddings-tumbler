@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "embeddings-tumbler/data",
+  "model": "fixture/model-a",
+  "dimension": 384,
+  "count": 6,
+  "text_included": true,
+  "provenance": {
+    "source": "fixture: valid-384",
+    "producer": "scripts/gen_contract_fixtures.py",
+    "created": "2026-11-13T00:00:00Z",
+    "synthetic": true,
+    "seed": 384,
+    "uncertain": []
+  },
+  "vectors": {
+    "file": "valid-384.f32",
+    "dtype": "float32",
+    "byte_order": "little",
+    "byte_length": 9216
+  },
+  "points": [
+    {
+      "id": "a-01",
+      "label": "the gateway listens on port 8001",
+      "group": "alpha",
+      "metadata": {
+        "role": "base",
+        "rank": 1
+      }
+    },
+    {
+      "id": "a-02",
+      "label": "the gateway runs on port 8001",
+      "group": "alpha",
+      "metadata": {
+        "role": "paraphrase",
+        "rank": 2
+      }
+    },
+    {
+      "id": "a-03",
+      "label": "<b>markup is text</b> & <script>not run</script>",
+      "group": "alpha",
+      "metadata": {
+        "note": "<i>also text</i>"
+      }
+    },
+    {
+      "id": "b-01",
+      "label": "naïve café, 東京, ünïcödé",
+      "group": "beta"
+    },
+    {
+      "id": "b-02",
+      "label": "",
+      "group": "beta",
+      "metadata": {
+        "nested": {
+          "k": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "id": "c-01",
+      "label": "a point with no group"
+    }
+  ]
+}

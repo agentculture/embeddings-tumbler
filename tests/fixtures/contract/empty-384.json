@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "kind": "embeddings-tumbler/data",
+  "model": "fixture/model-a",
+  "dimension": 384,
+  "count": 0,
+  "text_included": true,
+  "provenance": {
+    "source": "fixture: empty-384",
+    "producer": "scripts/gen_contract_fixtures.py",
+    "created": "2026-11-13T00:00:00Z",
+    "synthetic": true,
+    "seed": 0,
+    "limitations": [],
+    "uncertain": []
+  },
+  "vectors": {
+    "file": "empty-384.f32",
+    "dtype": "float32",
+    "byte_order": "little",
+    "byte_length": 0
+  },
+  "points": []
+}

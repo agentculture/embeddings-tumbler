@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "kind": "embeddings-tumbler/data",
+  "model": "fixture/model-a",
+  "dimension": 384,
+  "count": 4,
+  "text_included": false,
+  "provenance": {
+    "source": "fixture: labels-only",
+    "producer": "scripts/gen_contract_fixtures.py",
+    "created": "2026-11-13T00:00:00Z",
+    "synthetic": true,
+    "seed": null,
+    "limitations": [],
+    "uncertain": []
+  },
+  "reduction": {
+    "kind": "none",
+    "source_dimension": 384,
+    "directions_kept": 384,
+    "variance_dropped": 0
+  },
+  "vectors": {
+    "file": "labels-only.f32",
+    "dtype": "float32",
+    "byte_order": "little",
+    "byte_length": 6144
+  },
+  "points": [
+    {
+      "id": "item-0",
+      "label": "item-0",
+      "group": "g"
+    },
+    {
+      "id": "item-1",
+      "label": "item-1",
+      "group": "g"
+    },
+    {
+      "id": "item-2",
+      "label": "item-2",
+      "group": "g"
+    },
+    {
+      "id": "item-3",
+      "label": "item-3",
+      "group": "g"
+    }
+  ]
+}
