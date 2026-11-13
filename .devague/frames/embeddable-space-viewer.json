@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-13T19:04:24Z",
+  "updated": "2026-11-13T19:46:11Z",
   "claims": [
     {
       "id": "c1",
@@ -931,6 +931,51 @@
       "skipped_check": "an independent implementation reading the fixtures; regeneration on a second Python version",
       "refs": [
         "t2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "assumption-for-measurement",
+      "what": "t12: the stderr warning for a non-loopback --host is not exercised end to end (only the is_loopback helper is unit-tested), and the agent assumed the wheel ships static/ without building it. Main agent built the wheel: embeddings_tumbler/static/embeddings-tumbler.js is present. The warning branch stays untested.",
+      "skipped_check": "CLI test binding a non-loopback host; uv build --wheel",
+      "refs": [
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "assumption-for-measurement",
+      "what": "t5: the little-endian DataView path was never run on a big-endian host; no performance measurement on large sets (append copies all vectors each time); the in-memory test for the three file-form-only fixtures asserts refusal and unchanged base but not the exact code. Separately, t5 is the first independent implementation to read t2's fixtures and found no contradiction between document, index.json and fixtures (bears on l2).",
+      "skipped_check": "big-endian run; timing at 10,000 x 1024; exact-code assertion for file-form-only cases in memory form",
+      "refs": [
+        "t5",
+        "l2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l5",
+      "code": "control-absent",
+      "what": "t2b: code and tests written in one pass, tests never seen failing first; the endpoint pattern accepts a trailing space, which the document does not mention.",
+      "skipped_check": "running the new tests red before the implementation change",
+      "refs": [
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l6",
+      "code": "assumption-for-measurement",
+      "what": "t15: the before/after 'map --html' byte comparison across code versions was done by hand only (no committed cross-version test); rotation and top-k were never run on real model vectors or at 2560-d; the agent's cross-check against the viewer's validator used the old endpoint rule and its allowlist checker was written from a message, not the document. Main agent then exported a synthetic 300 x 1024 Atlas four ways (plain, labels-only, rotate, top-k 16, endpoint name 'lobes gateway') and both the merged Python reference validator and the merged JS loader accepted all four.",
+      "skipped_check": "committed cross-version map test; real-vector run (t16)",
+      "refs": [
+        "t15"
       ],
       "origin": "llm",
       "status": "proposed"

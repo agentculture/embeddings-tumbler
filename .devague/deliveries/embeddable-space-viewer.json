@@ -2,7 +2,7 @@
   "plan_slug": "embeddable-space-viewer",
   "schema_version": 2,
   "created": "2026-11-13T19:07:38Z",
-  "updated": "2026-11-13T19:07:38Z",
+  "updated": "2026-11-13T19:45:06Z",
   "deviations": [
     {
       "id": "d1",
@@ -18,6 +18,17 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "t15 adds two registration lines (the import and _export_cmd.register(sub)) to embeddings/cli/__init__.py in embeddings-cli, a stable-contract module; no parser behaviour, dispatch, _errors.py or _output.py changes",
+      "task_ref": "t15",
+      "reason": "A new verb can only be registered in _build_parser() in that module, at the spot embeddings-cli's CLAUDE.md marks for it; criterion 5's 'no stable-contract module changes' cannot be met literally without hiding the registration inside another verb. User chose 'Accept the 2 lines' on 2026-11-13.",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
     }
   ],
   "evidence": [],
