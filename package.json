@@ -1,0 +1,10 @@
+{
+  "name": "embeddings-tumbler",
+  "version": "0.10.1",
+  "private": true,
+  "description": "Drop-in viewer for embedding spaces.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test"
+  }
+}
