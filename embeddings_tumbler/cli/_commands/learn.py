@@ -29,6 +29,10 @@ Commands
   embeddings-tumbler overview           Descriptive snapshot of the agent.
   embeddings-tumbler doctor             Check the agent-identity invariants.
   embeddings-tumbler cli overview       Describe the CLI surface itself.
+  embeddings-tumbler viewer overview    Describe the viewer verbs.
+  embeddings-tumbler viewer write <dir> Write the viewer files into a host folder
+                                        (preview; --apply writes; --force overwrites).
+  embeddings-tumbler viewer serve <dir> Serve a folder as static files on loopback.
 
 Machine-readable output
 -----------------------
@@ -60,6 +64,15 @@ def _as_json_payload() -> dict[str, object]:
             {"path": ["overview"], "summary": "Descriptive snapshot of the agent."},
             {"path": ["doctor"], "summary": "Check the agent-identity invariants."},
             {"path": ["cli", "overview"], "summary": "Describe the CLI surface."},
+            {"path": ["viewer", "overview"], "summary": "Describe the viewer verbs."},
+            {
+                "path": ["viewer", "write"],
+                "summary": "Write the viewer files into a host folder (preview unless --apply).",
+            },
+            {
+                "path": ["viewer", "serve"],
+                "summary": "Serve a folder as static files, loopback by default.",
+            },
         ],
         "exit_codes": {
             "0": "success",
