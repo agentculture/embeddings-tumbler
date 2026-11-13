@@ -1,5 +1,5 @@
 agents:
-- suffix: culture-agent-template
+- suffix: embeddings-tumbler
   backend: claude
 gate:
   setup:
