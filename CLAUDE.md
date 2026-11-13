@@ -22,6 +22,11 @@ It is a sibling of [`embeddings-cli`](https://github.com/agentculture/embeddings
 which measures embedding spaces and is the first producer of data for this
 viewer.
 
+As of 2026-11-13 no repository surveyed for this work (`embeddings-lens`,
+`irc-lens`, `webglass-cli`, `embodiment`, `eidetic-cli`) contained an embedding
+viewer; the only one was a demo page whose data is generated in the page. That
+page is the reference: `docs/specs/reference/embedding-tumbler-demo.html`.
+
 ## Current state: planned, not built
 
 **Nothing of the viewer exists in this repo yet.** The package is still the
