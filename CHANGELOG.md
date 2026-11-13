@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-11-13
+
+### Added
+
+- The converged spec and plan for the embeddable space viewer
+  (`docs/specs/2026-11-13-embeddable-space-viewer.md`,
+  `docs/plans/2026-11-13-embeddable-space-viewer.md`) with the devague frame
+  and plan state under `.devague/`.
+- The reference demo the built site is expected to match
+  (`docs/specs/reference/embedding-tumbler-demo.html`).
+- A workforce brief with the proposed implementation split and per-task
+  guidance (`docs/workforce/README.md`), plus illustrative sketches of the
+  data file, a producer, two host pages and the mode interface
+  (`docs/workforce/examples/`).
+- The real-vector probe that changed the spec, with its script
+  (`docs/evidence/`).
+
+### Changed
+
+- `CLAUDE.md` is now the project's runtime prompt instead of the template
+  seed: what the viewer is, the rules the spec fixes, and that nothing of the
+  viewer is built yet.
+- markdownlint ignores the generated devague exports (`docs/specs/`,
+  `docs/plans/`, `.devague/`).
+
 ## [0.10.0] - 2026-10-06
 
 ### Added

@@ -1,0 +1,25 @@
+<!doctype html>
+<!--
+  Illustrative host page: the web-component form, served with
+      Content-Security-Policy: script-src 'self'
+  A sketch from planning; task t10 fixes the real element and attributes.
+  The shell file contains no rendering or projection logic: it calls only
+  mount, update and destroy on the core file.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Host page: web component form</title>
+  <link rel="stylesheet" href="host.css">
+</head>
+<body>
+  <main>
+    <h1>Conversation, as a space</h1>
+    <!-- `src` is loaded from the host's own origin. Removing the element destroys the viewer. -->
+    <embeddings-tumbler src="data/atlas-plain.json" mode="lattice" seed="20261113"></embeddings-tumbler>
+  </main>
+  <script src="embeddings-tumbler.js"></script>
+  <script src="embeddings-tumbler-element.js"></script>
+</body>
+</html>

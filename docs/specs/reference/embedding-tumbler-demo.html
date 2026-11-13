@@ -1,0 +1,936 @@
+<title>Embedding Tumbler</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+  /* Layout: a full-bleed night sky carries the page; the title floats on it, and the
+     instrument panel (view switch, 384-cell readout, controls, notes) sits beneath.
+     Single dark look by choice: the subject is light on darkness. */
+  :root {
+    --bg: #04060b;
+    --sky: #0b1430;
+    --fg: #e9eef6;
+    --muted: #8a96ab;
+    --line: #1b2436;
+    --accent: #ffc56b;
+    --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+    --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: dark;
+  }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+
+  .stage {
+    position: relative;
+    height: clamp(420px, 72vh, 900px);
+    background: radial-gradient(ellipse 75% 70% at 50% 46%, var(--sky) 0%, #070b18 48%, var(--bg) 82%);
+    overflow: hidden;
+    touch-action: pan-y;
+    cursor: grab;
+  }
+  .stage.dragging { cursor: grabbing; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #gl { mix-blend-mode: screen; }
+  .stage::after {   /* blend the sky into the panel below */
+    content: ""; position: absolute; inset: auto 0 0 0; height: 90px; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--bg));
+  }
+  .mast {
+    position: absolute; top: 22px; pointer-events: none; z-index: 2;
+    left: max(20px, env(safe-area-inset-left, 0px)); right: max(20px, env(safe-area-inset-right, 0px));
+  }
+  .mast h1 {
+    font-family: var(--font-display); font-weight: 400; font-style: italic;
+    font-size: clamp(34px, 6vw, 64px); line-height: 0.95; letter-spacing: -0.01em;
+    margin: 0 0 8px; text-wrap: balance; text-shadow: 0 0 28px rgba(4, 6, 11, 0.9);
+  }
+  .mast p { margin: 0; font-family: var(--font-data); font-size: 12px; letter-spacing: 0.06em; color: var(--muted); text-shadow: 0 0 12px var(--bg); }
+  .hud {
+    position: absolute; bottom: 16px; z-index: 2; margin: 0;
+    left: max(20px, env(safe-area-inset-left, 0px)); right: max(20px, env(safe-area-inset-right, 0px));
+    font-family: var(--font-data); font-size: 12px; color: var(--accent);
+    font-variant-numeric: tabular-nums; pointer-events: none;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); z-index: 3; }
+
+  .page {
+    max-width: 1120px; margin: 0 auto;
+    padding-block: 8px 56px;
+    padding-left: max(20px, env(safe-area-inset-left, 0px));
+    padding-right: max(20px, env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column; gap: 20px;
+  }
+
+  .modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--line); }
+  .mode {
+    font: inherit; color: var(--muted); text-align: left; background: transparent;
+    border: 0; border-top: 2px solid transparent; margin-top: -1px;
+    padding: 12px 16px 10px 0; cursor: pointer;
+    display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  }
+  .mode b { font-family: var(--font-display); font-weight: 400; font-size: 28px; line-height: 1.1; color: var(--fg); opacity: 0.55; }
+  .mode span { font-size: 13px; line-height: 1.35; }
+  .mode:hover b { opacity: 0.85; }
+  .mode[aria-pressed="true"] { border-top-color: var(--accent); }
+  .mode[aria-pressed="true"] b { opacity: 1; font-style: italic; color: var(--accent); }
+  .mode:focus-visible, .ctl button:focus-visible, .ctl input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-width: 600px) { .mode span { display: none; } .mode b { font-size: 24px; } }
+
+  .readout { display: flex; flex-direction: column; gap: 6px; }
+  .readout canvas { width: 100%; height: 22px; display: block; image-rendering: pixelated; border-block: 1px solid var(--line); }
+  .readout p, .ctl label, .ctl span, .note { margin: 0; font-family: var(--font-data); font-size: 12px; color: var(--muted); }
+  .readout p { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+  .ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; }
+  .ctl label { display: inline-flex; align-items: center; gap: 8px; }
+  .ctl input[type="range"] { width: 130px; accent-color: var(--accent); }
+  .ctl input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+  .ctl button {
+    font-family: var(--font-data); font-size: 12px; color: var(--fg); background: transparent;
+    border: 1px solid var(--line); border-radius: 999px; padding: 6px 16px; min-width: 76px; cursor: pointer;
+  }
+  .ctl button:hover { border-color: var(--muted); }
+
+  .explain { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 40px; max-width: 980px; }
+  .explain h2 { grid-column: 1 / -1; font-family: var(--font-display); font-weight: 400; font-style: italic; font-size: 30px; line-height: 1.1; margin: 4px 0 0; }
+  .explain h3 { font-family: var(--font-data); font-weight: 500; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin: 0 0 4px; }
+  .explain p { margin: 0; max-width: 62ch; color: #c5cddb; }
+  @media (max-width: 720px) { .explain { grid-template-columns: minmax(0, 1fr); } }
+  .note { border-top: 1px solid var(--line); padding-top: 14px; max-width: 92ch; line-height: 1.65; }
+</style>
+
+<div class="stage" id="stage">
+  <canvas id="gl" aria-label="Animated 3-D projection of a 384-dimensional embedding space"></canvas>
+  <canvas id="ov" aria-hidden="true"></canvas>
+  <header class="mast">
+    <h1>Embedding Tumbler</h1>
+    <p>12,288 EMBEDDINGS · 384 DIMENSIONS · ONE RESTLESS 3-D WINDOW</p>
+  </header>
+  <p class="hud" id="hud"></p>
+  <p class="fallback" id="fallback" hidden>This view draws on the graphics card and needs WebGL 2, which this browser does not offer.</p>
+</div>
+
+<div class="page">
+  <nav class="modes" aria-label="View">
+    <button class="mode" type="button" id="mode-tumble" data-mode="tumble" aria-pressed="true"><b>Tumble</b><span>The window turns through every dimension at once</span></button>
+    <button class="mode" type="button" id="mode-lattice" data-mode="lattice" aria-pressed="false"><b>Lattice</b><span>True neighbours wired together, one axis swapped at a time</span></button>
+    <button class="mode" type="button" id="mode-wander" data-mode="wander" aria-pressed="false"><b>Wander</b><span>Fly through the space, hopping neighbour to neighbour</span></button>
+  </nav>
+
+  <div class="readout">
+    <canvas id="strip" width="384" height="1" aria-hidden="true"></canvas>
+    <p><span>dimension 1</span><span>how much each of the 384 dimensions contributes to the view right now</span><span>dimension 384</span></p>
+  </div>
+
+  <div class="ctl">
+    <button type="button" id="btn-run">Pause</button>
+    <label for="in-speed">Speed <input type="range" id="in-speed" min="0.2" max="3" step="0.1" value="1"></label>
+    <label for="in-labels"><input type="checkbox" id="in-labels" checked> Labels</label>
+    <label for="in-trails"><input type="checkbox" id="in-trails" checked> Trails</label>
+    <span>Drag the sky to turn it. Hover a bright star to name it.</span>
+  </div>
+
+  <section class="explain" data-for="tumble">
+    <h2>Tumble</h2>
+    <div><h3>What is happening</h3>
+      <p>A rotating tesseract is a 4-D shape seen through a 3-D window that keeps turning. This is the same trick with 384 dimensions. The three axes you see are a small frame that drifts smoothly through the whole space and never returns to the same view.</p></div>
+    <div><h3>What to watch for</h3>
+      <p>Regions slide through each other and separate again. The ring of months opens into a circle, then flattens to a line. Filaments between regions swing like bridges. None of the points move. Only the viewpoint does.</p></div>
+  </section>
+
+  <section class="explain" data-for="lattice" hidden>
+    <h2>Lattice</h2>
+    <div><h3>What is happening</h3>
+      <p>A thousand of the points are wired to their three nearest neighbours, measured in all 384 dimensions, so the wires stay true even when the picture misleads. The view changes one axis at a time: a visible axis is traded for a hidden direction, the way a tesseract turns inside out.</p></div>
+    <div><h3>What to watch for</h3>
+      <p>A wire flares when the view shows it close to its true length and fades when it points off into dimensions you cannot see. A long wire joins two real neighbours that this view happens to pull apart. Two clumps that overlap with no wires between them are not actually close.</p></div>
+  </section>
+
+  <section class="explain" data-for="wander" hidden>
+    <h2>Wander</h2>
+    <div><h3>What is happening</h3>
+      <p>Instead of watching from outside, the camera travels. It hops from one named star to a near neighbour, and at every stop the three axes are fitted again to that neighbourhood, so each region unfolds along its own strongest directions. Every few hops it leaps somewhere far away.</p></div>
+    <div><h3>What to watch for</h3>
+      <p>Brightness is true distance. Bright points are close in all 384 dimensions. The dim dust is far away, however near it looks on screen. Spokes mark the nearest named neighbours of the current stop, and the ring of months turns face-on when the camera arrives there.</p></div>
+  </section>
+
+  <p class="note">The data is synthetic: nine topic regions, the filaments and bridges between them, a ring of months and an arc of temperature words, generated to behave like the output of a small sentence-embedding model and normalised to unit length. 290 points carry words; the rest stand in for unnamed passages. Real model output is noisier and less tidy.</p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const D = 384, TAU = Math.PI * 2;
+  const N = 12288, PER_ROW = 16, TEX_W = PER_ROW * 96, TEX_H = N / PER_ROW;
+  const S = 1000, K = 24;            // S = points that get true-neighbour measurements
+
+  /* ---------- seeded randomness ---------- */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  const rnd = mulberry32(20261113);
+  let spare = null;
+  function gauss() {
+    if (spare !== null) { const s = spare; spare = null; return s; }
+    let u, v, s;
+    do { u = rnd() * 2 - 1; v = rnd() * 2 - 1; s = u * u + v * v; } while (s >= 1 || s === 0);
+    const m = Math.sqrt(-2 * Math.log(s) / s);
+    spare = v * m;
+    return u * m;
+  }
+  function randUnit() {
+    const v = new Float32Array(D);
+    let n = 0;
+    for (let d = 0; d < D; d++) { v[d] = gauss(); n += v[d] * v[d]; }
+    n = 1 / Math.sqrt(n);
+    for (let d = 0; d < D; d++) v[d] *= n;
+    return v;
+  }
+  function hsl(h, s, l) {
+    const f = n => { const k = (n + h / 30) % 12; return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+    return [f(0), f(8), f(4)];
+  }
+
+  /* ---------- the synthetic embedding space ---------- */
+  const REGIONS = [
+    { name: 'cooking', hue: 28, words: 'simmer braise whisk saffron dough skillet roast garlic broth zest caramelize ladle sourdough marinade paprika sear custard colander knead shallot reduction poach crumb glaze oven stock' },
+    { name: 'law', hue: 52, words: 'statute verdict plaintiff clause appeal tort affidavit injunction precedent subpoena liability counsel hearing indemnity jury breach testimony docket arbitration lien bylaw deposition tribunal remedy contract ruling' },
+    { name: 'sport', hue: 96, words: 'sprint volley tackle relay podium offside dribble rally scrum backhand marathon keeper penalty crossbar pitstop peloton dugout freekick knockout baton hurdle umpire slalom rebound tiebreak kickoff' },
+    { name: 'code', hue: 140, words: 'compiler mutex refactor pointer closure endpoint latency commit daemon schema recursion kernel cache regex thread bytecode linter socket hashmap rollback payload shader cron traceback merge runtime' },
+    { name: 'money', hue: 170, words: 'ledger dividend mortgage invoice equity tariff escrow yield audit collateral inflation bond overdraft payroll hedge liquidity principal surplus arrears annuity deficit margin rebate remittance solvency tax' },
+    { name: 'ocean', hue: 198, words: 'tide reef kelp harbor current swell lagoon estuary trench plankton anchor breakwater undertow shoal brine mooring whale squall lighthouse driftwood atoll surf fathom jetty seabed gull' },
+    { name: 'astronomy', hue: 226, words: 'nebula orbit quasar comet eclipse pulsar parallax redshift aphelion supernova telescope galaxy meteor corona zenith exoplanet asteroid equinox magnetar perigee cosmos starlight lunar solstice binary dwarf' },
+    { name: 'music', hue: 266, words: 'chord tempo cello refrain octave snare melody vinyl harmony bassline crescendo riff falsetto metronome ballad timbre overture synth duet encore lyric fret reverb cadence choir solo' },
+    { name: 'emotion', hue: 328, words: 'grief delight envy awe dread longing relief shame tenderness fury calm pride wonder regret hope boredom jealousy gratitude panic nostalgia contempt joy sorrow yearning serenity unease' },
+    { name: 'months', hue: 4, words: '' },
+    { name: 'temperature', hue: 298, words: '' }
+  ];
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const TEMPS = ['frozen', 'icy', 'frosty', 'bitter', 'chilly', 'cold', 'brisk', 'cool', 'mild', 'temperate', 'lukewarm', 'warm', 'balmy', 'toasty', 'hot', 'sweltering', 'torrid', 'searing', 'scorching', 'blazing'];
+  const RGB = REGIONS.map(r => hsl(r.hue, 0.9, 0.62));
+  const CSS_COL = REGIONS.map(r => 'hsl(' + r.hue + ' 90% 72%)');
+
+  const X = new Float32Array(N * D);          // every point, 384 numbers each; also the GPU texture
+  const attr = new Float32Array(N * 5);       // id, r, g, b, weight
+  const labels = new Array(N).fill(null);
+  const regionOf = new Int8Array(N).fill(-1);
+  const isHalo = new Uint8Array(N);
+  const acc = new Float64Array(D);
+  function axpy(k, v) { for (let d = 0; d < D; d++) acc[d] += k * v[d]; }
+  function commit(i, noise, rgb, w) {
+    let n = 0;
+    for (let d = 0; d < D; d++) {
+      const x = acc[d] + (rnd() + rnd() - 1) * 2.449 * noise;
+      acc[d] = x; n += x * x;
+    }
+    n = 1 / Math.sqrt(n);
+    const o = i * D;
+    for (let d = 0; d < D; d++) { X[o + d] = acc[d] * n; acc[d] = 0; }
+    attr[i * 5] = i; attr[i * 5 + 1] = rgb[0]; attr[i * 5 + 2] = rgb[1]; attr[i * 5 + 3] = rgb[2]; attr[i * 5 + 4] = w;
+  }
+
+  const SPREAD = [0.22, 0.16, 0.12, 0.08, 0.06];
+  const reg = [];
+  for (let r = 0; r < 9; r++) reg.push({ c: randUnit(), dirs: SPREAD.map(() => randUnit()), ph: [rnd() * TAU, rnd() * TAU, rnd() * TAU] });
+  const ring = { c: randUnit(), u: randUnit(), w: randUnit() };
+  const arc = { c: randUnit(), u: randUnit(), w: randUnit(), q: randUnit() };
+  const bridges = [];
+  for (let b = 0; b < 13; b++) {
+    const a = b < 9 ? b : Math.floor(rnd() * 9);
+    let z = b < 9 ? (b + 1) % 9 : Math.floor(rnd() * 9);
+    if (z === a) z = (a + 4) % 9;
+    bridges.push({ a, z, bend: randUnit(), wob: randUnit() });
+  }
+  function blob(r) { axpy(1, reg[r].c); for (let j = 0; j < 5; j++) axpy(gauss() * SPREAD[j], reg[r].dirs[j]); }
+  function ringAt(th, rad) { axpy(0.9, ring.c); axpy(rad * Math.cos(th), ring.u); axpy(rad * Math.sin(th), ring.w); }
+  function arcAt(s) { axpy(0.9, arc.c); axpy((s - 0.5) * 1.1, arc.u); axpy(0.36 * Math.sin(Math.PI * s), arc.w); axpy(0.16 * Math.sin(TAU * s), arc.q); }
+
+  let n = 0;
+  const bright = c => [0.45 + 0.55 * c[0], 0.45 + 0.55 * c[1], 0.45 + 0.55 * c[2]];
+  for (let r = 0; r < 9; r++) for (const w of REGIONS[r].words.split(' ')) { blob(r); labels[n] = w; regionOf[n] = r; commit(n++, 0.006, bright(RGB[r]), 1); }
+  for (let m = 0; m < 12; m++) for (let j = 0; j < 3; j++) {
+    ringAt((m + j / 3) / 12 * TAU, 0.46);
+    labels[n] = (j === 0 ? '' : j === 1 ? 'mid-' : 'late ') + MONTHS[m]; regionOf[n] = 9;
+    commit(n++, 0.003, bright(RGB[9]), j === 0 ? 1 : 0.8);
+  }
+  for (let k = 0; k < TEMPS.length; k++) { arcAt(k / (TEMPS.length - 1)); labels[n] = TEMPS[k]; regionOf[n] = 10; commit(n++, 0.003, bright(RGB[10]), 1); }
+  const NAMED = n;
+  for (; n < N; n++) {
+    const t = rnd(), w = 0.1 + 0.55 * Math.pow(rnd(), 3);
+    if (t < 0.56) {
+      const r = Math.floor(rnd() * 9), R = reg[r];
+      regionOf[n] = r;
+      if (rnd() < 0.42) { blob(r); commit(n, 0.006, RGB[r], w); }
+      else {            // a filament: a curved thread inside the region
+        const f = Math.floor(rnd() * 3), s = (rnd() + rnd() - 1) * 1.25;
+        axpy(1, R.c);
+        axpy(0.36 * s, R.dirs[f]);
+        axpy(0.19 * Math.sin(2.3 * s + R.ph[f]), R.dirs[(f + 1) % 5]);
+        axpy(0.11 * Math.cos(3.1 * s + R.ph[f]), R.dirs[(f + 2) % 5]);
+        axpy(gauss() * 0.018, R.dirs[(f + 3) % 5]);
+        commit(n, 0.0035, RGB[r], w);
+      }
+    } else if (t < 0.73) { // a bridge: a continuous transition between two regions
+      const B = bridges[Math.floor(rnd() * bridges.length)], s = rnd();
+      axpy(1 - s, reg[B.a].c); axpy(s, reg[B.z].c);
+      axpy(0.3 * Math.sin(Math.PI * s), B.bend);
+      axpy(gauss() * 0.02 + 0.06 * Math.sin(9 * s), B.wob);
+      const ca = RGB[B.a], cz = RGB[B.z];
+      regionOf[n] = s < 0.5 ? B.a : B.z;
+      commit(n, 0.003, [ca[0] + (cz[0] - ca[0]) * s, ca[1] + (cz[1] - ca[1]) * s, ca[2] + (cz[2] - ca[2]) * s], w * 0.8);
+    } else if (t < 0.80) { ringAt(rnd() * TAU, 0.46 + gauss() * 0.012); regionOf[n] = 9; commit(n, 0.003, RGB[9], w); }
+    else if (t < 0.85) { arcAt(rnd()); regionOf[n] = 10; commit(n, 0.004, RGB[10], w); }
+    else {                 // the rest of the sphere: faint, unstructured
+      for (let d = 0; d < D; d++) acc[d] = gauss();
+      isHalo[n] = 1;
+      commit(n, 0, [0.55, 0.68, 1.0], 0.05 + 0.2 * rnd() * rnd());
+    }
+  }
+  { // centre the cloud so the tour turns about its middle
+    const mean = new Float64Array(D);
+    for (let i = 0; i < N; i++) { const o = i * D; for (let d = 0; d < D; d++) mean[d] += X[o + d]; }
+    for (let d = 0; d < D; d++) mean[d] /= N;
+    for (let i = 0; i < N; i++) { const o = i * D; for (let d = 0; d < D; d++) X[o + d] -= mean[d]; }
+  }
+
+  /* ---------- true neighbours in all 384 dimensions, measured in the background ---------- */
+  const nbr = new Int32Array(S * K), nbrDist = new Float32Array(S * K);
+  let knnRow = 0, knnReady = false, edgeCount = 0;
+  const distRow = new Float32Array(S), order = new Int32Array(S);
+  function knnSlice() {
+    const end = Math.min(S, knnRow + 16);
+    for (let i = knnRow; i < end; i++) {
+      const oi = i * D;
+      for (let j = 0; j < S; j++) {
+        const oj = j * D;
+        let s = 0;
+        for (let d = 0; d < D; d++) { const t = X[oi + d] - X[oj + d]; s += t * t; }
+        distRow[j] = j === i ? Infinity : s;
+        order[j] = j;
+      }
+      order.sort((a, b) => distRow[a] - distRow[b]);
+      for (let k = 0; k < K; k++) { nbr[i * K + k] = order[k]; nbrDist[i * K + k] = Math.sqrt(distRow[order[k]]); }
+    }
+    knnRow = end;
+    if (end < S) setTimeout(knnSlice, 0); else finishKnn();
+  }
+
+  /* ---------- the viewing frame: three orthonormal axes inside 384-d, plus the camera position ---------- */
+  const FC = new Float32Array(4 * D);
+  const F = FC.subarray(0, 3 * D), centre = FC.subarray(3 * D, 4 * D);
+  function orthonormalize(M) {
+    for (let i = 0; i < 3; i++) {
+      const oi = i * D;
+      for (let j = 0; j < i; j++) {
+        const oj = j * D;
+        let dp = 0;
+        for (let d = 0; d < D; d++) dp += M[oi + d] * M[oj + d];
+        for (let d = 0; d < D; d++) M[oi + d] -= dp * M[oj + d];
+      }
+      let nn = 0;
+      for (let d = 0; d < D; d++) nn += M[oi + d] * M[oi + d];
+      nn = Math.sqrt(nn);
+      if (nn < 1e-6) { for (let d = 0; d < D; d++) M[oi + d] = gauss(); i--; continue; }
+      nn = 1 / nn;
+      for (let d = 0; d < D; d++) M[oi + d] *= nn;
+    }
+  }
+  for (let i = 0; i < 3 * D; i++) F[i] = gauss();
+  orthonormalize(F);
+
+  /* Tumble: the frame drifts with a smoothed random velocity, so the motion never jerks or repeats. */
+  const tW = new Float32Array(3 * D), tV = new Float32Array(3 * D), tT = new Float32Array(3 * D);
+  for (let i = 0; i < 3 * D; i++) { tW[i] = gauss(); tV[i] = tW[i]; }
+  let turned = 0;
+  function stepTumble(dt) {
+    const k1 = Math.min(1, dt / 2.5), k2 = Math.min(1, dt / 0.8), kick = Math.sqrt(2 * k1);
+    for (let i = 0; i < 3 * D; i++) {
+      tW[i] += -tW[i] * k1 + gauss() * kick;
+      tV[i] += (tW[i] - tV[i]) * k2;
+      tT[i] = tV[i];
+    }
+    let norm = 0;
+    for (let i = 0; i < 3; i++) {       // keep only the part that leaves the current view
+      const oi = i * D;
+      for (let j = 0; j < 3; j++) {
+        const oj = j * D;
+        let dp = 0;
+        for (let d = 0; d < D; d++) dp += tV[oi + d] * F[oj + d];
+        for (let d = 0; d < D; d++) tT[oi + d] -= dp * F[oj + d];
+      }
+      for (let d = 0; d < D; d++) norm += tT[oi + d] * tT[oi + d];
+    }
+    const omega = 0.42, s = omega * dt / Math.sqrt(norm || 1);
+    for (let i = 0; i < 3 * D; i++) F[i] += tT[i] * s;
+    orthonormalize(F);
+    turned += omega * dt;
+  }
+
+  /* Lattice: one visible axis at a time rotates a quarter turn into a hidden direction. */
+  const swap = { axis: 0, u: 0, count: 1, base: new Float32Array(D), hidden: new Float32Array(D) };
+  function initSwap() {
+    orthonormalize(F);
+    swap.u = 0;
+    swap.base.set(F.subarray(swap.axis * D, swap.axis * D + D));
+    const h = swap.hidden;
+    let nn;
+    do {
+      for (let d = 0; d < D; d++) h[d] = gauss();
+      for (let j = 0; j < 3; j++) {
+        const oj = j * D;
+        let dp = 0;
+        for (let d = 0; d < D; d++) dp += h[d] * F[oj + d];
+        for (let d = 0; d < D; d++) h[d] -= dp * F[oj + d];
+      }
+      nn = 0;
+      for (let d = 0; d < D; d++) nn += h[d] * h[d];
+      nn = Math.sqrt(nn);
+    } while (nn < 1e-6);
+    for (let d = 0; d < D; d++) h[d] /= nn;
+  }
+  function stepSwap(dt) {
+    swap.u += dt / 3.4;
+    const u = Math.min(1, swap.u);
+    const th = (Math.PI / 2) * (u - Math.sin(TAU * u) / TAU);
+    const c = Math.cos(th), s = Math.sin(th), o = swap.axis * D;
+    for (let d = 0; d < D; d++) F[o + d] = c * swap.base[d] + s * swap.hidden[d];
+    if (swap.u >= 1) { swap.axis = (swap.axis + 1) % 3; swap.count++; initSwap(); }
+  }
+
+  /* Wander: fit three axes to a point's own neighbourhood, then fly between such fits. */
+  const frameCache = new Map();
+  function localFrame(i) {
+    if (frameCache.has(i)) return frameCache.get(i);
+    const M = K + 1, ids = [i];
+    for (let k = 0; k < K; k++) ids.push(nbr[i * K + k]);
+    const mean = new Float32Array(D);
+    for (const id of ids) for (let d = 0; d < D; d++) mean[d] += X[id * D + d] / M;
+    const Y = new Float32Array(M * D);
+    for (let a = 0; a < M; a++) for (let d = 0; d < D; d++) Y[a * D + d] = X[ids[a] * D + d] - mean[d];
+    const G = new Float64Array(M * M);
+    for (let a = 0; a < M; a++) for (let b = a; b < M; b++) {
+      let s = 0;
+      for (let d = 0; d < D; d++) s += Y[a * D + d] * Y[b * D + d];
+      G[a * M + b] = s; G[b * M + a] = s;
+    }
+    const vecs = [], out = new Float32Array(3 * D);
+    for (let ax = 0; ax < 3; ax++) {
+      let v = new Float64Array(M);
+      for (let a = 0; a < M; a++) v[a] = gauss();
+      for (let it = 0; it < 70; it++) {
+        const nv = new Float64Array(M);
+        for (let a = 0; a < M; a++) { let s = 0; for (let b = 0; b < M; b++) s += G[a * M + b] * v[b]; nv[a] = s; }
+        for (const p of vecs) { let dp = 0; for (let a = 0; a < M; a++) dp += nv[a] * p[a]; for (let a = 0; a < M; a++) nv[a] -= dp * p[a]; }
+        let nn = 0;
+        for (let a = 0; a < M; a++) nn += nv[a] * nv[a];
+        nn = Math.sqrt(nn) || 1;
+        for (let a = 0; a < M; a++) nv[a] /= nn;
+        v = nv;
+      }
+      vecs.push(v);
+      for (let a = 0; a < M; a++) for (let d = 0; d < D; d++) out[ax * D + d] += v[a] * Y[a * D + d];
+    }
+    orthonormalize(out);
+    frameCache.set(i, out);
+    return out;
+  }
+  const PERMS = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+  function alignTo(target, ref) {     // reorder and flip axes so the flight between frames twists as little as possible
+    const m = new Float64Array(9);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+      let dp = 0;
+      for (let d = 0; d < D; d++) dp += target[i * D + d] * ref[j * D + d];
+      m[i * 3 + j] = dp;
+    }
+    let best = PERMS[0], bestScore = -1;
+    for (const p of PERMS) {
+      const sc = Math.abs(m[p[0] * 3]) + Math.abs(m[p[1] * 3 + 1]) + Math.abs(m[p[2] * 3 + 2]);
+      if (sc > bestScore) { bestScore = sc; best = p; }
+    }
+    const out = new Float32Array(3 * D);
+    for (let j = 0; j < 3; j++) {
+      const src = best[j], sign = m[src * 3 + j] < 0 ? -1 : 1;
+      for (let d = 0; d < D; d++) out[j * D + d] = sign * target[src * D + d];
+    }
+    return out;
+  }
+  const wander = {
+    phase: 'travel', u: 0, prev: -1, cur: -1, to: 0, hops: 0, recent: [],
+    from: new Float32Array(D), Ffrom: new Float32Array(3 * D), Fto: new Float32Array(3 * D)
+  };
+  function namedNeighbours(i, max) {
+    const out = [];
+    for (let k = 0; k < K && out.length < max; k++) { const j = nbr[i * K + k]; if (j < NAMED) out.push(j); }
+    return out;
+  }
+  function pickNext(i) {
+    wander.hops++;
+    if (i >= 0 && wander.hops % 5 !== 0) {
+      const near = namedNeighbours(i, K).filter(j => !wander.recent.includes(j));
+      if (near.length) return near[Math.floor(rnd() * Math.min(near.length, 6))];
+    }
+    for (let tries = 0; tries < 40; tries++) {
+      const j = Math.floor(rnd() * NAMED);
+      if (j !== i && !wander.recent.includes(j) && (i < 0 || regionOf[j] !== regionOf[i])) return j;
+    }
+    return Math.floor(rnd() * NAMED);
+  }
+  function departTo(j) {
+    wander.from.set(centre);
+    wander.Ffrom.set(F);
+    wander.to = j;
+    wander.Fto = alignTo(localFrame(j), F);
+    wander.phase = 'travel';
+    wander.u = 0;
+    wander.recent.push(j);
+    if (wander.recent.length > 16) wander.recent.shift();
+  }
+  function initWander() { wander.prev = -1; wander.cur = -1; departTo(pickNext(-1)); }
+  function stepWander(dt) {
+    if (wander.phase === 'travel') {
+      wander.u += dt / 2.8;
+      const u = Math.min(1, wander.u), e = u * u * (3 - 2 * u), o = wander.to * D;
+      for (let d = 0; d < D; d++) centre[d] = wander.from[d] + (X[o + d] - wander.from[d]) * e;
+      for (let i = 0; i < 3 * D; i++) F[i] = wander.Ffrom[i] + (wander.Fto[i] - wander.Ffrom[i]) * e;
+      orthonormalize(F);
+      if (wander.u >= 1) { wander.phase = 'dwell'; wander.u = 0; wander.cur = wander.to; }
+    } else {
+      wander.u += dt / 2.0;
+      if (wander.u >= 1) { wander.prev = wander.cur; departTo(pickNext(wander.cur)); }
+    }
+  }
+
+  /* ---------- GPU: every point is projected from 384-d in the vertex shader ---------- */
+  const stage = document.getElementById('stage');
+  const cv = document.getElementById('gl');
+  const ov = document.getElementById('ov'), octx = ov.getContext('2d');
+  const strip = document.getElementById('strip'), sctx = strip.getContext('2d');
+  const stripImg = sctx.createImageData(D, 1);
+  const hud = document.getElementById('hud');
+  const gl = cv.getContext('webgl2', { alpha: false, antialias: false, powerPreference: 'high-performance' });
+  if (!gl || gl.getParameter(gl.MAX_TEXTURE_SIZE) < TEX_W) { document.getElementById('fallback').hidden = false; return; }
+  const hdr = !!gl.getExtension('EXT_color_buffer_float') || !!gl.getExtension('EXT_color_buffer_half_float');
+
+  const PROJ = `
+    uniform sampler2D uX; uniform sampler2D uF;
+    vec3 proj(int id, out float dist) {
+      int base = (id % ${PER_ROW}) * 96, row = id / ${PER_ROW};
+      vec3 p = vec3(0.0); float dd = 0.0;
+      for (int k = 0; k < 96; k++) {
+        vec4 x = texelFetch(uX, ivec2(base + k, row), 0) - texelFetch(uF, ivec2(k, 3), 0);
+        p += vec3(dot(x, texelFetch(uF, ivec2(k, 0), 0)), dot(x, texelFetch(uF, ivec2(k, 1), 0)), dot(x, texelFetch(uF, ivec2(k, 2), 0)));
+        dd += dot(x, x);
+      }
+      dist = sqrt(dd);
+      return p;
+    }
+    uniform vec4 uRot; uniform vec2 uView; uniform float uZoom;
+    vec4 place(vec3 p, out float z2) {
+      p *= uZoom;
+      float x1 = p.x * uRot.x + p.z * uRot.y, z1 = -p.x * uRot.y + p.z * uRot.x;
+      float y2 = p.y * uRot.z - z1 * uRot.w; z2 = p.y * uRot.w + z1 * uRot.z;
+      float s = 3.0 / max(0.6, 3.0 + z2);
+      return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);
+    }`;
+  const VS_POINT = `#version 300 es
+    precision highp float; precision highp sampler2D;
+    ${PROJ}
+    uniform float uPx, uWander, uTime, uGain, uDim;
+    in float aId; in vec4 aCol;
+    out vec3 vCol;
+    void main() {
+      float dist, z2;
+      vec4 q = place(proj(int(aId), dist), z2);
+      gl_Position = vec4(q.xy, 0.0, 1.0);
+      float fog = clamp((1.2 - dist) / 0.8, 0.0, 1.0);
+      float w = aCol.a;
+      float blur = 1.0 + 1.1 * z2 * z2;                      // depth of field: out-of-focus points swell and dim
+      float size = uPx * q.w * (0.55 + 1.5 * w) * blur * mix(1.0, 0.45 + 1.25 * fog, uWander);
+      gl_PointSize = max(size, 1.5);
+      float tw = 0.82 + 0.18 * sin(uTime * (1.3 + fract(aId * 0.618) * 2.2) + aId * 12.9898);
+      float a = (0.16 + 0.84 * w * w) * tw / pow(blur, 1.5) * mix(1.0, 0.22 + 0.78 * fog * fog, uWander);
+      vCol = aCol.rgb * a * uGain * mix(1.0, uDim, step(w, 0.99));
+    }`;
+  const FS_POINT = `#version 300 es
+    precision mediump float;
+    in vec3 vCol; out vec4 o;
+    void main() {
+      vec2 q = gl_PointCoord * 2.0 - 1.0;
+      float r2 = dot(q, q);
+      if (r2 > 1.0) discard;
+      float g = exp(-r2 * 4.5) * (1.0 - r2) + 0.9 * exp(-r2 * 38.0);
+      o = vec4(vCol * g, 1.0);
+    }`;
+  const VS_LINE = `#version 300 es
+    precision highp float; precision highp sampler2D;
+    ${PROJ}
+    uniform float uGain;
+    in float aId; in float aOther; in float aLen; in vec3 aCol;
+    out vec3 vCol;
+    void main() {
+      float d0, d1, z2;
+      vec3 p = proj(int(aId), d0), p2 = proj(int(aOther), d1);
+      vec4 q = place(p, z2);
+      gl_Position = vec4(q.xy, 0.0, 1.0);
+      float t = length(p - p2) / aLen * ${Math.sqrt(D / 3).toFixed(4)};   // 1 = typical; higher = seen nearer its true length
+      vCol = aCol * (0.03 + 0.2 * t * t * t) * uGain / (1.0 + 0.8 * z2 * z2);
+    }`;
+  const FS_LINE = `#version 300 es
+    precision mediump float; in vec3 vCol; out vec4 o; void main() { o = vec4(vCol, 1.0); }`;
+  const VS_QUAD = `#version 300 es
+    out vec2 vUV;
+    void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); vUV = p; gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`;
+  const FS_FADE = `#version 300 es
+    precision mediump float; uniform float uK; out vec4 o; void main() { o = vec4(uK, uK, uK, 1.0); }`;
+  const FS_TONE = `#version 300 es
+    precision highp float;
+    uniform sampler2D uT; in vec2 vUV; out vec4 o;
+    void main() {
+      vec3 c = texture(uT, vUV).rgb;
+      vec3 bloom = textureLod(uT, vUV, 2.0).rgb * 0.5 + textureLod(uT, vUV, 3.5).rgb * 0.45 + textureLod(uT, vUV, 5.0).rgb * 0.4 + textureLod(uT, vUV, 6.5).rgb * 0.3;
+      c = c + bloom * 0.55;
+      c = 1.0 - exp(-c * 1.35);                              // bright cores burn toward white
+      float v = smoothstep(1.25, 0.35, length(vUV - 0.5) * 1.6);
+      o = vec4(pow(c, vec3(0.92)) * mix(0.72, 1.0, v), 1.0);
+    }`;
+
+  function program(vs, fs) {
+    const p = gl.createProgram();
+    for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src); gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+      gl.attachShader(p, sh);
+    }
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    const u = {};
+    const count = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < count; i++) { const info = gl.getActiveUniform(p, i); u[info.name] = gl.getUniformLocation(p, info.name); }
+    return { p, u };
+  }
+  const pPoint = program(VS_POINT, FS_POINT), pLine = program(VS_LINE, FS_LINE);
+  const pFade = program(VS_QUAD, FS_FADE), pTone = program(VS_QUAD, FS_TONE);
+
+  function dataTexture(unit, w, h, data) {
+    const t = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, data);
+    for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.NEAREST);
+    for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+  dataTexture(0, TEX_W, TEX_H, X);
+  const texF = dataTexture(1, 96, 4, FC);
+
+  const vaoPoint = gl.createVertexArray();
+  gl.bindVertexArray(vaoPoint);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, attr, gl.STATIC_DRAW);
+  {
+    const a = gl.getAttribLocation(pPoint.p, 'aId'), c = gl.getAttribLocation(pPoint.p, 'aCol');
+    gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, 1, gl.FLOAT, false, 20, 0);
+    gl.enableVertexAttribArray(c); gl.vertexAttribPointer(c, 4, gl.FLOAT, false, 20, 4);
+  }
+  const vaoLine = gl.createVertexArray(), vaoQuad = gl.createVertexArray();
+  function finishKnn() {
+    const verts = [], seen = new Set();
+    for (let i = 0; i < S; i++) {
+      if (isHalo[i]) continue;
+      for (let k = 0; k < 3; k++) {
+        const j = nbr[i * K + k], key = i < j ? i * S + j : j * S + i;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const len = nbrDist[i * K + k];
+        verts.push(i, j, len, attr[i * 5 + 1], attr[i * 5 + 2], attr[i * 5 + 3]);
+        verts.push(j, i, len, attr[j * 5 + 1], attr[j * 5 + 2], attr[j * 5 + 3]);
+      }
+    }
+    edgeCount = verts.length / 12;
+    gl.bindVertexArray(vaoLine);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+    const names = [['aId', 1, 0], ['aOther', 1, 4], ['aLen', 1, 8], ['aCol', 3, 12]];
+    for (const [name, size, off] of names) {
+      const loc = gl.getAttribLocation(pLine.p, name);
+      if (loc < 0) continue;
+      gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 24, off);
+    }
+    gl.bindVertexArray(null);
+    knnReady = true;
+    if (mode === 'wander') initWander();
+  }
+
+  // an HDR off-screen sky: light accumulates there, then is tone-mapped with bloom onto the page
+  let W = 1, H = 1, dpr = 1, needClear = true;
+  const fbo = hdr ? gl.createFramebuffer() : null;
+  const texHdr = hdr ? gl.createTexture() : null;
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = Math.max(2, Math.round(r.width * dpr));
+    H = Math.max(2, Math.round(r.height * dpr));
+    for (const c of [cv, ov]) { c.width = W; c.height = H; }
+    if (hdr) {
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, texHdr);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, W, H, 0, gl.RGBA, gl.HALF_FLOAT, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texHdr, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    needClear = true;
+  }
+
+  let mode = 'tumble', running = true, speed = 1, showLabels = true, trails = true;
+  let yaw = 0.4, pitch = 0.16, zoom = 5, wanderMix = 0, latticeMix = 0, clock = 0;
+  let dragging = false, lastPX = 0, lastPY = 0, mouseX = -1, mouseY = -1;
+  const sx = new Float32Array(NAMED), sy = new Float32Array(NAMED), sa = new Float32Array(NAMED);
+  const cenX = new Float32Array(REGIONS.length), cenY = new Float32Array(REGIONS.length), cenN = new Float32Array(REGIONS.length);
+
+  function setView(prog, R, cy_, sy_, cp, sp) {
+    gl.useProgram(prog.p);
+    gl.uniform1i(prog.u.uX, 0); gl.uniform1i(prog.u.uF, 1);
+    gl.uniform4f(prog.u.uRot, cy_, sy_, cp, sp);
+    gl.uniform2f(prog.u.uView, 2 * R / W, 2 * R / H);
+    gl.uniform1f(prog.u.uZoom, zoom);
+  }
+  function text(str, x, y, alpha, color, align) {
+    octx.globalAlpha = alpha;
+    octx.textAlign = align || 'left';
+    octx.lineWidth = 4 * dpr;
+    octx.strokeStyle = 'rgba(4,6,11,0.85)';
+    octx.strokeText(str, x, y);
+    octx.fillStyle = color;
+    octx.fillText(str, x, y);
+  }
+  const FONT = px => px * dpr + 'px "IBM Plex Mono", ui-monospace, monospace';
+  function spokes(i, alpha) {
+    if (i < 0 || alpha <= 0.02) return;
+    octx.lineWidth = dpr;
+    octx.strokeStyle = CSS_COL[regionOf[i]];
+    for (const j of namedNeighbours(i, 6)) {
+      octx.globalAlpha = alpha * 0.5;
+      octx.beginPath(); octx.moveTo(sx[i], sy[i]); octx.lineTo(sx[j], sy[j]); octx.stroke();
+      if (showLabels) text(labels[j], sx[j] + 8 * dpr, sy[j] + 4 * dpr, alpha * 0.85, '#c5cddb');
+    }
+    octx.globalAlpha = alpha;
+    octx.lineWidth = 1.5 * dpr;
+    octx.beginPath(); octx.arc(sx[i], sy[i], 11 * dpr, 0, TAU); octx.stroke();
+    octx.font = 'italic ' + 26 * dpr + 'px "Instrument Serif", Georgia, serif';
+    text(labels[i], sx[i] + 18 * dpr, sy[i] - 12 * dpr, alpha, '#ffffff');
+    octx.font = FONT(11);
+  }
+
+  function render(dt) {
+    const ease = t => 1 - Math.exp(-dt / t);
+    clock += dt;
+    wanderMix += ((mode === 'wander' && knnReady ? 1 : 0) - wanderMix) * ease(0.5);
+    latticeMix += ((mode === 'lattice' && knnReady ? 1 : 0) - latticeMix) * ease(0.4);
+    if (!(mode === 'wander' && knnReady)) { const k = Math.exp(-dt / 0.7); for (let d = 0; d < D; d++) centre[d] *= k; }
+    if (!dragging && running) yaw += dt * 0.06 * speed;
+
+    // the named stars are also projected here, for labels, hover and auto-framing
+    const cy_ = Math.cos(yaw), sy_ = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const R = Math.min(W, H) * 0.46;
+    let sq = 0;
+    cenX.fill(0); cenY.fill(0); cenN.fill(0);
+    for (let i = 0; i < NAMED; i++) {
+      const o = i * D;
+      let a = 0, b = 0, c = 0, dd = 0;
+      for (let d = 0; d < D; d++) {
+        const t = X[o + d] - centre[d];
+        a += t * F[d]; b += t * F[D + d]; c += t * F[2 * D + d]; dd += t * t;
+      }
+      sq += a * a + b * b + c * c;
+      const x = a * zoom, y = b * zoom, z = c * zoom;
+      const x1 = x * cy_ + z * sy_, z1 = -x * sy_ + z * cy_;
+      const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+      const s = 3 / Math.max(0.6, 3 + z2);
+      sx[i] = W / 2 + x1 * s * R; sy[i] = H / 2 - y2 * s * R;
+      sa[i] = Math.min(1, Math.max(0.04, (1.2 - Math.sqrt(dd)) / 0.8));
+      const r = regionOf[i];
+      cenX[r] += sx[i]; cenY[r] += sy[i]; cenN[r]++;
+    }
+    const rms = Math.sqrt(sq / NAMED) || 1;
+    zoom += ((mode === 'wander' && knnReady ? 2.7 : 0.78 / rms) - zoom) * ease(0.6);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, texF);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 96, 4, gl.RGBA, gl.FLOAT, FC);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, hdr ? fbo : null);
+    gl.viewport(0, 0, W, H);
+    gl.enable(gl.BLEND);
+    let gain = hdr ? 1 : 0.55;
+    if (needClear || !trails || !hdr) {
+      gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); needClear = false;
+    } else {                              // dim what is already there instead of wiping it: motion leaves trails
+      const k = Math.exp(-dt / (0.17 - 0.07 * latticeMix));
+      gl.blendFunc(gl.ZERO, gl.SRC_COLOR);
+      gl.useProgram(pFade.p); gl.uniform1f(pFade.u.uK, k);
+      gl.bindVertexArray(vaoQuad); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gain *= (1 - k) * 1.6;
+    }
+    gl.blendFunc(gl.ONE, gl.ONE);
+    if (knnReady && latticeMix > 0.02) {
+      setView(pLine, R, cy_, sy_, cp, sp);
+      gl.uniform1f(pLine.u.uGain, gain * latticeMix * 1.5);
+      gl.bindVertexArray(vaoLine); gl.drawArrays(gl.LINES, 0, edgeCount * 2);
+    }
+    setView(pPoint, R, cy_, sy_, cp, sp);
+    gl.uniform1f(pPoint.u.uPx, 6.5 * dpr);
+    gl.uniform1f(pPoint.u.uWander, wanderMix);
+    gl.uniform1f(pPoint.u.uTime, clock);
+    gl.uniform1f(pPoint.u.uGain, gain);
+    gl.uniform1f(pPoint.u.uDim, 1 - 0.45 * latticeMix);
+    gl.bindVertexArray(vaoPoint); gl.drawArrays(gl.POINTS, 0, N);
+    if (hdr) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.disable(gl.BLEND);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, texHdr); gl.generateMipmap(gl.TEXTURE_2D);
+      gl.useProgram(pTone.p); gl.uniform1i(pTone.u.uT, 2);
+      gl.bindVertexArray(vaoQuad); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    // overlay: labels, spokes and hover, redrawn clean each frame
+    octx.clearRect(0, 0, W, H);
+    octx.lineJoin = 'round';
+    octx.font = FONT(11);
+    if (showLabels && wanderMix < 0.97) {
+      for (let r = 0; r < REGIONS.length; r++) {
+        text(REGIONS[r].name.toUpperCase(), cenX[r] / cenN[r], cenY[r] / cenN[r] - 14 * dpr, (1 - wanderMix) * 0.8, CSS_COL[r], 'center');
+      }
+    }
+    if (mode === 'wander' && knnReady) {
+      if (wander.phase === 'dwell') spokes(wander.cur, 1);
+      else {
+        const u = Math.min(1, wander.u), e = u * u * (3 - 2 * u);
+        spokes(wander.prev, 1 - e * 1.6);
+        spokes(wander.to, e * e);
+      }
+    }
+    if (mouseX >= 0) {
+      let best = -1, bd = (20 * dpr) * (20 * dpr);
+      for (let i = 0; i < NAMED; i++) {
+        const dx = sx[i] - mouseX, dy = sy[i] - mouseY, d2 = dx * dx + dy * dy;
+        if (d2 < bd) { bd = d2; best = i; }
+      }
+      if (best >= 0) {
+        octx.globalAlpha = 1; octx.lineWidth = 1.5 * dpr; octx.strokeStyle = '#ffffff';
+        octx.beginPath(); octx.arc(sx[best], sy[best], 8 * dpr, 0, TAU); octx.stroke();
+        const right = sx[best] > W * 0.7;
+        octx.font = FONT(12);
+        text(labels[best] + ' · ' + REGIONS[regionOf[best]].name, sx[best] + (right ? -14 : 14) * dpr, sy[best] + 4 * dpr, 1, '#ffffff', right ? 'right' : 'left');
+      }
+    }
+    octx.globalAlpha = 1;
+
+    // the 384-cell readout
+    const px8 = stripImg.data;
+    for (let d = 0; d < D; d++) {
+      const e = (F[d] * F[d] + F[D + d] * F[D + d] + F[2 * D + d] * F[2 * D + d]) * D / 3;
+      px8[d * 4] = 255; px8[d * 4 + 1] = 197 - Math.min(60, e * 12); px8[d * 4 + 2] = 107;
+      px8[d * 4 + 3] = Math.min(255, e * 80);
+    }
+    sctx.putImageData(stripImg, 0, 0);
+  }
+
+  let hudClock = 0;
+  function updateHud(dt) {
+    hudClock += dt;
+    if (hudClock < 0.12) return;
+    hudClock = 0;
+    let s;
+    if (mode !== 'tumble' && !knnReady) {
+      s = 'measuring true neighbours in 384-d … ' + Math.round(knnRow / S * 100) + '%';
+    } else if (mode === 'tumble') {
+      s = 'view turned ' + Math.round(turned * 180 / Math.PI).toLocaleString('en-US') + '° through 384-d';
+    } else if (mode === 'lattice') {
+      s = 'swap ' + swap.count + ' · axis ' + 'XYZ'[swap.axis] + ' trading for a hidden direction · ' +
+          String(Math.round(Math.min(1, swap.u) * 100)).padStart(3, ' ') + '% · ' + edgeCount.toLocaleString('en-US') + ' wires';
+    } else if (wander.phase === 'dwell') {
+      s = 'at "' + labels[wander.cur] + '" · ' + REGIONS[regionOf[wander.cur]].name + ' · stop ' + wander.hops;
+    } else {
+      const far = wander.cur >= 0 && regionOf[wander.cur] !== regionOf[wander.to];
+      s = (wander.cur >= 0 ? '"' + labels[wander.cur] + '" → ' : 'heading to ') + '"' + labels[wander.to] + '"' +
+          (far ? ' · long leap to ' + REGIONS[regionOf[wander.to]].name : '');
+    }
+    if (!running) s += ' · paused';
+    hud.textContent = s;
+  }
+
+  /* ---------- controls ---------- */
+  const MODES = ['tumble', 'lattice', 'wander'];
+  function setMode(m, fromHash) {
+    if (!MODES.includes(m)) m = 'tumble';
+    mode = m;
+    for (const b of document.querySelectorAll('.mode')) b.setAttribute('aria-pressed', String(b.dataset.mode === m));
+    for (const s of document.querySelectorAll('.explain')) s.hidden = s.dataset.for !== m;
+    if (m === 'lattice') initSwap();
+    if (m === 'wander' && knnReady) initWander();
+    if (!fromHash && location.hash !== '#' + m) { try { location.hash = m; } catch (e) { /* the hash is a convenience */ } }
+    hudClock = 1;
+  }
+  for (const b of document.querySelectorAll('.mode')) b.addEventListener('click', () => setMode(b.dataset.mode));
+  window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h !== mode && MODES.includes(h)) setMode(h, true); });
+
+  const btnRun = document.getElementById('btn-run');
+  function setRunning(v) { running = v; btnRun.textContent = v ? 'Pause' : 'Play'; hudClock = 1; }
+  btnRun.addEventListener('click', () => setRunning(!running));
+  document.getElementById('in-speed').addEventListener('input', e => { speed = Number(e.target.value) || 1; });
+  document.getElementById('in-labels').addEventListener('change', e => { showLabels = e.target.checked; });
+  document.getElementById('in-trails').addEventListener('change', e => { trails = e.target.checked; needClear = true; });
+
+  stage.addEventListener('pointerdown', e => {
+    dragging = true; lastPX = e.clientX; lastPY = e.clientY;
+    stage.classList.add('dragging');
+    try { stage.setPointerCapture(e.pointerId); } catch (err) { /* capture is optional */ }
+  });
+  stage.addEventListener('pointermove', e => {
+    const r = stage.getBoundingClientRect();
+    mouseX = (e.clientX - r.left) * dpr; mouseY = (e.clientY - r.top) * dpr;
+    if (!dragging) return;
+    yaw += (e.clientX - lastPX) * 0.007;
+    pitch = Math.max(-1.3, Math.min(1.3, pitch + (e.clientY - lastPY) * 0.007));
+    lastPX = e.clientX; lastPY = e.clientY;
+  });
+  const endDrag = () => { dragging = false; stage.classList.remove('dragging'); };
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+  stage.addEventListener('pointerleave', () => { mouseX = -1; mouseY = -1; });
+
+  /* ---------- go ---------- */
+  resize();
+  new ResizeObserver(resize).observe(stage);
+  setMode(location.hash.slice(1) || 'tumble', true);
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) setRunning(false);
+  setTimeout(knnSlice, 60);
+
+  let last = performance.now();
+  function tick(now) {
+    const dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000));
+    last = now;
+    if (running) {
+      const sdt = dt * speed;
+      if (mode === 'lattice') stepSwap(sdt);
+      else if (mode === 'wander' && knnReady) stepWander(sdt);
+      else stepTumble(sdt);
+    }
+    render(dt);
+    updateHud(dt);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>

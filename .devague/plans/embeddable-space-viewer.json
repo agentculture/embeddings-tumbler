@@ -1,0 +1,779 @@
+{
+  "slug": "embeddable-space-viewer",
+  "title": "embeddable space viewer",
+  "frame_slug": "embeddable-space-viewer",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-11-13T18:40:09Z",
+  "updated": "2026-11-13T18:43:50Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Any site or tool can drop in embeddings-tumbler: a self-contained viewer that takes a set of embeddings and shows them as a moving 3-D window through the full-dimensional space (Tumble, Lattice, Wander). The first version is proven on a real Atlas study from embeddings-cli; vector stores, live agent conversations and photo collections feed the same data contract later.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "The demo's visual quality survives real data: with real vectors (not the synthetic set) the three views still show visible structure, or the page says plainly that this model's space has little.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The viewer is ONE dependency-free, no-build core JS file exposing mount(el)/update(data) over a documented JSON data contract, themed by the host's CSS variables, loading nothing from an external origin (no CDN, no web fonts). The other two delivery forms are thin shells over that same file: a custom element (<embeddings-tumbler>) and a standalone page that loads a data file. None of the three uses inline script.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The shipped file passes embodiment's check-no-external-origin build check and runs under a script-src 'self' policy with no inline script; it has no runtime dependency and no build step is needed to use it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "The data contract carries, per point: id, label, group, free metadata, and a float32 vector; plus set-level dimension, model id and provenance. It supports a full replace and an incremental append (for a live conversation). An Atlas directory (atlas.json + records.jsonl + vectors.npy) is the first source that must convert to it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "An Atlas directory written by 'embeddings survey' converts to the contract and renders without hand editing, and a second producer that is not embeddings-cli can emit the same contract from its documentation alone.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Vectors reach the browser through a server-side step (an exported file or a same-origin proxy); the page never calls the embedding gateway and never holds the key. The key is injected into the server/CLI process with: grant run --inject EMBEDDINGS_API_KEY=LOBES_GATEWAY_API_KEY -- <cmd>.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "With browser dev tools open on a hosted page, no request goes to the gateway and the key appears nowhere in page source, storage or network traffic.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "One view shows one embedding model. Vectors from different models are never mixed in a view: Qwen3-Embedding-0.6B is 1024-d, embed-deep 2560-d, gemma2-embed 768-d, and eidetic's offline fallback is a 128-d hash that is not semantic at all.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Handing the viewer vectors of mixed dimension or two model ids is refused with a plain message rather than drawn.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "The viewer is a new surface beside 'embeddings map --html', not a replacement. map --html stays a self-contained, PCA, readable-without-JavaScript artifact; Atlas schema v1 and the three stable-contract CLI modules are not changed by the viewer.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "After the viewer ships, 'embeddings map --html' output is byte-identical for the same Atlas and no file under embeddings/atlas or the stable-contract CLI modules changed for the viewer's sake.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "The viewer keeps the measurement rules: linear projections only, and the page states its provenance (source, model, item count, how the view is produced) and that a projection is a shadow of the space. Untrusted text reaches the page only as data, never as markup.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "Every rendered view states source, model, dimension and item count, and no code path applies a non-linear layout; label text containing markup is shown as text.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "audience",
+      "text": "Three readers: (1) a developer of a host site or tool (embodiment's dashboard, a docs site, a vector-store admin page) who wants to show an embedding space without writing graphics code; (2) a producer of vectors (embeddings-cli, eidetic-cli, embodiment, a photo indexer) that must emit the data contract; (3) the person watching, who should come away with a truer feel for the space, not a prettier lie.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "Each of the three readers has a concrete first user: a host page that mounts the viewer, embeddings-cli as the producer, and a person shown a real Atlas who can say what they learned from it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "before_state",
+      "text": "Today the only picture of an embedding space in this ecosystem is 'embeddings map --html': a static 2-D PCA scatter of one Atlas. The animated viewer exists only as a single demo page with synthetic data, web fonts from a CDN, and no way to hand it vectors.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "As of 2026-11-13 no repo surveyed (embeddings-lens, irc-lens, webglass-cli, embodiment, eidetic-cli) contains an embedding viewer, and the demo page's data is generated in the page.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "after_state",
+      "text": "A host adds one script file and calls mount(element) then update(data). Real vectors from a named model appear as a moving 3-D window with the three views, the page says where the vectors came from and that it is a projection, and new points can be appended while it runs.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "A host needs no code beyond including the file and the two calls; an update() that appends points while the view is running neither resets the camera nor drops existing points.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "why_it_matters",
+      "text": "An embedding space is hundreds of dimensions and every still picture of it hides almost all of them. Motion through many projections is the honest way to show that, and one shared viewer means a vector store, a conversation and a photo collection are all read the same way.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "On a real Atlas, at least one structure that is hidden or merged in the 2-D 'embeddings map' picture becomes visible in a moving view; if none does, the claim is reported as not shown rather than assumed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "success_signal",
+      "text": "The same unmodified core file runs in all three forms showing one real Atlas embedded through the lobes gateway: the standalone page, a plain host page that calls mount/update, and a host page that uses the web component under a script-src 'self' policy. No form makes a network request to any origin other than its host's, and a point appended through update() appears without a reload.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "The check is run with the browser's network log captured for each of the three forms, and the Atlas used was embedded live through the gateway, not synthetic.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "embeddings-cli gains one producer step that turns an Atlas directory (with its vectors present) into the viewer's data file, so the first proof needs no hand conversion. It is added as a new write-gated path following the survey/map --apply and --force convention, and it does not change 'map'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "Running the producer on a freshly surveyed Atlas and opening the standalone page with its output shows that Atlas's real points and labels, and the producer refuses, with a hint, an Atlas whose vector file is absent.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "The published demo artifact (https://claude.ai/artifact/3Z9bhQHuwMEqSoRvgWvzgi, source kept at docs/specs/reference/embedding-tumbler-demo.html) is part of this spec: it is the visual and behavioural reference, and the site that gets built is expected to look and move like it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "Shown side by side on the same sample data, the built standalone page and the reference artifact are recognisably the same thing to the user, who signs off on the comparison; every intended difference is written down, starting with the fonts, which the reference loads from Google Fonts and the built site must bundle or replace because nothing may load from another origin.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Tumble on real data must be a guided tour, not a uniformly random one. In the probe 2026-11-13: 311 real texts embedded live with Qwen/Qwen3-Embedding-0.6B through the lobes gateway, the vectors are 1024-d and group separation (inter/intra distance) is 1.12 in full space, 1.11 in random 3-D frames (no better than nothing), 1.48 for frames drawn inside the top-8 principal directions and 1.90 for PCA-3. The tour is biased toward the data's high-variance directions, and the page states what share of the variance the directions it tours through hold.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "On the probe corpus the mean group separation over Tumble's frames is clearly above the 1.11 random-frame baseline, and the stated variance share matches a recomputation from the data.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Nothing in the viewer hard-codes 384 dimensions. The reference demo fixes D=384 in its texture layout (96 texels per point), its shader loop and its 384-cell readout strip, but the first real source is 1024-d and the other gateway lanes are 768-d and 2560-d. Dimension comes from the data; the readout strip has one cell per dimension.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "The same core file renders the built-in 384-d sample set and a 1024-d Atlas with no code change, and is exercised at 768-d and 2560-d at least with generated data.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "The data contract carries vectors as a binary float32 block, not as JSON numbers. In the probe 2026-11-13: 311 real texts embedded live with Qwen/Qwen3-Embedding-0.6B through the lobes gateway, 311 points x 1024-d are 1.27 MB as raw float32 but about 3.3 MB as JSON decimal text; 10,000 points would be 41 MB raw and over 100 MB as JSON. Point records (id, label, group, metadata) stay JSON; the vector block is referenced or embedded beside them.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "A data file's size is within a few percent of points x dimensions x 4 bytes plus the records, and the standalone page loads a 10,000 x 1024 file without exhausting the tab.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "The contract and the core file are versioned. The data carries a schema version and the viewer refuses an unknown or newer version with a plain message instead of best-effort drawing (the rule Atlas schema v1 already follows). Because hosts will vendor copies of the file rather than depend on a package, the file itself states its version and source at the top.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "A data file with a bumped schema version is refused with a message naming both versions, and a vendored copy can be traced to a release from its own header.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "The viewer has a full lifecycle, not only mount and update: destroy(el) frees the GPU resources and stops the animation loop; it pauses when the tab is hidden or the element is off screen; it recovers from a lost WebGL context; several instances can live on one page; and without WebGL 2 it shows a plain message rather than an empty box. It keeps honouring reduced-motion as the reference does.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "Mounting and destroying the viewer twenty times on one page leaves no growing GPU or timer use, a forced context loss is recovered or reported, and a hidden tab does no per-frame work.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "boundary",
+      "text": "The data file contains the corpus text and its vectors, and vectors can leak the text they were made from. The viewer never transmits data anywhere; it only reads what its host gives it. The producer says plainly that its output carries text and vectors, and can leave text out (labels only). Publishing a standalone page with a private corpus is the operator's explicit act, never a default.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "The viewer contains no network call other than loading the data file it was pointed at, and a labels-only data file renders with no corpus text present in it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "A view is reproducible. The tour takes a seed, the page shows it with the rest of the provenance, and the same data, seed and elapsed time give the same view, so a screenshot can be traced back to how it was produced. This is the rule docs/design-notes/semantic-measurement.md section 3 sets for every other reading of an Atlas.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "Two page loads with the same data file and seed show the same frame at the same elapsed time, and the seed appears in the provenance block.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "success_signal",
+      "text": "Measured on a real Atlas of at least 300 texts embedded live with Qwen/Qwen3-Embedding-0.6B (1024-d): Tumble's frames average a group separation of at least 1.3 against the 1.11 random-frame baseline; the standalone page holds at least 30 frames per second with 10,000 points on the user's desktop; and the network log shows 0 requests to any origin other than the host's in all three delivery forms.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "Each of the three numbers is produced by a script or recorded check kept in the repo (separation computed from the tour's frames, frame rate logged by the page, network log captured), on the named model and corpus size, so the result can be rerun.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "[tumbler] Bring the spec into the new repo: copy the exported spec, the frame state and the reference demo source into embeddings-tumbler, and replace the template CLAUDE.md/README text with what this project is.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/specs/2026-11-13-embeddable-space-viewer.md and docs/specs/reference/embedding-tumbler-demo.html exist in embeddings-tumbler and are byte-identical to the embeddings-cli copies",
+        "README.md and CLAUDE.md no longer describe a template; they state that no embedding viewer existed in the surveyed repos as of 2026-11-13 and name the reference file",
+        "markdownlint and the existing pytest suite pass"
+      ],
+      "deps": [],
+      "covers": [
+        "c13",
+        "h10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "[tumbler] Write the data contract: docs/data-contract.md plus fixtures under tests/fixtures/contract/ (valid 384-d and 1024-d sets, labels-only set, bumped schema version, wrong vector-block length, mixed dimension, second model id).",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The document specifies, with field names and types: schema version, model id, dimension, item count, provenance, optional reduction record, per-point id/label/group/metadata, and the little-endian float32 vector block with its exact length rule",
+        "It specifies full replace and incremental append, and what is refused (unknown version, wrong block length, mixed dimension or model)",
+        "Every fixture is generated by a stdlib-only Python script in the repo, and a test asserts each valid fixture's vector block is exactly points x dimension x 4 bytes"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "c26",
+        "c27"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "[tumbler] JavaScript source layout and assembler: js/src/NN-name.js modules concatenated in filename order by scripts/assemble.py into embeddings_tumbler/static/embeddings-tumbler.js with a version-and-source header; package.json with node's built-in test runner.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "scripts/assemble.py is deterministic: two runs give byte-identical output, and a test fails when the committed assembled file is stale",
+        "The assembled file starts with a header naming the project, version and source repository, and the version equals pyproject.toml's",
+        "A static test fails if the assembled file contains an http(s) URL, eval, new Function or an import of another module",
+        "'node --test' runs from the repo root with no installed dependency"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "c27"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "[tumbler] Core mathematics module (pure JS, no DOM): seeded random source, centring, orthonormal frames, principal directions, the guided tour generator, true nearest neighbours, local neighbourhood frames, and the group-separation measure.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Given the same data and seed, the tour returns the identical frame for the same elapsed time across two runs",
+        "Every frame returned is orthonormal to 1e-5 and every projection is a linear map of the centred data; no non-linear layout exists in the module",
+        "On a fixture with planted groups in 1024-d, the guided tour's mean group separation exceeds a uniformly random tour's by a margin asserted in the test",
+        "The tour reports the share of total variance held by the directions it moves through, and a test recomputes that share independently",
+        "All functions take dimension from their input; tests run at 384, 768, 1024 and 2560"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c30",
+        "h21",
+        "c24",
+        "c9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "[tumbler] Contract loader and validator module (pure JS): reads records plus the float32 block, checks version, dimension and model, and merges an append into an existing set.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Each valid fixture loads; the bumped-version fixture is refused with a message naming the version found and the versions supported",
+        "A vector block of the wrong length, mixed dimensions, or an append with a different model id or dimension is refused and the existing set is returned unchanged",
+        "An append with new ids adds points and keeps existing ids and their order; a reduction record in the data is preserved and exposed"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c6",
+        "h6",
+        "h18",
+        "c26",
+        "c27"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "[tumbler] Renderer module: port the reference's WebGL 2 drawing (points, true-neighbour wires, glow, bloom, depth of field, trails, twinkle) with the dimension taken from the data instead of fixed at 384.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "No literal 384 or 96 remains in texture layout or shader source; shader loop bounds are generated from the dimension",
+        "A headless-browser test renders a 384-d and a 1024-d fixture to non-blank frames with no console error",
+        "The renderer exposes dispose() that deletes every texture, buffer, program and framebuffer it created, and handles context loss by rebuilding or reporting",
+        "Without WebGL 2 the renderer reports unavailability to its caller instead of throwing"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c25",
+        "h16"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "[tumbler] The three modes as separate modules over one mode interface: Tumble (guided tour), Lattice (true-neighbour wires, one axis swapped at a time) and Wander (neighbour-to-neighbour flight with local frames).",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Each mode lives in its own file and implements the same documented interface (enter, step, draw parameters, status line)",
+        "A test registers a fourth dummy mode without editing any existing mode file or the data contract",
+        "Tumble uses the guided tour from the mathematics module and exposes the variance share it tours through",
+        "With a fixed seed, each mode's sequence of frames over 10 simulated seconds is identical across two runs"
+      ],
+      "deps": [
+        "t4",
+        "t6"
+      ],
+      "covers": [
+        "c24"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "[tumbler] Viewer API module: mount(el), update(data), destroy(el); pause when hidden or off screen; provenance block; per-dimension readout strip; controls; theming from the host's CSS variables.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "mount changes nothing outside the given element; update(full set) replaces the view; update(append) adds points without resetting the camera or dropping points",
+        "Invalid data shows a plain message inside the element and does not throw into the host",
+        "The provenance block shows source, model, dimension, item count, seed, how the view is produced, any reduction applied, and that a projection is a shadow of the space",
+        "A label containing HTML markup is displayed as literal text",
+        "destroy stops the animation loop and releases observers and GPU resources; while document.hidden or off screen no frame work runs",
+        "The module contains no fetch, XMLHttpRequest, WebSocket, sendBeacon or image/script URL construction"
+      ],
+      "deps": [
+        "t5",
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c2",
+        "c14",
+        "h11",
+        "c28",
+        "c9",
+        "h5",
+        "c29"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "[tumbler] Built-in sample set: port the reference's synthetic generator (nine regions, filaments, bridges, month ring, temperature arc) to emit a contract-conforming data set, marked synthetic in its provenance.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "With the reference's seed the generator yields the same point count and group names as the reference demo",
+        "Its output passes the contract loader, and its provenance says the data is synthetic"
+      ],
+      "deps": [
+        "t2",
+        "t4"
+      ],
+      "covers": [
+        "c22"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "[tumbler] Web component shell: a separate file defining <embeddings-tumbler> that calls only the public mount/update/destroy API.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The file contains no rendering or projection code; a static test asserts it references only mount, update and destroy on the core object",
+        "Adding the element mounts a viewer, removing it destroys it, and a 'src' attribute loads a data file from the host's own origin"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "[tumbler] Standalone page: HTML, stylesheet and page script (no inline script, no external origin) that loads a data file or the sample set and reproduces the reference's look: night sky, masthead, readout strip, controls and per-mode notes.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The page has no inline script or style attribute that a script-src 'self' policy would block, and references no other origin; fonts are bundled or replaced by a local stack",
+        "Opened with no data argument it shows the sample set; given a data file path it shows that file",
+        "All three modes, the provenance block and the controls from the reference are present"
+      ],
+      "deps": [
+        "t8",
+        "t9"
+      ],
+      "covers": [
+        "c22"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "[tumbler] CLI verbs in the Python package: write the viewer files (core, web component, standalone page) into a host folder, and serve a folder locally; both follow the agent-first rubric.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The write verb previews by default, writes only with --apply, refuses existing files without --force, and supports --json",
+        "The serve verb binds to loopback by default, serves only static files, and neither reads nor needs any gateway key",
+        "'teken cli doctor . --strict' passes, each new verb has an explain entry, and learn lists them"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t13",
+      "summary": "[tumbler] Packaging and release: the wheel carries the static files; an npm package under the culture.dev organisation carries the same core file; CI runs pytest, node tests and the assembler check, and publishes both by trusted publishing.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A CI step fails if the core file in the built wheel and in the npm tarball are not byte-identical or their version headers differ",
+        "The publish workflows use the registries' trusted publishing; no registry token appears in repository secrets, workflow files or any committed file",
+        "A pull request performs a dry-run build of both packages without publishing"
+      ],
+      "deps": [
+        "t10",
+        "t11",
+        "t12"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t14",
+      "summary": "[tumbler] Browser test harness: three host fixtures (plain page calling mount/update, web-component page served with script-src 'self', standalone page) driven headlessly with the network log captured.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "For each of the three forms the captured network log contains zero requests to any origin other than the test server's",
+        "The web-component fixture renders under a Content-Security-Policy of script-src 'self' with no violation reported",
+        "A scan equivalent to embodiment's check-no-external-origin passes on every shipped file",
+        "Mounting and destroying twenty times leaves the count of live canvases, animation callbacks and observers at zero",
+        "An append through update() adds visible points without a page reload"
+      ],
+      "deps": [
+        "t10",
+        "t11"
+      ],
+      "covers": [
+        "c16",
+        "h13",
+        "h2",
+        "h4",
+        "h20",
+        "h19"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t15",
+      "summary": "[cli] Producer step in embeddings-cli: a new write-gated verb that turns an Atlas with its vectors into a viewer data file, with options to leave text out and to apply an exact rotation or a stated top-k reduction.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "It previews by default, writes only with --apply, refuses an existing target without --force, writes atomically, and refuses an Atlas with no vector file with a hint naming 'embeddings survey'",
+        "The output passes the contract fixtures' rules, copies model, endpoint, seed, limitations and uncertain into provenance, and its size is within 5% of points x dimensions x 4 bytes plus the records",
+        "A labels-only option produces a file containing no corpus text",
+        "Exact rotation preserves all pairwise distances to 1e-5; top-k is off unless requested and records directions kept and variance dropped",
+        "'embeddings map --html' output is byte-identical before and after for the same Atlas, no file under embeddings/atlas or the stable-contract modules changes, and the roadmap lockstep test, explain, learn, README and the version bump are in place"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c21",
+        "h8",
+        "c8",
+        "h7",
+        "h3",
+        "h17",
+        "c29",
+        "c4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t16",
+      "summary": "[both] Real-Atlas proof: survey at least 300 texts live through the lobes gateway (key via grant run), produce the data file, run the three forms on it, and record the measurements and what was and was not seen.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A script kept in the repo computes Tumble's mean group separation on the real data file and the random-frame baseline; the result is recorded and compared with the 1.3 target",
+        "The page's logged frame rate with 10,000 real 1024-d points on the user's desktop is recorded and compared with the 30 fps target",
+        "The network logs for all three forms on the real data show zero foreign requests",
+        "An evidence document states which structures are visible in motion that the 2-D 'embeddings map' of the same Atlas hides or merges, or states plainly that none was found",
+        "The gateway key appears in no file, log or page produced by the run"
+      ],
+      "deps": [
+        "t11",
+        "t14",
+        "t15"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c15",
+        "h12",
+        "c32",
+        "h22",
+        "h15",
+        "h16",
+        "h9",
+        "c16",
+        "h13",
+        "h8"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t17",
+      "summary": "[tumbler] Reference comparison: a written list of every intended difference from the reference demo, and a side-by-side check on the sample set that the user signs off.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/reference-differences.md lists each intended difference, starting with fonts, and nothing else differs in the three modes' look on the sample set",
+        "The user's sign-off of the side-by-side comparison is recorded before the first release"
+      ],
+      "deps": [
+        "t11"
+      ],
+      "covers": [
+        "h14",
+        "c22"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t18",
+      "summary": "[tumbler] Documentation for the two outside readers: a host integration guide (script, web component, standalone page, theming, lifecycle) and a producer guide, tested by a second producer written only from the guide.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The host guide shows a complete working page for each delivery form, and each example is exercised by the browser harness",
+        "A stdlib-only script written from the producer guide alone, not sharing code with embeddings-cli, emits a data file the loader accepts",
+        "The guides state that the data file carries text and vectors and how to leave text out"
+      ],
+      "deps": [
+        "t8",
+        "t12"
+      ],
+      "covers": [
+        "c12",
+        "h3",
+        "h9"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "The single core file is assembled from several source modules by a small in-repo script. The spec says no build step is needed to USE the file; this plan reads that as allowing an assembly step for developers. If the user wants one hand-written file instead, tasks t4-t8 collapse into one and cannot run in parallel.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "Whether npm lets a trusted publisher be attached before a package's first publish, the exact scope string for the culture.dev organisation, and whether the name is free are unverified; the first npm release may need a one-time token publish from grant.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t13",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Keeping the PyPI and npm releases in step adds JavaScript tooling and a second publish job to a repo whose CI is pytest-only.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t13",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "Appending points shifts the cloud's centre, scale and true-neighbour sets; absorbing that without a visible jump, and its cost per append, is unmeasured.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "Headless browsers in CI may have no GPU; the WebGL 2 render tests may need a software renderer or have to run only locally. Only desktop Chrome has been looked at; Firefox, Safari and phones are unexamined.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t14",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "The 30 fps target with 10,000 x 1024-d points is unmeasured; the reference handled 12,288 x 384-d. If it is missed, the options are the opt-in top-k reduction or measuring fewer neighbours.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t16",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "The producer verb's name in embeddings-cli is not chosen; it must read as a global verb or a noun with an overview to pass the rubric.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t15",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "Work spans two repos: the plan lives in embeddings-cli but seventeen of eighteen tasks build in embeddings-tumbler. The workforce run needs both checkouts, and the embeddings-cli PR needs its own version bump.",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r9",
+      "text": "Later sources are not planned here: embodiment's vector route and dashboard view, eidetic-cli export, image embedding, the single-embedding view, a text alternative to the canvas, and the innereye interchange format.",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}

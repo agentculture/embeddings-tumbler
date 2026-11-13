@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+  Illustrative host page: the script form. A sketch from planning; task t8
+  fixes the real signatures. Everything is loaded from the host's own origin
+  and there is no inline script, so this works under script-src 'self'.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Host page: script form</title>
+  <link rel="stylesheet" href="host.css">
+</head>
+<body>
+  <main>
+    <h1>My vector store</h1>
+    <!-- The viewer draws only inside this element. Size it with CSS. -->
+    <div id="space" class="space"></div>
+  </main>
+  <script src="embeddings-tumbler.js"></script>
+  <script src="host-script.js"></script>
+</body>
+</html>
+<!--
+  host.css — theme the viewer through CSS custom properties (names illustrative):
+
+    .space { height: 70vh; --tumbler-bg: #04060b; --tumbler-fg: #e9eef6; --tumbler-accent: #ffc56b; }
+
+  host-script.js:
+
+    const el = document.getElementById('space');
+
+    // 1. Mount. Options are illustrative: a starting mode and a seed, so the
+    //    view can be reproduced.
+    EmbeddingsTumbler.mount(el, { mode: 'tumble', seed: 20261113 });
+
+    // 2. Hand it data. The host fetches from ITS OWN origin; the viewer itself
+    //    never makes a request.
+    const manifest = await (await fetch('data/atlas-plain.json')).json();
+    const block = await (await fetch('data/' + manifest.vectors.file)).arrayBuffer();
+    EmbeddingsTumbler.update(el, { ...manifest, vectors: new Float32Array(block) });
+
+    // 3. Append while it runs (a live conversation). Same model and dimension,
+    //    or the append is refused and the current view is left unchanged.
+    EmbeddingsTumbler.update(el, {
+      append: true,
+      schema_version: 1,
+      model: manifest.model,
+      dimension: manifest.dimension,
+      points: [{ id: 'turn-42', label: 'what did we decide about the ring?', group: 'user' }],
+      vectors: newTurnVector,            // Float32Array of length `dimension`
+    });
+
+    // 4. Tear down when the host removes the element.
+    EmbeddingsTumbler.destroy(el);
+-->
