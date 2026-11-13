@@ -106,14 +106,14 @@ for (const D of [384, 2560]) {
       }
     }
     const ids = Array.from({ length: M }, (_, i) => i);
-    const F = m.localFrame(X, D, ids);
+    const F = m.localFrame(X, M, D, ids);
     assert.ok(m.frameError(F, 3, D) < 1e-5);
     for (let r = 0; r < 3; r++) {
       let inSpan = 0;
       for (let a = 0; a < 3; a++) inSpan += dot(F, r, plane, a, D) ** 2;
       assert.ok(inSpan > 0.999);
     }
-    assert.deepStrictEqual(Array.from(math().localFrame(X, D, ids)), Array.from(F));
+    assert.deepStrictEqual(Array.from(math().localFrame(X, M, D, ids)), Array.from(F));
   });
 }
 
@@ -125,7 +125,7 @@ test("localFrame stays orthonormal for a neighbourhood of rank below three", () 
     X[D + d] = Math.cos(d);
     X[2 * D + d] = 2 * Math.cos(d);
   }
-  const F = m.localFrame(X, D, [0, 1, 2]);
+  const F = m.localFrame(X, 3, D, [0, 1, 2]);
   assert.ok(m.frameError(F, 3, D) < 1e-5);
 });
 
@@ -191,7 +191,8 @@ for (const D of DIMS) {
     const b = run();
     const direct = Array.from(b.frameAt(23.3));
     let last = null;
-    for (let t = 0; t <= 23.3 + 1e-9; t += 23.3 / 233) last = a.frameAt(Math.min(t, 23.3));
+    // (i / 233) * 23.3 is exactly 23.3 at i = 233 by construction (i / 233 === 1).
+    for (let i = 0; i <= 233; i++) last = a.frameAt((i / 233) * 23.3);
     assert.deepStrictEqual(Array.from(last), direct);
     // backwards in time replays from the start and still agrees
     const early = Array.from(b.frameAt(1.2));

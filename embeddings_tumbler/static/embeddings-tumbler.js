@@ -102,6 +102,16 @@
       if (!(D >= 1) || Math.floor(D) !== D) throw new RangeError("dimension must be a positive integer");
     }
 
+    // `rows` directions of length D in `dirs`, exactly: a mismatch is a caller bug.
+    function checkRows(dirs, rows, D, what) {
+      if (!(rows >= 1) || Math.floor(rows) !== rows || rows > D) {
+        throw new TypeError(what + ": rows must be an integer from 1 to the dimension");
+      }
+      if (!dirs || dirs.length !== rows * D) {
+        throw new TypeError(what + ": expected " + rows * D + " values (rows * dimension)");
+      }
+    }
+
     function checkData(X, N, D) {
       checkDim(D);
       if (!(N >= 0) || Math.floor(N) !== N) throw new RangeError("count must be a non-negative integer");
@@ -161,6 +171,7 @@
     // directions (row-major, rows * D). Exact for whatever directions are given.
     function varianceShare(Y, N, D, dirs, rows) {
       checkData(Y, N, D);
+      checkRows(dirs, rows, D, "varianceShare");
       var total = totalVariance(Y, N, D);
       if (!(total > 0)) return 0;
       var s = 0;
@@ -196,39 +207,53 @@
         }
         var nn = 0;
         for (var d4 = 0; d4 < D; d4++) nn += v[d4] * v[d4];
-        if (!(nn > 1e-24) || nn <= 1e-12 * before) {
-          fallbackRow(M, i, D, v);
-          nn = 0;
-          for (var d5 = 0; d5 < D; d5++) nn += v[d5] * v[d5];
-        }
+        if (!(nn > 1e-24) || nn <= 1e-12 * before) nn = fallbackRow(M, i, D, v);
         var inv = 1 / Math.sqrt(nn);
         for (var d6 = 0; d6 < D; d6++) M[oi + d6] = v[d6] * inv;
       }
       return M;
     }
 
-    // The standard basis vector with the smallest coverage by rows 0..i-1,
-    // made orthogonal to them. Written into v.
+    // Standard basis vectors in order of least coverage by rows 0..i-1 (ties
+    // to the lower index), each made orthogonal to those rows; the first whose
+    // remainder does not collapse is written into v. Returns its squared norm.
+    // Since i < D, some basis vector always keeps at least (D - i) / D of its
+    // length, so the search ends.
     function fallbackRow(M, i, D, v) {
-      var best = 0;
-      var bestCover = Infinity;
+      var cover = new Float64Array(D);
+      var order = [];
       for (var c = 0; c < D; c++) {
-        var cover = 0;
-        for (var j = 0; j < i; j++) cover += M[j * D + c] * M[j * D + c];
-        if (cover < bestCover) {
-          bestCover = cover;
-          best = c;
+        var cv = 0;
+        for (var j = 0; j < i; j++) cv += M[j * D + c] * M[j * D + c];
+        cover[c] = cv;
+        order.push(c);
+      }
+      order.sort(function (a, b) {
+        return cover[a] - cover[b] || a - b;
+      });
+      var bestNorm = -1;
+      var bestC = order[0];
+      for (var t = 0; t <= D; t++) {
+        // after trying every candidate, settle on the one that kept the most
+        var cand = t < D ? order[t] : bestC;
+        for (var d = 0; d < D; d++) v[d] = d === cand ? 1 : 0;
+        for (var pass = 0; pass < 2; pass++) {
+          for (var j2 = 0; j2 < i; j2++) {
+            var oj = j2 * D;
+            var dp = 0;
+            for (var d2 = 0; d2 < D; d2++) dp += v[d2] * M[oj + d2];
+            for (var d3 = 0; d3 < D; d3++) v[d3] -= dp * M[oj + d3];
+          }
+        }
+        var nn = 0;
+        for (var d4 = 0; d4 < D; d4++) nn += v[d4] * v[d4];
+        if (t === D || nn > 1e-6) return nn;
+        if (nn > bestNorm) {
+          bestNorm = nn;
+          bestC = cand;
         }
       }
-      for (var d = 0; d < D; d++) v[d] = d === best ? 1 : 0;
-      for (var pass = 0; pass < 2; pass++) {
-        for (var j2 = 0; j2 < i; j2++) {
-          var oj = j2 * D;
-          var dp = 0;
-          for (var d2 = 0; d2 < D; d2++) dp += v[d2] * M[oj + d2];
-          for (var d3 = 0; d3 < D; d3++) v[d3] -= dp * M[oj + d3];
-        }
-      }
+      return nn;
     }
 
     // Largest deviation of M M^T from the identity (rows * rows entries).
@@ -258,7 +283,10 @@
     // `centre` may be null (zero). Returns Float32Array(N * rows).
     function project(X, N, D, frame, centreVec, out, rows) {
       checkData(X, N, D);
-      var R = rows || 3;
+      var R = rows === undefined || rows === null ? 3 : rows;
+      checkRows(frame, R, D, "project");
+      if (centreVec && centreVec.length !== D) throw new TypeError("project: centre must have dimension values");
+      if (out && out.length < N * R) throw new TypeError("project: out is shorter than count * rows");
       var P = out || new Float32Array(N * R);
       var x = new Float64Array(D);
       for (var i = 0; i < N; i++) {
@@ -366,6 +394,15 @@
     function principalDirections(Y, N, D, k, opts) {
       checkData(Y, N, D);
       var o = opts || {};
+      var maxIt = o.maxIterations === undefined ? 60 : o.maxIterations;
+      var tol = o.tolerance === undefined ? 1e-6 : o.tolerance;
+      if (!(maxIt >= 0) || Math.floor(maxIt) !== maxIt) {
+        throw new RangeError("maxIterations must be a non-negative integer");
+      }
+      if (!(tol >= 0) || !isFinite(tol)) throw new RangeError("tolerance must be a finite number >= 0");
+      if (o.oversample !== undefined && (!(o.oversample >= 0) || Math.floor(o.oversample) !== o.oversample)) {
+        throw new RangeError("oversample must be a non-negative integer");
+      }
       var S = o.sampleRows | 0;
       if (S > 0 && N > S) {
         var Ys = new Float32Array(S * D);
@@ -382,6 +419,8 @@
         finishPca(Y, N, D, fitted);
         return fitted;
       }
+      // k is clamped into 1..D. Directions beyond the data's rank (at most
+      // N - 1 for centred data) are an orthonormal completion with variance 0.
       var K = Math.max(1, Math.min(k | 0, D));
       var total = totalVariance(Y, N, D);
       var dirs = new Float32Array(K * D);
@@ -405,8 +444,6 @@
         return result;
       }
       var seed = mixSeed(o.seed === undefined ? 0 : o.seed, SALT_PCA);
-      var maxIt = o.maxIterations === undefined ? 60 : o.maxIterations;
-      var tol = o.tolerance === undefined ? 1e-6 : o.tolerance;
       if (N <= D) {
         var G = gram(Y, N, D);
         var vecs; // rows in N-space
@@ -701,8 +738,9 @@
 
     // The guided tour over data: principal directions first, then a tour inside
     // them. Reports the share of total variance held by the toured directions.
-    // opts: { seed (0), subspace (8), speed, sampleRows (passed to principalDirections),
-    //         pca (a principalDirections result to reuse) }
+    // opts: { seed (0), subspace (8), speed, pca (a principalDirections result
+    //         to reuse); sampleRows, maxIterations, tolerance and oversample are
+    //         passed to principalDirections }
     function guidedTour(Y, N, D, opts) {
       checkData(Y, N, D);
       var o = opts || {};
@@ -710,7 +748,13 @@
       if (m < 3) throw new RangeError("a guided tour needs a subspace of at least three directions");
       var pca = o.pca;
       if (!pca || pca.count < m || pca.dimension !== D) {
-        pca = principalDirections(Y, N, D, m, { seed: o.seed, sampleRows: o.sampleRows });
+        pca = principalDirections(Y, N, D, m, {
+          seed: o.seed,
+          sampleRows: o.sampleRows,
+          maxIterations: o.maxIterations,
+          tolerance: o.tolerance,
+          oversample: o.oversample,
+        });
       }
       var basis = pca.directions.subarray(0, m * D);
       var tour = makeTour(basis, m, D, { seed: o.seed, speed: o.speed });
@@ -793,7 +837,7 @@
 
     // A schedule of swaps: during cycle c = floor(t / period), axis c mod 3
     // turns a quarter turn into a hidden direction drawn from the stream
-    // mixSeed(seed, c). frameAt(t) is a pure function of (frame0, seed, period,
+    // mixSeed(seed ^ SALT_SWAP, c). frameAt(t) is a pure function of (frame0, seed, period,
     // basis, t); it replays cycle starts from frame0 when time goes backwards.
     // opts: { seed (0), period (3.4 s, the reference's), basis, basisRows }
     function makeSwapTour(frame0, D, opts) {
@@ -804,7 +848,13 @@
       var period = o.period === undefined ? 3.4 : o.period;
       if (!(period > 0)) throw new RangeError("period must be positive");
       var basis = o.basis || null;
-      var basisRows = basis ? o.basisRows | 0 : 0;
+      var basisRows = 0;
+      if (basis) {
+        basisRows = o.basisRows;
+        if (!(basisRows >= 3 && basisRows <= D) || Math.floor(basisRows) !== basisRows || basis.length !== basisRows * D) {
+          throw new RangeError("makeSwapTour: basis needs basisRows (3..dimension) with basis.length = basisRows * dimension");
+        }
+      }
       var first = new Float32Array(3 * D);
       for (var i = 0; i < 3 * D; i++) first[i] = frame0[i];
       orthonormalize(first, 3, D);
@@ -873,7 +923,12 @@
       var distances = new Float32Array(S * K);
       var bestD = new Float64Array(K + 1);
       var bestI = new Int32Array(K + 1);
-      var state = { k: K, count: S, dimension: D, indices: indices, distances: distances, next: 0, done: S === 0 };
+      // With k = 0 there is nothing to find: the stepper starts finished.
+      var state = { k: K, count: S, dimension: D, indices: indices, distances: distances, next: 0, done: false };
+      if (K === 0) {
+        state.next = S;
+        state.done = true;
+      }
 
       function row(i) {
         var filled = 0;
@@ -895,7 +950,6 @@
             if (s > bound) break;
           }
           if (s > bound || (filled === K && s === bound && j > bestI[K - 1])) continue;
-          if (K === 0) continue;
           // insert j, keeping (distance, index) ascending
           var pos = filled < K ? filled : K - 1;
           while (pos > 0 && (bestD[pos - 1] > s || (bestD[pos - 1] === s && bestI[pos - 1] > j))) {
@@ -915,6 +969,7 @@
 
       state.step = function (rows) {
         var r = rows === undefined ? S : Math.max(1, rows | 0);
+        if (state.done) return true;
         var stop = Math.min(S, state.next + r);
         for (var i = state.next; i < stop; i++) row(i);
         state.next = stop;
@@ -936,15 +991,24 @@
     // Three axes fitted to a neighbourhood: the top three principal directions
     // of the points `ids` (the point itself and its neighbours), from their
     // Gram matrix. Deterministic. Returns Float32Array(3 * D), orthonormal.
-    function localFrame(X, D, ids, out) {
-      checkDim(D);
+    // ids must be integers in 0..N-1 (at least one); anything else is a caller
+    // bug and throws RangeError.
+    function localFrame(X, N, D, ids, out) {
+      checkData(X, N, D);
       var M = ids.length;
+      if (!(M >= 1)) throw new RangeError("localFrame needs at least one point id");
+      for (var q = 0; q < M; q++) {
+        var id = ids[q];
+        if (!(id >= 0 && id < N) || Math.floor(id) !== id) {
+          throw new RangeError("localFrame: point id " + id + " is outside 0.." + (N - 1));
+        }
+      }
       var mean = new Float64Array(D);
       for (var a = 0; a < M; a++) {
         var oa = ids[a] * D;
         for (var d = 0; d < D; d++) mean[d] += X[oa + d];
       }
-      for (var d1 = 0; d1 < D; d1++) mean[d1] /= M || 1;
+      for (var d1 = 0; d1 < D; d1++) mean[d1] /= M;
       var Yl = new Float64Array(M * D);
       for (var a2 = 0; a2 < M; a2++) {
         var oa2 = ids[a2] * D;
@@ -1029,7 +1093,9 @@
     // between points of the same group, over all pairs (the probe's measure;
     // 1.0 means no visible grouping). P holds N points of `dim` coordinates.
     // Labels that are "", null or undefined are ungrouped and left out.
-    // Returns NaN when there are no within-group or no between-group pairs.
+    // Returns NaN when there are no within-group or no between-group pairs;
+    // Infinity when all same-group pairs coincide but groups are apart; 1 when
+    // every grouped point coincides.
     function groupSeparation(P, N, dim, groups) {
       var within = 0;
       var nWithin = 0;
@@ -1058,7 +1124,10 @@
           }
         }
       }
-      if (nWithin === 0 || nBetween === 0 || within === 0) return NaN;
+      if (nWithin === 0 || nBetween === 0) return NaN;
+      // Every same-group pair coincides: Infinity when the groups are apart,
+      // 1 (nothing to see) when everything coincides.
+      if (within === 0) return between > 0 ? Infinity : 1;
       return between / nBetween / (within / nWithin);
     }
 
