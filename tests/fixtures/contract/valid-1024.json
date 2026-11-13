@@ -17,7 +17,7 @@
     "uncertain": [
       "the near/far groups are invented"
     ],
-    "endpoint": "fixture route",
+    "endpoint": "lobes gateway",
     "params": {
       "batch_size": 4
     }

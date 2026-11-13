@@ -58,7 +58,10 @@ this module; an append returns a new one.
   name resolved against the JSON url's folder (query and fragment dropped, same
   origin and prefix, never another folder). A failed block fetch is
   `block-unreadable`. A data file that cannot be fetched or parsed is reported as
-  `wrong-kind` (the contract defines no other code for it).
+  `wrong-kind` (the contract defines no other code for it): this includes a
+  data file that cannot be fetched and one that is not valid JSON.
+  `provenance.endpoint`, when present, must match
+  `^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$`, else `endpoint-is-address`.
 - `supportedVersions`: `[1]`.
 - `messages`: the code to template map (same text as
   `tests/fixtures/contract/index.json`).

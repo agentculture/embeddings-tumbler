@@ -18,7 +18,7 @@
   var SUPPORTED = [1];
   var KIND = "embeddings-tumbler/data";
   var MAX_INT = 9007199254740991;
-  var ADDRESS = /:\/\/|localhost|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|:[0-9]+/i;
+  var ENDPOINT_NAME = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/;
   var PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
   var MESSAGES = {
@@ -200,7 +200,7 @@
       return refuse("vector-file-path", { file: d.vectors.file }, base);
     }
     if (d.provenance !== undefined && d.provenance.endpoint !== undefined) {
-      if (ADDRESS.test(d.provenance.endpoint)) return refuse("endpoint-is-address", {}, base);
+      if (!ENDPOINT_NAME.test(d.provenance.endpoint)) return refuse("endpoint-is-address", {}, base);
     }
     if (d.count !== d.points.length) {
       return refuse("count-mismatch", { count: d.count, found: d.points.length }, base);
