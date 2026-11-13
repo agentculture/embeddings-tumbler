@@ -244,7 +244,7 @@ def build() -> tuple[dict[str, dict], dict[str, bytes], list[dict]]:
             "fixture: valid-1024",
             seed=1024,
             limitations=["fixture vectors are random, not from a model"],
-            endpoint="fixture route",
+            endpoint="lobes gateway",
             params={"batch_size": 4},
         ),
         reduction={
@@ -387,6 +387,14 @@ def build() -> tuple[dict[str, dict], dict[str, bytes], list[dict]]:
     addressed["provenance"]["endpoint"] = "http://localhost:8001/v1"
     add("endpoint-address", addressed)
 
+    hostname = copy.deepcopy(valid_384)
+    hostname["provenance"]["endpoint"] = "gateway.internal"
+    add("endpoint-hostname", hostname)
+
+    with_port = copy.deepcopy(valid_384)
+    with_port["provenance"]["endpoint"] = "lobes:8001"
+    add("endpoint-port", with_port)
+
     wrong_kind = copy.deepcopy(valid_384)
     wrong_kind["kind"] = "embeddings-cli/atlas"
     add("wrong-kind", wrong_kind)
@@ -502,6 +510,10 @@ def build() -> tuple[dict[str, dict], dict[str, bytes], list[dict]]:
         ),
         refused("non-finite", "non-finite.json", None, message("non-finite", id="a-03")),
         refused("endpoint-address", "endpoint-address.json", None, message("endpoint-is-address")),
+        refused(
+            "endpoint-hostname", "endpoint-hostname.json", None, message("endpoint-is-address")
+        ),
+        refused("endpoint-port", "endpoint-port.json", None, message("endpoint-is-address")),
         refused("wrong-kind", "wrong-kind.json", None, message("wrong-kind")),
         refused(
             "vector-file-path",

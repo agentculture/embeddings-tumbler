@@ -60,6 +60,9 @@ a combined binary container needs a custom reader in every producer; two plain
 files can be written by a few lines of any language's standard library, and
 the block can be fetched straight into an `ArrayBuffer`.
 
+When the data file itself cannot be fetched or is not valid JSON, the loader
+reports `wrong-kind` (the contract defines no other code for it).
+
 Rules:
 
 - `vectors.file` **must** be a plain file name: it matches
@@ -127,22 +130,27 @@ and `uncertain` are required, as they are in an Atlas.
 | `limitations` | list of strings | yes | Known limitations, copied from the Atlas's `limitations`. `[]` is a deliberate claim that none are known. |
 | `uncertain` | list of strings | yes | Interpretations the source is not confident in, copied from the Atlas's `uncertain`. `[]` is a deliberate claim. |
 | `created` | string | no | When the file was written, as an RFC 3339 UTC timestamp, for example `2026-11-13T19:00:00Z`. The viewer shows it as text and does not parse it. |
-| `endpoint` | non-empty string | no | A **name** for the route the vectors were embedded through, for example `lobes gateway`. It must not be a network address; see below. |
+| `endpoint` | non-empty string | no | A **name** for the route the vectors were embedded through, for example `lobes gateway`. It must match the name pattern below; a host name, URL or address is refused. |
 | `params` | object | no | Free measurement parameters (for example an Atlas's `params`). The viewer may show them as text and otherwise ignores them. |
 
 **The endpoint is a name, not an address.** The viewer's rule is that the
 embedding gateway's address and key never reach a page. An Atlas records the
 endpoint as a URL; a producer copying it into a data file must replace the URL
-with a name for the route (for example `lobes gateway`). The viewer refuses,
-with `endpoint-is-address`, any `endpoint` that matches this pattern
-(case-insensitive):
+with a name for the route (for example `lobes gateway`). The rule is an
+allowlist: `provenance.endpoint`, when present, must be a string that matches
 
 ```text
-://|localhost|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|:[0-9]+
+^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$
 ```
 
-That is: anything with a scheme separator, the word `localhost`, a dotted IPv4
-address, or a colon followed by a port number.
+That is: ASCII letters, digits, spaces, underscores and hyphens only, 1 to 64
+characters, starting with a letter or digit. There are no dots, colons or
+slashes, so a host name with a domain, a URL, an IP address and a port are all
+refused. Any string that does not match is refused with `endpoint-is-address`.
+A value that is not a string, or is empty, is `invalid-field` instead (check 3
+runs before check 5). Two limits are stated plainly: a single-word name such as
+`gateway` cannot be told apart from a single-label host name and is accepted;
+and names are ASCII-only in version 1.
 
 #### Reduction record
 
@@ -334,6 +342,12 @@ points as they arrive.
   `true` (logical OR), and `false` only when both say `false`: a view that
   holds any corpus text never claims to be labels-only. The view's model, dimension, reduction record and provenance
   are those of the base set.
+- An append's `provenance`, when present, is validated field by field like any
+  other; the endpoint check (check 5) runs only when a provenance with an
+  `endpoint` is present.
+- On append the viewer compares only the reduction `kind`. It trusts the
+  producer that an appended `rotation` or `top-k` set uses the same directions
+  as the base, and cannot check it.
 - An append with `count` 0 is valid and changes nothing.
 - A refused append leaves the view exactly as it was.
 
@@ -376,8 +390,8 @@ Checks run in this order; the first failure is the refusal.
    first offending field.
 4. File form only: `vectors.file` is a plain file name → otherwise
    `vector-file-path`. The block is not read.
-5. `provenance.endpoint`, if present, is not a network address → otherwise
-   `endpoint-is-address`.
+5. `provenance.endpoint`, if present, matches the name pattern
+   `^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$` → otherwise `endpoint-is-address`.
 6. `count` equals the length of `points` → otherwise `count-mismatch`.
 7. Every `id` in `points` is unique within the set → otherwise `duplicate-id`
    (naming the first repeated id).
@@ -415,7 +429,7 @@ tests may match on the code; the message text is also fixed for version 1.
 | `schema-version` | `schema_version` is missing, not an integer, or not supported (unknown or newer). | `Data schema version {found} is not supported; this viewer reads schema version {supported}.` |
 | `invalid-field` | A field is missing, has the wrong type, or breaks a value rule. | `Field "{field}" is missing or not valid.` |
 | `vector-file-path` | `vectors.file` is not a plain file name. | `Vector file "{file}" must be a plain file name in the same folder as the data file.` |
-| `endpoint-is-address` | `provenance.endpoint` looks like a network address. | `"provenance.endpoint" must name the embedding route, not give a network address.` |
+| `endpoint-is-address` | `provenance.endpoint` is a string that does not match the name pattern (so it may be a network address or host name). | `"provenance.endpoint" must name the embedding route, not give a network address.` |
 | `count-mismatch` | `count` differs from the number of point records. | `"count" is {count} but the data has {found} point records.` |
 | `duplicate-id` | An id appears twice in one set. | `Point id "{id}" appears more than once.` |
 | `block-unreadable` | File form: the block file cannot be fetched or read. | `Vector file "{file}" could not be read.` |
@@ -475,7 +489,7 @@ from it.
 | Case | Outcome | What it exercises |
 |------|---------|-------------------|
 | `valid-384` | accepted | 384-d, no reduction record, groups, metadata, an empty label, an ungrouped point, Unicode, a label made of HTML tags |
-| `valid-1024` | accepted | 1024-d, `rotation` reduction, non-empty `limitations` and `uncertain`, an `endpoint` name, `params` |
+| `valid-1024` | accepted | 1024-d, `rotation` reduction, non-empty `limitations` and `uncertain`, the `endpoint` name `lobes gateway`, `params` |
 | `labels-only` | accepted | `text_included: false`, labels equal ids, explicit `none` reduction, `seed: null` |
 | `top-k-16` | accepted | `top-k` reduction: 16 of 1024 directions, 0.42 of the variance dropped |
 | `empty-set` | accepted | `count` 0 and an empty block |
@@ -493,6 +507,8 @@ from it.
 | `block-unreadable` | `block-unreadable` | `vectors.file` names `no-such-block.f32`, which does not exist |
 | `non-finite` | `non-finite` | a NaN in one row |
 | `endpoint-address` | `endpoint-is-address` | a URL in `provenance.endpoint` |
+| `endpoint-hostname` | `endpoint-is-address` | a bare dotted host name, `gateway.internal` |
+| `endpoint-port` | `endpoint-is-address` | a `name:port` form, `lobes:8001` |
 | `wrong-kind` | `wrong-kind` | another tool's `kind` |
 | `vector-file-path` | `vector-file-path` | `vectors.file` = `../valid-384.f32` |
 | `missing-limitations` | `invalid-field` | `provenance.limitations` absent |

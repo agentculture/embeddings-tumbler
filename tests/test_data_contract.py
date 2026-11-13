@@ -35,7 +35,7 @@ CONTRACT_DOC = REPO_ROOT / "docs" / "data-contract.md"
 SUPPORTED_VERSIONS = [1]
 KIND = "embeddings-tumbler/data"
 FILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-ADDRESS_RE = re.compile(r"://|localhost|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|:[0-9]+", re.IGNORECASE)
+ENDPOINT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$")
 MAX_SAFE_INTEGER = 2**53 - 1
 
 
@@ -220,7 +220,7 @@ def validate(data: object, block: bytes | None, base: dict | None, templates: di
     if not readable:
         faults.add("vector-file-path", file=vec_file)
     endpoint = data.get("provenance", {}).get("endpoint")
-    if endpoint is not None and ADDRESS_RE.search(endpoint):
+    if endpoint is not None and not ENDPOINT_NAME_RE.fullmatch(endpoint):
         faults.add("endpoint-is-address")
     points = data["points"]
     if len(points) != data["count"]:
@@ -552,3 +552,42 @@ def test_document_lists_every_refusal_code_and_message_template() -> None:
     for code, template in _index()["messages"].items():
         assert f"`{code}`" in doc, f"refusal code {code} is not documented"
         assert template in doc, f"message template for {code} is not in the document"
+
+
+def test_document_templates_equal_the_generator_and_index_exactly() -> None:
+    import importlib.util
+
+    doc = CONTRACT_DOC.read_text(encoding="utf-8")
+    section = doc.split("### Codes and messages", 1)[1].split("Placeholder values", 1)[0]
+    in_doc = {}
+    for line in section.splitlines():
+        match = re.match(r"^\| `([a-z-]+)` \|.*\| `(.+)` \|$", line)
+        if match:
+            in_doc[match.group(1)] = match.group(2)
+    spec = importlib.util.spec_from_file_location(
+        "gen_contract_fixtures", REPO_ROOT / "scripts" / "gen_contract_fixtures.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert in_doc == module.MESSAGES
+    assert in_doc == _index()["messages"]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "accepted"),
+    [
+        ("lobes gateway", True),
+        ("gateway", True),
+        ("a" * 64, True),
+        ("a" * 65, False),
+        ("gateway.internal", False),
+        ("lobes:8001", False),
+        ("http://localhost:8001/v1", False),
+        ("10.0.0.1", False),
+        (" gateway", False),
+        ("gateway ", True),
+        ("g\u00e4teway", False),
+    ],
+)
+def test_endpoint_allowlist(endpoint: str, accepted: bool) -> None:
+    assert bool(ENDPOINT_NAME_RE.fullmatch(endpoint)) is accepted

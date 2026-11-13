@@ -290,6 +290,26 @@
       }
     },
     {
+      "name": "endpoint-hostname",
+      "file": "endpoint-hostname.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "endpoint-is-address",
+        "message": "\"provenance.endpoint\" must name the embedding route, not give a network address."
+      }
+    },
+    {
+      "name": "endpoint-port",
+      "file": "endpoint-port.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "endpoint-is-address",
+        "message": "\"provenance.endpoint\" must name the embedding route, not give a network address."
+      }
+    },
+    {
       "name": "wrong-kind",
       "file": "wrong-kind.json",
       "base": null,
