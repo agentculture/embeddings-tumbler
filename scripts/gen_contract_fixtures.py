@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import shutil
 import struct
 import sys
 from pathlib import Path
@@ -53,6 +52,7 @@ MESSAGES = {
     "endpoint-is-address": (
         '"provenance.endpoint" must name the embedding route, not give a network address.'
     ),
+    "block-unreadable": 'Vector file "{file}" could not be read.',
     "count-mismatch": '"count" is {count} but the data has {found} point records.',
     "duplicate-id": 'Point id "{id}" appears more than once.',
     "block-length": (
@@ -308,6 +308,18 @@ def build() -> tuple[dict[str, dict], dict[str, bytes], list[dict]]:
     )
     add("append-384", append_384, make_vectors(385, [0, 0], 384))
 
+    p_labels_append = [{"id": f"item-{i}", "label": f"item-{i}", "group": "g"} for i in (8, 9)]
+    append_labels = data_set(
+        "append-labels-only",
+        model=MODEL_A,
+        dimension=384,
+        points=p_labels_append,
+        prov=None,
+        op="append",
+        text_included=False,
+    )
+    add("append-labels-only", append_labels, make_vectors(389, [0, 0], 384))
+
     # --- refused sets: each a copy of a valid one with exactly one fault ---
     # Copies of valid-384 keep pointing at valid-384.f32 unless the block
     # itself is the fault, so the repository carries one copy of it.
@@ -383,6 +395,10 @@ def build() -> tuple[dict[str, dict], dict[str, bytes], list[dict]]:
     escape["vectors"]["file"] = "../valid-384.f32"
     add("vector-file-path", escape)
 
+    unreadable = copy.deepcopy(valid_384)
+    unreadable["vectors"]["file"] = "no-such-block.f32"  # deliberately never written
+    add("block-unreadable", unreadable)
+
     no_limits = copy.deepcopy(valid_384)
     del no_limits["provenance"]["limitations"]
     add("missing-limitations", no_limits)
@@ -396,7 +412,8 @@ def build() -> tuple[dict[str, dict], dict[str, bytes], list[dict]]:
         return [p["id"] for s in sets for p in s["points"]]
 
     def accepted(name: str, file: str, base: str | None, view: dict, *sets: dict) -> dict:
-        text = all(s["text_included"] for s in sets)
+        # The view holds text if any part of it does (the safe direction).
+        text = any(s["text_included"] for s in sets)
         return {
             "name": name,
             "file": file,
@@ -424,6 +441,14 @@ def build() -> tuple[dict[str, dict], dict[str, bytes], list[dict]]:
         accepted("top-k-16", "top-k-16.json", None, top_k, top_k),
         accepted("empty-set", "empty-384.json", None, empty, empty),
         accepted("append-onto-384", "append-384.json", v, valid_384, valid_384, append_384),
+        accepted(
+            "labels-only-append-onto-text",
+            "append-labels-only.json",
+            v,
+            valid_384,
+            valid_384,
+            append_labels,
+        ),
         refused("append-without-base", "append-384.json", None, message("append-without-base")),
         refused(
             "bumped-version",
@@ -469,6 +494,12 @@ def build() -> tuple[dict[str, dict], dict[str, bytes], list[dict]]:
             None,
             message("count-mismatch", count=6, found=5),
         ),
+        refused(
+            "block-unreadable",
+            "block-unreadable.json",
+            None,
+            message("block-unreadable", file="no-such-block.f32"),
+        ),
         refused("non-finite", "non-finite.json", None, message("non-finite", id="a-03")),
         refused("endpoint-address", "endpoint-address.json", None, message("endpoint-is-address")),
         refused("wrong-kind", "wrong-kind.json", None, message("wrong-kind")),
@@ -513,11 +544,42 @@ def dump_json(obj: object) -> bytes:
     return (json.dumps(obj, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
+OWNED_SUFFIXES = (".json", ".f32")
+
+
+class RefusedTarget(Exception):
+    """The output folder holds files this generator did not write."""
+
+
+def prepare(out_dir: Path) -> None:
+    """Make ``out_dir`` ready without ever removing a directory tree.
+
+    A missing or empty folder is used as it is. A non-empty folder is accepted
+    only if it holds this generator's ``index.json``; then only its own kinds
+    of file (``*.json`` and ``*.f32`` directly inside it) are removed, so stale
+    fixtures do not linger. Sub-folders and any other file are left alone.
+    """
+    if not out_dir.exists():
+        out_dir.mkdir(parents=True)
+        return
+    if not out_dir.is_dir():
+        raise RefusedTarget(f"{out_dir} exists and is not a folder")
+    entries = list(out_dir.iterdir())
+    if not entries:
+        return
+    if not (out_dir / "index.json").is_file():
+        raise RefusedTarget(
+            f"{out_dir} is not empty and holds no index.json from this generator; "
+            "refusing to write into it"
+        )
+    for entry in entries:
+        if entry.is_file() and not entry.is_symlink() and entry.suffix in OWNED_SUFFIXES:
+            entry.unlink()
+
+
 def write(out_dir: Path) -> list[Path]:
     docs, blocks, cases = build()
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-    out_dir.mkdir(parents=True)
+    prepare(out_dir)
     written = []
     for name, doc in sorted(docs.items()):
         written.append(out_dir / name)
@@ -534,7 +596,12 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="output folder")
     args = parser.parse_args(argv)
-    for path in write(args.out):
+    try:
+        written = write(args.out)
+    except RefusedTarget as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    for path in written:
         print(path)
     return 0
 

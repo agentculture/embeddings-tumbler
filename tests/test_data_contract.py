@@ -48,10 +48,8 @@ def _cases() -> list[dict]:
 
 
 def _case_ids(valid_only: bool = False) -> list[str]:
-    try:
-        return [case["name"] for case in _cases() if case["valid"] or not valid_only]
-    except FileNotFoundError:
-        return []
+    # No escape hatch: a missing index.json must fail collection, not collect zero cases.
+    return [case["name"] for case in _cases() if case["valid"] or not valid_only]
 
 
 # ---------------------------------------------------------------------------
@@ -235,10 +233,10 @@ def validate(data: object, block: bytes | None, base: dict | None, templates: di
 
     dim, count = data["dimension"], data["count"]
     expected = count * dim * 4
-    if block is None:
-        block = b""
     if not readable:
         pass  # a refused path is never read, so the block is not checked
+    elif block is None:
+        faults.add("block-unreadable", file=vec_file)
     elif len(block) != expected:
         faults.add("block-length", found=len(block), count=count, dimension=dim, expected=expected)
     elif len(points) == count:
@@ -339,7 +337,11 @@ def test_index_references_every_fixture_file_and_nothing_else() -> None:
             referenced.add(name)
             data, _ = _load(name)
             vec_file = data.get("vectors", {}).get("file")
-            if isinstance(vec_file, str) and FILE_NAME_RE.match(vec_file):
+            if (
+                isinstance(vec_file, str)
+                and FILE_NAME_RE.match(vec_file)
+                and (FIXTURES / vec_file).is_file()
+            ):
                 referenced.add(vec_file)
     on_disk = {p.name for p in FIXTURES.iterdir()}
     assert referenced == on_disk
@@ -360,6 +362,63 @@ def test_index_covers_the_cases_the_plan_names() -> None:
     codes = {c["refusal"]["code"] for c in cases.values() if not c["valid"]}
     for needed in ("schema-version", "block-length", "dimension-mismatch", "model-mismatch"):
         assert needed in codes, f"no fixture is refused with {needed}"
+
+
+def test_index_exists_and_lists_the_expected_cases() -> None:
+    assert (FIXTURES / "index.json").is_file()
+    cases = _cases()
+    assert sum(1 for c in cases if c["valid"]) >= 7
+    assert sum(1 for c in cases if not c["valid"]) >= 16
+    names = {c["name"] for c in cases}
+    assert {"labels-only-append-onto-text", "block-unreadable"} <= names
+
+
+def test_labels_only_append_onto_text_keeps_text_included_true() -> None:
+    case = next(c for c in _cases() if c["name"] == "labels-only-append-onto-text")
+    base, _ = _load(case["base"])
+    data, _ = _load(case["file"])
+    assert base["text_included"] is True and data["text_included"] is False
+    assert case["valid"] and case["expect"]["text_included"] is True
+
+
+def test_block_unreadable_fixture_names_a_missing_file() -> None:
+    case = next(c for c in _cases() if c["name"] == "block-unreadable")
+    data, _ = _load(case["file"])
+    assert not (FIXTURES / data["vectors"]["file"]).exists()
+    assert case["refusal"]["code"] == "block-unreadable"
+
+
+def _run_generator(out: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-I", str(GENERATOR), "--out", str(out)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_generator_refuses_a_foreign_non_empty_folder(tmp_path: Path) -> None:
+    (tmp_path / "precious.txt").write_text("keep me", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "deep.json").write_text("{}", encoding="utf-8")
+    result = _run_generator(tmp_path)
+    assert result.returncode != 0
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["precious.txt", "sub"]
+    assert (tmp_path / "sub" / "deep.json").is_file()
+
+
+def test_generator_only_removes_its_own_stale_files(tmp_path: Path) -> None:
+    assert _run_generator(tmp_path).returncode == 0
+    (tmp_path / "stale.f32").write_bytes(b"old")
+    (tmp_path / "stale.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("not ours", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "deep.f32").write_bytes(b"x")
+    assert _run_generator(tmp_path).returncode == 0
+    assert not (tmp_path / "stale.f32").exists()
+    assert not (tmp_path / "stale.json").exists()
+    assert (tmp_path / "notes.txt").is_file()
+    assert (tmp_path / "sub" / "deep.f32").is_file()
 
 
 def test_every_refusal_code_has_a_fixture() -> None:
@@ -417,7 +476,8 @@ def test_case_outcome_matches_the_index(name: str) -> None:
         assert expect["model"] == effective["model"]
         assert expect["dimension"] == effective["dimension"]
         assert expect["reduction"] == effective.get("reduction", {}).get("kind", "none")
-        text = effective["text_included"] and data["text_included"]
+        # The safe direction: the view holds text if either part does.
+        text = effective["text_included"] or data["text_included"]
         assert expect["text_included"] is text
         assert case["refusal"] is None
     else:

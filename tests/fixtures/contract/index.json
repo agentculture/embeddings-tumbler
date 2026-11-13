@@ -11,6 +11,7 @@
     "invalid-field": "Field \"{field}\" is missing or not valid.",
     "vector-file-path": "Vector file \"{file}\" must be a plain file name in the same folder as the data file.",
     "endpoint-is-address": "\"provenance.endpoint\" must name the embedding route, not give a network address.",
+    "block-unreadable": "Vector file \"{file}\" could not be read.",
     "count-mismatch": "\"count\" is {count} but the data has {found} point records.",
     "duplicate-id": "Point id \"{id}\" appears more than once.",
     "block-length": "Vector block is {found} bytes; expected {count} points x {dimension} dimensions x 4 bytes = {expected} bytes.",
@@ -145,6 +146,30 @@
       "refusal": null
     },
     {
+      "name": "labels-only-append-onto-text",
+      "file": "append-labels-only.json",
+      "base": "valid-384.json",
+      "valid": true,
+      "expect": {
+        "count": 8,
+        "ids": [
+          "a-01",
+          "a-02",
+          "a-03",
+          "b-01",
+          "b-02",
+          "c-01",
+          "item-8",
+          "item-9"
+        ],
+        "model": "fixture/model-a",
+        "dimension": 384,
+        "reduction": "none",
+        "text_included": true
+      },
+      "refusal": null
+    },
+    {
       "name": "append-without-base",
       "file": "append-384.json",
       "base": null,
@@ -232,6 +257,16 @@
       "refusal": {
         "code": "count-mismatch",
         "message": "\"count\" is 6 but the data has 5 point records."
+      }
+    },
+    {
+      "name": "block-unreadable",
+      "file": "block-unreadable.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "block-unreadable",
+        "message": "Vector file \"no-such-block.f32\" could not be read."
       }
     },
     {

@@ -63,9 +63,15 @@ the block can be fetched straight into an `ArrayBuffer`.
 Rules:
 
 - `vectors.file` **must** be a plain file name: it matches
-  `^[A-Za-z0-9][A-Za-z0-9._-]*$`. No folder separators, no `..`, no leading
-  dot, no URL. Anything else is refused with `vector-file-path` before any
-  attempt to read it.
+  `^[A-Za-z0-9][A-Za-z0-9._-]*$`: it contains no folder separator (`/` or
+  `\`), no colon and so no URL, and does not start with a dot. With no
+  separator the whole name is a single path segment, and since it cannot start
+  with a dot that segment can never be `.` or `..`, so the name cannot leave the
+  folder. Dots inside the name (`a..b.f32`) are allowed. Anything else is
+  refused with `vector-file-path` before any attempt to read it.
+- If the named file cannot be fetched or read (it does not exist, the server
+  answers with an HTTP error, or the read fails), the set is refused with
+  `block-unreadable` and the view is left unchanged.
 - The loader resolves `vectors.file` against the location of the JSON file
   (the same folder; for a URL, the same origin and path prefix). It never
   follows a name to another folder or origin.
@@ -277,8 +283,8 @@ same rules as the JSON file**, except `vectors`:
 | anything else (including the file form's descriptor object) | refused with `invalid-field` on `vectors`. |
 
 In the in-memory form there is no `file`, `dtype`, `byte_order` or
-`byte_length`, so `vector-file-path` and the `vectors.*` field checks do not
-apply. A `Float32Array` that is a view into a larger buffer is read from its own
+`byte_length`, so `vector-file-path`, `block-unreadable` and the `vectors.*`
+field checks do not apply. A `Float32Array` that is a view into a larger buffer is read from its own
 offset and length only.
 
 The loader turns a file pair into this form: it validates the JSON part,
@@ -324,8 +330,9 @@ points as they arrive.
   There is no update-in-place of an existing point in version 1.
 - On success the new points follow the existing ones, in the append's order;
   existing points keep their ids, order and vectors. The view's count is the
-  sum. Its `text_included` becomes `false` if either the view or the append
-  says `false`. The view's model, dimension, reduction record and provenance
+  sum. Its `text_included` is `true` if either the view or the append says
+  `true` (logical OR), and `false` only when both say `false`: a view that
+  holds any corpus text never claims to be labels-only. The view's model, dimension, reduction record and provenance
   are those of the base set.
 - An append with `count` 0 is valid and changes nothing.
 - A refused append leaves the view exactly as it was.
@@ -374,11 +381,16 @@ Checks run in this order; the first failure is the refusal.
 6. `count` equals the length of `points` → otherwise `count-mismatch`.
 7. Every `id` in `points` is unique within the set → otherwise `duplicate-id`
    (naming the first repeated id).
-8. The block's actual length is `count` × `dimension` × 4 bytes → otherwise
+8. File form only: the block file named by `vectors.file` can be fetched and
+   read in full → otherwise `block-unreadable` (a missing file, an HTTP error
+   status, or a failed read). The view is left unchanged. A loader may start
+   fetching the block earlier, but it reports this code only if checks 1 to 7
+   all passed.
+9. The block's actual length is `count` × `dimension` × 4 bytes → otherwise
    `block-length`.
-9. Every value in the block is finite → otherwise `non-finite` (naming the
-   first point whose row has a non-finite value).
-10. For an append, in this order: the view holds a set
+10. Every value in the block is finite → otherwise `non-finite` (naming the
+    first point whose row has a non-finite value).
+11. For an append, in this order: the view holds a set
     (`append-without-base`), the models are equal (`model-mismatch`), the
     dimensions are equal (`dimension-mismatch`), the reduction kinds are equal
     (`reduction-mismatch`), every id is new (`id-exists`, naming the first id
@@ -406,6 +418,7 @@ tests may match on the code; the message text is also fixed for version 1.
 | `endpoint-is-address` | `provenance.endpoint` looks like a network address. | `"provenance.endpoint" must name the embedding route, not give a network address.` |
 | `count-mismatch` | `count` differs from the number of point records. | `"count" is {count} but the data has {found} point records.` |
 | `duplicate-id` | An id appears twice in one set. | `Point id "{id}" appears more than once.` |
+| `block-unreadable` | File form: the block file cannot be fetched or read. | `Vector file "{file}" could not be read.` |
 | `block-length` | The vector block's actual length is wrong. | `Vector block is {found} bytes; expected {count} points x {dimension} dimensions x 4 bytes = {expected} bytes.` |
 | `non-finite` | A vector holds NaN or ±Infinity. | `Vector of point "{id}" contains a value that is not a finite number.` |
 | `append-without-base` | An append arrives when the view holds no set. | `Cannot append: the view holds no data set yet. Send a full set first.` |
@@ -467,6 +480,7 @@ from it.
 | `top-k-16` | accepted | `top-k` reduction: 16 of 1024 directions, 0.42 of the variance dropped |
 | `empty-set` | accepted | `count` 0 and an empty block |
 | `append-onto-384` | accepted | an append onto `valid-384`; existing ids keep their order |
+| `labels-only-append-onto-text` | accepted | a labels-only append onto the text-bearing `valid-384`; the view's `text_included` stays `true` |
 | `append-without-base` | `append-without-base` | the same append with no base |
 | `bumped-version` | `schema-version` | `schema_version` 2 |
 | `wrong-block-length` | `block-length` | a block 4 bytes short |
@@ -476,6 +490,7 @@ from it.
 | `id-exists` | `id-exists` | an append reusing an id |
 | `duplicate-id` | `duplicate-id` | one set with a repeated id |
 | `count-mismatch` | `count-mismatch` | `count` 6 with 5 records |
+| `block-unreadable` | `block-unreadable` | `vectors.file` names `no-such-block.f32`, which does not exist |
 | `non-finite` | `non-finite` | a NaN in one row |
 | `endpoint-address` | `endpoint-is-address` | a URL in `provenance.endpoint` |
 | `wrong-kind` | `wrong-kind` | another tool's `kind` |
