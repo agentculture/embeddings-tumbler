@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-13T18:39:08Z",
+  "updated": "2026-11-13T19:04:24Z",
   "claims": [
     {
       "id": "c1",
@@ -912,7 +912,30 @@
       "seeds": []
     }
   ],
-  "lapses": [],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "assumption-for-measurement",
+      "what": "t3 agent did not check that bare 'node --test' stays clean when .venv exists in the checkout, and did not load the assembled file in a real browser (only node's module.exports branch ran). Main agent then ran 'node --test' in the main checkout with .venv present: 3 pass, 0 fail. The browser global-export branch stays unexercised until t10/t11/t14.",
+      "skipped_check": "node --test in a checkout with .venv; classic script load in a browser",
+      "refs": [
+        "t3"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l2",
+      "code": "grader-unverified",
+      "what": "t2's reference validator lives in the pytest file and was written by the same agent from its own contract document, so the tests show the fixtures and the document agree with each other, not that the contract is right; nothing in JavaScript has read the fixtures yet (t5). Fixture byte-identity was checked on CPython 3.13 on one machine only.",
+      "skipped_check": "an independent implementation reading the fixtures; regeneration on a second Python version",
+      "refs": [
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
   "obligations": [
     {
       "id": "o1",

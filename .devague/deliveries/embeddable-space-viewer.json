@@ -1,0 +1,26 @@
+{
+  "plan_slug": "embeddable-space-viewer",
+  "schema_version": 2,
+  "created": "2026-11-13T19:07:38Z",
+  "updated": "2026-11-13T19:07:38Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t15 writes a route name (e.g. 'lobes gateway') into provenance.endpoint instead of copying the Atlas's endpoint URL; the data contract refuses any endpoint that looks like a network address (endpoint-is-address)",
+      "task_ref": "t15",
+      "reason": "An Atlas records its endpoint as a URL, and the spec rule is that the embedding gateway address never reaches a page; copying it as t15's criterion words it would break that rule. User chose 'Name only' on 2026-11-13.",
+      "affects": [
+        "t2",
+        "t5",
+        "t16"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}
