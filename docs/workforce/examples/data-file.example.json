@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "kind": "embeddings-tumbler/data",
+  "model": "Qwen/Qwen3-Embedding-0.6B",
+  "dimension": 1024,
+  "count": 3,
+  "provenance": {
+    "source": "atlas: docs/studies/atlas-plain",
+    "producer": "embeddings-cli 0.8.1",
+    "created": "2026-11-13T19:00:00Z",
+    "seed": 0,
+    "synthetic": false,
+    "limitations": [
+      "live-embedding float variance: vectors were embedded live, not served from cache"
+    ],
+    "uncertain": []
+  },
+  "reduction": {
+    "kind": "none",
+    "directions_kept": 1024,
+    "variance_dropped": 0.0
+  },
+  "text_included": true,
+  "vectors": {
+    "file": "atlas-plain.f32",
+    "dtype": "float32",
+    "byte_order": "little",
+    "byte_length": 12288
+  },
+  "points": [
+    {
+      "id": "v01-base",
+      "label": "the lobes embedding gateway listens on port 8001",
+      "group": "value",
+      "metadata": { "fact": "v01", "role": "base" }
+    },
+    {
+      "id": "v01-para-high",
+      "label": "the lobes embedding gateway runs on port 8001",
+      "group": "value",
+      "metadata": { "fact": "v01", "role": "para_high" }
+    },
+    {
+      "id": "v01-contra-high",
+      "label": "the lobes embedding gateway listens on port 8002",
+      "group": "value",
+      "metadata": { "fact": "v01", "role": "contra_high" }
+    }
+  ]
+}

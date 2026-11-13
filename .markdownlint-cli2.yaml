@@ -29,3 +29,8 @@ ignores:
   # .colleague/skills is the same symlink for colleague's skills discovery —
   # ignored for the same reason (third path onto the identical files).
   - ".colleague/skills/**"
+  # devague exports (spec + plan) are generated artifacts — the frame and plan
+  # state under .devague/ are the source, so they are not hand-reformatted.
+  - "docs/specs/**"
+  - "docs/plans/**"
+  - ".devague/**"
