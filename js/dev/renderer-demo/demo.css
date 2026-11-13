@@ -1,0 +1,6 @@
+html, body { margin: 0; height: 100%; background: #04060b; color: #c5cddb; font: 12px ui-monospace, monospace; overflow: hidden; }
+#stage { position: fixed; inset: 0; cursor: grab; }
+#gl { width: 100%; height: 100%; display: block; }
+#fps { position: fixed; top: 8px; right: 12px; font-size: 14px; color: #ffc56b; }
+#info { position: fixed; top: 8px; left: 12px; max-width: 70vw; white-space: pre-wrap; }
+#keys { position: fixed; bottom: 8px; left: 12px; opacity: 0.6; }
