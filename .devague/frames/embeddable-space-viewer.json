@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-13T19:48:26Z",
+  "updated": "2026-11-13T20:29:03Z",
   "claims": [
     {
       "id": "c1",
@@ -998,6 +998,17 @@
       "skipped_check": "side-by-side with the reference; twinkle and wire assertions; CI run of the browser test",
       "refs": [
         "t6"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l9",
+      "code": "assumption-for-measurement",
+      "what": "t9: the browser attach path (window.EmbeddingsTumbler.sample, loaded after the core) was never run in a browser; the fidelity test against the reference generator was not mutation-tested; generate() timings are single runs.",
+      "skipped_check": "browser load of sample-data.js after the core; a deliberately wrong port to show the fidelity test fails",
+      "refs": [
+        "t9"
       ],
       "origin": "llm",
       "status": "proposed"
