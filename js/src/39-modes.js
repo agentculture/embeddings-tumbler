@@ -215,6 +215,38 @@ ET.modes = (function () {
     return st;
   }
 
+  // A sliced form of stats(set) for a stepper task. run() adds the next rows
+  // (about STATS_WORK values, so about half a millisecond) and returns true
+  // once the statistics are complete and cached; job.result is then the same
+  // object stats(set) returns, with the same values bit for bit (the rows are
+  // added in the same order). A set whose statistics are cached finishes at once.
+  var STATS_WORK = 1 << 19;
+  function statsJob(set) {
+    var D = set.dimension;
+    var rows = Math.max(1, Math.floor(STATS_WORK / Math.max(1, D)));
+    var st = null;
+    var job = {
+      result: null,
+      progress: function () {
+        return job.result ? 1 : st && set.count > 0 ? st.count / set.count : 0;
+      },
+      run: function () {
+        if (job.result) return true;
+        if (!st && statsCache && statsCache.has(set)) {
+          job.result = statsCache.get(set);
+          return true;
+        }
+        if (!st) st = { count: 0, dimension: D, sum: new Float64Array(D), sumSq: 0, mean: new Float32Array(D) };
+        addRows(st, set.vectors, st.count, Math.min(set.count, st.count + rows), D);
+        if (st.count < set.count) return false;
+        if (statsCache && !statsCache.has(set)) statsCache.set(set, st);
+        job.result = statsCache ? statsCache.get(set) : st;
+        return true;
+      },
+    };
+    return job;
+  }
+
   // ----- shared motion helpers ------------------------------------------------
 
   // A centre that glides exponentially (time constant tau seconds) from where it
@@ -412,7 +444,9 @@ ET.modes = (function () {
     check: check,
     create: create,
     stepper: stepper,
+    now: now,
     stats: stats,
+    statsJob: statsJob,
     makeGlide: makeGlide,
     alignment: alignment,
     applyAlignment: applyAlignment,

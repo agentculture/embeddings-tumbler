@@ -2,7 +2,7 @@
   "plan_slug": "embeddable-space-viewer",
   "schema_version": 2,
   "created": "2026-11-13T19:07:38Z",
-  "updated": "2026-11-13T19:45:06Z",
+  "updated": "2026-11-14T01:37:50Z",
   "deviations": [
     {
       "id": "d1",
@@ -29,6 +29,22 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "An extra performance pass, not a task in the plan, reworks three merged modules: the principal-direction fit becomes a sliced stepper (t4), the modes prepare in units under about 4 ms (t7), and an append no longer copies all base vectors (t5). Results must stay bit-identical and the frozen data contract is unchanged.",
+      "task_ref": "t8",
+      "reason": "The user's live test showed a visible jump after appending points (measured: one frame of about 200 ms at 384-d when Tumble refits, 888 ms at 10,500 x 1024) and a heavier initial load on phone Safari; t8's criterion says an append must not reset the camera, and the spec says no visible jump where avoidable. The plan's tasks t4, t5 and t7 did not bound these costs.",
+      "affects": [
+        "t4",
+        "t5",
+        "t7",
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
     }
   ],
   "evidence": [],

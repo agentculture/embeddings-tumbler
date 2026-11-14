@@ -118,6 +118,96 @@
       if (!X || X.length < N * D) throw new RangeError("vector block is shorter than count * dimension");
     }
 
+    // ----- sliced work ---------------------------------------------------------
+    //
+    // The long computations (centring, the principal-direction fit, the guided
+    // tour's construction) are written once, as generator functions that pause
+    // (yield) between small pieces of work. A stepper runs them a few units at a
+    // time; the blocking functions run the same generators to the end without
+    // pausing, so there is one code path and the results are bit-identical
+    // however the work was sliced. A pause only ever falls between pieces, never
+    // inside one, so where it falls changes how much work one step does and
+    // nothing else. It falls after UNIT multiply-adds of work, or earlier once
+    // SLICE_MS milliseconds have passed since the unit began (memory-bound loops
+    // and code the engine has not optimised yet run slower per multiply-add).
+    // The clock is read about every CHECK multiply-adds.
+
+    var UNIT = 1 << 20; // multiply-adds per unit at most: about 0.6 ms of arithmetic in node
+    var CHECK = UNIT >> 4;
+    var SLICE_MS = 1;
+
+    // Counts work done and says when a unit is over.
+    function Tracker(total) {
+      this.total = total > 0 ? total : 1;
+      this.done = 0;
+      this.acc = 0;
+      this.nextCheck = CHECK;
+      this.t0 = 0;
+    }
+    Tracker.prototype.add = function (cost) {
+      this.done += cost;
+      this.acc += cost;
+      if (this.acc < this.nextCheck) return false;
+      if (this.acc >= UNIT || clockNow() - this.t0 >= SLICE_MS) {
+        this.acc = 0;
+        this.nextCheck = CHECK;
+        return true;
+      }
+      this.nextCheck = this.acc + CHECK;
+      return false;
+    };
+    // The blocking calls never pause.
+    var NO_PAUSE = {
+      add: function () {
+        return false;
+      },
+    };
+
+    function runAll(gen) {
+      var r = gen.next();
+      while (!r.done) r = gen.next();
+      return r.value;
+    }
+
+    function clockNow() {
+      if (typeof performance !== "undefined" && performance && typeof performance.now === "function") {
+        return performance.now();
+      }
+      return Date.now();
+    }
+
+    // A stepper over a generator: { step(budgetMs?) -> done, done, progress, result }.
+    // step(budgetMs) runs units until budgetMs milliseconds have passed (always at
+    // least one unit, so step(0) runs exactly one); step() runs to the end.
+    // `result` is null until done.
+    function genStepper(gen, tracker) {
+      var st = { done: false, progress: 0, result: null, step: null };
+      st.step = function (budgetMs) {
+        if (st.done) return true;
+        var limit = budgetMs === undefined ? Infinity : budgetMs;
+        var start = clockNow();
+        var first = true;
+        while (first || limit === Infinity || clockNow() - start < limit) {
+          first = false;
+          tracker.t0 = clockNow();
+          var r = gen.next();
+          if (r.done) {
+            st.done = true;
+            st.result = r.value;
+            st.progress = 1;
+            return true;
+          }
+        }
+        st.progress = Math.min(0.99, tracker.done / tracker.total);
+        return false;
+      };
+      return st;
+    }
+
+    function clamp01(x) {
+      return x < 0 ? 0 : x > 1 ? 1 : x;
+    }
+
     // ----- centring and variance -------------------------------------------
 
     // Mean of N points in D dimensions, accumulated in double precision.
@@ -132,51 +222,85 @@
       return mean;
     }
 
+    // Centring, sliced by rows: the mean (accumulated row by row in double
+    // precision, as meanOf), then the centred rows.
+    function* centreGen(X, N, D, inPlace, wk) {
+      var mean = new Float64Array(D);
+      for (var i = 0; i < N; i++) {
+        var o = i * D;
+        for (var d = 0; d < D; d++) mean[d] += X[o + d];
+        if (wk.add(D)) yield;
+      }
+      if (N > 0) for (var e = 0; e < D; e++) mean[e] /= N;
+      var Y = inPlace ? X : new Float32Array(N * D);
+      for (var i2 = 0; i2 < N; i2++) {
+        var o2 = i2 * D;
+        for (var d2 = 0; d2 < D; d2++) Y[o2 + d2] = X[o2 + d2] - mean[d2];
+        if (wk.add(D)) yield;
+      }
+      return { mean: mean, data: Y };
+    }
+
     // Subtract the mean. Returns { mean: Float64Array(D), data: Float32Array(N*D) }.
     // With opts.inPlace the input block itself is overwritten and returned as data.
     // Centring is a translation: all pairwise distances are unchanged.
     function centre(X, N, D, opts) {
-      var mean = meanOf(X, N, D);
-      var Y = opts && opts.inPlace ? X : new Float32Array(N * D);
+      checkData(X, N, D);
+      return runAll(centreGen(X, N, D, !!(opts && opts.inPlace), NO_PAUSE));
+    }
+
+    // The same, as a stepper whose result is centre()'s, bit for bit.
+    function makeCentre(X, N, D, opts) {
+      checkData(X, N, D);
+      var wk = new Tracker(2 * N * D);
+      return genStepper(centreGen(X, N, D, !!(opts && opts.inPlace), wk), wk);
+    }
+
+    function* totalVarianceGen(Y, N, D, wk) {
+      var s = 0;
       for (var i = 0; i < N; i++) {
         var o = i * D;
-        for (var d = 0; d < D; d++) Y[o + d] = X[o + d] - mean[d];
+        for (var d = 0; d < D; d++) s += Y[o + d] * Y[o + d];
+        if (wk.add(D)) yield;
       }
-      return { mean: mean, data: Y };
+      return N > 0 ? s / N : 0;
     }
 
     // Total variance of centred data: the mean squared length of the rows.
     function totalVariance(Y, N, D) {
       checkData(Y, N, D);
-      var s = 0;
-      var len = N * D;
-      for (var i = 0; i < len; i++) s += Y[i] * Y[i];
-      return N > 0 ? s / N : 0;
+      return runAll(totalVarianceGen(Y, N, D, NO_PAUSE));
     }
 
-    // Variance of the centred data along one unit direction (row r of dirs).
-    function varianceAlong(Y, N, D, dirs, r) {
-      var o = r * D;
-      var s = 0;
+    // Sum over the rows of the squared projection onto each of `rows` unit
+    // directions (row r of dirs), each sum taken in row order.
+    function* projectedSquaresGen(Y, N, D, dirs, rows, wk) {
+      var sums = new Float64Array(rows);
       for (var i = 0; i < N; i++) {
-        var p = 0;
         var oi = i * D;
-        for (var d = 0; d < D; d++) p += Y[oi + d] * dirs[o + d];
-        s += p * p;
+        for (var r = 0; r < rows; r++) {
+          var o = r * D;
+          var p = 0;
+          for (var d = 0; d < D; d++) p += Y[oi + d] * dirs[o + d];
+          sums[r] += p * p;
+        }
+        if (wk.add(rows * D)) yield;
       }
-      return N > 0 ? s / N : 0;
+      return sums;
     }
 
     // Share of the total variance held by the span of `rows` orthonormal
-    // directions (row-major, rows * D). Exact for whatever directions are given.
+    // directions (row-major, rows * D). Exact for whatever directions are given,
+    // clamped to [0, 1] (rounding can otherwise overshoot 1 by about 1e-8).
     function varianceShare(Y, N, D, dirs, rows) {
       checkData(Y, N, D);
       checkRows(dirs, rows, D, "varianceShare");
       var total = totalVariance(Y, N, D);
       if (!(total > 0)) return 0;
+      var sums = runAll(projectedSquaresGen(Y, N, D, dirs, rows, NO_PAUSE));
       var s = 0;
-      for (var r = 0; r < rows; r++) s += varianceAlong(Y, N, D, dirs, r);
-      return s / total;
+      for (var r = 0; r < rows; r++) s += N > 0 ? sums[r] / N : 0;
+      return clamp01(s / total);
     }
 
     // ----- orthonormal frames ------------------------------------------------
@@ -190,28 +314,43 @@
       checkDim(D);
       if (rows > D) throw new RangeError("cannot fit more orthonormal rows than the dimension");
       var v = new Float64Array(D);
+      for (var i = 0; i < rows; i++) orthoRow(M, i, D, v);
+      return M;
+    }
+
+    // The same, sliced by rows (one row costs about 4 * i * D multiply-adds).
+    function* orthonormalizeGen(M, rows, D, wk) {
+      checkDim(D);
+      if (rows > D) throw new RangeError("cannot fit more orthonormal rows than the dimension");
+      var v = new Float64Array(D);
       for (var i = 0; i < rows; i++) {
-        var oi = i * D;
-        var before = 0;
-        for (var d = 0; d < D; d++) {
-          v[d] = M[oi + d];
-          before += v[d] * v[d];
-        }
-        for (var pass = 0; pass < 2; pass++) {
-          for (var j = 0; j < i; j++) {
-            var oj = j * D;
-            var dp = 0;
-            for (var d2 = 0; d2 < D; d2++) dp += v[d2] * M[oj + d2];
-            for (var d3 = 0; d3 < D; d3++) v[d3] -= dp * M[oj + d3];
-          }
-        }
-        var nn = 0;
-        for (var d4 = 0; d4 < D; d4++) nn += v[d4] * v[d4];
-        if (!(nn > 1e-24) || nn <= 1e-12 * before) nn = fallbackRow(M, i, D, v);
-        var inv = 1 / Math.sqrt(nn);
-        for (var d6 = 0; d6 < D; d6++) M[oi + d6] = v[d6] * inv;
+        orthoRow(M, i, D, v);
+        if (wk.add((4 * i + 3) * D)) yield;
       }
       return M;
+    }
+
+    // Row i of M made orthogonal to rows 0..i-1 (twice) and normalised; v is scratch.
+    function orthoRow(M, i, D, v) {
+      var oi = i * D;
+      var before = 0;
+      for (var d = 0; d < D; d++) {
+        v[d] = M[oi + d];
+        before += v[d] * v[d];
+      }
+      for (var pass = 0; pass < 2; pass++) {
+        for (var j = 0; j < i; j++) {
+          var oj = j * D;
+          var dp = 0;
+          for (var d2 = 0; d2 < D; d2++) dp += v[d2] * M[oj + d2];
+          for (var d3 = 0; d3 < D; d3++) v[d3] -= dp * M[oj + d3];
+        }
+      }
+      var nn = 0;
+      for (var d4 = 0; d4 < D; d4++) nn += v[d4] * v[d4];
+      if (!(nn > 1e-24) || nn <= 1e-12 * before) nn = fallbackRow(M, i, D, v);
+      var inv = 1 / Math.sqrt(nn);
+      for (var d6 = 0; d6 < D; d6++) M[oi + d6] = v[d6] * inv;
     }
 
     // Standard basis vectors in order of least coverage by rows 0..i-1 (ties
@@ -310,6 +449,10 @@
     // where vectors row j is the unit eigenvector for values[j]. Each vector's
     // largest-magnitude component is made positive, so the output is canonical.
     function symmetricEigen(A, n) {
+      return runAll(symmetricEigenGen(A, n, NO_PAUSE));
+    }
+
+    function* symmetricEigenGen(A, n, wk) {
       var a = new Float64Array(A);
       var V = new Float64Array(n * n);
       for (var i = 0; i < n; i++) V[i * n + i] = 1;
@@ -350,6 +493,7 @@
               V[k3 * n + q2] = s * vkp + c * vkq;
             }
           }
+          if (wk.add(6 * n * (n - p2))) yield;
         }
       }
       var order = [];
@@ -391,7 +535,22 @@
     // With sampleRows = S and N > S, the directions are fitted on S rows taken
     // at an even stride (deterministic), and the variances and shares are still
     // computed exactly over all N rows.
+    // Runs makePrincipalDirections to the end: the same bytes, in one call.
     function principalDirections(Y, N, D, k, opts) {
+      checkPca(Y, N, D, opts);
+      return runAll(pcaGen(Y, N, D, k, opts || {}, NO_PAUSE, false));
+    }
+
+    // The same fit as a stepper { step(budgetMs?) -> done, done, progress, result }.
+    // Arguments are checked here, as principalDirections checks them.
+    function makePrincipalDirections(Y, N, D, k, opts) {
+      checkPca(Y, N, D, opts);
+      var o = opts || {};
+      var wk = new Tracker(pcaWorkEstimate(N, D, k, o));
+      return genStepper(pcaGen(Y, N, D, k, o, wk, false), wk);
+    }
+
+    function checkPca(Y, N, D, opts) {
       checkData(Y, N, D);
       var o = opts || {};
       var maxIt = o.maxIterations === undefined ? 60 : o.maxIterations;
@@ -403,26 +562,46 @@
       if (o.oversample !== undefined && (!(o.oversample >= 0) || Math.floor(o.oversample) !== o.oversample)) {
         throw new RangeError("oversample must be a non-negative integer");
       }
+    }
+
+    // A rough count of the multiply-adds a fit takes (for progress only),
+    // assuming a dozen iterations.
+    function pcaWorkEstimate(N, D, k, o) {
+      var K = Math.max(1, Math.min(k | 0, D));
+      var S = o.sampleRows | 0;
+      var n = S > 0 && N > S ? S : N;
+      var p = Math.min(n <= D ? n : D, K + (o.oversample === undefined ? Math.max(4, K) : o.oversample));
+      var fit = n <= D ? (n * n * D) / 2 + 12 * p * n * n : 12 * 2 * n * D * p;
+      return n * D + N * D + fit + K * N * D;
+    }
+
+    // pcaGen: the fit itself. `inner` marks the fit on the sampled rows, whose
+    // variances the outer call recomputes over all rows, so it skips them.
+    function* pcaGen(Y, N, D, k, o, wk, inner) {
+      var maxIt = o.maxIterations === undefined ? 60 : o.maxIterations;
+      var tol = o.tolerance === undefined ? 1e-6 : o.tolerance;
       var S = o.sampleRows | 0;
       if (S > 0 && N > S) {
         var Ys = new Float32Array(S * D);
         for (var si = 0; si < S; si++) {
           var src = Math.floor((si * N) / S) * D;
           for (var sd = 0; sd < D; sd++) Ys[si * D + sd] = Y[src + sd];
+          if (wk.add(D)) yield;
         }
-        var inner = {};
-        for (var key in o) if (key !== "sampleRows") inner[key] = o[key];
-        var fitted = principalDirections(Ys, S, D, k, inner);
-        fitted.totalVariance = totalVariance(Y, N, D);
+        var innerOpts = {};
+        for (var key in o) if (key !== "sampleRows") innerOpts[key] = o[key];
+        var fitted = yield* pcaGen(Ys, S, D, k, innerOpts, wk, true);
+        Ys = null;
+        fitted.totalVariance = yield* totalVarianceGen(Y, N, D, wk);
         fitted.method += "-sampled";
         fitted.sampledRows = S;
-        finishPca(Y, N, D, fitted);
+        yield* finishPcaGen(Y, N, D, fitted, wk);
         return fitted;
       }
       // k is clamped into 1..D. Directions beyond the data's rank (at most
       // N - 1 for centred data) are an orthonormal completion with variance 0.
       var K = Math.max(1, Math.min(k | 0, D));
-      var total = totalVariance(Y, N, D);
+      var total = yield* totalVarianceGen(Y, N, D, wk);
       var dirs = new Float32Array(K * D);
       var result = {
         count: K,
@@ -438,30 +617,31 @@
         sampledRows: N,
       };
       if (N === 0 || !(total > 0)) {
-        orthonormalize(dirs, K, D);
+        yield* orthonormalizeGen(dirs, K, D, wk);
         result.method = "degenerate";
-        finishPca(Y, N, D, result);
+        if (!inner) yield* finishPcaGen(Y, N, D, result, wk);
         return result;
       }
       var seed = mixSeed(o.seed === undefined ? 0 : o.seed, SALT_PCA);
       if (N <= D) {
-        var G = gram(Y, N, D);
+        var G = yield* gramGen(Y, N, D, wk);
         var vecs; // rows in N-space
         var nv = Math.min(K, N);
         if (N <= 64) {
-          vecs = symmetricEigen(G, N).vectors;
+          vecs = (yield* symmetricEigenGen(G, N, wk)).vectors;
           result.method = "gram-exact";
         } else {
-          var it = subspaceIteration(
+          var it = yield* subspaceIterationGen(
             function (Q, p, W) {
-              denseApply(G, N, Q, p, W);
+              return denseApplyGen(G, N, Q, p, W, wk);
             },
             N,
             nv,
             o.oversample,
             seed,
             maxIt,
-            tol
+            tol,
+            wk
           );
           vecs = it.vectors;
           result.method = "gram-iterative";
@@ -475,45 +655,54 @@
             if (w === 0) continue;
             var oa = a * D;
             for (var d = 0; d < D; d++) dirs[oj + d] += w * Y[oa + d];
+            if (wk.add(D)) yield;
           }
         }
-        orthonormalize(dirs, K, D);
+        yield* orthonormalizeGen(dirs, K, D, wk);
       } else {
-        var it2 = subspaceIteration(
+        var it2 = yield* subspaceIterationGen(
           function (Q, p, W) {
-            covarianceApply(Y, N, D, Q, p, W);
+            return covarianceApplyGen(Y, N, D, Q, p, W, wk);
           },
           D,
           K,
           o.oversample,
           seed,
           maxIt,
-          tol
+          tol,
+          wk
         );
         for (var j2 = 0; j2 < K * D; j2++) dirs[j2] = it2.vectors[j2];
-        orthonormalize(dirs, K, D);
+        yield* orthonormalizeGen(dirs, K, D, wk);
         result.method = "covariance-iterative";
         result.iterations = it2.iterations;
         result.converged = it2.converged;
       }
-      finishPca(Y, N, D, result);
+      if (!inner) yield* finishPcaGen(Y, N, D, result, wk);
       return result;
     }
 
-    function finishPca(Y, N, D, result) {
+    // Exact variances and shares along the result's directions, over all rows.
+    // Shares are clamped to [0, 1] (rounding can otherwise overshoot 1 slightly).
+    function* finishPcaGen(Y, N, D, result, wk) {
       var K = result.count;
       var total = result.totalVariance;
+      var sums = yield* projectedSquaresGen(Y, N, D, result.directions, K, wk);
       var s = 0;
       for (var r = 0; r < K; r++) {
-        var v = varianceAlong(Y, N, D, result.directions, r);
+        var v = N > 0 ? sums[r] / N : 0;
         result.variances[r] = v;
-        result.shares[r] = total > 0 ? v / total : 0;
+        result.shares[r] = total > 0 ? clamp01(v / total) : 0;
         s += result.shares[r];
       }
-      result.share = s;
+      result.share = clamp01(s);
     }
 
     function gram(Y, N, D) {
+      return runAll(gramGen(Y, N, D, NO_PAUSE));
+    }
+
+    function* gramGen(Y, N, D, wk) {
       var G = new Float64Array(N * N);
       for (var a = 0; a < N; a++) {
         var oa = a * D;
@@ -524,12 +713,13 @@
           G[a * N + b] = s;
           G[b * N + a] = s;
         }
+        if (wk.add((N - a) * D)) yield;
       }
       return G;
     }
 
     // W (p rows of length n) = A Q for symmetric dense A (n x n), Q given as rows.
-    function denseApply(A, n, Q, p, W) {
+    function* denseApplyGen(A, n, Q, p, W, wk) {
       for (var j = 0; j < p; j++) {
         var oj = j * n;
         for (var a = 0; a < n; a++) {
@@ -537,13 +727,14 @@
           var oa = a * n;
           for (var b = 0; b < n; b++) s += A[oa + b] * Q[oj + b];
           W[oj + a] = s;
+          if (wk.add(n)) yield;
         }
       }
     }
 
     // W (p rows of length D) = Y^T (Y Q^T)^T, i.e. the covariance (times N)
     // applied to each row of Q, without forming the D x D matrix.
-    function covarianceApply(Y, N, D, Q, p, W) {
+    function* covarianceApplyGen(Y, N, D, Q, p, W, wk) {
       // Rows of Y are taken four at a time so each pass over Q and W serves
       // four points (a quarter of the memory traffic). A missing row at the end
       // repeats the last real row with weight zero. The order of additions is
@@ -583,19 +774,21 @@
             W[o2 + d2] += a * Y[oa + d2] + b * Y[ob + d2] + (c * Y[oc + d2] + e * Y[od + d2]);
           }
         }
+        if (wk.add(8 * p * D)) yield;
       }
     }
 
     // Block subspace iteration with Rayleigh-Ritz for the top k eigenvectors
     // of a symmetric positive semi-definite operator on R^n. Deterministic for
-    // a given seed. Returns { vectors: Float64Array(k*n) rows, values, iterations, converged }.
-    function subspaceIteration(apply, n, k, oversample, seed, maxIt, tol) {
+    // a given seed. `applyGen(Q, p, W)` returns a generator that fills W.
+    // Returns { vectors: Float64Array(k*n) rows, values, iterations, converged }.
+    function* subspaceIterationGen(applyGen, n, k, oversample, seed, maxIt, tol, wk) {
       var extra = oversample === undefined ? Math.max(4, k) : oversample;
       var p = Math.min(n, k + extra);
       var rng = makeRandom(seed);
       var Q = new Float64Array(p * n);
       rng.fillGauss(Q, 0, p * n);
-      orthonormalize(Q, p, n);
+      yield* orthonormalizeGen(Q, p, n, wk);
       var W = new Float64Array(p * n);
       var B = new Float64Array(p * p);
       var prev = null;
@@ -603,7 +796,7 @@
       var iterations = 0;
       var converged = false;
       for (var it = 0; it <= maxIt; it++) {
-        apply(Q, p, W);
+        yield* applyGen(Q, p, W);
         iterations = it + 1;
         for (var a = 0; a < p; a++) {
           for (var b = a; b < p; b++) {
@@ -612,8 +805,9 @@
             B[a * p + b] = s;
             B[b * p + a] = s;
           }
+          if (wk.add((p - a) * n)) yield;
         }
-        eig = symmetricEigen(B, p);
+        eig = yield* symmetricEigenGen(B, p, wk);
         if (prev) {
           var worst = 0;
           for (var r = 0; r < k; r++) {
@@ -630,7 +824,7 @@
         var tmp = Q;
         Q = W;
         W = tmp;
-        orthonormalize(Q, p, n);
+        yield* orthonormalizeGen(Q, p, n, wk);
       }
       var vectors = new Float64Array(k * n);
       for (var r2 = 0; r2 < k; r2++) {
@@ -638,6 +832,7 @@
           var w = eig.vectors[r2 * p + c];
           if (w === 0) continue;
           for (var x2 = 0; x2 < n; x2++) vectors[r2 * n + x2] += w * Q[c * n + x2];
+          if (wk.add(n)) yield;
         }
       }
       return { vectors: vectors, values: eig.values.slice(0, k), iterations: iterations, converged: converged };
@@ -741,27 +936,54 @@
     // opts: { seed (0), subspace (8), speed, pca (a principalDirections result
     //         to reuse); sampleRows, maxIterations, tolerance and oversample are
     //         passed to principalDirections }
+    // Runs makeGuidedTour to the end: the same tour, in one call.
     function guidedTour(Y, N, D, opts) {
-      checkData(Y, N, D);
       var o = opts || {};
+      var m = checkGuidedTour(Y, N, D, o);
+      return runAll(guidedTourGen(Y, N, D, o, m, NO_PAUSE));
+    }
+
+    // The same as a stepper { step(budgetMs?) -> done, done, progress, result }
+    // whose result is the tour.
+    function makeGuidedTour(Y, N, D, opts) {
+      var o = opts || {};
+      var m = checkGuidedTour(Y, N, D, o);
+      var est = needsFit(o.pca, m, D) ? pcaWorkEstimate(N, D, m, o) : 1;
+      var wk = new Tracker(est);
+      return genStepper(guidedTourGen(Y, N, D, o, m, wk), wk);
+    }
+
+    function needsFit(pca, m, D) {
+      return !pca || pca.count < m || pca.dimension !== D;
+    }
+
+    function tourPcaOpts(o) {
+      return {
+        seed: o.seed,
+        sampleRows: o.sampleRows,
+        maxIterations: o.maxIterations,
+        tolerance: o.tolerance,
+        oversample: o.oversample,
+      };
+    }
+
+    function checkGuidedTour(Y, N, D, o) {
+      checkData(Y, N, D);
       var m = Math.min(o.subspace === undefined ? 8 : o.subspace | 0, D);
       if (m < 3) throw new RangeError("a guided tour needs a subspace of at least three directions");
+      if (needsFit(o.pca, m, D)) checkPca(Y, N, D, tourPcaOpts(o));
+      return m;
+    }
+
+    function* guidedTourGen(Y, N, D, o, m, wk) {
       var pca = o.pca;
-      if (!pca || pca.count < m || pca.dimension !== D) {
-        pca = principalDirections(Y, N, D, m, {
-          seed: o.seed,
-          sampleRows: o.sampleRows,
-          maxIterations: o.maxIterations,
-          tolerance: o.tolerance,
-          oversample: o.oversample,
-        });
-      }
+      if (needsFit(pca, m, D)) pca = yield* pcaGen(Y, N, D, m, tourPcaOpts(o), wk, false);
       var basis = pca.directions.subarray(0, m * D);
       var tour = makeTour(basis, m, D, { seed: o.seed, speed: o.speed });
       var share = 0;
       for (var j = 0; j < m; j++) share += pca.shares[j];
       tour.kind = "guided-tour";
-      tour.varianceShare = share;
+      tour.varianceShare = clamp01(share);
       tour.variances = pca.variances.slice(0, m);
       tour.totalVariance = pca.totalVariance;
       tour.pca = pca;
@@ -994,6 +1216,19 @@
     // ids must be integers in 0..N-1 (at least one); anything else is a caller
     // bug and throws RangeError.
     function localFrame(X, N, D, ids, out) {
+      checkLocalFrame(X, N, D, ids);
+      return runAll(localFrameGen(X, N, D, ids, out, NO_PAUSE));
+    }
+
+    // The same as a stepper whose result is localFrame's frame, bit for bit.
+    function makeLocalFrame(X, N, D, ids, out) {
+      checkLocalFrame(X, N, D, ids);
+      var M = ids.length;
+      var wk = new Tracker(M * M * D + 4 * M * D + 50 * M * M * M);
+      return genStepper(localFrameGen(X, N, D, ids, out, wk), wk);
+    }
+
+    function checkLocalFrame(X, N, D, ids) {
       checkData(X, N, D);
       var M = ids.length;
       if (!(M >= 1)) throw new RangeError("localFrame needs at least one point id");
@@ -1003,6 +1238,10 @@
           throw new RangeError("localFrame: point id " + id + " is outside 0.." + (N - 1));
         }
       }
+    }
+
+    function* localFrameGen(X, N, D, ids, out, wk) {
+      var M = ids.length;
       var mean = new Float64Array(D);
       for (var a = 0; a < M; a++) {
         var oa = ids[a] * D;
@@ -1014,8 +1253,9 @@
         var oa2 = ids[a2] * D;
         for (var d2 = 0; d2 < D; d2++) Yl[a2 * D + d2] = X[oa2 + d2] - mean[d2];
       }
-      var G = gram(Yl, M, D);
-      var eig = symmetricEigen(G, M);
+      if (wk.add(2 * M * D)) yield;
+      var G = yield* gramGen(Yl, M, D, wk);
+      var eig = yield* symmetricEigenGen(G, M, wk);
       var F64 = new Float64Array(3 * D);
       var axes = Math.min(3, M);
       for (var ax = 0; ax < axes; ax++) {
@@ -1024,6 +1264,7 @@
           var w = eig.vectors[ax * M + b];
           for (var d3 = 0; d3 < D; d3++) F64[ax * D + d3] += w * Yl[b * D + d3];
         }
+        if (wk.add(M * D)) yield;
       }
       orthonormalize(F64, 3, D);
       var F = out || new Float32Array(3 * D);
@@ -1143,6 +1384,7 @@
       makeRandom: makeRandom,
       meanOf: meanOf,
       centre: centre,
+      makeCentre: makeCentre,
       totalVariance: totalVariance,
       varianceShare: varianceShare,
       orthonormalize: orthonormalize,
@@ -1151,8 +1393,10 @@
       project: project,
       symmetricEigen: symmetricEigen,
       principalDirections: principalDirections,
+      makePrincipalDirections: makePrincipalDirections,
       makeTour: makeTour,
       guidedTour: guidedTour,
+      makeGuidedTour: makeGuidedTour,
       hiddenDirection: hiddenDirection,
       swapAngle: swapAngle,
       swapStep: swapStep,
@@ -1160,6 +1404,7 @@
       makeKnn: makeKnn,
       knn: knn,
       localFrame: localFrame,
+      makeLocalFrame: makeLocalFrame,
       alignTo: alignTo,
       smoothstep: smoothstep,
       blendFrames: blendFrames,
@@ -1391,6 +1636,35 @@
     return out;
   }
 
+  // Appends write into spare capacity instead of copying the base's vectors.
+  // A set's `vectors` is a Float32Array view of exactly count * dimension
+  // values over a buffer that may be longer. `head` maps a buffer to the end
+  // (in values) of the newest view over it. An append onto the set whose view
+  // ends at the head writes its rows just after it and returns a longer view
+  // over the same buffer: the older, shorter view is untouched, so the older
+  // set stays valid. An append onto any other set (a fork, or a set that never
+  // had spare room) copies into a new buffer of twice the needed length, so
+  // the cost of appends is proportional to the points added, amortised.
+  var head = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function appendValues(baseValues, values) {
+    var n0 = baseValues.length;
+    var n1 = n0 + values.length;
+    var buf = baseValues.buffer;
+    var off = baseValues.byteOffset / 4;
+    if (head && head.get(buf) === off + n0 && off + n1 <= buf.byteLength / 4) {
+      var grown = new Float32Array(buf, baseValues.byteOffset, n1);
+      grown.set(values, n0);
+      head.set(buf, off + n1);
+      return grown;
+    }
+    var fresh = new Float32Array(Math.max(2 * n1, 64));
+    fresh.set(baseValues, 0);
+    fresh.set(values, n0);
+    if (head) head.set(fresh.buffer, n1);
+    return fresh.subarray(0, n1);
+  }
+
   function copyPoints(pts) {
     var out = [];
     for (var i = 0; i < pts.length; i++) {
@@ -1458,9 +1732,7 @@
       for (var n = 0; n < points.length; n++) {
         if (has(held, points[n].id)) return refuse("id-exists", { id: points[n].id }, base);
       }
-      var merged = new Float32Array(base.vectors.length + values.length);
-      merged.set(base.vectors, 0);
-      merged.set(values, base.vectors.length);
+      var merged = appendValues(base.vectors, values);
       var allPoints = base.points.concat(points);
       return {
         ok: true,
@@ -2827,6 +3099,38 @@ ET.modes = (function () {
     return st;
   }
 
+  // A sliced form of stats(set) for a stepper task. run() adds the next rows
+  // (about STATS_WORK values, so about half a millisecond) and returns true
+  // once the statistics are complete and cached; job.result is then the same
+  // object stats(set) returns, with the same values bit for bit (the rows are
+  // added in the same order). A set whose statistics are cached finishes at once.
+  var STATS_WORK = 1 << 19;
+  function statsJob(set) {
+    var D = set.dimension;
+    var rows = Math.max(1, Math.floor(STATS_WORK / Math.max(1, D)));
+    var st = null;
+    var job = {
+      result: null,
+      progress: function () {
+        return job.result ? 1 : st && set.count > 0 ? st.count / set.count : 0;
+      },
+      run: function () {
+        if (job.result) return true;
+        if (!st && statsCache && statsCache.has(set)) {
+          job.result = statsCache.get(set);
+          return true;
+        }
+        if (!st) st = { count: 0, dimension: D, sum: new Float64Array(D), sumSq: 0, mean: new Float32Array(D) };
+        addRows(st, set.vectors, st.count, Math.min(set.count, st.count + rows), D);
+        if (st.count < set.count) return false;
+        if (statsCache && !statsCache.has(set)) statsCache.set(set, st);
+        job.result = statsCache ? statsCache.get(set) : st;
+        return true;
+      },
+    };
+    return job;
+  }
+
   // ----- shared motion helpers ------------------------------------------------
 
   // A centre that glides exponentially (time constant tau seconds) from where it
@@ -3024,7 +3328,9 @@ ET.modes = (function () {
     check: check,
     create: create,
     stepper: stepper,
+    now: now,
     stats: stats,
+    statsJob: statsJob,
     makeGlide: makeGlide,
     alignment: alignment,
     applyAlignment: applyAlignment,
@@ -3059,7 +3365,10 @@ ET.modes = (function () {
   var DEFAULTS = {
     subspace: 8, // directions the tour moves through
     speed: 0.42, // rad/s, the reference's rate
-    transition: 1.5, // seconds to blend in from the previous view
+    transition: 1.5, // seconds to blend in from the previous view (mode entry only)
+    refitTransition: "auto", // seconds to turn onto a refitted tour; "auto" picks it from the turn's size
+    refitTransitionMin: 1.5, // "auto" never turns faster than this many seconds
+    refitTransitionMax: 12, // nor slower than this many
     fitRows: 4096, // fit the directions on at most this many rows (shares stay exact)
     centreTau: 0.7, // seconds: the camera glides to the data's mean (the reference's)
     zoomSample: 512, // points used for auto-framing
@@ -3125,30 +3434,48 @@ ET.modes = (function () {
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
     }
 
+    // The fit, in small units: centring (ET.math.makeCentre), then the
+    // principal directions and the tour (ET.math.makeGuidedTour), each pumped
+    // one unit (about a millisecond) per run(). The tour is bit-identical to
+    // the blocking ET.math.guidedTour on the same data and seed.
     function fit(onDone) {
-      var Y = null;
       var fitSet = null;
+      var cen = null;
+      var tourSt = null;
       return [
         {
           required: true,
           weight: 1,
+          progress: function () {
+            return cen ? cen.progress : 0;
+          },
           run: function () {
-            fitSet = set;
-            Y = ET.math.centre(fitSet.vectors, fitSet.count, D).data;
-            return true;
+            if (!cen) {
+              fitSet = set;
+              cen = ET.math.makeCentre(fitSet.vectors, fitSet.count, D);
+            }
+            return cen.step(0);
           },
         },
         {
           required: true,
           weight: 8,
+          progress: function () {
+            return tourSt ? tourSt.progress : 0;
+          },
           run: function () {
-            var tour = ET.math.guidedTour(Y, fitSet.count, D, {
-              seed: seed,
-              subspace: opt.subspace,
-              speed: opt.speed,
-              sampleRows: fitSet.count > opt.fitRows ? opt.fitRows : undefined,
-            });
-            Y = null; // the centred copy is not kept
+            if (!tourSt) {
+              tourSt = ET.math.makeGuidedTour(cen.result.data, fitSet.count, D, {
+                seed: seed,
+                subspace: opt.subspace,
+                speed: opt.speed,
+                sampleRows: fitSet.count > opt.fitRows ? opt.fitRows : undefined,
+              });
+            }
+            if (!tourSt.step(0)) return false;
+            var tour = tourSt.result;
+            cen = null; // the centred copy is not kept
+            tourSt = null;
             onDone(tour, fitSet.count);
             return true;
           },
@@ -3178,12 +3505,15 @@ ET.modes = (function () {
           },
         ]);
       }
+      var job = M.statsJob(set);
       var tasks = [
         {
           required: true,
           weight: 1,
+          progress: job.progress,
           run: function () {
-            st = M.stats(set);
+            if (!job.run()) return false;
+            st = job.result;
             var start = entry && entry.centre ? entry.centre : st.mean;
             glide = M.makeGlide(start, st.mean, opt.centreTau, D);
             return true;
@@ -3215,14 +3545,20 @@ ET.modes = (function () {
       return i;
     }
 
-    function frameAt(t, res) {
+    // The frame before the entry blend: the active tour, turned onto from the
+    // previous one during a refit's blend.
+    function innerFrame(t, res) {
       var i = activeIndex(t);
       var cur = tours[i];
       tourFrame(cur, t, res);
-      if (i > 0 && t - cur.t0 < opt.transition) {
-        var prev = tourFrame(tours[i - 1], t, new Float32Array(3 * D));
-        ET.math.blendFrames(prev, res, ET.math.smoothstep((t - cur.t0) / opt.transition), D, res);
+      if (cur.blend && t - cur.t0 < cur.blend.duration) {
+        applyRefitBlend(cur.blend, 1 - refitEase((t - cur.t0) / cur.blend.duration), res, D);
       }
+      return res;
+    }
+
+    function frameAt(t, res) {
+      innerFrame(t, res);
       if (entry && t < opt.transition) {
         ET.math.blendFrames(entry.frame, res, ET.math.smoothstep(t / opt.transition), D, res);
       }
@@ -3237,12 +3573,31 @@ ET.modes = (function () {
     // so the past already fixed is never rewritten.
     function fixSwitch(T) {
       var t0 = Math.max(T, lastSwitch());
-      var al = M.alignment(pending.tour.frameAt(t0), frameAt(t0, new Float32Array(3 * D)), D);
-      tours.push({ tour: pending.tour, al: al, t0: t0, share: pending.tour.varianceShare, count: pending.count });
+      var shown = innerFrame(t0, new Float32Array(3 * D));
+      var al = M.alignment(pending.tour.frameAt(t0), shown, D);
+      var next = { tour: pending.tour, al: al, t0: t0, share: pending.tour.varianceShare, count: pending.count, blend: null };
+      var start = tourFrame(next, t0, new Float32Array(3 * D));
+      next.blend = makeRefitBlend(shown, start, D);
+      next.blend.duration = refitDuration(next.blend, pending.tour, t0);
+      tours.push(next);
       self.varianceShare = pending.tour.varianceShare;
       pending = null;
       refitRunning = false;
       requestedAt = null;
+    }
+
+    // How long the turn onto a refitted tour takes. With "auto": long enough
+    // that the turn adds at most REFIT_EXTRA times the tour's own mean rate of
+    // change at its fastest (so the frame never changes much faster than in
+    // normal running), within [refitTransitionMin, refitTransitionMax].
+    // A pure function of the two tours and the switch time.
+    function refitDuration(bl, tour, t0) {
+      if (typeof opt.refitTransition === "number" && opt.refitTransition > 0) return opt.refitTransition;
+      var lo = opt.refitTransitionMin;
+      var hi = Math.max(lo, opt.refitTransitionMax);
+      var v = tourRate(tour, t0);
+      var need = v > 0 ? (REFIT_PEAK * bl.rate) / (REFIT_EXTRA * v) : hi;
+      return need < lo ? lo : need > hi ? hi : need;
     }
 
     function drawFor(frame, centre, t) {
@@ -3352,6 +3707,7 @@ ET.modes = (function () {
         fittedRows: last && last.tour.pca ? last.tour.pca.sampledRows : 0,
         method: last && last.tour.pca ? last.tour.pca.method : null,
         refitAt: last && last.t0 > -Infinity ? last.t0 : null,
+        refitTransition: last && last.blend ? last.blend.duration : null,
         refitPending: refitRunning,
         empty: empty,
       };
@@ -3366,6 +3722,273 @@ ET.modes = (function () {
     }
 
     return self;
+  }
+
+  // ----- the turn onto a refitted tour ---------------------------------------
+  //
+  // At the switch time T the frame shown is A (three orthonormal rows) and the
+  // new tour starts at B. The turn is a fixed rotation Q of the whole space
+  // with Q B = A, made of a rotation inside B's span (3 x 3, Z) and rotations
+  // in mutually orthogonal planes taking B's principal vectors to A's (the
+  // shortest turn between the two spans). During the blend the frame is
+  // Q(s) applied to the new tour's moving frame, with s going from 1 to 0
+  // along refitEase: the tour moves at its own rate (a rotation does not change
+  // it) and the turn adds a rate that the duration keeps small. Q(s) is a
+  // rotation for every s, so the frame stays orthonormal and never folds.
+
+  var REFIT_RAMP = 0.25; // refitEase speeds up over the first quarter and slows down over the last
+  var REFIT_PEAK = 1 / (1 - REFIT_RAMP); // refitEase's largest slope
+  var REFIT_EXTRA = 0.5; // the turn adds at most this share of the tour's mean rate
+
+  // Progress 0..1 with an even rate in the middle and smooth ends.
+  function refitEase(u) {
+    var x = u <= 0 ? 0 : u >= 1 ? 1 : u;
+    var a = REFIT_RAMP;
+    if (x > 1 - a) return 1 - refitEase(1 - x);
+    if (x < a) {
+      var y = x / a;
+      return REFIT_PEAK * a * (y * y * y - (y * y * y * y) / 2);
+    }
+    return REFIT_PEAK * (a / 2 + x - a);
+  }
+
+  function dotRows(P, i, Q, j, D) {
+    var s = 0;
+    for (var d = 0; d < D; d++) s += P[i * D + d] * Q[j * D + d];
+    return s;
+  }
+
+  function makeRefitBlend(A, B, D) {
+    // M = A B^T (3 x 3) = U S V^T by the eigenvectors of M^T M.
+    var Mt = new Float64Array(9);
+    for (var i = 0; i < 3; i++) for (var j = 0; j < 3; j++) Mt[i * 3 + j] = dotRows(A, i, B, j, D);
+    var MtM = new Float64Array(9);
+    for (var a = 0; a < 3; a++) {
+      for (var b = 0; b < 3; b++) {
+        var s0 = 0;
+        for (var k = 0; k < 3; k++) s0 += Mt[k * 3 + a] * Mt[k * 3 + b];
+        MtM[a * 3 + b] = s0;
+      }
+    }
+    var V = ET.math.symmetricEigen(MtM, 3).vectors; // row j: v_j
+    var U = new Float64Array(9); // row j: u_j
+    for (var jj = 0; jj < 2; jj++) {
+      var n = 0;
+      for (var r = 0; r < 3; r++) {
+        var x = 0;
+        for (var c = 0; c < 3; c++) x += Mt[r * 3 + c] * V[jj * 3 + c];
+        U[jj * 3 + r] = x;
+      }
+      if (jj === 1) {
+        var dp = U[3] * U[0] + U[4] * U[1] + U[5] * U[2];
+        for (var r1 = 0; r1 < 3; r1++) U[3 + r1] -= dp * U[r1];
+      }
+      for (var r2 = 0; r2 < 3; r2++) n += U[jj * 3 + r2] * U[jj * 3 + r2];
+      if (n > 1e-18) {
+        n = Math.sqrt(n);
+        for (var r3 = 0; r3 < 3; r3++) U[jj * 3 + r3] /= n;
+      } else {
+        // M has (almost) no part here: any unit vector orthogonal to the earlier ones
+        var best = 0;
+        var bestCover = Infinity;
+        for (var e = 0; e < 3; e++) {
+          var cover = jj === 0 ? 0 : Math.abs(U[e]);
+          if (cover < bestCover) {
+            bestCover = cover;
+            best = e;
+          }
+        }
+        for (var r4 = 0; r4 < 3; r4++) U[jj * 3 + r4] = r4 === best ? 1 : 0;
+        if (jj === 1) {
+          var dp2 = U[3] * U[0] + U[4] * U[1] + U[5] * U[2];
+          var n2 = 0;
+          for (var r5 = 0; r5 < 3; r5++) {
+            U[3 + r5] -= dp2 * U[r5];
+            n2 += U[3 + r5] * U[3 + r5];
+          }
+          n2 = Math.sqrt(n2);
+          for (var r6 = 0; r6 < 3; r6++) U[3 + r6] /= n2;
+        }
+      }
+    }
+    // u_2 completes U so that Z = V^T U is a rotation (det +1).
+    var detV =
+      V[0] * (V[4] * V[8] - V[5] * V[7]) - V[1] * (V[3] * V[8] - V[5] * V[6]) + V[2] * (V[3] * V[7] - V[4] * V[6]);
+    var sg = detV < 0 ? -1 : 1;
+    U[6] = sg * (U[1] * U[5] - U[2] * U[4]);
+    U[7] = sg * (U[2] * U[3] - U[0] * U[5]);
+    U[8] = sg * (U[0] * U[4] - U[1] * U[3]);
+    // Principal vectors B'_j = sum_k v_j[k] B_k and A'_j = sum_k u_j[k] A_k.
+    var Bp = new Float64Array(3 * D);
+    var Ap = new Float64Array(3 * D);
+    for (var j2 = 0; j2 < 3; j2++) {
+      for (var k2 = 0; k2 < 3; k2++) {
+        var wv = V[j2 * 3 + k2];
+        var wu = U[j2 * 3 + k2];
+        for (var d = 0; d < D; d++) {
+          Bp[j2 * D + d] += wv * B[k2 * D + d];
+          Ap[j2 * D + d] += wu * A[k2 * D + d];
+        }
+      }
+    }
+    // Plane j turns B'_j toward T_j by theta_j, ending at A'_j.
+    var Tp = new Float64Array(3 * D);
+    var theta = new Float64Array(3);
+    for (var j3 = 0; j3 < 3; j3++) {
+      var cth = dotRows(Ap, j3, Bp, j3, D);
+      var nn = 0;
+      for (var d2 = 0; d2 < D; d2++) {
+        var tv = Ap[j3 * D + d2] - cth * Bp[j3 * D + d2];
+        Tp[j3 * D + d2] = tv;
+        nn += tv * tv;
+      }
+      nn = Math.sqrt(nn);
+      if (nn > 1e-12) {
+        for (var d3 = 0; d3 < D; d3++) Tp[j3 * D + d3] /= nn;
+        theta[j3] = Math.atan2(nn, cth);
+      } else {
+        for (var d4 = 0; d4 < D; d4++) Tp[j3 * D + d4] = 0;
+        theta[j3] = 0;
+      }
+    }
+    // Z = V^T U: Z[i][j] = v_i . u_j, as an axis and angle (Z = exp(phi K)).
+    var Z = new Float64Array(9);
+    for (var zi = 0; zi < 3; zi++) {
+      for (var zj = 0; zj < 3; zj++) {
+        Z[zi * 3 + zj] = V[zi * 3] * U[zj * 3] + V[zi * 3 + 1] * U[zj * 3 + 1] + V[zi * 3 + 2] * U[zj * 3 + 2];
+      }
+    }
+    var cphi = (Z[0] + Z[4] + Z[8] - 1) / 2;
+    var phi = Math.acos(cphi > 1 ? 1 : cphi < -1 ? -1 : cphi);
+    var K = new Float64Array(9);
+    var sphi = Math.sin(phi);
+    var axis = null;
+    if (phi > 1e-12 && sphi > 1e-6) {
+      axis = [(Z[7] - Z[5]) / (2 * sphi), (Z[2] - Z[6]) / (2 * sphi), (Z[3] - Z[1]) / (2 * sphi)];
+    } else if (phi > 1e-12) {
+      // a half turn: Z + I = 2 n n^T
+      var bi = 0;
+      for (var q = 1; q < 3; q++) if (Z[q * 4] > Z[bi * 4]) bi = q;
+      var len = Math.sqrt(Math.max((Z[bi * 4] + 1) / 2, 1e-300));
+      axis = [0, 0, 0];
+      for (var q2 = 0; q2 < 3; q2++) axis[q2] = (Z[q2 * 3 + bi] + (q2 === bi ? 1 : 0)) / (4 * len);
+    }
+    if (axis) {
+      K[1] = -axis[2];
+      K[2] = axis[1];
+      K[3] = axis[2];
+      K[5] = -axis[0];
+      K[6] = -axis[1];
+      K[7] = axis[0];
+    } else {
+      phi = 0;
+    }
+    var bl = { Bp: Bp, Tp: Tp, theta: theta, K: K, phi: phi, duration: 0, rate: 0 };
+    bl.rate = blendRate(bl, B, D);
+    return bl;
+  }
+
+  // Q(s) applied to the rows of F, in place, then re-orthonormalised.
+  function applyRefitBlend(bl, s, F, D) {
+    var x = new Float64Array(3 * D);
+    for (var i = 0; i < 3 * D; i++) x[i] = F[i];
+    rotateRows(bl, s, x, D);
+    ET.math.orthonormalize(x, 3, D);
+    for (var i2 = 0; i2 < 3 * D; i2++) F[i2] = x[i2];
+    return ET.math.orthonormalize(F, 3, D);
+  }
+
+  function rotateRows(bl, s, x, D) {
+    if (s === 0) return x;
+    var K = bl.K;
+    var sn = Math.sin(s * bl.phi);
+    var cm = 1 - Math.cos(s * bl.phi);
+    var Z = new Float64Array(9);
+    for (var a = 0; a < 3; a++) {
+      for (var b = 0; b < 3; b++) {
+        var k2 = K[a * 3] * K[b] + K[a * 3 + 1] * K[3 + b] + K[a * 3 + 2] * K[6 + b];
+        Z[a * 3 + b] = (a === b ? 1 : 0) + sn * K[a * 3 + b] + cm * k2;
+      }
+    }
+    var Bp = bl.Bp;
+    var Tp = bl.Tp;
+    for (var r = 0; r < 3; r++) {
+      var o = r * D;
+      var c0 = 0;
+      var c1 = 0;
+      var c2 = 0;
+      for (var d = 0; d < D; d++) {
+        c0 += x[o + d] * Bp[d];
+        c1 += x[o + d] * Bp[D + d];
+        c2 += x[o + d] * Bp[2 * D + d];
+      }
+      var e0 = c0 * Z[0] + c1 * Z[3] + c2 * Z[6] - c0;
+      var e1 = c0 * Z[1] + c1 * Z[4] + c2 * Z[7] - c1;
+      var e2 = c0 * Z[2] + c1 * Z[5] + c2 * Z[8] - c2;
+      for (var d2 = 0; d2 < D; d2++) x[o + d2] += e0 * Bp[d2] + e1 * Bp[D + d2] + e2 * Bp[2 * D + d2];
+      for (var j = 0; j < 3; j++) {
+        var th = s * bl.theta[j];
+        if (th === 0) continue;
+        var oj = j * D;
+        var p = 0;
+        var q = 0;
+        for (var d3 = 0; d3 < D; d3++) {
+          p += x[o + d3] * Bp[oj + d3];
+          q += x[o + d3] * Tp[oj + d3];
+        }
+        var cs = Math.cos(th) - 1;
+        var si = Math.sin(th);
+        var wb = p * cs - q * si;
+        var wt = p * si + q * cs;
+        for (var d4 = 0; d4 < D; d4++) x[o + d4] += wb * Bp[oj + d4] + wt * Tp[oj + d4];
+      }
+    }
+    return x;
+  }
+
+  // How fast the turn moves the frame per unit of s (Frobenius norm of the
+  // change, largest over s), measured on the new tour's starting frame B.
+  function blendRate(bl, B, D) {
+    var h = 1e-4;
+    var worst = 0;
+    var x0 = new Float64Array(3 * D);
+    var x1 = new Float64Array(3 * D);
+    for (var k = 0; k <= 8; k++) {
+      var s0 = Math.max(0, k / 8 - h);
+      var s1 = Math.min(1, k / 8 + h);
+      for (var i = 0; i < 3 * D; i++) {
+        x0[i] = B[i];
+        x1[i] = B[i];
+      }
+      rotateRows(bl, s0, x0, D);
+      rotateRows(bl, s1, x1, D);
+      var n = 0;
+      for (var i2 = 0; i2 < 3 * D; i2++) n += (x1[i2] - x0[i2]) * (x1[i2] - x0[i2]);
+      var rate = Math.sqrt(n) / (s1 - s0);
+      if (rate > worst) worst = rate;
+    }
+    return worst;
+  }
+
+  // The tour's mean rate of change (Frobenius norm per second of mode time)
+  // over the 12 s from t0, sampled every half second. The frame is the
+  // coefficients times an orthonormal basis, so the coefficients' rate is the
+  // frame's.
+  function tourRate(tour, t0) {
+    var h = 1e-3;
+    var m = tour.subspace;
+    var a = new Float64Array(3 * m);
+    var b = new Float64Array(3 * m);
+    var sum = 0;
+    for (var k = 0; k < 24; k++) {
+      var t = t0 + k * 0.5;
+      tour.coefficientsAt(t, a);
+      tour.coefficientsAt(t + h, b);
+      var n = 0;
+      for (var i = 0; i < 3 * m; i++) n += (b[i] - a[i]) * (b[i] - a[i]);
+      sum += Math.sqrt(n) / h;
+    }
+    return sum / 24;
   }
 
   M.register({
@@ -3387,12 +4010,13 @@ ET.modes = (function () {
 // ---------------------------------------------------------------------------
 (function () {
   var M = ET.modes;
+  var KNN_SLICE_MS = 1; // a unit of neighbour work stops after its first row once this has passed
 
   var DEFAULTS = {
     period: 3.4, // seconds per axis swap (the reference's)
     neighbourLimit: 1000, // only the first this-many points get neighbours (the reference's 1,000)
     wireNeighbours: 3, // wires per point (the reference's 3)
-    sliceRows: 16, // query rows per unit of neighbour work (the reference's 16)
+    sliceRows: 16, // at most this many query rows per unit of neighbour work (the reference's 16)
     transition: 1.2, // seconds to blend draw parameters in from the previous view
     wireFade: 1.2, // seconds for the wires to fade in once measured
     centreTau: 0.7, // seconds: the camera glides to the data's mean
@@ -3457,11 +4081,14 @@ ET.modes = (function () {
     }
 
     function statsTask() {
+      var job = M.statsJob(set);
       return {
         required: true,
         weight: 1,
+        progress: job.progress,
         run: function () {
-          st = M.stats(set);
+          if (!job.run()) return false;
+          st = job.result;
           var start = entry && entry.centre ? entry.centre : st.mean;
           glide = M.makeGlide(start, st.mean, opt.centreTau, D);
           return true;
@@ -3482,7 +4109,16 @@ ET.modes = (function () {
         },
         run: function () {
           if (knn !== stepper) return true; // superseded by a newer measurement
-          if (!stepper.step(opt.sliceRows)) return false;
+          // Query rows one at a time until about KNN_SLICE_MS has passed (at
+          // least one row, at most sliceRows). The rows are measured in order
+          // whatever the slicing, so the wires never depend on it.
+          var start = M.now();
+          var rows = 0;
+          while (!stepper.done && rows < opt.sliceRows && (rows === 0 || M.now() - start < KNN_SLICE_MS)) {
+            stepper.step(1);
+            rows++;
+          }
+          if (!stepper.done) return false;
           buildWires(s, stepper);
           return true;
         },
@@ -3690,6 +4326,7 @@ ET.modes = (function () {
 (function () {
   var M = ET.modes;
   var SALT_WANDER = 0x3a7d3e;
+  var SCAN_WORK = 1 << 17; // values compared per piece of a neighbour scan done ahead of need
 
   var DEFAULTS = {
     neighbours: 24, // neighbours a local frame is fitted to (the reference's K)
@@ -3742,6 +4379,7 @@ ET.modes = (function () {
     var nbrCache = {};
     var targets = []; // stop of hop h
     var toFrames = []; // aligned local frame of hop h
+    var ahead = null; // the next hop's work in progress: { h, j, scan, fit }
     var out = null;
     var tmpC = null;
 
@@ -3760,6 +4398,7 @@ ET.modes = (function () {
       nbrCache = {};
       targets = [];
       toFrames = [];
+      ahead = null;
       self.time = 0;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
       tmpC = new Float64Array(D);
@@ -3791,20 +4430,47 @@ ET.modes = (function () {
       for (var c = 0; c < visit.length; c++) inVisit[visit[c]] = 1;
     }
 
+    // Preparation: the set's statistics (sliced), the visit list and the
+    // neighbour pool (one unit, O(N)), then the first stop, computed in slices
+    // as every later stop is (see workAhead), so the first frame does no heavy
+    // work. The stops are the same whenever and however they are computed.
     function prepare() {
+      if (empty) {
+        return M.stepper([
+          {
+            required: true,
+            run: function () {
+              ready = true;
+              return true;
+            },
+          },
+        ]);
+      }
+      var job = M.statsJob(set);
+      var pooled = false;
       return M.stepper([
         {
           required: true,
           weight: 1,
+          progress: job.progress,
           run: function () {
-            if (empty) {
-              ready = true;
-              return true;
-            }
-            var st = M.stats(set);
+            if (!job.run()) return false;
+            var st = job.result;
             scale = st.radius / M.REFERENCE_RADIUS;
             startCentre = entry && entry.centre ? new Float32Array(entry.centre) : new Float32Array(st.mean);
-            buildPool();
+            return true;
+          },
+        },
+        {
+          required: true,
+          weight: 1,
+          run: function () {
+            if (!pooled) {
+              buildPool();
+              pooled = true;
+              return false;
+            }
+            if (!workAhead(0)) return false;
             ready = true;
             return true;
           },
@@ -3820,13 +4486,29 @@ ET.modes = (function () {
     // nearest first, ties to the lower index. O(pool * D), cached per point.
     function nearest(j) {
       if (nbrCache[j]) return nbrCache[j];
-      var X = set.vectors;
+      var sc = scanStart(j);
+      scanRows(sc, pool.length);
+      return scanFinish(sc);
+    }
+
+    // The same search, resumable: scanRows(sc, rows) measures the next `rows`
+    // pool points. The pool is scanned in order, so the result does not depend
+    // on how the scan was sliced.
+    function scanStart(j) {
       var K = Math.max(0, Math.min(opt.neighbours, pool.length - 1));
-      var bestD = new Float64Array(K);
-      var bestI = new Int32Array(K);
-      var filled = 0;
+      return { j: j, K: K, q: 0, filled: 0, bestD: new Float64Array(K), bestI: new Int32Array(K) };
+    }
+
+    function scanRows(sc, rows) {
+      var X = set.vectors;
+      var K = sc.K;
+      var bestD = sc.bestD;
+      var bestI = sc.bestI;
+      var filled = sc.filled;
+      var j = sc.j;
       var oj = j * D;
-      for (var q = 0; q < pool.length; q++) {
+      var stop = Math.min(pool.length, sc.q + rows);
+      for (var q = sc.q; q < stop; q++) {
         var i = pool[q];
         if (i === j) continue;
         var oi = i * D;
@@ -3846,8 +4528,14 @@ ET.modes = (function () {
         bestI[pos] = i;
         if (filled < K) filled++;
       }
-      nbrCache[j] = bestI.subarray(0, filled);
-      return nbrCache[j];
+      sc.q = stop;
+      sc.filled = filled;
+      return stop >= pool.length;
+    }
+
+    function scanFinish(sc) {
+      nbrCache[sc.j] = sc.bestI.subarray(0, sc.filled);
+      return nbrCache[sc.j];
     }
 
     function nearVisits(i, max) {
@@ -3886,12 +4574,49 @@ ET.modes = (function () {
     function ensure(h) {
       while (targets.length <= h) {
         var n = targets.length;
-        var j = pick(n);
-        targets.push(j);
-        var ids = [j].concat(Array.prototype.slice.call(nearest(j)));
-        var lf = ET.math.localFrame(set.vectors, set.count, D, ids);
-        toFrames.push(ET.math.alignTo(lf, n > 0 ? toFrames[n - 1] : startFrame, D));
+        addStop(n, pick(n));
       }
+    }
+
+    // Hop n's local frame (fitted to stop j and its neighbours, aligned to the
+    // previous hop's), appended to the route.
+    function stopIds(j) {
+      return [j].concat(Array.prototype.slice.call(nearest(j)));
+    }
+
+    function addStop(n, j, fitted) {
+      var lf = fitted || ET.math.localFrame(set.vectors, set.count, D, stopIds(j));
+      targets.push(j);
+      toFrames.push(ET.math.alignTo(lf, n > 0 ? toFrames[n - 1] : startFrame, D));
+      ahead = null;
+    }
+
+    // One small piece of the work for hop h, ahead of need: pick its stop,
+    // then scan the pool for the stop's neighbours SCAN_WORK values at a time,
+    // then fit its frame (ET.math.makeLocalFrame, one unit per call) and align
+    // it. Returns true once hop h is in the route.
+    // stateAt calls it every frame for the next hop, so by the time the flight
+    // reaches a stop (4.8 s later) nothing is left to compute in that frame.
+    // The pieces compute exactly what ensure(h) computes in one go.
+    function workAhead(h) {
+      if (targets.length > h) return true;
+      if (targets.length < h) return false; // only the next hop is worked on ahead
+      if (!ahead || ahead.h !== h) {
+        var j = pick(h);
+        ahead = { h: h, j: j, scan: nbrCache[j] ? null : scanStart(j), fit: null };
+        return false;
+      }
+      if (ahead.scan) {
+        if (scanRows(ahead.scan, Math.max(1, Math.floor(SCAN_WORK / D)))) {
+          scanFinish(ahead.scan);
+          ahead.scan = null;
+        }
+        return false;
+      }
+      if (!ahead.fit) ahead.fit = ET.math.makeLocalFrame(set.vectors, set.count, D, stopIds(ahead.j));
+      if (!ahead.fit.step(0)) return false;
+      addStop(h, ahead.j, ahead.fit.result);
+      return true;
     }
 
     function hopAt(t) {
@@ -3906,6 +4631,7 @@ ET.modes = (function () {
       var hp = hopAt(t);
       var h = hp.h;
       ensure(h);
+      workAhead(h + 1);
       var j = targets[h];
       var fromF = h > 0 ? toFrames[h - 1] : startFrame;
       var X = set.vectors;
@@ -4005,6 +4731,7 @@ ET.modes = (function () {
       ensure(h);
       targets.length = h + 1;
       toFrames.length = h + 1;
+      ahead = null;
       set = newSet;
       nbrCache = {};
       buildPool();
@@ -4042,6 +4769,7 @@ ET.modes = (function () {
       nbrCache = {};
       targets = [];
       toFrames = [];
+      ahead = null;
       ready = false;
     }
 
