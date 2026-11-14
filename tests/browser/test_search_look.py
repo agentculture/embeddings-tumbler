@@ -22,6 +22,14 @@ except where a full-size count is said. Each check has a control that shows it c
   No group name is drawn in Focus while a search is shown; control: Tumble with the same
   search draws them.
 
+Nothing measured here waits on the wall clock. How far the filter has eased, how far the
+trails of a sought frame have settled and when the wires are shown all advance per drawn
+frame, by at most 0.05 s a frame, so a fixed sleep covers less of them the slower the frames
+come (a loaded machine, a software renderer in CI): the search picture was then counted
+with the filter part-way in, so with the wires only part-way dimmed. Each measurement waits
+on the viewer's own state instead (`_viewer`, the handle's test hook), and the tour starts
+from a sought moment of Tumble, so the frames measured are the same frames in every run.
+
 Measured on the ranking that lights the nearest named points and every point as near as
 the last of them (423 points for `tide harbor` on the sample set).
 """
@@ -36,6 +44,19 @@ H = "window.EmbeddingsTumbler.get(document.getElementById('space'))"
 PERIOD = 3.4  # Lattice's swap period (seconds)
 T90 = PERIOD * 4 + PERIOD * 0.9  # swap 5, 90% through: the lattice collapses to a thin shape
 WANDER_AT = (3, 8, 13, 20, 30, 45)  # seconds of Wander's tour
+TUMBLE_AT = 5  # seconds of Tumble's tour: the view Wander is entered from
+WIRE_FADE = 1.2  # seconds of Lattice's time for its wires to fade in (wireFade)
+# Seconds of the viewer's drawing time (it advances by each frame's step, 0.05 s at most) a
+# sought frame is given before it is counted: the trails (0.1 s in Lattice, 0.17 s at most)
+# have then settled to within two percent whatever the frame rate.
+SETTLE = 0.7
+
+# What a Lattice count was taken on: the moment, the filter and the wires.
+LATTICE_STATE = f"""() => {{
+  const h = {H}, v = h._viewer, d = v.mode.inst.describe();
+  return {{ mode: h.mode(), paused: h.isPaused(), time: h.time(), preparing: h.info().preparing,
+    filter: v.search.filter, wires: d.wires, wiresShownAt: d.wiresShownAt }};
+}}"""
 
 GRAB = """() => new Promise((resolve) => requestAnimationFrame(() => {
   const c = document.querySelector('.tumbler-canvas');
@@ -110,7 +131,14 @@ class _Run:
     def search(self, texts: list[str]):
         self.ev(f"async () => {{ await {H}.setSearches({texts!r}); }}")
         self.tab.wait_for(f"() => {H}.info().search.litCount", timeout=120)
-        self.tab.page.wait_for_timeout(1500)  # the filter eases in (time constant 0.35 s)
+        # the filter eases in (time constant 0.35 s of drawn frames) and the frame that
+        # faces the results is worked out: wait for both, however slowly the frames come
+        self.tab.wait_for(
+            f"""() => {{ const h = {H}, s = h._viewer.search;
+              return s.filter === 1 && !s.work.length && !s.facingJob
+                && !h.info().search.waiting; }}""",
+            timeout=120,
+        )
 
     def clear(self):
         self.ev(f"async () => {{ await {H}.clearSearches(); }}")
@@ -119,14 +147,19 @@ class _Run:
             f"() => {{ const v = {H}._viewer; return !v || v.search.filter === 0; }}", timeout=60
         )
 
+    def hold(self, t: float):
+        """Pause at moment `t` of the tour and wait until that frame's picture has settled."""
+        began = self.ev(
+            f"() => {{ const h = {H}; h.pause(); h.seek({t}); return h._viewer.drawTime; }}"
+        )
+        self.tab.wait_for(f"(t0) => {H}._viewer.drawTime - t0 >= {SETTLE}", arg=began, timeout=120)
+
     def at(self, t: float) -> dict:
-        self.ev(f"() => {{ const h = {H}; h.pause(); h.seek({t}); }}")
-        self.tab.page.wait_for_timeout(700)
+        self.hold(t)
         return self.grab()
 
     def hot(self, t: float, store: bool) -> dict:
-        self.ev(f"() => {{ const h = {H}; h.pause(); h.seek({t}); }}")
-        self.tab.page.wait_for_timeout(700)
+        self.hold(t)
         return self.tab.evaluate(HOT, [str(t), store])
 
     def motion(self) -> dict:
@@ -144,6 +177,9 @@ def look(browser, webgl, site) -> dict:
         tab.goto(server.url("/index.html?sample=synthetic"))
         run = _Run(tab)
         run.ready()
+        # the view Wander is entered from: a fixed moment of Tumble, not wherever the tour
+        # had got to when the page was ready
+        run.hold(TUMBLE_AT)
         # Wander, in one visit (the camera's path depends on the view it was entered from):
         # the moments with no search ever set, then the same moments with the search
         run.mode("wander")
@@ -151,16 +187,20 @@ def look(browser, webgl, site) -> dict:
         run.search(["tide harbor"])
         out["wander_search"] = [run.hot(t, False) for t in WANDER_AT]
         run.clear()
-        # Lattice: the same moment with no search and with one
+        # Lattice: the same moment with no search and with one. The view is paused (since
+        # Wander's first moment), so Lattice's time stays 0 while the neighbours are
+        # measured and the wires are shown from time 0: fully faded in long before T90.
         run.mode("lattice")
         tab.wait_for(
-            "() => /[0-9] wires/.test(document.querySelector('.tumbler-status').textContent)",
+            f"""() => {{ const h = {H}; return !h.info().preparing
+              && h._viewer.mode.inst.describe().wiresShownAt !== null; }}""",
             timeout=240,
         )
-        tab.page.wait_for_timeout(2000)  # the wires fade in
         out["lattice_none"] = {k: v for k, v in run.at(T90).items() if k != "px"}
+        out["lattice_none"]["state"] = run.ev(LATTICE_STATE)
         run.search(["tide harbor"])
         out["lattice_search"] = {k: v for k, v in run.at(T90).items() if k != "px"}
+        out["lattice_search"]["state"] = run.ev(LATTICE_STATE)
         out["lit_count"] = run.ev(f"() => {H}.info().search.litCount")
         # Tumble and Focus with the search, running
         run.ev(f"() => {H}.resume()")
@@ -183,6 +223,17 @@ def look(browser, webgl, site) -> dict:
 
 def test_lattice_wires_follow_the_search(look):
     none, found = look["lattice_none"], look["lattice_search"]
+    # both counts are of the same frame: Lattice, paused at T90, nothing left to prepare,
+    # the wires measured and fully faded in; the filter fully out, then fully in
+    for frame in (none, found):
+        state = frame["state"]
+        assert state["mode"] == "lattice" and state["paused"] and not state["preparing"], look
+        assert state["time"] == T90, look
+        assert state["wires"] > 0, look
+        assert state["wiresShownAt"] + WIRE_FADE <= T90, look
+    assert none["state"]["wires"] == found["state"]["wires"], look
+    assert none["state"]["filter"] == 0, look
+    assert found["state"]["filter"] == 1, look
     # control: the same moment with no search is bright where wires pile up
     assert none["hot"] >= 100, look
     assert found["hot"] * 4 <= none["hot"], look
