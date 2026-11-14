@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import stat
 import threading
 import urllib.error
 import urllib.request
@@ -53,13 +54,27 @@ def test_write_apply_is_byte_identical(tmp_path, capsys):
     assert not list(target.glob(".et-tmp-*"))
 
 
+def test_written_files_get_the_permissions_of_any_new_file(tmp_path, capsys):
+    # Not the owner-only mode of a private temporary file: the user's umask decides, as
+    # for any file they create, so a web server can read the published assets.
+    target = tmp_path / "out"
+    assert main(["viewer", "write", str(target), "--apply"]) == 0
+    plain = tmp_path / "plain.txt"
+    plain.write_text("x", encoding="utf-8")
+    expected = stat.S_IMODE(plain.stat().st_mode)
+    for written in target.rglob("*"):
+        if written.is_file():
+            assert stat.S_IMODE(written.stat().st_mode) == expected, written
+
+
 def test_write_refuses_existing_without_force(tmp_path, capsys):
     target = tmp_path / "out"
     target.mkdir()
     (target / "embeddings-tumbler.js").write_text("mine")
     assert main(["viewer", "write", str(target), "--apply"]) == 1
     err = capsys.readouterr().err
-    assert err.startswith("error:") and "hint:" in err
+    assert err.startswith("error:")
+    assert "hint:" in err
     assert (target / "embeddings-tumbler.js").read_text() == "mine"
     assert main(["viewer", "write", str(target), "--apply", "--force"]) == 0
     assert (target / "embeddings-tumbler.js").read_bytes() == (
@@ -100,7 +115,8 @@ def test_write_fake_tree_nested_and_skips(tmp_path, capsys):
     (target / "sub" / "b.css").write_text("edited")
     with pytest.raises(CliError) as exc:
         viewer_cmd.cmd_write(args, source_root=src)
-    assert exc.value.code == 1 and "sub/b.css" in exc.value.message
+    assert exc.value.code == 1
+    assert "sub/b.css" in exc.value.message
     assert (target / "sub" / "b.css").read_text() == "edited"
     args.force = True
     assert viewer_cmd.cmd_write(args, source_root=src) == 0
@@ -153,10 +169,12 @@ def test_explain_entries_and_learn_list_viewer(capsys):
     capsys.readouterr()
     main(["learn"])
     text = capsys.readouterr().out
-    assert "viewer write" in text and "viewer serve" in text
+    assert "viewer write" in text
+    assert "viewer serve" in text
     main(["learn", "--json"])
     paths = [c["path"] for c in json.loads(capsys.readouterr().out)["commands"]]
-    assert ["viewer", "write"] in paths and ["viewer", "serve"] in paths
+    assert ["viewer", "write"] in paths
+    assert ["viewer", "serve"] in paths
 
 
 # --- serve ---------------------------------------------------------------
@@ -199,7 +217,8 @@ def _get(url, method="GET"):
 def test_serve_binds_loopback_by_default(served):
     base, server = served
     assert server.server_address[0] == "127.0.0.1"
-    assert _static_server.is_loopback("::1") and _static_server.is_loopback("localhost")
+    assert _static_server.is_loopback("::1")
+    assert _static_server.is_loopback("localhost")
     assert not _static_server.is_loopback("192.168.1.5")
     assert not _static_server.is_loopback("example.com")
 
@@ -223,13 +242,31 @@ def test_serve_content_types_and_no_store(served, path, ctype):
     assert headers["Cache-Control"] == "no-store"
 
 
+def test_serve_get_returns_each_file_byte_for_byte(served, tmp_path):
+    # A static server's response body is the file, unchanged: markup in an HTML page and
+    # bytes in a vector block are served as they are, never escaped or re-encoded.
+    base, _ = served
+    root = tmp_path / "site"
+    (root / "page.html").write_text("<script src=a.js></script> & <b>", encoding="utf-8")
+    (root / "big.f32").write_bytes(bytes(range(256)) * 300)
+    for name in ("index.html", "a.js", "v.f32", "page.html", "big.f32"):
+        status, headers, body = _get(f"{base}/{name}")
+        assert status == 200
+        assert body == (root / name).read_bytes(), name
+        assert headers["Content-Length"] == str(len(body))
+        assert headers["X-Content-Type-Options"] == "nosniff"
+
+
 def test_serve_head_and_methods(served):
     base, _ = served
     status, headers, body = _get(base + "/a.js", "HEAD")
-    assert status == 200 and body == b"" and headers["Content-Length"] == "8"
+    assert status == 200
+    assert body == b""
+    assert headers["Content-Length"] == "8"
     for method in ("POST", "PUT", "DELETE"):
         status, headers, _ = _get(base + "/a.js", method)
-        assert status == 405 and headers["Allow"] == "GET, HEAD"
+        assert status == 405
+        assert headers["Allow"] == "GET, HEAD"
 
 
 @pytest.mark.parametrize(
@@ -257,7 +294,8 @@ def test_serve_ignores_gateway_key_in_environment(served, monkeypatch, tmp_path,
     for p in ("/", "/a.js", "/nope"):
         status, headers, body = _get(base + p)
         seen += body + json.dumps(headers).encode()
-    assert b"SENTINEL" not in seen and b"sentinel" not in seen
+    assert b"SENTINEL" not in seen
+    assert b"sentinel" not in seen
     # and the CLI output
     started = {}
     monkeypatch.setattr(viewer_cmd, "run_server", lambda s: started.setdefault("s", s))
@@ -275,7 +313,8 @@ def test_serve_cli_json_shape(tmp_path, capsys, monkeypatch):
     started["s"].server_close()
     cap = capsys.readouterr()
     payload = json.loads(cap.out)
-    assert payload["host"] == "127.0.0.1" and payload["port"] > 0
+    assert payload["host"] == "127.0.0.1"
+    assert payload["port"] > 0
     assert payload["url"] == f"http://127.0.0.1:{payload['port']}/"
     assert payload["root"] == str(tmp_path.resolve())
     assert "warning" not in cap.err
@@ -317,7 +356,8 @@ def test_serve_directory_without_slash_redirects(served):
     assert headers["Location"] == "/sub/"
     assert body != b"sub"
     status, headers, _ = _get_no_redirect(base + "/sub?x=1")
-    assert status == 301 and headers["Location"] == "/sub/?x=1"
+    assert status == 301
+    assert headers["Location"] == "/sub/?x=1"
     # following the redirect lands on the folder's index
     assert _get(base + "/sub")[2] == b"sub"
     # a HEAD is redirected too, a missing folder or an escape is still a 404
@@ -393,7 +433,9 @@ def test_serve_bind_failure_remediation_names_the_cause(tmp_path, capsys, monkey
     monkeypatch.setattr(_static_server, "make_server", refuse(_errno.EADDRNOTAVAIL))
     assert main(["viewer", "serve", str(tmp_path), "--host", "::1", "--json"]) == 2
     cap = capsys.readouterr()
-    assert "--host" in cap.err and "Traceback" not in cap.err and cap.out == ""
+    assert "--host" in cap.err
+    assert "Traceback" not in cap.err
+    assert cap.out == ""
 
 
 def test_the_redirect_location_is_rebuilt_never_echoed(tmp_path: Path) -> None:
@@ -420,3 +462,20 @@ def test_the_redirect_location_is_rebuilt_never_echoed(tmp_path: Path) -> None:
         assert "<" not in location
     # Never a protocol-relative address.
     assert directory_redirect(root, "//sub%20dir") in (None, "/sub%20dir/")
+
+
+def test_the_redirect_location_uses_the_folder_names_on_disk(tmp_path: Path) -> None:
+    from embeddings_tumbler._static_server import directory_redirect
+
+    (tmp_path / "data" / "deep").mkdir(parents=True)
+    (tmp_path / "data" / "deep" / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    (tmp_path / "latest").symlink_to(tmp_path / "data", target_is_directory=True)
+    root = tmp_path.resolve()
+    assert directory_redirect(root, "/data/deep") == "/data/deep/"
+    # A symlinked folder inside the root keeps its own name, not its target's.
+    assert directory_redirect(root, "/latest/deep?x=1") == "/latest/deep/?x=1"
+    # No index.html, a file, or a missing folder: no redirect.
+    (tmp_path / "data" / "page.txt").write_text("x", encoding="utf-8")
+    assert directory_redirect(root, "/data") is None
+    assert directory_redirect(root, "/data/page.txt") is None
+    assert directory_redirect(root, "/nope") is None

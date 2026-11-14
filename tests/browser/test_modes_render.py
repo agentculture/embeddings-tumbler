@@ -80,6 +80,7 @@ def test_each_mode_draws_lit_frames(demo_result, mode):
 
 def test_status_lines_come_from_the_modes(demo_result):
     s = demo_result["statuses"]
-    assert "strongest directions" in s["tumble"] and "variance" in s["tumble"]
+    assert "strongest directions" in s["tumble"]
+    assert "variance" in s["tumble"]
     assert "trading for a hidden direction" in s["lattice"]
     assert s["wander"].startswith('"') or s["wander"].startswith("at ") or "heading" in s["wander"]

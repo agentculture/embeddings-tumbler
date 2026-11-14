@@ -69,7 +69,9 @@ def test_c4_twenty_mount_destroy_cycles_leave_nothing_script_form(script_page, k
                  roots: document.querySelectorAll('.tumbler').length,
                  children: document.getElementById('space').children.length };
     }""")
-    assert held["viewers"] == 0 and held["roots"] == 0 and held["children"] == 0, held
+    assert held["viewers"] == 0, held
+    assert held["roots"] == 0, held
+    assert held["children"] == 0, held
     if kind == "fresh":
         assert held["checked"] == 21
 
@@ -124,8 +126,10 @@ def test_c4_twenty_element_add_remove_cycles_leave_nothing_web_component(compone
                  roots: document.querySelectorAll('.tumbler').length,
                  loads: window.__wc.events.filter((e) => e.type === 'tumbler-load').length };
     }""")
-    assert held["checked"] == 40 and held["viewers"] == 0, held
-    assert held["children"] == 0 and held["roots"] == 0, held
+    assert held["checked"] == 40, held
+    assert held["viewers"] == 0, held
+    assert held["children"] == 0, held
+    assert held["roots"] == 0, held
     assert held["loads"] == 20, "a fetch that was in flight at removal still loaded a viewer"
     tab.assert_no_console_errors()
     tab.assert_no_csp_violations()

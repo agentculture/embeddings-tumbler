@@ -54,9 +54,9 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
-      - run: uv run pytest -n auto -v
+      - run: uv run --locked --no-build pytest -n auto -v
 
   verify-packages:
     # Builds both packages from this commit and fails unless the wheel and the
@@ -75,7 +75,7 @@ jobs:
       - name: install npm 11.21.1
         run: |
           set -euo pipefail
-          npm install -g npm@11.21.1
+          npm install -g npm@11.21.1 --ignore-scripts
           npm --version
 
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
@@ -102,7 +102,7 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
       - name: Set dev version
         run: |
@@ -146,7 +146,7 @@ jobs:
       - name: install npm 11.21.1 (trusted publishing needs 11.5.1 or later)
         run: |
           set -euo pipefail
-          npm install -g npm@11.21.1
+          npm install -g npm@11.21.1 --ignore-scripts
           node -e '
             const v = process.argv[1].split(".").map(Number);
             const ok = v[0] > 11 || (v[0] === 11 && (v[1] > 5 || (v[1] === 5 && v[2] >= 1)));
@@ -207,7 +207,7 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
       # npm is needed only to pack a tarball to compare the wheel against.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

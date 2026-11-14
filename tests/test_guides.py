@@ -168,6 +168,7 @@ def test_second_producer_output_is_accepted(tmp_path: Path) -> None:
     assert done.returncode == 0, done.stderr
     data, block = _read_pair(tmp_path / "out.json")
     assert validate(data, block, None, _index()["messages"]) == []
-    assert data["count"] == 320 and data["dimension"] == 12
+    assert data["count"] == 320
+    assert data["dimension"] == 12
     # The committed example data is that output with the block renamed to space.f32.
     assert block == (EXAMPLES / "script" / "space.f32").read_bytes()

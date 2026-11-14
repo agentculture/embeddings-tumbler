@@ -173,7 +173,8 @@ def test_standalone_form_page_shows_the_named_file(opened):
     _open(page, base, "/index.html?data=space.json")
     probe = "() => (document.querySelector('.tumbler') || {innerText: ''}).innerText"
     text = _wait(page, "() => { const t = " + probe[6:] + "; return t.includes('320') && t; }")
-    assert "synthetic/cold-test" in text and "320" in text
+    assert "synthetic/cold-test" in text
+    assert "320" in text
     assert _lit(page) > 50, "the picture is blank"
     _clean(base, tab)
     # A data address on another origin is refused and never requested.

@@ -453,7 +453,8 @@ def test_cli_exit_codes_and_messages_on_fixtures(tmp_path, monkeypatch, capsys):
         check_packages.main(given + ["--tarball", str(bad), "--github-output", str(out_file)]) == 1
     )
     err = capsys.readouterr().err
-    assert "core file differs" in err and "FAIL" in err
+    assert "core file differs" in err
+    assert "FAIL" in err
     assert not out_file.exists(), "paths must not be published for a failed check"
 
 
@@ -495,6 +496,62 @@ def test_registry_tarball_is_packed_by_spec(tmp_path, monkeypatch):
     assert calls[0][:3] == ["npm", "pack", "@culture.dev/embeddings-tumbler@1.0.0"]
 
 
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "--registry=https://evil.example/",
+        "-x",
+        "@culture.dev/embeddings-tumbler",
+        "@culture.dev/embeddings-tumbler@latest",
+        "@culture.dev/embeddings-tumbler@1.0.0 --foo",
+        "../x@1.0.0",
+    ],
+)
+def test_registry_tarball_spec_must_be_a_package_at_an_exact_version(tmp_path, monkeypatch, spec):
+    def fake_run(cmd):
+        raise AssertionError(f"npm must not run for {spec!r}: {cmd}")
+
+    monkeypatch.setattr(check_packages, "_run", fake_run)
+    monkeypatch.setattr(check_packages.shutil, "which", lambda _: "/usr/bin/npm")
+    with pytest.raises(RuntimeError, match="not a package at an exact version"):
+        check_packages.pack_tarball(tmp_path, spec)
+
+
+def test_out_dir_receives_the_built_artefacts(tmp_path, monkeypatch, capsys):
+    # The build tools write into a temporary folder; --out-dir gets the files afterwards,
+    # and --github-output names them where they were kept.
+    statics = _statics("1.0.0")
+    src = tmp_path / "src"
+    src.mkdir()
+    wheel, tarball, sdist = _set(src, statics=statics)
+    seen = []
+
+    def fake_build(kind, made):
+        def build(folder):
+            seen.append(folder)
+            return Path(shutil.copy(made, folder / made.name)).resolve()
+
+        return build
+
+    monkeypatch.setattr(check_packages, "read_versions", lambda: ("1.0.0", "1.0.0"))
+    monkeypatch.setattr(check_packages, "build_wheel", fake_build("wheel", wheel))
+    monkeypatch.setattr(check_packages, "build_sdist", fake_build("sdist", sdist))
+    monkeypatch.setattr(
+        check_packages, "pack_tarball", lambda folder, spec: fake_build("npm", tarball)(folder)
+    )
+    out = tmp_path / "kept"
+    out_file = tmp_path / "github_output"
+    assert check_packages.main(["--out-dir", str(out), "--github-output", str(out_file)]) == 0
+    assert all(folder != out.resolve() for folder in seen)
+    assert sorted(p.name for p in out.iterdir()) == sorted([wheel.name, sdist.name, tarball.name])
+    assert out_file.read_text(encoding="utf-8").splitlines() == [
+        f"wheel={(out / wheel.name).resolve()}",
+        f"sdist={(out / sdist.name).resolve()}",
+        f"tarball={(out / tarball.name).resolve()}",
+    ]
+    assert str((out / tarball.name).resolve()) in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # check_packages.py on real builds
 # ---------------------------------------------------------------------------
@@ -524,7 +581,9 @@ def test_check_packages_passes_on_the_real_build(real_build):
     wheels = list(out.glob("*.whl"))
     tarballs = list(out.glob("*.tgz"))
     sdists = list(out.glob("*.tar.gz"))
-    assert len(wheels) == 1 and len(tarballs) == 1 and len(sdists) == 1
+    assert len(wheels) == 1
+    assert len(tarballs) == 1
+    assert len(sdists) == 1
     with tarfile.open(tarballs[0]) as tf:
         names = sorted(m.name.removeprefix("package/") for m in tf.getmembers() if m.isfile())
     assert names == TARBALL_FILES
@@ -593,7 +652,8 @@ def test_sync_version_targets_the_top_level_key_not_the_first_in_file_order(tmp_
     expected = original.replace('"version": "1.0.0",\n  "files"', '"version": "2.0.0",\n  "files"')
     assert package.read_text(encoding="utf-8") == expected
     data = json.loads(expected)
-    assert data["engines"]["version"] == "1.0.0" and data["nested"][0]["version"] == "1.0.0"
+    assert data["engines"]["version"] == "1.0.0"
+    assert data["nested"][0]["version"] == "1.0.0"
 
 
 def test_sync_version_refuses_a_package_json_without_a_top_level_version(

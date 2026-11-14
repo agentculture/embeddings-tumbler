@@ -20,6 +20,9 @@ refused case the exact refusal code and message.
 Usage:
     python3 scripts/gen_contract_fixtures.py            # rewrite the committed fixtures
     python3 scripts/gen_contract_fixtures.py --out DIR  # write them somewhere else
+
+``--out DIR`` must be inside the current folder (after resolving symlinks); anything
+else is refused before a file is touched.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import struct
 import sys
 from pathlib import Path
@@ -604,12 +608,28 @@ def write(out_dir: Path) -> list[Path]:
     return written
 
 
+def inside_current_folder(path: Path) -> Path:
+    """``path`` checked to resolve (symlinks followed) inside the current folder.
+
+    Returns the resolved path, relative to the current folder when ``path`` was relative.
+    RefusedTarget when it is not inside.
+    """
+    base = Path(os.path.realpath(os.getcwd()))
+    real = Path(os.path.realpath(path))
+    if not real.is_relative_to(base):
+        raise RefusedTarget(f"--out {path} is outside the current folder {base}")
+    return real if path.is_absolute() else real.relative_to(base)
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="output folder")
+    parser.add_argument(
+        "--out", type=Path, help="output folder inside the current one (default: the fixtures)"
+    )
     args = parser.parse_args(argv)
     try:
-        written = write(args.out)
+        out = DEFAULT_OUT if args.out is None else inside_current_folder(args.out)
+        written = write(out)
     except RefusedTarget as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

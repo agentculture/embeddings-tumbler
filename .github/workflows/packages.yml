@@ -37,7 +37,7 @@ jobs:
       - name: install npm 11.21.1
         run: |
           set -euo pipefail
-          npm install -g npm@11.21.1
+          npm install -g npm@11.21.1 --ignore-scripts
           npm --version
 
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4

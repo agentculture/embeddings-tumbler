@@ -76,7 +76,8 @@ def test_mount_stays_inside_the_element(run):
     s = run[1]["steps"]
     assert s["childrenAfterMount"] == 1
     assert s["headStyles"] == 0
-    assert s["update"]["ok"] is True and s["update"]["count"] == 2000
+    assert s["update"]["ok"] is True
+    assert s["update"]["count"] == 2000
 
 
 def test_layout_holds_at_this_width(run):
@@ -91,9 +92,8 @@ def test_layout_holds_at_this_width(run):
     for part in ("controls", "modes", "provenance", "strip", "status"):
         box = lay[part]
         assert box["height"] > 0, part
-        assert (
-            box["left"] >= lay["root"]["left"] - 1 and box["right"] <= lay["root"]["right"] + 1
-        ), part
+        assert box["left"] >= lay["root"]["left"] - 1, part
+        assert box["right"] <= lay["root"]["right"] + 1, part
     # The status line sits inside the stage, above its bottom edge.
     assert lay["status"]["bottom"] <= lay["stage"]["bottom"] + 1
     assert "radial-gradient" in lay["stageBackground"], "styles were applied under style-src 'self'"
@@ -123,7 +123,8 @@ def test_provenance_is_shown(run):
 
 def test_append_keeps_the_camera_and_adds_points(run):
     a = run[1]["steps"]["append"]
-    assert a["result"]["ok"] is True and a["result"]["added"] == 200
+    assert a["result"]["ok"] is True
+    assert a["result"]["added"] == 200
     assert a["count"] == 2200
     assert a["frameChange"] == 0, "the frame moved on append"
     assert a["lit"] > 50
@@ -133,12 +134,14 @@ def test_markup_labels_are_literal_text(run):
     m = run[1]["steps"]["markup"]
     assert m["result"]["ok"] is True
     assert m["groupShownLiterally"] is True
-    assert m["imgElements"] == 0 and m["bElements"] == 0
+    assert m["imgElements"] == 0
+    assert m["bElements"] == 0
 
 
 def test_invalid_data_shows_a_message(run):
     inv = run[1]["steps"]["invalid"]
-    assert inv["result"]["ok"] is False and inv["result"]["code"] == "wrong-kind"
+    assert inv["result"]["ok"] is False
+    assert inv["result"]["code"] == "wrong-kind"
     assert inv["noticeVisible"] is True
     assert "embeddings-tumbler/data" in inv["noticeText"]
 

@@ -22,6 +22,10 @@ What it does, with the repository's own browser harness (``tests/browser/harness
   for each mode over ``--seconds`` seconds (frames counted by the viewer itself,
   ``info().frames``), after the mode reports ready and two seconds to settle.
 
+Every path given on the command line must be inside the current folder (after resolving
+symlinks), and the data file's ``vectors.file`` must be a plain file name as the contract
+requires; anything else is refused before a file is read.
+
 Writes nothing but the temporary folders, the optional ``--out`` JSON and ``--shots`` images.
 The only network traffic is between the browser and the loopback servers started here.
 """
@@ -30,6 +34,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +51,8 @@ from tests.browser import harness  # noqa: E402
 EXAMPLES = ROOT / "docs" / "guides" / "examples"
 POLICY = "default-src 'self'"
 MODES = ["tumble", "lattice", "wander"]
+# docs/data-contract.md: vectors.file is one path segment that cannot be "." or "..".
+PLAIN_FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 HANDLE = "window.EmbeddingsTumbler.get(document.getElementById('space'))"
 INFO = (
@@ -55,10 +63,27 @@ INFO = (
 ) % HANDLE
 
 
+def _inside_current_folder(path: Path) -> Path:
+    """The real path of ``path``; SystemExit unless it is inside the current folder."""
+    base = Path(os.path.realpath(os.getcwd()))
+    real = Path(os.path.realpath(path))
+    if not real.is_relative_to(base):
+        raise SystemExit(f"{path} is outside the current folder {base}")
+    return real
+
+
+def _block_path(data: Path, meta: dict) -> Path:
+    """The vector block beside ``data``, named by a contract-valid ``vectors.file``."""
+    name = meta["vectors"]["file"]
+    if not isinstance(name, str) or not PLAIN_FILE_NAME.fullmatch(name):
+        raise SystemExit(f"{data}: vectors.file {name!r} is not a plain file name")
+    return data.parent / name
+
+
 def _copy_pair(data: Path, folder: Path, name: str | None = None) -> str:
     """Copy <data>.json and its vector block into ``folder``; return the JSON file name."""
     meta = json.loads(data.read_text(encoding="utf-8"))
-    block = data.parent / meta["vectors"]["file"]
+    block = _block_path(data, meta)
     if name is None:
         shutil.copyfile(data, folder / data.name)
         shutil.copyfile(block, folder / block.name)
@@ -182,26 +207,30 @@ def main() -> int:
     ap.add_argument("--out", type=Path)
     ap.add_argument("--shots", type=Path)
     args = ap.parse_args()
+    data = _inside_current_folder(args.data)
+    large = _inside_current_folder(args.large) if args.large else None
+    out = _inside_current_folder(args.out) if args.out else None
+    shots = _inside_current_folder(args.shots) if args.shots else None
 
     from playwright.sync_api import sync_playwright
 
-    expect = json.loads(args.data.read_text(encoding="utf-8"))["count"]
+    expect = json.loads(data.read_text(encoding="utf-8"))["count"]
     result: dict = {"renderer": harness.renderer(), "policy": POLICY, "forms": []}
     with tempfile.TemporaryDirectory() as tmp, sync_playwright() as pw:
         browser = harness.launch(pw)
         try:
             result["browser"] = "Chromium " + browser.version
             for form in ("script", "web-component", "standalone"):
-                result["forms"].append(_visit(browser, form, args.data, Path(tmp), expect,
-                                              args.shots))  # fmt: skip
-            if args.large:
-                result["frame_rate"] = _frame_rate(browser, args.large, Path(tmp), args.seconds,
-                                                   args.shots)  # fmt: skip
+                result["forms"].append(_visit(browser, form, data, Path(tmp), expect,
+                                              shots))  # fmt: skip
+            if large:
+                result["frame_rate"] = _frame_rate(browser, large, Path(tmp), args.seconds,
+                                                   shots)  # fmt: skip
         finally:
             browser.close()
     text = json.dumps(result, indent=2)
-    if args.out:
-        args.out.write_text(text + "\n", encoding="utf-8")
+    if out:
+        out.write_text(text + "\n", encoding="utf-8")
     print(text)
     bad = [f["form"] for f in result["forms"]
            if f["foreign_requests"] or f["console_errors"] or f["csp_violations"]]  # fmt: skip

@@ -31,16 +31,17 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
-      # The Chromium build matching the pinned Playwright (1.65.x), with its system libraries.
-      # TODO: cache the Playwright browser folder with actions/cache once its commit SHA is pinned
-      # here; no SHA for it is known in this repository yet, so it is not used.
+      # The Chromium build matching the Playwright version locked in uv.lock (1.65.x), with its
+      # system libraries. The browser folder is deliberately not cached: every action here is
+      # pinned by commit SHA and actions/cache is not among them, so Chromium is downloaded on
+      # each run instead.
       - name: install Chromium for Playwright
-        run: uv run playwright install --with-deps chromium
+        run: uv run --locked --no-build playwright install --with-deps chromium
 
       - name: scan shipped files for external origins
         run: python3 scripts/check_no_external_origin.py embeddings_tumbler/static
 
       - name: browser suite (SwiftShader software rendering)
-        run: uv run pytest tests/browser -v
+        run: uv run --locked --no-build pytest tests/browser -v

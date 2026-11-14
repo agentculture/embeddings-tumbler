@@ -5,10 +5,11 @@ Usage::
 
     python3 scripts/check_no_external_origin.py [PATH ...] [--expect NAME ...] [--json]
 
-Each PATH is a file or a folder (scanned recursively). With no PATH it scans
-``embeddings_tumbler/static/`` next to this script. Exit codes: ``0`` clean, ``1`` findings,
-``2`` a path could not be read. Hosts can run it over the folder ``embeddings-tumbler viewer
-write`` produced, or over their own site.
+Each PATH is a file or a folder (scanned recursively) inside the current folder; a PATH
+that resolves outside it is refused. With no PATH it scans ``embeddings_tumbler/static/``
+next to this script. Exit codes: ``0`` clean, ``1`` findings, ``2`` a path could not be read
+or is outside the current folder. Hosts can run it over the folder ``embeddings-tumbler
+viewer write`` produced, or over their own site, from a folder that contains it.
 
 A port of embodiment's ``web/scripts/check-no-external-origin.mjs`` (its acceptance check that a
 built page "references no external origin"), extended for files that are hand-written rather
@@ -56,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from html.parser import HTMLParser
@@ -132,7 +134,9 @@ def check_js_text(text: str, label: str = "script.js") -> list[str]:
     return findings
 
 
-_CSS_URL = re.compile(r"url\(\s*(['\"]?)([^'\")]*)\1\s*\)", re.IGNORECASE)
+# Possessive quantifiers: the same matches as the plain greedy form (the value runs to the
+# first quote or parenthesis either way), without its backtracking on a failed match.
+_CSS_URL = re.compile(r"url\(\s*+(['\"]?)([^'\")]*+)\1\s*+\)", re.IGNORECASE)
 _CSS_IMPORT = re.compile(r"@import\s+(?:url\(\s*)?['\"]?([^'\")\s;]+)", re.IGNORECASE)
 
 
@@ -168,29 +172,35 @@ class _HtmlScan(HTMLParser):
     def _where(self) -> str:
         return f"{self.label}:{self.getpos()[0]}"
 
+    def _url_attribute(self, tag: str, name: str, value: str) -> None:
+        candidates = [value]
+        if name in ("srcset", "ping"):
+            candidates = [c.strip().split(" ")[0] for c in re.split(r"[,\s]\s*", value)]
+        rule = "H1" if name in ("href", "src") else "H2"
+        for c in candidates:
+            if c and EXTERNAL.match(c):
+                self.findings.append(
+                    f"{self._where()}: <{tag} {name}={value!r}> is an external origin [{rule}]"
+                )
+
+    def _meta_refresh(self, values: dict[str, str]) -> None:
+        m = re.search(r"url\s*=\s*['\"]?([^'\";]+)", values.get("content", ""), re.I)
+        if m and EXTERNAL.match(m.group(1)):
+            self.findings.append(
+                f"{self._where()}: meta refresh to {m.group(1)!r} is an external origin [H2]"
+            )
+
     def _attrs(self, tag: str, attrs) -> None:
         values = {k.lower(): (v or "") for k, v in attrs}
         for name, value in values.items():
             if name in URL_ATTRIBUTES:
-                candidates = [value]
-                if name in ("srcset", "ping"):
-                    candidates = [c.strip().split(" ")[0] for c in re.split(r"[,\s]\s*", value)]
-                for c in candidates:
-                    if c and EXTERNAL.match(c):
-                        self.findings.append(
-                            f"{self._where()}: <{tag} {name}={value!r}> is an external origin "
-                            f"[{'H1' if name in ('href', 'src') else 'H2'}]"
-                        )
+                self._url_attribute(tag, name, value)
             elif name == "style":
                 self.findings += [
                     f + " (style attribute) [H3]" for f in check_css_text(value, self._where())
                 ]
         if tag == "meta" and values.get("http-equiv", "").lower() == "refresh":
-            m = re.search(r"url\s*=\s*['\"]?([^'\";]+)", values.get("content", ""), re.I)
-            if m and EXTERNAL.match(m.group(1)):
-                self.findings.append(
-                    f"{self._where()}: meta refresh to {m.group(1)!r} is an external origin [H2]"
-                )
+            self._meta_refresh(values)
 
     def handle_starttag(self, tag, attrs):
         self._attrs(tag, attrs)
@@ -272,6 +282,25 @@ def check_paths(paths: list[Path], expect: list[str] = ()) -> tuple[list[Path], 
     return files, findings
 
 
+class OutsideFolder(OSError):
+    """A path given on the command line resolves outside the current folder."""
+
+
+def inside_current_folder(path: Path) -> Path:
+    """``path`` checked to resolve (symlinks followed) inside the current folder.
+
+    Returns the resolved path, relative to the current folder when ``path`` was relative,
+    so that findings name files as they were given. OutsideFolder when it is not inside.
+    """
+    base = Path(os.path.realpath(os.getcwd()))
+    real = Path(os.path.realpath(path))
+    if not real.is_relative_to(base):
+        raise OutsideFolder(
+            f"{path}: outside the current folder {base}; run from a folder that contains it"
+        )
+    return real if path.is_absolute() else real.relative_to(base)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="check_no_external_origin.py",
@@ -281,10 +310,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expect", action="append", default=[], help="a file that must exist")
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
     args = parser.parse_args(argv)
-    paths = args.paths or [DEFAULT_ROOT]
+    try:
+        paths = [inside_current_folder(p) for p in args.paths] or [DEFAULT_ROOT]
+    except OutsideFolder as exc:
+        print(f"error: refused {exc}", file=sys.stderr)
+        return 2
     try:
         files, findings = check_paths(paths, args.expect)
-    except (FileNotFoundError, OSError) as exc:
+    except OSError as exc:
         print(f"error: cannot read {exc}", file=sys.stderr)
         return 2
     if args.json:

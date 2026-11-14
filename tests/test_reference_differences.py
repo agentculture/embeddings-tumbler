@@ -135,14 +135,17 @@ def test_sign_off_check_accepts_a_recorded_line_and_rejects_contradictions():
     signed += "\nSigned off by the user on 2026-11-20: looks right to me\n"
     assert _check_sign_off(signed) == "recorded"
     # a recorded line while the document still says "not yet recorded" is refused
+    still_open = text.rstrip("\n") + "\nSigned off by the user on 2026-11-20: ok\n"
     with pytest.raises(AssertionError):
-        _check_sign_off(text.rstrip("\n") + "\nSigned off by the user on 2026-11-20: ok\n")
+        _check_sign_off(still_open)
     # a recorded line without the user's words is refused
+    no_words = signed.rsplit("\n", 2)[0] + "\nSigned off by the user on 2026-11-20:\n"
     with pytest.raises(AssertionError):
-        _check_sign_off(signed.rsplit("\n", 2)[0] + "\nSigned off by the user on 2026-11-20:\n")
+        _check_sign_off(no_words)
     # saying it is signed off without the line is refused
+    claimed = text.replace("is **not yet recorded**", "is recorded")
     with pytest.raises(AssertionError):
-        _check_sign_off(text.replace("is **not yet recorded**", "is recorded"))
+        _check_sign_off(claimed)
 
 
 def test_the_form_line_in_the_instruction_is_not_a_recorded_sign_off():
@@ -206,4 +209,5 @@ def test_side_by_side_page_is_not_shipped():
 @pytest.mark.parametrize("name", ["page.js", "page.css", "index.html"])
 def test_side_by_side_page_loads_nothing_from_elsewhere(name):
     text = (SBS / name).read_text(encoding="utf-8")
-    assert "http://" not in text and "https://" not in text
+    assert "http://" not in text
+    assert "https://" not in text

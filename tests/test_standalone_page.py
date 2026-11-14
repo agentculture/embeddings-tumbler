@@ -54,7 +54,8 @@ def page() -> _Collect:
 @pytest.mark.parametrize("name", PAGE_FILES)
 def test_page_file_ships_and_names_no_other_origin(name):
     text = (STATIC / name).read_text(encoding="utf-8")
-    assert "http://" not in text and "https://" not in text
+    assert "http://" not in text
+    assert "https://" not in text
     assert "@import" not in text
     assert "url(" not in text
 
@@ -74,7 +75,8 @@ def test_every_reference_is_a_shipped_same_folder_name(page):
     refs = [attrs[k] for _, attrs in page.tags for k in ("src", "href") if k in attrs]
     assert refs, "the page references its stylesheet and scripts"
     for ref in refs:
-        assert ref and PLAIN_NAME.match(ref), f"{ref!r} is not a plain same-folder name"
+        assert ref, f"{ref!r} is not a plain same-folder name"
+        assert PLAIN_NAME.match(ref), f"{ref!r} is not a plain same-folder name"
         assert (STATIC / ref).is_file(), f"{ref} is not shipped in embeddings_tumbler/static/"
 
 
@@ -98,14 +100,16 @@ def test_page_declares_a_strict_policy_and_a_viewport(page):
     assert directives.get("default-src") in (["'self'"], ["'none'"])
     for name in ("script-src", "style-src", "connect-src"):
         assert directives.get(name, directives["default-src"]) in (["'self'"], ["'none'"])
-    assert "'unsafe-inline'" not in csp and "'unsafe-eval'" not in csp
+    assert "'unsafe-inline'" not in csp
+    assert "'unsafe-eval'" not in csp
     assert "width=device-width" in metas.get("viewport", "")
 
 
 def test_page_script_calls_only_the_public_api():
     text = (STATIC / "page.js").read_text(encoding="utf-8")
     assert "_internal" not in text
-    assert "innerHTML" not in text and "insertAdjacentHTML" not in text
+    assert "innerHTML" not in text
+    assert "insertAdjacentHTML" not in text
     assert "document.write" not in text
     assert not re.search(r"\beval\b|new Function", text)
     assert not re.search(r"\.style\b", text), "the page script sets no inline styles"
