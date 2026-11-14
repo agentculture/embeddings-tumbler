@@ -96,9 +96,8 @@ together at 1,024 dimensions.
 - **The generated set stays.** `index.html?sample=synthetic`, or the link under
   the notes, shows the reference's synthetic sample set; the page also falls
   back to it, and says so, when the pair is missing or the page is opened as a
-  file. The pair committed today is a 30-item stand-in with hash vectors
-  (`stand-in/not-a-model`, marked synthetic) until the real pair is embedded
-  (planned).
+  file. The committed pair holds 999 items embedded with
+  `Qwen/Qwen3-Embedding-0.6B` (1,024 dimensions) on 2026-11-14.
 
 ## Repository scaffold
 
