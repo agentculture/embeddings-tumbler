@@ -585,7 +585,7 @@ def test_serve_embed_json_names_the_route_never_the_gateway(tmp_path, capsys, mo
     assert payload["embed"] == {
         "enabled": True,
         "route": "/_tumbler/search",
-        "model": "Qwen/Qwen3-Embedding-0.6B",
+        "model": "google/embeddinggemma-2",
         "rerank_model": "rr",
         "query_form": "prefixed",
     }

@@ -677,7 +677,7 @@ def test_load_config_defaults_and_key_fallback():
     config = load_config({"COLLEAGUE_API_KEY": KEY})
     assert config.key == KEY
     assert config.base_url == _embed_route.DEFAULT_EMBED_URL
-    assert config.embed_model == "Qwen/Qwen3-Embedding-0.6B"
+    assert config.embed_model == "google/embeddinggemma-2"
     preferred = load_config({"COLLEAGUE_API_KEY": "other", "EMBEDDINGS_API_KEY": KEY})
     assert preferred.key == KEY
 

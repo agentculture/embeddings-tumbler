@@ -50,8 +50,8 @@ Then open `http://127.0.0.1:8000/` in a browser.
 
 The page opens on a real data set: 999 articles from English Wikipedia's list
 of vital articles (Level 3). Each point is one article. Its vector was made by
-the model `Qwen/Qwen3-Embedding-0.6B` from the first sentences of the article's
-introduction, and has 1,024 dimensions. The titles and texts are Wikipedia's,
+the model `google/embeddinggemma-2` from the first sentences of the article's
+introduction, and has 768 dimensions. The titles and texts are Wikipedia's,
 written by Wikipedia contributors and shortened; they are under the Creative
 Commons Attribution-ShareAlike 4.0 licence (CC BY-SA 4.0), and the package's
 `NOTICE` file gives the source and the changes made.
@@ -78,15 +78,15 @@ results in order, nearest first:
 | Rank | Article | Distance |
 |------|---------|----------|
 | 1 | River | 0.000 |
-| 2 | Flood | 0.435 |
-| 3 | Lake | 0.454 |
-| 4 | Nile | 0.499 |
-| 5 | Amazon River | 0.553 |
-| 6 | Drink | 0.555 |
-| 7 | Yangtze | 0.563 |
-| 8 | Drinking water | 0.564 |
+| 2 | Lake | 0.214 |
+| 3 | Nile | 0.221 |
+| 4 | Flood | 0.229 |
+| 5 | Wind | 0.229 |
+| 6 | Erosion | 0.233 |
+| 7 | Fishing | 0.235 |
+| 8 | Drinking water | 0.239 |
 
-The radius of this search is 0.564, the distance of its eighth result.
+The radius of this search is 0.239, the distance of its eighth result.
 
 The picture did not stop while this happened, and it does not stop while a
 search is shown. When a new search arrives, the view swings toward it for a few
@@ -122,8 +122,8 @@ music
 
 Now there are two searches. The line reads
 `A river · B music · 16 points lit`. Search B's results are Music, History of
-music, Musical instrument, Singing, The arts, Folk music, Art and Classical
-music, with a radius of 0.494.
+music, Singing, Musical instrument, Art, The arts, Entertainment and Dance,
+with a radius of 0.241.
 
 For each pair of searches the panel adds a line that compares them: how many
 points are within both radii, which results they have in common, and the
@@ -264,7 +264,7 @@ from the environment of the server you started, not from the page:
 |----------|---------|
 | `EMBEDDINGS_EMBED_URL` | The address of an OpenAI-compatible embedding service, including `/v1`. Without it, `http://localhost:8001/v1`. |
 | `EMBEDDINGS_API_KEY`, or else `COLLEAGUE_API_KEY` | The key. Without one the command stops and names these variables. |
-| `EMBEDDINGS_EMBED_MODEL` | The model to ask for. Without it, `Qwen/Qwen3-Embedding-0.6B`, the model that made the Wikipedia set. |
+| `EMBEDDINGS_EMBED_MODEL` | The model to ask for. Without it, `google/embeddinggemma-2`, the model that made the Wikipedia set. |
 
 **The address and the key never reach the page.** They stay in the helper's
 process. The helper answers the page with a vector and the model's name, and

@@ -29,17 +29,17 @@ TITLES = {p["id"]: p["label"] for p in DEMO["points"]}
 WAIT = 120
 
 # The results the guide quotes for its first two searches (article titles, nearest first).
-RIVER = ["River", "Flood", "Lake", "Nile", "Amazon River", "Drink", "Yangtze", "Drinking water"]
-RIVER_DISTANCES = ["0.000", "0.435", "0.454", "0.499", "0.553", "0.555", "0.563", "0.564"]
+RIVER = ["River", "Lake", "Nile", "Flood", "Wind", "Erosion", "Fishing", "Drinking water"]
+RIVER_DISTANCES = ["0.000", "0.214", "0.221", "0.229", "0.229", "0.233", "0.235", "0.239"]
 MUSIC = [
     "Music",
     "History of music",
-    "Musical instrument",
     "Singing",
-    "The arts",
-    "Folk music",
+    "Musical instrument",
     "Art",
-    "Classical music",
+    "The arts",
+    "Entertainment",
+    "Dance",
 ]
 
 HANDLE = "EmbeddingsTumbler.get(document.getElementById('space'))"
@@ -203,8 +203,8 @@ def walk(browser, base_url):
 
 def test_the_default_data_is_the_wikipedia_set(walk):
     assert walk["facts"]["count"] == 999
-    assert walk["facts"]["model"] == "Qwen/Qwen3-Embedding-0.6B"
-    assert walk["facts"]["dimension"] == 1024
+    assert walk["facts"]["model"] == "google/embeddinggemma-2"
+    assert walk["facts"]["dimension"] == 768
 
 
 def test_focus_is_the_fourth_view(walk):
@@ -249,7 +249,7 @@ def test_the_first_search_gives_the_results_the_guide_quotes(walk):
     assert _titles(walk["river"], "A") == RIVER
     assert river["results"][0]["distance"] == pytest.approx(0, abs=1e-6)
     assert [f"{hit['distance']:.3f}" for hit in river["results"]] == RIVER_DISTANCES
-    assert round(river["radius"], 3) == 0.564
+    assert round(river["radius"], 3) == 0.239
     assert walk["river"]["litCount"] == 8
     assert walk["river_panel"]["summary"] == "A river · 8 points lit"
 
@@ -258,7 +258,7 @@ def test_two_searches_are_lettered_and_compared(walk):
     two = walk["two"]
     assert [q["letter"] for q in two["searches"]] == ["A", "B"]
     assert _titles(two, "B") == MUSIC
-    assert round(two["searches"][1]["radius"], 3) == 0.494
+    assert round(two["searches"][1]["radius"], 3) == 0.241
     assert [[p["a"], p["b"], p["shared"], p["common"]] for p in two["pairs"]] == [["A", "B", 0, 0]]
     assert walk["two_panel"]["summary"] == "A river · B music · 16 points lit"
     assert "A and B: no point found by both" in walk["two_panel"]["pairs"]

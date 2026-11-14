@@ -927,7 +927,7 @@ over HTTP). Decided here for that reason.
 | Flag | Meaning |
 |------|---------|
 | `--embed` | Turn the route on. Without it, `viewer serve` is exactly today's static-only server and reads no environment variable. |
-| `--embed-model MODEL` | The embedding model to ask the gateway for. Default: the environment's `EMBEDDINGS_EMBED_MODEL`, else `Qwen/Qwen3-Embedding-0.6B` (embeddings-cli's default). |
+| `--embed-model MODEL` | The embedding model to ask the gateway for. Default: the environment's `EMBEDDINGS_EMBED_MODEL`, else `google/embeddinggemma-2`, the model that made the standalone page's default data. |
 | `--rerank-model MODEL` | Turn on the `rerank` operation with this model. Without it, rerank is not offered. |
 | `--query-prefix TEXT` | Text put before every query before embedding (for models that embed queries and documents differently). Without it the query is sent as typed. |
 | `--embed-allow-remote` | Allow `--embed` on a non-loopback `--host`. Without it, `--embed` with a non-loopback bind is a user error (exit 1) and nothing is served. |

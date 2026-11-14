@@ -1163,7 +1163,7 @@ given:
 |----------|---------|
 | `EMBEDDINGS_EMBED_URL` | The base address of an OpenAI-compatible embedding service, including `/v1`. Default `http://localhost:8001/v1`. |
 | `EMBEDDINGS_API_KEY`, or else `COLLEAGUE_API_KEY` | The key. With neither set, the command stops with exit code 2 and a message that names the variables. |
-| `EMBEDDINGS_EMBED_MODEL` | The embedding model, unless `--embed-model` names one. Default `Qwen/Qwen3-Embedding-0.6B`. |
+| `EMBEDDINGS_EMBED_MODEL` | The embedding model, unless `--embed-model` names one. Default `google/embeddinggemma-2`. |
 
 Neither the address nor the key is ever sent to a page: not in an answer, not
 in a header, not in a log line, and not in the command's `--json` output. The
@@ -1192,7 +1192,7 @@ same small route on your own server and call it from your `embed` callback.
 The standalone page's default data is a real set, so that search has something
 to find: 999 articles from English Wikipedia's list of vital articles
 (Level 3), each embedded from the first sentences of its introduction by
-`Qwen/Qwen3-Embedding-0.6B`, which is also the helper's default model. The
+`google/embeddinggemma-2`, which is also the helper's default model. The
 titles and texts are Wikipedia's, under the Creative Commons
 Attribution-ShareAlike 4.0 licence (CC BY-SA 4.0), not this package's licence;
 the package's `NOTICE` file gives the source, the revision and the changes

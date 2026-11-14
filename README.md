@@ -77,8 +77,8 @@ English Wikipedia articles, the ones linked from the list
 "Wikipedia:Vital articles/Level 3", each embedded from the first sentences of its
 introduction. The list's section an article sits under (People, History,
 Science, ...) is its group, so the colours mean something. The pair ships beside
-the page as `demo-wikipedia.json` and `demo-wikipedia.f32`, about 4.5 MB
-together at 1,024 dimensions.
+the page as `demo-wikipedia.json` and `demo-wikipedia.f32`, about 3.4 MB
+together at 768 dimensions.
 
 - **Licence.** The titles and texts are Wikipedia's, written by Wikipedia
   contributors, under the Creative Commons Attribution-ShareAlike 4.0 licence
@@ -97,7 +97,7 @@ together at 1,024 dimensions.
   the notes, shows the reference's synthetic sample set; the page also falls
   back to it, and says so, when the pair is missing or the page is opened as a
   file. The committed pair holds 999 items embedded with
-  `Qwen/Qwen3-Embedding-0.6B` (1,024 dimensions) on 2026-11-14.
+  `google/embeddinggemma-2` (768 dimensions) on 2026-11-14.
 
 ## Repository scaffold
 

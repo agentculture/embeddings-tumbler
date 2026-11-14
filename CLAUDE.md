@@ -115,8 +115,9 @@ the page's default data pair, `demo-wikipedia.json` and `demo-wikipedia.f32`
 ships too). The pair is written straight into `embeddings_tumbler/static/` by
 `scripts/build_demo_set.py` from the committed corpus
 `data/wikipedia-vital-3/corpus.jsonl` (built by `scripts/build_demo_corpus.py`).
-The committed pair is the real one: 999 items, 1,024 dimensions, embedded with
-`Qwen/Qwen3-Embedding-0.6B` through the gateway on 2026-11-14.
+The committed pair is the real one: 999 items, 768 dimensions, embedded with
+`google/embeddinggemma-2` through the gateway on 2026-11-14 (the owner's choice of
+model; it is also the default model of `viewer serve --embed`).
 
 Two channels carry the same unmodified core file: the Python wheel (package
 data, with CLI verbs that write the files into a host folder or serve a folder
