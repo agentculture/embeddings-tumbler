@@ -1,0 +1,299 @@
+{
+ "groups": [
+  {
+   "group": "Fonts",
+   "items": [
+    {
+     "title": "Display face: the title, mode names and note headings",
+     "visible": "yes"
+    },
+    {
+     "title": "Body face: the mode summaries and note paragraphs",
+     "visible": "yes"
+    },
+    {
+     "title": "Data face: counts, status, captions, controls and the closing note",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Page chrome and layout",
+   "items": [
+    {
+     "title": "A shorter stage on short screens",
+     "visible": "no"
+    },
+    {
+     "title": "Note text filled in from the data",
+     "visible": "no"
+    },
+    {
+     "title": "The closing note depends on the data",
+     "visible": "no"
+    },
+    {
+     "title": "The mode comes from ?mode=, not from #mode",
+     "visible": "no"
+    }
+   ]
+  },
+  {
+   "group": "Tumble's motion",
+   "items": [
+    {
+     "title": "A seeded guided tour, not an unseeded random walk",
+     "visible": "yes"
+    },
+    {
+     "title": "What the guided tour looks like on the sample set",
+     "visible": "yes"
+    },
+    {
+     "title": "The starting frame",
+     "visible": "no"
+    }
+   ]
+  },
+  {
+   "group": "Lattice",
+   "items": [
+    {
+     "title": "Hidden directions are seeded per swap",
+     "visible": "no"
+    },
+    {
+     "title": "A fresh Lattice starts from a seeded frame",
+     "visible": "no"
+    },
+    {
+     "title": "The dimming, trails and wires no longer wait for the neighbours",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Wander",
+   "items": [
+    {
+     "title": "Wander starts at once",
+     "visible": "yes"
+    },
+    {
+     "title": "The route comes from the seed",
+     "visible": "yes"
+    },
+    {
+     "title": "Where a fresh Wander starts, and a stop with no group",
+     "visible": "no"
+    },
+    {
+     "title": "Distances tuned by eye are scaled to the data",
+     "visible": "no"
+    }
+   ]
+  },
+  {
+   "group": "Mode switching and timing",
+   "items": [
+    {
+     "title": "Motion is a function of time, not of frames",
+     "visible": "no"
+    },
+    {
+     "title": "Switching modes blends over a fixed time",
+     "visible": "yes"
+    },
+    {
+     "title": "Auto-framing uses a fixed sample",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Status lines",
+   "items": [
+    {
+     "title": "Tumble's status line",
+     "visible": "yes"
+    },
+    {
+     "title": "Lattice and Wander status lines",
+     "visible": "slightly"
+    },
+    {
+     "title": "The status line may wrap",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Labels",
+   "items": [
+    {
+     "title": "Labels are page text, not canvas drawing",
+     "visible": "slightly"
+    },
+    {
+     "title": "Which points are labelled",
+     "visible": "no"
+    }
+   ]
+  },
+  {
+   "group": "The readout strip",
+   "items": [
+    {
+     "title": "One cell per dimension of the data",
+     "visible": "no"
+    }
+   ]
+  },
+  {
+   "group": "Controls and input",
+   "items": [
+    {
+     "title": "User zoom",
+     "visible": "yes"
+    },
+    {
+     "title": "The Reset zoom button",
+     "visible": "yes"
+    },
+    {
+     "title": "Touch-friendly buttons",
+     "visible": "yes"
+    },
+    {
+     "title": "Keys 1 to 3 switch modes, only while the viewer has focus",
+     "visible": "yes"
+    },
+    {
+     "title": "A longer hint that sits on its own line",
+     "visible": "yes"
+    },
+    {
+     "title": "Treatments for a light background",
+     "visible": "no"
+    }
+   ]
+  },
+  {
+   "group": "The provenance block",
+   "items": [
+    {
+     "title": "A provenance block under the controls",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Dimension and data",
+   "items": [
+    {
+     "title": "The dimension and the count come from the data",
+     "visible": "no"
+    },
+    {
+     "title": "The same vectors, with the point weights and bridge colours rebuilt",
+     "visible": "slightly"
+    },
+    {
+     "title": "A view seed",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Behaviour the reference does not have",
+   "items": [
+    {
+     "title": "Data files",
+     "visible": "no"
+    },
+    {
+     "title": "Refusals and plain messages",
+     "visible": "no"
+    },
+    {
+     "title": "Appends turn the view gently",
+     "visible": "no"
+    },
+    {
+     "title": "Pausing when hidden or off screen",
+     "visible": "no"
+    },
+    {
+     "title": "Reduced motion",
+     "visible": "no"
+    },
+    {
+     "title": "Several viewers, and three ways to use the file",
+     "visible": "no"
+    },
+    {
+     "title": "A strict content security policy",
+     "visible": "no"
+    },
+    {
+     "title": "Loading and error panels on the page",
+     "visible": "slightly"
+    }
+   ]
+  },
+  {
+   "group": "The reference's own defects that were not copied",
+   "items": [
+    {
+     "title": "All three mode notes shown at once",
+     "visible": "yes"
+    },
+    {
+     "title": "The WebGL fallback text drawn over the sky",
+     "visible": "yes"
+    },
+    {
+     "title": "No character set",
+     "visible": "no"
+    },
+    {
+     "title": "No document type, so the reference runs in quirks mode",
+     "visible": "unknown"
+    }
+   ]
+  },
+  {
+   "group": "Unintended differences found",
+   "items": [
+    {
+     "title": "Group names and Wander's names lack the reference's dark outline",
+     "visible": "yes"
+    },
+    {
+     "title": "Wander's stop name, neighbour names and ring are styled differently",
+     "visible": "yes"
+    },
+    {
+     "title": "Tumble fills the stage and reaches its edges",
+     "visible": "yes"
+    },
+    {
+     "title": "The readout strip has no borders and no gap before its caption",
+     "visible": "yes"
+    },
+    {
+     "title": "The speed slider is narrower and the Pause button smaller",
+     "visible": "yes"
+    },
+    {
+     "title": "The reference's page has an 8 px margin; the build is truly full-bleed",
+     "visible": "yes"
+    },
+    {
+     "title": "The mode summaries are worded differently",
+     "visible": "yes"
+    }
+   ]
+  }
+ ]
+}
