@@ -372,6 +372,29 @@ ET.renderer = (function () {
       };
     }
 
+    function shaderError(message) {
+      var e = new Error(message);
+      e.isShaderError = true;
+      return e;
+    }
+
+    // A failure while building or uploading: shader-failed for compile and link errors,
+    // gpu-failed for anything else a GL call threw.
+    function failure(e) {
+      var msg = e && e.message ? e.message : String(e);
+      if (e && e.isShaderError) return unavailable("shader-failed", "The view could not be drawn: " + msg);
+      return unavailable("gpu-failed", "The view could not be sent to the GPU: " + msg);
+    }
+
+    // Drop a half-built GPU state after a failed upload and remember why. The CPU copy
+    // is kept, so rebuild() (or a context restore) can try again.
+    function failGpu(e) {
+      freeGpu();
+      gpu = null;
+      error = failure(e);
+      return error;
+    }
+
     function compile(vsSrc, fsSrc, uniformNames) {
       var prog = track("program", gl.createProgram());
       var pair = [
@@ -387,7 +410,7 @@ ET.renderer = (function () {
         if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
           var log = gl.getShaderInfoLog(sh);
           for (var j = 0; j < shaders.length; j++) gl.deleteShader(shaders[j]);
-          throw new Error("shader did not compile: " + log);
+          throw shaderError("shader did not compile: " + log);
         }
         gl.attachShader(prog, sh);
       }
@@ -398,7 +421,7 @@ ET.renderer = (function () {
         gl.detachShader(prog, shaders[k]);
         gl.deleteShader(shaders[k]);
       }
-      if (!linked) throw new Error("shader program did not link: " + linkLog);
+      if (!linked) throw shaderError("shader program did not link: " + linkLog);
       var u = {};
       for (var m = 0; m < uniformNames.length; m++) u[uniformNames[m]] = gl.getUniformLocation(prog, uniformNames[m]);
       return { program: prog, u: u };
@@ -596,7 +619,7 @@ ET.renderer = (function () {
       } catch (e) {
         freeGpu();
         gpu = null;
-        return unavailable("shader-failed", "The view could not be drawn: " + (e && e.message ? e.message : String(e)));
+        return failure(e);
       }
     }
 
@@ -629,12 +652,13 @@ ET.renderer = (function () {
       return { vectors: vec, attr: attr };
     }
 
+    // True when the GPU state is whole: not disposed, not lost, no failed build.
     function usable() {
-      return !disposed && !lost && gpu !== null;
+      return !disposed && !lost && gpu !== null && error === null;
     }
 
     var api = {
-      // Replace all points. Returns { ok: true, layout } or { ok: false, reason, message }.
+      // Replace all points. Returns { ok: true, layout, uploaded } or { ok: false, reason, message }.
       setData: function (input) {
         if (disposed) return unavailable("disposed", "The renderer has been disposed.");
         var d = input && input.dimension;
@@ -653,20 +677,20 @@ ET.renderer = (function () {
         writePoints(input, n, 0);
         wires = { pairs: null, lengths: null, count: 0 };
         needClear = true;
-        if (usable()) {
-          try {
-            uploadAllPoints();
-            uploadWires();
-          } catch (e) {
-            error = unavailable("shader-failed", "The view could not be drawn: " + e.message);
-            return error;
-          }
+        if (!usable()) return { ok: true, layout: lay, uploaded: false };
+        try {
+          uploadAllPoints();
+          uploadWires();
+        } catch (e) {
+          return failGpu(e);
         }
-        return { ok: true, layout: lay };
+        return { ok: true, layout: lay, uploaded: true };
       },
 
       // Add points after the existing ones. Wires are kept. Returns
-      // { ok: true, reallocated } (reallocated: the GPU copy was rebuilt at a larger size).
+      // { ok: true, reallocated, uploaded } (reallocated: the GPU copy was rebuilt at a
+      // larger size; uploaded: false when only the CPU copy changed because the context is
+      // lost or a build failed).
       appendData: function (input) {
         if (disposed) return unavailable("disposed", "The renderer has been disposed.");
         if (!store.lay) throw new TypeError("appendData needs a prior setData");
@@ -674,7 +698,7 @@ ET.renderer = (function () {
           throw new TypeError("dimension " + input.dimension + " differs from the data's " + store.dimension);
         }
         var n = checkPoints(input, store.dimension);
-        if (n === 0) return { ok: true, reallocated: false };
+        if (n === 0) return { ok: true, reallocated: false, uploaded: usable() };
         var total = store.count + n;
         var lay = store.lay;
         var reallocated = false;
@@ -697,7 +721,8 @@ ET.renderer = (function () {
         var first = store.count;
         writePoints(input, n, first);
         store.count = total;
-        if (usable()) {
+        if (!usable()) return { ok: true, reallocated: reallocated, uploaded: false };
+        try {
           if (reallocated) {
             uploadAllPoints();
           } else {
@@ -706,6 +731,7 @@ ET.renderer = (function () {
               r0 = Math.floor(first / P),
               r1 = Math.floor((total - 1) / P),
               rowFloats = lay.width * 4;
+            gl.activeTexture(gl.TEXTURE0); // never rely on whichever unit was left active
             gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
             gl.texSubImage2D(
               gl.TEXTURE_2D,
@@ -722,14 +748,16 @@ ET.renderer = (function () {
             gl.bufferSubData(gl.ARRAY_BUFFER, first * 16, store.attr.subarray(first * 4, total * 4));
             gl.bindBuffer(gl.ARRAY_BUFFER, null);
           }
+        } catch (e) {
+          return failGpu(e);
         }
-        return { ok: true, reallocated: reallocated };
+        return { ok: true, reallocated: reallocated, uploaded: true };
       },
 
       // Neighbour wires as index pairs (two per wire). lengths: optional true distances,
       // one per wire; measured from the kept vectors when absent.
       setWires: function (pairs, lengths) {
-        if (disposed) return;
+        if (disposed) return unavailable("disposed", "The renderer has been disposed.");
         if (!isIndexArray(pairs)) throw new TypeError("pairs must be a Uint32Array (or Int32Array)");
         if (pairs.length % 2 !== 0) throw new TypeError("pairs must hold two indices per wire");
         var m = pairs.length / 2;
@@ -757,7 +785,30 @@ ET.renderer = (function () {
           }
         }
         wires = { pairs: new Uint32Array(pairs), lengths: new Float32Array(lens), count: m };
-        if (usable()) uploadWires();
+        if (!usable()) return { ok: true, uploaded: false };
+        try {
+          uploadWires();
+        } catch (e) {
+          return failGpu(e);
+        }
+        return { ok: true, uploaded: true };
+      },
+
+      // Retry building every GPU object from the CPU copy, after a failed restore or a
+      // failed upload. Returns { ok: true } or { ok: false, reason, message }. draw()
+      // never retries by itself.
+      rebuild: function () {
+        if (disposed) return unavailable("disposed", "The renderer has been disposed.");
+        if (lost || (typeof gl.isContextLost === "function" && gl.isContextLost())) {
+          return unavailable("context-lost", "The graphics context is lost; wait for it to be restored.");
+        }
+        error = null;
+        var res = buildAll();
+        if (!res.ok) {
+          error = res;
+          return res;
+        }
+        return { ok: true };
       },
 
       // Set the drawing-buffer size in device pixels.
@@ -772,7 +823,7 @@ ET.renderer = (function () {
 
       // Draw one frame. state: see DEFAULTS, plus frame (Float32Array 3 * D) and
       // centre (Float32Array D, default zeros). Returns false when nothing could be
-      // drawn (disposed, context lost, failed rebuild).
+      // drawn (disposed, context lost, or a failed build or upload until rebuild()).
       draw: function (state) {
         if (!usable()) return false;
         var s = merge(state);
