@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T00:16:14Z",
+  "updated": "2026-11-14T00:55:01Z",
   "claims": [
     {
       "id": "c1",
@@ -1031,6 +1031,17 @@
       "skipped_check": "independent review before merge",
       "refs": [
         "t6"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l12",
+      "code": "n-below-claim",
+      "what": "t7 fixes: Wander's no-jump bound across an append comes from one set and three seeds; preparation times were not re-measured in node after the fixes; Tumble's variance share printed 1.0000000342 for a 2-to-5 point set (floating-point overshoot shown as 100.0%).",
+      "skipped_check": "more sets and seeds for the append continuity bound; clamp of the share to 1",
+      "refs": [
+        "t7"
       ],
       "origin": "llm",
       "status": "proposed"
