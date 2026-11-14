@@ -45,9 +45,10 @@ def _load():
 scan = _load()
 
 
-def _run(*args: str) -> subprocess.CompletedProcess:
+def _run(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess:
+    # Paths must be inside the folder the scanner runs from, so each call names that folder.
     return subprocess.run(
-        [sys.executable, str(SCRIPT), *args], capture_output=True, text=True, check=False
+        [sys.executable, str(SCRIPT), *args], capture_output=True, text=True, check=False, cwd=cwd
     )
 
 
@@ -99,7 +100,7 @@ def test_shipped_set_is_what_the_scanner_expects():
 def test_every_file_in_the_built_wheel_passes(wheel_static):
     names = sorted(p.name for p in wheel_static.iterdir() if p.suffix not in (".py", ".pyc"))
     assert names == SHIPPED, "the wheel ships a different set from the source tree"
-    done = _run(str(wheel_static), *_expect_args())
+    done = _run(str(wheel_static), *_expect_args(), cwd=wheel_static)
     assert done.returncode == 0, done.stderr
     assert f"{len(SHIPPED)} file(s) reference no external origin" in done.stdout
 
@@ -107,7 +108,7 @@ def test_every_file_in_the_built_wheel_passes(wheel_static):
 def test_every_file_viewer_write_produces_passes(written_folder):
     names = sorted(p.name for p in written_folder.iterdir())
     assert names == SHIPPED
-    done = _run(str(written_folder), *_expect_args())
+    done = _run(str(written_folder), *_expect_args(), cwd=written_folder)
     assert done.returncode == 0, done.stderr
 
 
@@ -192,8 +193,9 @@ def test_negative_control_bites(rule, tmp_path):
     assert findings, f"{rule}: the scanner missed it"
     code = rule.split()[0]
     assert any(f"[{code}]" in f for f in findings), findings
-    done = _run(str(path))
-    assert done.returncode == 1 and code in done.stderr
+    done = _run(str(path), cwd=tmp_path)
+    assert done.returncode == 1
+    assert code in done.stderr
 
 
 @pytest.mark.parametrize("case", list(CLEAN))
@@ -208,15 +210,34 @@ def test_a_planted_file_in_a_shipped_folder_fails_the_whole_scan(written_folder,
     folder = tmp_path / "site"
     shutil.copytree(written_folder, folder)
     (folder / "extra.js").write_text('fetch("https://cdn.example/x.js")', encoding="utf-8")
-    done = _run(str(folder))
-    assert done.returncode == 1 and "extra.js" in done.stderr
+    done = _run(str(folder), cwd=tmp_path)
+    assert done.returncode == 1
+    assert "extra.js" in done.stderr
 
 
 def test_set_rules(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
-    assert _run(str(empty)).returncode == 1
+    assert _run(str(empty), cwd=tmp_path).returncode == 1
     (empty / "a.js").write_text("const a = 1;", encoding="utf-8")
-    done = _run(str(empty), "--expect", "embeddings-tumbler.js")
-    assert done.returncode == 1 and "[S1]" in done.stderr
-    assert _run(str(tmp_path / "missing")).returncode == 2
+    done = _run(str(empty), "--expect", "embeddings-tumbler.js", cwd=tmp_path)
+    assert done.returncode == 1
+    assert "[S1]" in done.stderr
+    assert _run(str(tmp_path / "missing"), cwd=tmp_path).returncode == 2
+
+
+def test_a_path_outside_the_current_folder_is_refused(tmp_path):
+    inside = tmp_path / "site"
+    inside.mkdir()
+    (inside / "a.js").write_text("const a = 1;", encoding="utf-8")
+    outside = tmp_path / "other.js"
+    outside.write_text("const b = 2;", encoding="utf-8")
+    done = _run(str(outside), cwd=inside)
+    assert done.returncode == 2
+    assert "outside the current folder" in done.stderr
+    assert done.stdout == ""
+    # a relative path climbing out is refused too; one inside is scanned and named as given
+    assert _run("../other.js", cwd=inside).returncode == 2
+    done = _run("a.js", cwd=inside)
+    assert done.returncode == 0, done.stderr
+    assert "       a.js" in done.stdout

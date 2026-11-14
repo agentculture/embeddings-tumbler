@@ -301,6 +301,7 @@ def test_regenerating_gives_byte_identical_fixtures(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=False,
+        cwd=tmp_path,
     )
     assert result.returncode == 0, result.stderr
     fresh = sorted(p.name for p in tmp_path.iterdir())
@@ -316,6 +317,7 @@ def test_two_generations_are_identical(tmp_path: Path) -> None:
             [sys.executable, "-I", str(GENERATOR), "--out", str(tmp_path / sub)],
             check=True,
             capture_output=True,
+            cwd=tmp_path,
         )
     names = sorted(p.name for p in (tmp_path / "a").iterdir())
     assert names == sorted(p.name for p in (tmp_path / "b").iterdir())
@@ -354,7 +356,8 @@ def test_index_covers_the_cases_the_plan_names() -> None:
         if case["valid"]:
             data, _ = _load(case["file"])
             dims.setdefault(data["dimension"], []).append(case["name"])
-    assert 384 in dims and 1024 in dims, "valid 384-d and 1024-d sets are required"
+    assert 384 in dims, "valid 384-d and 1024-d sets are required"
+    assert 1024 in dims, "valid 384-d and 1024-d sets are required"
     labels_only = [
         c for c in cases.values() if c["valid"] and _load(c["file"])[0]["text_included"] is False
     ]
@@ -377,8 +380,10 @@ def test_labels_only_append_onto_text_keeps_text_included_true() -> None:
     case = next(c for c in _cases() if c["name"] == "labels-only-append-onto-text")
     base, _ = _load(case["base"])
     data, _ = _load(case["file"])
-    assert base["text_included"] is True and data["text_included"] is False
-    assert case["valid"] and case["expect"]["text_included"] is True
+    assert base["text_included"] is True
+    assert data["text_included"] is False
+    assert case["valid"]
+    assert case["expect"]["text_included"] is True
 
 
 def test_block_unreadable_fixture_names_a_missing_file() -> None:
@@ -388,12 +393,14 @@ def test_block_unreadable_fixture_names_a_missing_file() -> None:
     assert case["refusal"]["code"] == "block-unreadable"
 
 
-def _run_generator(out: Path) -> subprocess.CompletedProcess:
+def _run_generator(out: Path, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    # --out must be inside the folder the generator runs from: by default, out itself.
     return subprocess.run(
         [sys.executable, "-I", str(GENERATOR), "--out", str(out)],
         capture_output=True,
         text=True,
         check=False,
+        cwd=out if cwd is None else cwd,
     )
 
 
@@ -405,6 +412,16 @@ def test_generator_refuses_a_foreign_non_empty_folder(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert sorted(p.name for p in tmp_path.iterdir()) == ["precious.txt", "sub"]
     assert (tmp_path / "sub" / "deep.json").is_file()
+
+
+def test_generator_refuses_an_out_folder_outside_the_current_one(tmp_path: Path) -> None:
+    here = tmp_path / "here"
+    here.mkdir()
+    result = _run_generator(tmp_path / "elsewhere", cwd=here)
+    assert result.returncode == 1
+    assert "outside the current folder" in result.stderr
+    assert result.stdout == ""
+    assert not (tmp_path / "elsewhere").exists()
 
 
 def test_generator_only_removes_its_own_stale_files(tmp_path: Path) -> None:

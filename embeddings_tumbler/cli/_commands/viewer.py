@@ -17,6 +17,8 @@ from embeddings_tumbler.cli._commands.overview import emit_overview
 from embeddings_tumbler.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, CliError
 from embeddings_tumbler.cli._output import emit_diagnostic, emit_result
 
+_JSON_HELP = "Emit structured JSON."
+
 
 def _json(args: argparse.Namespace) -> bool:
     return bool(getattr(args, "json", False))
@@ -143,7 +145,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "viewer",
         help="Write the viewer files into a host folder, or serve a folder locally.",
     )
-    p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p.add_argument("--json", action="store_true", help=_JSON_HELP)
     p.set_defaults(func=cmd_viewer_overview, json=False)
     noun_sub = p.add_subparsers(dest="viewer_command", parser_class=type(p))
 
@@ -153,16 +155,16 @@ def register(sub: argparse._SubParsersAction) -> None:
     w.add_argument("target", help="Host folder to write into.")
     w.add_argument("--apply", action="store_true", help="Actually write (default is a preview).")
     w.add_argument("--force", action="store_true", help="Overwrite files that already exist.")
-    w.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    w.add_argument("--json", action="store_true", help=_JSON_HELP)
     w.set_defaults(func=cmd_write)
 
     s = noun_sub.add_parser("serve", help="Serve a folder as static files (loopback by default).")
     s.add_argument("folder", help="Folder to serve.")
     s.add_argument("--host", default=_static_server.DEFAULT_HOST, help="Bind address.")
     s.add_argument("--port", type=int, default=8000, help="Port; 0 picks a free one.")
-    s.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    s.add_argument("--json", action="store_true", help=_JSON_HELP)
     s.set_defaults(func=cmd_serve)
 
     ov = noun_sub.add_parser("overview", help="Describe the viewer verbs.")
-    ov.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    ov.add_argument("--json", action="store_true", help=_JSON_HELP)
     ov.set_defaults(func=cmd_viewer_overview)

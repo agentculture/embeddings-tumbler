@@ -104,7 +104,8 @@ def test_main_fails_closed_and_prints_nothing_on_stdout(capsys):
     out, err = capsys.readouterr()
     assert code == 1
     assert out == ""
-    assert "ECONNREFUSED" in err and "publish nothing" in err
+    assert "ECONNREFUSED" in err
+    assert "publish nothing" in err
 
 
 def test_main_fails_when_npm_cannot_be_started(capsys):
@@ -118,3 +119,22 @@ def test_main_fails_when_npm_cannot_be_started(capsys):
 def test_main_needs_a_package_and_a_version():
     with pytest.raises(SystemExit):
         state.main(["only-one-arg"])
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--registry=https://evil.example/", "0.10.1"],
+        ["@culture.dev/embeddings-tumbler", "--json"],
+        ["@culture.dev/embeddings-tumbler", "latest"],
+        ["../pkg", "1.0.0"],
+    ],
+)
+def test_main_refuses_anything_but_a_package_and_an_exact_version(argv, capsys):
+    def run(cmd):
+        raise AssertionError(f"npm must not run: {cmd}")
+
+    assert state.main(argv, run=run) == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "publish nothing" in err

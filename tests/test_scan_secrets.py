@@ -336,7 +336,8 @@ def _registry_findings(path: str, text: str) -> list:
 )
 def test_registry_token_plumbing_is_caught(line: str) -> None:
     findings = _registry_findings("workflow.yml", line + "\n")
-    assert findings and all(f.kind == "registry-token" for f in findings), line
+    assert findings, line
+    assert all(f.kind == "registry-token" for f in findings), line
 
 
 def test_an_npmrc_with_any_auth_is_caught_even_as_a_reference() -> None:

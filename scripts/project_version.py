@@ -19,7 +19,9 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-_TABLE_RE = re.compile(r"^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$")
+# Matched against the stripped line; the name is stripped after. No two parts can take the
+# same character, so a failed match does not backtrack over the line.
+_TABLE_RE = re.compile(r"\[\[?([^\]]+)\]\]?\s*(?:#.*)?")
 _VERSION_RE = re.compile(r'^(\s*version\s*=\s*)"([^"\\]*)"')
 
 
@@ -32,9 +34,9 @@ def set_version(text: str, new: str) -> str:
     lines = text.splitlines(keepends=True)
     table = None
     for i, line in enumerate(lines):
-        header = _TABLE_RE.match(line)
+        header = _TABLE_RE.fullmatch(line.strip())
         if header:
-            table = header.group(1)
+            table = header.group(1).strip()
             continue
         if table == "project":
             match = _VERSION_RE.match(line)

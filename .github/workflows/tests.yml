@@ -33,7 +33,7 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -53,7 +53,7 @@ jobs:
       - name: node --test
         run: node --test
 
-      - run: uv run pytest -n auto --cov=embeddings_tumbler --cov-report=xml:coverage.xml --cov-report=term -v
+      - run: uv run --locked --no-build pytest -n auto --cov=embeddings_tumbler --cov-report=xml:coverage.xml --cov-report=term -v
 
       - name: SonarCloud Scan
         if: env.SONAR_TOKEN != ''
@@ -95,28 +95,28 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
       - name: black --check
-        run: uv run black --check embeddings_tumbler tests
+        run: uv run --locked --no-build black --check embeddings_tumbler tests
 
       - name: isort --check
-        run: uv run isort --check-only embeddings_tumbler tests
+        run: uv run --locked --no-build isort --check-only embeddings_tumbler tests
 
       - name: flake8
-        run: uv run flake8 embeddings_tumbler tests
+        run: uv run --locked --no-build flake8 embeddings_tumbler tests
 
       - name: bandit
-        run: uv run bandit -c pyproject.toml -r embeddings_tumbler
+        run: uv run --locked --no-build bandit -c pyproject.toml -r embeddings_tumbler
 
       - name: markdownlint-cli2
         run: |
           set -euo pipefail
-          npm install -g markdownlint-cli2@0.21.0
+          npm install -g markdownlint-cli2@0.21.0 --ignore-scripts
           markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
 
       - name: afi rubric gate
-        run: uv run teken cli doctor . --strict
+        run: uv run --locked --no-build teken cli doctor . --strict
 
   harness-smoke:
     # All four harnesses (Claude Code, Pi/associate, colleague, Qwen Code) are
@@ -133,7 +133,7 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
       # `--stage all` runs three stages and prints exactly which of them really
       # ran here:
@@ -153,7 +153,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run python scripts/harness-smoke.py --stage all --require config 2>&1 \
+          uv run --locked --no-build python scripts/harness-smoke.py --stage all --require config 2>&1 \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
   version-check:

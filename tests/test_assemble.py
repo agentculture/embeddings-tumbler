@@ -32,9 +32,25 @@ def _pyproject_version() -> str:
     ]
 
 
-def test_assembly_is_deterministic():
-    assert assemble.assemble() == assemble.assemble()
-    assert assemble.assemble().encode("utf-8") == assemble.assemble().encode("utf-8")
+class _ListedInReverse:
+    """A stand-in for SRC_DIR whose glob lists the same modules in reverse name order."""
+
+    def __init__(self, folder: Path):
+        self.folder = folder
+
+    def glob(self, pattern: str) -> list[Path]:
+        return sorted(self.folder.glob(pattern), key=lambda p: p.name, reverse=True)
+
+
+def test_assembly_is_deterministic(monkeypatch):
+    # Same inputs give byte-identical output: across two runs, across a freshly loaded
+    # assembler, and whatever order the file system lists the modules in.
+    first = assemble.assemble().encode("utf-8")
+    second = assemble.assemble().encode("utf-8")
+    assert first == second
+    assert _load_assembler().assemble().encode("utf-8") == first
+    monkeypatch.setattr(assemble, "SRC_DIR", _ListedInReverse(assemble.SRC_DIR))
+    assert assemble.assemble().encode("utf-8") == first
 
 
 def test_committed_file_is_not_stale():

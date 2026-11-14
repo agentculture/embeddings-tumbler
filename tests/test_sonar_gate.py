@@ -153,3 +153,12 @@ def test_the_workflow_runs_the_check_after_the_scan() -> None:
     assert "sonar.qualitygate.wait=true" in (REPO_ROOT / "sonar-project.properties").read_text(
         encoding="utf-8"
     )
+
+
+def test_properties_outside_the_repository_are_refused(monkeypatch, capsys, tmp_path) -> None:
+    outside = tmp_path / "sonar-project.properties"
+    outside.write_text("sonar.projectKey=someone-else\n", encoding="utf-8")
+    code, out = run(monkeypatch, capsys, [], ["--branch", "main", "--properties", str(outside)])
+    assert code == 2
+    assert "outside this repository" in out.err
+    assert "someone-else" not in out.out + out.err

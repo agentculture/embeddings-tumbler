@@ -186,12 +186,17 @@ def run(browser, servers):
 
 def test_element_mounts_and_loads_src(run):
     ev = run["first_events"][0]
-    assert ev["type"] == "tumbler-load" and ev["target"] == "wc"
-    assert ev["detail"]["ok"] is True and ev["detail"]["count"] == 6
+    assert ev["type"] == "tumbler-load"
+    assert ev["target"] == "wc"
+    assert ev["detail"]["ok"] is True
+    assert ev["detail"]["count"] == 6
     info = run["loaded"]
-    assert info["mounted"] and info["handle"] and info["children"] == 1
+    assert info["mounted"]
+    assert info["handle"]
+    assert info["children"] == 1
     assert info["display"] == "block"
-    assert info["count"] == 6 and info["dimension"] == 384
+    assert info["count"] == 6
+    assert info["dimension"] == 384
     assert run["lit"] > 50, "the viewer drew nothing"
     assert sorted(u.rsplit("/", 1)[1] for u in run["requests_after_load"]) == [
         "valid-384.f32",
@@ -201,20 +206,26 @@ def test_element_mounts_and_loads_src(run):
 
 def test_removing_the_element_destroys_the_viewer(run):
     r = run["removed"]
-    assert r["mounted"] is False and r["handle"] is False and r["children"] == 0
+    assert r["mounted"] is False
+    assert r["handle"] is False
+    assert r["children"] == 0
     assert run["frames_while_removed"] == 0, "animation frames were requested after removal"
 
 
 def test_adding_the_element_again_mounts_again(run):
     info = run["readded"]
-    assert info["mounted"] and info["children"] == 1 and info["count"] == 6
+    assert info["mounted"]
+    assert info["children"] == 1
+    assert info["count"] == 6
     assert run["readded_viewers"] == 1, "a moved element leaked a viewer"
     assert run["readded_lit"] > 50
 
 
 def test_changing_src_loads_the_other_file(run):
     info = run["switched"]
-    assert info["dimension"] == 1024 and info["count"] == 4  # valid-1024.json: 4 points
+    # valid-1024.json: 4 points
+    assert info["dimension"] == 1024
+    assert info["count"] == 4
     assert run["switched_events"][0]["type"] == "tumbler-load"
     assert run["switched_events"][0]["detail"]["op"] == "replace"
     assert run["switched_lit"] > 50
@@ -222,26 +233,30 @@ def test_changing_src_loads_the_other_file(run):
 
 def test_another_origin_is_refused_and_never_requested(run):
     ev = run["foreign_events"][0]
-    assert ev["type"] == "tumbler-error" and ev["detail"]["code"] == "src-refused"
+    assert ev["type"] == "tumbler-error"
+    assert ev["detail"]["code"] == "src-refused"
     assert "own origin" in run["foreign"]["message"]
     assert run["foreign_server_hits"] == []
     assert run["foreign_page_requests"] == []
     assert run["foreign"]["mounted"], "the viewer stays mounted and keeps its data"
-    assert run["foreign"]["count"] == 4 and run["foreign"]["dimension"] == 1024
+    assert run["foreign"]["count"] == 4
+    assert run["foreign"]["dimension"] == 1024
 
 
 def test_the_refusal_holds_without_a_connect_restriction(run):
     # Same refusal on a page whose policy would allow the request: still nothing is sent.
     assert run["open_refusal"]["type"] == "tumbler-error"
     assert run["open_refusal"]["detail"]["code"] == "src-refused"
-    assert run["open_hits"] == [] and run["open_page_requests"] == []
+    assert run["open_hits"] == []
+    assert run["open_page_requests"] == []
     # Positive control: a request to that origin would have been counted.
     assert len(run["control_hits"]) == 1
 
 
 def test_a_missing_file_gives_a_plain_message(run):
     ev = run["missing_events"][0]
-    assert ev["type"] == "tumbler-error" and ev["detail"]["code"] == "src-unreadable"
+    assert ev["type"] == "tumbler-error"
+    assert ev["detail"]["code"] == "src-unreadable"
     assert "could not be read" in run["missing"]["message"]
 
 

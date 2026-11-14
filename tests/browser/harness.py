@@ -394,7 +394,9 @@ def decode_png(png: bytes) -> tuple[int, int, list[bytes]]:
         chunk = png[pos + 8 : pos + 8 + length]
         if kind == b"IHDR":
             width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", chunk)
-            assert depth == 8 and interlace == 0 and colour in (2, 6), (depth, colour, interlace)
+            assert depth == 8, (depth, colour, interlace)
+            assert interlace == 0, (depth, colour, interlace)
+            assert colour in (2, 6), (depth, colour, interlace)
             channels = 3 if colour == 2 else 4
         elif kind == b"IDAT":
             idat += chunk

@@ -98,7 +98,8 @@ def test_pull_requests_dry_run_both_packages_without_publishing():
     assert "pull_request" in _triggers(doc)
     text = (WORKFLOWS / "packages.yml").read_text(encoding="utf-8")
     assert not PUBLISH_CMD.search(text)
-    assert "id-token" not in text and "environment:" not in text
+    assert "id-token" not in text
+    assert "environment:" not in text
     job = doc["jobs"]["dry-run"]
     assert "scripts/check_packages.py" in _run_text(job)
     assert not job.get("if"), "the dry run must run on every pull request"
@@ -158,7 +159,8 @@ def test_npm_already_published_is_decided_by_the_fail_closed_script():
     steps = job["steps"]
     state = _step_index(job, r"scripts/npm_release_state\.py")
     assert steps[state]["id"] == "npm"
-    assert "|| true" not in steps[state]["run"] and "2>/dev/null" not in steps[state]["run"]
+    assert "|| true" not in steps[state]["run"]
+    assert "2>/dev/null" not in steps[state]["run"]
     compare = steps[_step_index(job, r"--registry-tarball")]
     publish = steps[_step_index(job, r"npm publish")]
     assert compare["if"] == "steps.npm.outputs.state == 'present'"
@@ -231,6 +233,33 @@ def test_test_job_runs_node_and_every_generated_file_check():
     names = [step.get("name") for step in doc["jobs"]["test"]["steps"]]
     assert "SonarCloud Scan" in names
     assert {"lint", "harness-smoke", "version-check"} <= set(doc["jobs"])
+
+
+# ---------------------------------------------------------------------------
+# Installs: locked versions, no build or lifecycle scripts run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.name)
+def test_uv_installs_only_locked_built_distributions(path: Path):
+    # `uv sync` and `uv run` (which syncs first) install exactly uv.lock (--locked fails
+    # when it is stale) and never build a source distribution (--no-build runs no setup code).
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        for match in re.finditer(r"\buv\s+(sync|run)\b(.*)", line):
+            assert "--locked" in match.group(2).split(), f"{path.name}:{lineno}: {line.strip()}"
+            assert "--no-build" in match.group(2).split(), f"{path.name}:{lineno}: {line.strip()}"
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.name)
+def test_npm_installs_run_no_lifecycle_scripts(path: Path):
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if re.search(r"\bnpm\s+(install|i|ci)\b", line):
+            assert "--ignore-scripts" in line.split(), f"{path.name}:{lineno}: {line.strip()}"
+
+
+def test_no_workflow_carries_a_todo():
+    for path in FILES:
+        assert "TODO" not in path.read_text(encoding="utf-8"), path.name
 
 
 # ---------------------------------------------------------------------------

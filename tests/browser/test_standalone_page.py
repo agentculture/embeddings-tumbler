@@ -155,11 +155,13 @@ def test_sample_set_renders_with_modes_provenance_and_controls(sample_run):
     assert r["state"] == "ready", r["wait"]
     assert r["info"]["model"] == "synthetic/reference-sample"
     assert r["info"]["count"] > 0
-    assert r["lit"] and r["lit"] > 200, "the sky shows no lit points"
+    assert r["lit"], "the sky shows no lit points"
+    assert r["lit"] > 200, "the sky shows no lit points"
     assert r["modes"] == ["tumble", "lattice", "wander"]
     assert r["controls"] == {"play": 1, "speed": 1, "labels": 1, "trails": 1}
     assert r["readout"] == 1
-    assert r["provenance"] and r["provenance"]["shown"]
+    assert r["provenance"]
+    assert r["provenance"]["shown"]
     assert "synthetic/reference-sample" in r["provenance"]["text"]
     assert "shadow of the space" in r["provenance"]["text"]
     assert r["notes"] == {"tumble": True, "lattice": False, "wander": False}
@@ -179,14 +181,18 @@ def test_data_file_shows_its_model_and_count(browser, base_url):
     r = _open(browser, base_url, "?data=valid-384.json&mode=lattice&seed=7", settle=_drawn)
     assert r["state"] == "ready", r["wait"]
     assert r["info"]["model"] == "fixture/model-a"
-    assert r["info"]["count"] == 6 and r["info"]["dimension"] == 384
+    assert r["info"]["count"] == 6
+    assert r["info"]["dimension"] == 384
     assert r["info"]["mode"] == "lattice"
     text = r["provenance"]["text"]
-    assert "fixture/model-a" in text and "fixture: valid-384" in text
+    assert "fixture/model-a" in text
+    assert "fixture: valid-384" in text
     assert "6 items" in text
     assert r["notes"] == {"tumble": False, "lattice": True, "wander": False}
     assert any(u.endswith("/valid-384.f32") for u in r["requests"])
-    assert r["csp"] == [] and r["console_errors"] == [] and r["foreign"] == []
+    assert r["csp"] == []
+    assert r["console_errors"] == []
+    assert r["foreign"] == []
 
 
 def test_data_on_another_origin_is_refused_without_a_request(browser, base_url):
@@ -195,7 +201,8 @@ def test_data_on_another_origin_is_refused_without_a_request(browser, base_url):
     assert "another origin" in r["wait"]
     assert r["info"] is None, "no viewer is mounted for a refused address"
     assert r["foreign"] == [], r["foreign"]
-    assert r["csp"] == [] and r["console_errors"] == []
+    assert r["csp"] == []
+    assert r["console_errors"] == []
 
 
 def test_missing_file_shows_a_plain_message(browser, base_url):
@@ -208,7 +215,8 @@ def test_missing_file_shows_a_plain_message(browser, base_url):
     assert r["console_errors"], "expected the browser's own 404 line in the console"
     assert all("404" in e for e in r["console_errors"]), r["console_errors"]
     assert not any(e.startswith("pageerror") for e in r["console_errors"])
-    assert r["csp"] == [] and r["foreign"] == []
+    assert r["csp"] == []
+    assert r["foreign"] == []
 
 
 def test_a_refused_set_shows_the_viewers_message_and_no_points(browser, base_url):
@@ -216,13 +224,19 @@ def test_a_refused_set_shows_the_viewers_message_and_no_points(browser, base_url
     r = _open(browser, base_url, "?data=bumped-version.json")
     assert r["state"] == "refused"
     assert "schema version 2" in (r["info"]["message"] or "")
-    assert r["lit"] is not None and r["lit"] < 50, r["lit"]
-    assert r["csp"] == [] and r["console_errors"] == [] and r["foreign"] == []
+    assert r["lit"] is not None, r["lit"]
+    assert r["lit"] < 50, r["lit"]
+    assert r["csp"] == []
+    assert r["console_errors"] == []
+    assert r["foreign"] == []
 
 
 def test_a_descriptor_declaring_another_dtype_is_refused(browser, base_url):
     r = _open(browser, base_url, "?data=float64-384.json")
     assert r["state"] == "refused"
     assert 'Field "vectors.dtype" is missing or not valid.' in (r["info"]["message"] or "")
-    assert r["lit"] is not None and r["lit"] < 50, r["lit"]
-    assert r["csp"] == [] and r["console_errors"] == [] and r["foreign"] == []
+    assert r["lit"] is not None, r["lit"]
+    assert r["lit"] < 50, r["lit"]
+    assert r["csp"] == []
+    assert r["console_errors"] == []
+    assert r["foreign"] == []

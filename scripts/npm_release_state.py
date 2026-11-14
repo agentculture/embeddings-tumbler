@@ -19,12 +19,37 @@ publish job stops and publishes nothing. Stdlib only.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
+
+#: The only arguments that reach the npm command line: a package name (scope optional) and
+#: an exact version. Anything else, such as a word starting with "-", is refused.
+PACKAGE = re.compile(r"(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*")
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?")
 
 
 class StateError(Exception):
     """npm's answer does not say clearly whether the version is published."""
+
+
+def _registry_error(returncode: int, data: object) -> str:
+    """A non-zero npm exit: "absent" for a missing package (E404), StateError otherwise."""
+    error = data.get("error") if isinstance(data, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    if returncode == 1 and code == "E404":
+        return "absent"
+    summary = error.get("summary") if isinstance(error, dict) else None
+    raise StateError(f"npm exited {returncode} with error {code}: {summary}")
+
+
+def _version_list(data: object, stdout: str) -> list[str]:
+    """The version list npm printed: one string, or a list of strings."""
+    if isinstance(data, str):
+        return [data]
+    if isinstance(data, list) and all(isinstance(v, str) for v in data):
+        return data
+    raise StateError(f"npm exited 0 with an unexpected answer: {stdout.strip()[:200]}")
 
 
 def classify(returncode: int, stdout: str, version: str) -> str:
@@ -34,19 +59,8 @@ def classify(returncode: int, stdout: str, version: str) -> str:
     except ValueError as exc:
         raise StateError(f"npm exited {returncode} with output that is not JSON") from exc
     if returncode != 0:
-        error = data.get("error") if isinstance(data, dict) else None
-        code = error.get("code") if isinstance(error, dict) else None
-        if returncode == 1 and code == "E404":
-            return "absent"
-        summary = error.get("summary") if isinstance(error, dict) else None
-        raise StateError(f"npm exited {returncode} with error {code}: {summary}")
-    if isinstance(data, str):
-        versions = [data]
-    elif isinstance(data, list) and all(isinstance(v, str) for v in data):
-        versions = data
-    else:
-        raise StateError(f"npm exited 0 with an unexpected answer: {stdout.strip()[:200]}")
-    return "present" if version in versions else "absent"
+        return _registry_error(returncode, data)
+    return "present" if version in _version_list(data, stdout) else "absent"
 
 
 def _npm(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -58,6 +72,13 @@ def main(argv: list[str] | None = None, run=_npm) -> int:
     if len(args) != 2:
         raise SystemExit("usage: npm_release_state.py <package> <version>")
     package, version = args
+    if not PACKAGE.fullmatch(package) or not VERSION.fullmatch(version):
+        print(
+            f"npm_release_state: {package!r} {version!r} is not a package name and an exact "
+            "version; failing so the job will publish nothing",
+            file=sys.stderr,
+        )
+        return 1
     cmd = ["npm", "view", package, "versions", "--json"]
     try:
         result = run(cmd)

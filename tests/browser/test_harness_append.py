@@ -121,7 +121,8 @@ def appended(request, open_tab, site, webgl):
 def test_c5_append_adds_visible_points_without_a_reload(appended):
     a = appended
     # No reload, no navigation.
-    assert a["nav1"]["marker"] == a["nav0"]["marker"] and a["nav0"]["marker"]
+    assert a["nav1"]["marker"] == a["nav0"]["marker"]
+    assert a["nav0"]["marker"]
     assert a["nav1"]["entries"] == a["nav0"]["entries"] == 1
     assert a["docs"][1] == a["docs"][0] == 1, "a new document request: the page was reloaded"
     assert a["navs"][1] == a["navs"][0], "the main frame navigated"
@@ -135,9 +136,14 @@ def test_c5_append_adds_visible_points_without_a_reload(appended):
     assert len(orange_before) == 0, "the base set has no orange points"
     assert len(orange_after) >= 30, f"only {len(orange_after)} orange pixels after the append"
     x0, y0, x1, y1 = harness.bbox(orange_after)
-    assert x1 - x0 < width * 0.1 and y1 - y0 < height * 0.15, "the arrivals are a tight cluster"
+    assert x1 - x0 < width * 0.1, "the arrivals are a tight cluster"
+    assert y1 - y0 < height * 0.15, "the arrivals are a tight cluster"
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    assert abs(cx - width / 2) < width * 0.1 and abs(cy - height / 2) < height * 0.2, (
+    assert abs(cx - width / 2) < width * 0.1, (
+        "the cluster sits at the data's centre, between the blobs",
+        (cx, cy),
+    )
+    assert abs(cy - height / 2) < height * 0.2, (
         "the cluster sits at the data's centre, between the blobs",
         (cx, cy),
     )

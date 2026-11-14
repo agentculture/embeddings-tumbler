@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import os
-import tempfile
+import secrets
 from dataclasses import dataclass
 from importlib import resources
 from importlib.resources.abc import Traversable
@@ -46,9 +46,8 @@ def _walk(node: Traversable, prefix: tuple[str, ...]) -> list[tuple[tuple[str, .
         if child.is_dir():
             if child.name not in _SKIP_DIRS:
                 found.extend(_walk(child, prefix + (child.name,)))
-        elif child.is_file():
-            if Path(child.name).suffix not in _SKIP_SUFFIXES:
-                found.append((prefix + (child.name,), child))
+        elif child.is_file() and Path(child.name).suffix not in _SKIP_SUFFIXES:
+            found.append((prefix + (child.name,), child))
     return found
 
 
@@ -96,16 +95,23 @@ def plan(target: Path, source_root: Traversable | None = None) -> list[PlannedFi
 
 def _write_atomic(dest: Path, data: bytes) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=".et-tmp-")
-    try:
-        with os.fdopen(fd, "wb") as handle:
+    # A fresh, unpredictable name created exclusively ("x" refuses an existing file or
+    # symlink), then renamed over the destination. The file gets the ordinary permissions
+    # of any file the user creates (their umask decides; 0644 under the usual 022), so a
+    # web server can read the published assets wherever the user's own files are readable.
+    tmp = dest.parent / f".et-tmp-{secrets.token_hex(16)}"
+    # Opened before the try: if the name was taken, the file is not ours to remove.
+    with open(tmp, "xb") as handle:
+        try:
             handle.write(data)
-        os.chmod(tmp, 0o644)  # published assets: readable by a web server
-        os.replace(tmp, dest)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+            handle.close()
+            os.replace(tmp, dest)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                handle.close()
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
 
 
 def apply(target: Path, planned: list[PlannedFile], *, force: bool) -> None:

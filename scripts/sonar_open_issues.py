@@ -32,6 +32,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 HOST = "https://sonarcloud.io"
 OPEN_STATUSES = frozenset({"OPEN", "CONFIRMED"})
 PAGE_SIZE = 500
@@ -54,6 +55,14 @@ def project_key(properties: Path) -> str:
         if sep and name.strip() == "sonar.projectKey" and value.strip():
             return value.strip()
     raise CheckError(f"{properties} has no sonar.projectKey")
+
+
+def in_repository(path: Path) -> Path:
+    """``path`` resolved (symlinks followed); CheckError unless it is inside this repository."""
+    real = Path(os.path.realpath(path))
+    if not real.is_relative_to(REPO_ROOT):
+        raise CheckError(f"{path} is outside this repository ({REPO_ROOT})")
+    return real
 
 
 def fetch_json(url: str, token: str | None) -> dict:
@@ -118,14 +127,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--properties",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "sonar-project.properties",
-        help="the sonar-project.properties to read the project key from",
+        default=REPO_ROOT / "sonar-project.properties",
+        help="the sonar-project.properties (inside this repository) to read the project key from",
     )
     args = parser.parse_args(argv)
     where = {"pullRequest": args.pull_request} if args.pull_request else {"branch": args.branch}
     label = f"pull request {args.pull_request}" if args.pull_request else f"branch {args.branch}"
     try:
-        key = project_key(args.properties)
+        key = project_key(in_repository(args.properties))
         issues = open_issues(key, where, os.environ.get("SONAR_TOKEN") or None)
     except CheckError as err:
         print(f"sonar-open-issues: could not check {label}: {err}", file=sys.stderr)
