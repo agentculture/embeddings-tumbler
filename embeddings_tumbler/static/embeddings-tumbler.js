@@ -5560,11 +5560,6 @@ ET.viewer = (function () {
     display: '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif',
   };
   var STAGE_HEIGHT = "clamp(300px, 62vh, 860px)";
-  // How the picture is drawn on a light host (--tumbler-light-style or the lightStyle
-  // option): "panel" keeps a dark night-sky stage inside the light panel; "ink" draws
-  // each group as saturated coloured ink on the light sky; "soft" is ink, lighter.
-  var LIGHT_STYLES = ["panel", "ink", "soft"];
-  var DEFAULT_LIGHT_STYLE = "soft"; // the owner's choice at sign-off (2026-11-14)
 
   var DEFAULT_OPTIONS = {
     mode: "tumble",
@@ -5578,7 +5573,6 @@ ET.viewer = (function () {
     masthead: true,
     title: "",
     provenanceOpen: true,
-    lightStyle: null, // null: --tumbler-light-style, else DEFAULT_LIGHT_STYLE
     modeOptions: null, // { tumble: {...}, ... } passed to ET.modes.create
     maxPixelRatio: 2,
     preserveDrawingBuffer: false,
@@ -6225,22 +6219,6 @@ ET.viewer = (function () {
     for (var i = 0; i < MAX_GROUP_PROPS; i++) {
       t.groups.push(colour("--tumbler-group-" + (i + 1)));
     }
-    var style = v.options.lightStyle || raw("--tumbler-light-style");
-    t.lightStyle = LIGHT_STYLES.includes(style) ? style : DEFAULT_LIGHT_STYLE;
-    // What the stage (sky, status, labels, messages over it) is drawn with: the host's
-    // colours, except a light host with the "panel" style, whose stage stays dark.
-    t.panelStage = light && t.lightStyle === "panel";
-    t.ink = light && !t.panelStage;
-    t.stage = t.panelStage
-      ? {
-          light: false,
-          background: parseColour(DARK.background),
-          sky: parseColour(DARK.sky),
-          foreground: parseColour(DARK.foreground),
-          muted: parseColour(DARK.muted),
-          accent: parseColour(DARK.accent),
-        }
-      : { light: light, background: t.background, sky: t.sky, foreground: t.foreground, muted: t.muted, accent: t.accent };
     return t;
   }
 
@@ -6280,44 +6258,41 @@ ET.viewer = (function () {
     var accent = cssRgb(t.accent);
     var bg = cssRgb(t.background);
     setStyles(v.root, { color: fg, background: bg, fontFamily: t.font });
-    var st = t.stage;
-    var sbg = cssRgb(st.background);
-    var sfg = cssRgb(st.foreground);
-    var mid = mix(st.sky, st.background, 0.55);
+    var mid = mix(t.sky, t.background, 0.55);
     v.stage.style.height = t.stageHeight;
     v.stage.style.background =
       "radial-gradient(ellipse 75% 70% at 50% 46%, " +
-      cssRgb(st.sky) +
+      cssRgb(t.sky) +
       " 0%, " +
       cssRgb(mid) +
       " 48%, " +
-      sbg +
+      bg +
       " 82%)";
     // The renderer draws light on black. On a dark stage it is screened over the sky.
-    // For ink on a light stage the points are uploaded in complementary colours and the
-    // canvas is inverted and multiplied: each group comes out as ink of its own hue.
-    // Soft ink is the same ink laid on at 70% opacity: lighter, the hues kept.
-    if (t.ink) {
+    // On a light stage the points are uploaded in complementary colours and the canvas
+    // is inverted and multiplied: each group comes out as ink of its own hue, laid on
+    // at 70% opacity (soft ink: lighter, the hues kept).
+    if (t.light) {
       v.canvas.style.filter = "invert(1)";
       v.canvas.style.mixBlendMode = "multiply";
-      v.canvas.style.opacity = t.lightStyle === "soft" ? "0.7" : "1";
+      v.canvas.style.opacity = "0.7";
     } else {
       v.canvas.style.filter = "none";
       v.canvas.style.mixBlendMode = "screen";
       v.canvas.style.opacity = "1";
     }
     v.mastTitle.style.fontFamily = t.fontDisplay;
-    v.mastTitle.style.color = sfg;
-    v.mastTitle.style.textShadow = "0 0 28px " + cssRgb(st.background, 0.9);
+    v.mastTitle.style.color = fg;
+    v.mastTitle.style.textShadow = "0 0 28px " + cssRgb(t.background, 0.9);
     v.mastLine.style.fontFamily = t.fontData;
-    v.mastLine.style.color = cssRgb(st.muted);
-    v.mastLine.style.textShadow = "0 0 12px " + sbg;
-    setStyles(v.status, { fontFamily: t.fontData, color: cssRgb(st.accent), textShadow: "0 0 8px " + sbg });
-    setStyles(v.fatal, { color: sfg, background: cssRgb(st.background, 0.82), fontFamily: t.font });
-    setStyles(v.empty, { color: cssRgb(st.muted), fontFamily: t.fontData });
-    setStyles(v.notice, { color: sfg, background: cssRgb(st.background, 0.92), borderColor: cssRgb(st.accent), fontFamily: t.fontData });
-    v.noticeDismiss.style.borderColor = t.panelStage ? DARK.line : line;
-    v.noticeDismiss.style.color = sfg;
+    v.mastLine.style.color = muted;
+    v.mastLine.style.textShadow = "0 0 12px " + bg;
+    setStyles(v.status, { fontFamily: t.fontData, color: accent, textShadow: "0 0 8px " + bg });
+    setStyles(v.fatal, { color: fg, background: cssRgb(t.background, 0.82), fontFamily: t.font });
+    setStyles(v.empty, { color: muted, fontFamily: t.fontData });
+    setStyles(v.notice, { color: fg, background: cssRgb(t.background, 0.92), borderColor: accent, fontFamily: t.fontData });
+    v.noticeDismiss.style.borderColor = line;
+    v.noticeDismiss.style.color = fg;
     v.modeNav.style.borderTopColor = line;
     v.modeButtons.forEach(function (mb) {
       mb.title.style.fontFamily = t.fontDisplay;
@@ -6347,13 +6322,13 @@ ET.viewer = (function () {
     v.labelPool.forEach(function (rec) {
       rec.key = "";
     });
-    v.outline = outlineShadow(st.background);
-    v.stageFg = sfg;
+    v.outline = outlineShadow(t.background);
+    v.stageFg = fg;
     // The reference's Wander names: the stop in white, its neighbours #c5cddb (the
     // foreground three-eighths of the way to the muted colour). On a light stage the
     // stop takes the foreground, so it stays dark ink.
-    v.stopColour = st.light ? sfg : "rgb(255, 255, 255)";
-    v.neighbourColour = cssRgb(mix(st.foreground, st.muted, 0.375));
+    v.stopColour = t.light ? fg : "rgb(255, 255, 255)";
+    v.neighbourColour = cssRgb(mix(t.foreground, t.muted, 0.375));
     v.accent255 = [Math.round(t.accent[0] * 255), Math.round(t.accent[1] * 255), Math.round(t.accent[2] * 255)];
   }
 
@@ -6439,7 +6414,7 @@ ET.viewer = (function () {
   // What the uploaded point colours depend on; a change means a re-upload.
   function paintKey(v) {
     var t = v.theme;
-    return JSON.stringify([t.ink, t.lightStyle, t.ungrouped, t.groups]);
+    return JSON.stringify([t.light, t.ungrouped, t.groups]);
   }
 
   // ---------- point colours and weights ----------
@@ -6479,7 +6454,7 @@ ET.viewer = (function () {
       } else if (v.labelledCount === 0) w = 0.7;
       else if (g < 0) w = 0.05 + 0.2 * h * h;
       else w = 0.1 + 0.55 * h * h * h;
-      if (v.theme.ink) c = inkUpload(c, labelled);
+      if (v.theme.light) c = inkUpload(c, labelled);
       var o = (i - from) * 3;
       colours[o] = c[0];
       colours[o + 1] = c[1];
@@ -7460,12 +7435,11 @@ ET.viewer = (function () {
     out.time = v.drawTime;
     out.dt = dt;
     if (!v.trails) out.trails = 0;
-    // Ink is dark where light piles up, so it is drawn with less gain than light on
-    // black (cores keep their hue instead of burning to black); soft ink, less again.
-    if (v.theme.ink) {
-      var soft = v.theme.lightStyle === "soft";
-      out.gain = soft ? 0.55 : 0.7;
-      out.bloom = soft ? 0.3 : 0.45;
+    // Ink is dark where light piles up, so on a light stage it is drawn with less gain
+    // and bloom than light on black (cores keep their hue instead of burning to black).
+    if (v.theme.light) {
+      out.gain = 0.55;
+      out.bloom = 0.3;
     }
     // Many full-weight points pile up into a white (or, in ink, black) ball, so the
     // overall brightness comes down as their number goes up.
@@ -7671,7 +7645,7 @@ ET.viewer = (function () {
       if (!cn[gi]) continue;
       // Lighter than the points on a dark host (the reference's 72% lightness),
       // darker on a light one so the names stay readable.
-      var col = cssRgb(v.theme.stage.light ? mix(groupColour(v, gi), [0, 0, 0], 0.45) : nameTint(groupColour(v, gi)));
+      var col = cssRgb(v.theme.light ? mix(groupColour(v, gi), [0, 0, 0], 0.45) : nameTint(groupColour(v, gi)));
       used = label(v, used, shorten(v.groupNames[gi], 32), cx[gi] / cn[gi] / dpr, cy[gi] / cn[gi] / dpr - 14, {
         kind: "group",
         colour: col,
@@ -7754,7 +7728,7 @@ ET.viewer = (function () {
     var px = p.x;
     var py = p.y;
     var gc = groupColour(v, groupIndexOf(v, v.set.points[i].group));
-    var col = cssRgb(v.theme.stage.light ? gc : nameTint(gc));
+    var col = cssRgb(v.theme.light ? gc : nameTint(gc));
     for (var j of neighbours) {
       if (!isPointIndex(v, j)) continue;
       var q = project(v, j, s, ds, v.tmp3);
@@ -8432,8 +8406,6 @@ ET.viewer = (function () {
     parseColour: parseColour,
     safeCssValue: safeCssValue,
     SHADOW: SHADOW,
-    LIGHT_STYLES: LIGHT_STYLES,
-    DEFAULT_LIGHT_STYLE: DEFAULT_LIGHT_STYLE,
   };
 })();
 

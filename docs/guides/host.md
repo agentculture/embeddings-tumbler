@@ -354,7 +354,6 @@ const viewer = EmbeddingsTumbler.mount(document.getElementById("space"), {
   title: "Support tickets",
   controls: true,          // false hides the play, zoom, speed and label controls
   provenanceOpen: false,   // start the provenance block collapsed (it cannot be removed)
-  lightStyle: null,        // "panel", "ink" or "soft" on a light page
   onError: function (result) {
     console.warn("refused:", result.code, result.message);
   }
@@ -457,10 +456,9 @@ button {
   padding: 6px 12px;
 }
 
-/* A light page: tell the viewer so, and pick how the picture is drawn on it. */
+/* A light page: tell the viewer so, and it draws the points as soft coloured ink. */
 embeddings-tumbler {
   --tumbler-background: #f6f3ec;
-  --tumbler-light-style: soft;
   --tumbler-stage-height: 420px;
 }
 ```
@@ -561,7 +559,6 @@ element it is mounted in, or any ancestor. It reads them at mount, on every
 | `--tumbler-font` | system UI sans-serif | same | body text |
 | `--tumbler-font-data` | system monospace | same | status, labels, controls, provenance |
 | `--tumbler-font-display` | an old-style serif stack | same | title, mode names |
-| `--tumbler-light-style` | `soft` | same | how a light background is drawn (below); ignored on a dark background |
 | `--tumbler-stage-height` | `clamp(300px, 62vh, 860px)` | same | height of the picture (any CSS length) |
 
 Colours accept hex, `rgb()`, `hsl()` and anything else the browser understands.
@@ -595,28 +592,19 @@ A dark theme:
 **Light backgrounds.** The viewer draws light points on black, with a glow,
 which would wash out on a light page. When `--tumbler-background` is light
 (luminance above one half), it switches its unset colours to the light column
-above, and you choose how the picture is drawn with `--tumbler-light-style` (or
-the `lightStyle` option):
-
-- `panel`: the picture keeps its dark night sky as a panel on your
-  light page, with all its glow and colour; the controls and provenance around
-  it follow your light colours.
-- `ink`: the picture sits on a light sky and each group is drawn as saturated ink
-  of its own colour. The glow is gone, and dense cores read as dark saturated
-  colour.
-- `soft` (the default): `ink` laid on more lightly, with the hues kept. This is
-  the one treatment the project's owner accepted; the other two remain
-  available but are not recommended.
+above and draws the picture as soft coloured ink: the picture sits on a light
+sky, each group is drawn as ink of its own colour laid on lightly, the hues
+kept, and group names are darkened. There is nothing to choose. Two other
+treatments (a dark panel for the picture, and stronger coloured ink) were tried
+during development and removed at the project owner's decision on 2026-11-14.
 
 <!-- file: examples/snippets/theme-light.css -->
 
 ```css
-/* A light page. The viewer notices the light background and switches to its light defaults.
-   --tumbler-light-style picks how the picture is drawn on it: soft (the default: light
-   coloured ink), ink (stronger coloured ink) or panel (a dark panel for the picture). */
+/* A light page. The viewer notices the light background, switches to its light defaults
+   and draws the points as soft coloured ink. */
 .space {
   --tumbler-background: #fbfaf6;
-  --tumbler-light-style: soft;
 }
 ```
 

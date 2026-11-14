@@ -623,7 +623,6 @@ test("theme comes from the host's custom properties, with defaults", () => {
   assert.strictEqual(v.root.style.background, "rgb(4, 6, 11)", "default background");
   assert.strictEqual(v.canvas.style.mixBlendMode, "screen");
   el.style.setProperty("--tumbler-background", "#ffffff");
-  el.style.setProperty("--tumbler-light-style", "ink");
   el.style.setProperty("--tumbler-accent", "rgb(200, 10, 20)");
   el.style.setProperty("--tumbler-font", '"Host Sans", sans-serif');
   el.style.setProperty("--tumbler-group-1", "#00ff00");
@@ -817,11 +816,11 @@ test("an empty mounted viewer says plainly that it has no data, with no provenan
   h2.destroy();
 });
 
-function themed(props) {
+function themed(props, options) {
   const dom = makeFakeDom();
   const el = dom.host();
   for (const k of Object.keys(props)) el.style.setProperty(k, props[k]);
-  const h = api.mount(el);
+  const h = api.mount(el, options);
   const v = h._viewer;
   const uploads = [];
   const orig = v.renderer.setData;
@@ -834,60 +833,113 @@ function themed(props) {
   return { dom, el, h, v, uploads };
 }
 
-test("light background, dark stage panel: the stage keeps the night sky and screen blending", () => {
-  const { h, v, uploads } = themed({ "--tumbler-background": "#ffffff", "--tumbler-light-style": "panel" });
-  assert.strictEqual(v.theme.lightStyle, "panel");
-  assert.strictEqual(v.root.style.background, "rgb(255, 255, 255)", "the panel follows the host");
-  assert.match(v.stage.style.background, /rgb\(4, 6, 11\)/, "the stage stays dark");
-  assert.strictEqual(v.canvas.style.mixBlendMode, "screen");
-  assert.strictEqual(v.canvas.style.filter, "none");
-  assert.strictEqual(v.status.style.color, "rgb(255, 197, 107)", "stage text uses the dark palette");
-  const c = uploads.at(-1).slice(3, 6); // point 1: unlabelled, group 0
-  // Group 0's colour as given to the renderer: the reference's hsl(28, .9, .62), not inverted.
-  assert.ok(c[0] > 0.9 && c[2] < 0.5, Array.from(c).join(","));
-  h.destroy();
-});
+// Everything a light background changes about the picture, in one comparable record.
+function lightLook(t) {
+  t.dom.frames(2);
+  const v = t.v;
+  return {
+    filter: v.canvas.style.filter,
+    blend: v.canvas.style.mixBlendMode,
+    opacity: v.canvas.style.opacity,
+    stage: v.stage.style.background,
+    root: v.root.style.background,
+    status: v.status.style.color,
+    dismiss: v.noticeDismiss.style.borderColor,
+    gain: v.lastDraw.gain,
+    bloom: v.lastDraw.bloom,
+    colours: Array.from(t.uploads.at(-1)),
+    uploads: t.uploads.length,
+  };
+}
 
-test("light background, coloured ink: complementary colours inverted keep each group's hue", () => {
-  const { h, v, uploads } = themed({ "--tumbler-background": "#ffffff", "--tumbler-light-style": "ink" });
+test("light background: soft coloured ink, lighter, each group keeping its hue", () => {
+  const { dom, h, v, uploads } = themed({ "--tumbler-background": "#ffffff" });
+  assert.strictEqual(v.theme.light, true);
   assert.strictEqual(v.canvas.style.filter, "invert(1)");
   assert.strictEqual(v.canvas.style.mixBlendMode, "multiply");
+  assert.strictEqual(v.canvas.style.opacity, "0.7", "the ink laid on at 70%");
+  assert.strictEqual(v.root.style.background, "rgb(255, 255, 255)", "the panel follows the host");
+  assert.doesNotMatch(v.stage.style.background, /rgb\(4, 6, 11\)/, "the stage is light, not a night sky");
+  assert.strictEqual(v.status.style.color, "rgb(163, 95, 0)", "stage text uses the light palette");
   const c = uploads.at(-1);
   // Orange group: after the CSS inversion the ink is 1 - uploaded, which must be orange-ish:
   // red channel strongest, blue weakest.
   const ink = [1 - c[0], 1 - c[1], 1 - c[2]];
   assert.ok(ink[0] > ink[1] && ink[1] > ink[2], ink.join(","));
   assert.ok(ink[0] - ink[2] > 0.4, "saturated, not grey or black");
-  h.destroy();
-});
-
-test("light background, soft ink: like coloured ink, drawn lighter", () => {
-  const { dom, h, v } = themed({ "--tumbler-background": "#ffffff", "--tumbler-light-style": "soft" });
-  assert.strictEqual(v.canvas.style.filter, "invert(1)");
   dom.frames(2);
   assert.ok(v.lastDraw.gain < 1);
+  assert.strictEqual(v.lastDraw.gain, 0.55, "12 points: no crowding, the soft gain itself");
+  assert.strictEqual(v.lastDraw.bloom, 0.3);
   h.destroy();
 });
 
-test("a light background with no style chosen uses the documented default; dark hosts are unchanged", () => {
+test("there is one light treatment: no light style is read, offered or exported", () => {
   const { h, v } = themed({ "--tumbler-background": "#f6f4ee" });
-  assert.strictEqual(v.theme.lightStyle, api._internal.viewer.DEFAULT_LIGHT_STYLE);
+  assert.strictEqual(Object.hasOwn(v.theme, "lightStyle"), false);
+  assert.strictEqual(Object.hasOwn(v.options, "lightStyle"), false);
+  assert.strictEqual(api._internal.viewer.LIGHT_STYLES, undefined);
+  assert.strictEqual(api._internal.viewer.DEFAULT_LIGHT_STYLE, undefined);
+  h.destroy();
+});
+
+test("a stray lightStyle option or --tumbler-light-style property changes nothing", () => {
+  const light = { "--tumbler-background": "#ffffff" };
+  const plain = themed(light);
+  const want = lightLook(plain);
+  plain.h.destroy();
+  for (const style of ["panel", "ink", "soft"]) {
+    const byOption = themed(light, { lightStyle: style });
+    assert.deepStrictEqual(lightLook(byOption), want, "lightStyle: " + style);
+    byOption.h.destroy();
+    const byProperty = themed({ ...light, "--tumbler-light-style": style });
+    assert.deepStrictEqual(lightLook(byProperty), want, "--tumbler-light-style: " + style);
+    byProperty.h.destroy();
+  }
+  // Nor on a dark background.
+  const dark = themed({});
+  const darkWant = lightLook(dark);
+  dark.h.destroy();
+  const darkStray = themed({ "--tumbler-light-style": "panel" }, { lightStyle: "ink" });
+  assert.deepStrictEqual(lightLook(darkStray), darkWant);
+  darkStray.h.destroy();
+});
+
+test("a light background is the soft ink with the light defaults; dark hosts are unchanged", () => {
+  const { h, v } = themed({ "--tumbler-background": "#f6f4ee" });
+  assert.strictEqual(v.canvas.style.opacity, "0.7");
+  assert.strictEqual(v.status.style.color, "rgb(163, 95, 0)", "unset accent: the light default");
   h.destroy();
   const d = themed({});
   assert.strictEqual(d.v.theme.light, false);
   assert.strictEqual(d.v.canvas.style.mixBlendMode, "screen");
   assert.strictEqual(d.v.canvas.style.filter, "none");
+  assert.strictEqual(d.v.canvas.style.opacity, "1");
   assert.match(d.v.stage.style.background, /rgb\(11, 20, 48\)/);
   d.h.destroy();
 });
 
-test("switching the light style on a running view re-colours it", () => {
-  const { el, h, v, uploads } = themed({ "--tumbler-background": "#ffffff", "--tumbler-light-style": "panel" });
+test("changing the background from dark to light and back on a running view re-colours it", () => {
+  const { el, h, v, uploads } = themed({});
   const n = uploads.length;
-  el.style.setProperty("--tumbler-light-style", "ink");
+  const darkColours = Array.from(uploads.at(-1));
+  el.style.setProperty("--tumbler-background", "#ffffff");
   h.refreshTheme();
-  assert.strictEqual(uploads.length, n + 1);
+  assert.strictEqual(uploads.length, n + 1, "light: the points are uploaded again");
   assert.strictEqual(v.canvas.style.filter, "invert(1)");
+  assert.strictEqual(v.canvas.style.mixBlendMode, "multiply");
+  assert.strictEqual(v.canvas.style.opacity, "0.7");
+  assert.notDeepStrictEqual(Array.from(uploads.at(-1)), darkColours);
+  el.style.setProperty("--tumbler-background", "#04060b");
+  h.refreshTheme();
+  assert.strictEqual(uploads.length, n + 2, "dark again: uploaded again");
+  assert.strictEqual(v.canvas.style.filter, "none");
+  assert.strictEqual(v.canvas.style.mixBlendMode, "screen");
+  assert.strictEqual(v.canvas.style.opacity, "1");
+  assert.deepStrictEqual(Array.from(uploads.at(-1)), darkColours, "the dark colours exactly as before");
+  // The same theme read again changes nothing: no upload, trails kept.
+  h.refreshTheme();
+  assert.strictEqual(uploads.length, n + 2);
   h.destroy();
 });
 

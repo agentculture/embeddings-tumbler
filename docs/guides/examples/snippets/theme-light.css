@@ -1,7 +1,5 @@
-/* A light page. The viewer notices the light background and switches to its light defaults.
-   --tumbler-light-style picks how the picture is drawn on it: soft (the default: light
-   coloured ink), ink (stronger coloured ink) or panel (a dark panel for the picture). */
+/* A light page. The viewer notices the light background, switches to its light defaults
+   and draws the points as soft coloured ink. */
 .space {
   --tumbler-background: #fbfaf6;
-  --tumbler-light-style: soft;
 }

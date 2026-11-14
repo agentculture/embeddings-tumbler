@@ -33,7 +33,7 @@ pick a free port (the command prints it).
 | append 200 points | `update` with `op: "append"`: the camera stays, the count grows |
 | send invalid data | a set with schema version 2: a message inside the viewer, the view keeps running |
 | send a label with markup | a replace whose first label and the `ocean` group name contain markup; both must show as text |
-| theme | cycles dark (the defaults), teal, and three light treatments ("light: dark stage panel", "light: coloured ink", "light: soft ink", set with `--tumbler-light-style`) by changing `--tumbler-*` custom properties on the host element, then calls `refreshTheme()` |
+| theme | cycles dark (the defaults), teal and light (drawn as soft coloured ink) by changing `--tumbler-*` custom properties on the host element, then calls `refreshTheme()` |
 | destroy | `EmbeddingsTumbler.destroy(el)`: the element is emptied and the loop stops |
 
 Under each viewer a box shows `info()`: mode, elapsed time, seed, user zoom,
@@ -51,7 +51,7 @@ its longest step), and the time each `update()` call took.
 | `seed` | the viewers' seed | `1` |
 | `mode` | starting mode: `tumble`, `lattice` or `wander` | `tumble` |
 | `one` | `1` mounts only the left viewer (for measuring) | off |
-| `theme` | start with this theme: `teal`, `panel`, `ink` or `soft` | dark |
+| `theme` | start with this theme: `teal` or `light` | dark |
 
 Examples:
 

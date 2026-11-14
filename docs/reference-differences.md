@@ -322,8 +322,8 @@ not done; see "Not yet compared or not yet decided".
 ### Treatments for a light background
 
 - **Reference:** dark only.
-- **Build:** a host with a light background gets one of three treatments, chosen with `--tumbler-light-style` or the `lightStyle` option: `panel` (the default, a dark stage inside a light page), `ink` and `soft`. The standalone page is dark only, as the reference is, so none of them shows on it.
-- **Why:** the user rejected an earlier inverted-ink look because "the clusters are black"; the three current treatments came after that. The user has not yet seen them.
+- **Build:** a host with a light background gets one treatment, soft coloured ink: each group drawn as ink of its own hue, laid on lightly over a light sky. There is no option to choose another. The standalone page is dark only, as the reference is, so it does not show there.
+- **Why:** the user rejected an earlier inverted-ink look because "the clusters are black". Three treatments followed (a dark stage inside a light page, saturated coloured ink, and soft ink); the user saw all three, accepted soft ink only, and the other two were removed (2026-11-14).
 - **Visible on the sample set:** no.
 
 ## The provenance block
@@ -511,9 +511,10 @@ Checked in the screenshots or measured on 2026-11-14; none of these differ.
 ## Not yet compared or not yet decided
 
 - **The three light-background treatments** (`panel`, `ink`, `soft`) were seen
-  by the user, who accepted `soft` and not the other two (2026-11-14). The
-  default is now `soft`; `panel` and `ink` remain as options. They do not appear
-  on the standalone page.
+  by the user, who accepted `soft` and not the other two (2026-11-14). The other
+  two were then removed at the user's decision the same day: a light background
+  is always drawn as `soft` ink, and there is no option to choose. It does not
+  appear on the standalone page.
 - **No frame-for-frame comparison is possible.** The reference's Tumble is
   unseeded and its Wander route is random, so the two pages never show the same
   frame. Point size, glow, bloom, depth of field and trail length were judged by

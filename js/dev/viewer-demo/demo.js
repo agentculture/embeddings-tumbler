@@ -76,15 +76,9 @@
         "--tumbler-font": "Georgia, serif",
       },
     },
-  ];
-  // Three light treatments, chosen with --tumbler-light-style (see js/api/50-viewer.md).
-  [
-    ["light: dark stage panel", "panel"],
-    ["light: coloured ink", "ink"],
-    ["light: soft ink", "soft"],
-  ].forEach(function (pair) {
-    THEMES.push({
-      name: pair[0],
+    {
+      // A light background: drawn as soft coloured ink (see js/api/50-viewer.md).
+      name: "light",
       props: {
         "--tumbler-background": "#f6f4ee",
         "--tumbler-sky": "#ffffff",
@@ -92,10 +86,9 @@
         "--tumbler-muted": "#5b6578",
         "--tumbler-line": "#d6dae2",
         "--tumbler-accent": "#a35f00",
-        "--tumbler-light-style": pair[1],
       },
-    });
-  });
+    },
+  ];
   const START_THEME = q.get("theme") || "";
   const ALL_PROPS = [];
   THEMES.forEach(function (t) {
@@ -238,7 +231,7 @@
     s.handle = T.mount(s.el, { seed: SEED, mode: MODE, title: name === "a" ? "Embedding Tumbler" : "" });
     if (START_THEME) {
       const idx = THEMES.findIndex(function (t) {
-        return t.name === START_THEME || (t.props["--tumbler-light-style"] || t.name) === START_THEME;
+        return t.name === START_THEME;
       });
       if (idx >= 0) setTheme(s, idx, document.querySelector('[data-side="' + name + '"] button[data-act="theme"]'));
     }
