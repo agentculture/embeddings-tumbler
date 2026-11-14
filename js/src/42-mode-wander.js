@@ -40,9 +40,31 @@
     spokes: 6, // labelled neighbours listed in `focus` for the viewer's spokes
   };
 
+  // Insert pool point i, at squared distance s, into a scan's best lists (nearest
+  // first, ties to the lower index, at most K kept). Returns the new fill count.
+  function insertNearest(bestD, bestI, filled, K, s, i) {
+    if (filled === K && (s > bestD[K - 1] || (s === bestD[K - 1] && i > bestI[K - 1]))) return filled;
+    var pos = filled < K ? filled : K - 1;
+    while (pos > 0 && (bestD[pos - 1] > s || (bestD[pos - 1] === s && bestI[pos - 1] > i))) {
+      bestD[pos] = bestD[pos - 1];
+      bestI[pos] = bestI[pos - 1];
+      pos--;
+    }
+    bestD[pos] = s;
+    bestI[pos] = i;
+    return filled < K ? filled + 1 : filled;
+  }
+
+  // A finished scan: its neighbours, nearest first, cached on its context.
+  function scanFinish(sc) {
+    var nb = sc.bestI.subarray(0, sc.filled);
+    sc.c.nbr.set(sc.j, nb);
+    return nb;
+  }
+
   function create(options) {
     var opt = {};
-    for (var k in DEFAULTS) opt[k] = options && options[k] !== undefined ? options[k] : DEFAULTS[k];
+    for (var k in DEFAULTS) opt[k] = options?.[k] === undefined ? DEFAULTS[k] : options[k];
     var cycle = opt.travel + opt.dwell;
 
     var self = {
@@ -125,15 +147,15 @@
         p.push(a);
         mark[a] = 1;
       }
-      for (var b = 0; b < lab.length; b++) {
-        if (!mark[lab[b]]) {
-          p.push(lab[b]);
-          mark[lab[b]] = 1;
+      for (var l of lab) {
+        if (!mark[l]) {
+          p.push(l);
+          mark[l] = 1;
         }
       }
       var visit = lab.length >= 2 ? Int32Array.from(lab) : Int32Array.from(p);
       var inVisit = new Uint8Array(N);
-      for (var c = 0; c < visit.length; c++) inVisit[visit[c]] = 1;
+      for (var v of visit) inVisit[v] = 1;
       return { n: N, visit: visit, inVisit: inVisit, pool: Int32Array.from(p), labelled: lab.length, nbr: new Map() };
     }
 
@@ -173,7 +195,7 @@
             if (!job.run()) return false;
             var st = job.result;
             scale = st.radius / M.REFERENCE_RADIUS;
-            startCentre = entry && entry.centre ? new Float32Array(entry.centre) : new Float32Array(st.mean);
+            startCentre = entry?.centre ? new Float32Array(entry.centre) : new Float32Array(st.mean);
             return true;
           },
         },
@@ -235,26 +257,11 @@
           var x = X[oi + d] - X[oj + d];
           s += x * x;
         }
-        if (filled === K && (s > bestD[K - 1] || (s === bestD[K - 1] && i > bestI[K - 1]))) continue;
-        var pos = filled < K ? filled : K - 1;
-        while (pos > 0 && (bestD[pos - 1] > s || (bestD[pos - 1] === s && bestI[pos - 1] > i))) {
-          bestD[pos] = bestD[pos - 1];
-          bestI[pos] = bestI[pos - 1];
-          pos--;
-        }
-        bestD[pos] = s;
-        bestI[pos] = i;
-        if (filled < K) filled++;
+        filled = insertNearest(bestD, bestI, filled, K, s, i);
       }
       sc.q = stop;
       sc.filled = filled;
       return stop >= pool.length;
-    }
-
-    function scanFinish(sc) {
-      var nb = sc.bestI.subarray(0, sc.filled);
-      sc.c.nbr.set(sc.j, nb);
-      return nb;
     }
 
     function nearVisits(c, i, max) {
@@ -278,14 +285,14 @@
       var hopNo = h + 1;
       if (i >= 0 && hopNo % opt.leapEvery !== 0) {
         var near = nearVisits(c, i, opt.neighbours).filter(function (j) {
-          return recent.indexOf(j) < 0;
+          return !recent.includes(j);
         });
         if (near.length) return near[Math.floor(rng.next() * Math.min(near.length, opt.nearChoices))];
       }
       var gi = groupOf(i);
       for (var tries = 0; tries < 40; tries++) {
         var j = visit[Math.floor(rng.next() * visit.length)];
-        if (j !== i && recent.indexOf(j) < 0 && (gi === "" || groupOf(j) !== gi)) return j;
+        if (j !== i && !recent.includes(j) && (gi === "" || groupOf(j) !== gi)) return j;
       }
       var idx = Math.floor(rng.next() * visit.length);
       if (visit[idx] === i && visit.length > 1) idx = (idx + 1) % visit.length;
@@ -506,8 +513,8 @@
         var from = entry;
         if (ready) {
           var s = stateAt(t);
-          from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
-          if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
+          from = { frame: new Float32Array(s.frame), centre: null, draw: { ...s.draw } };
+          if (!empty || entry?.centre) from.centre = new Float32Array(s.centre);
         }
         enter(newSet, { seed: seed, from: from });
         return M.changed(prepare(), true);
@@ -570,7 +577,7 @@
         travel: opt.travel,
         dwell: opt.dwell,
         labelled: ctx ? ctx.labelled : 0,
-        visiting: ctx && ctx.labelled >= 2 ? "labelled points" : "any point",
+        visiting: ctx?.labelled >= 2 ? "labelled points" : "any point",
         empty: empty,
         varianceShare: null,
       };

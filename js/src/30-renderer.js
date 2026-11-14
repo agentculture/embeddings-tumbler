@@ -54,18 +54,63 @@ ET.renderer = (function () {
   });
 
   var MAX_ROW_WIDTH = 4096; // preferred texture row width (texels) before widening
+  var INT32_MAX = 2147483647;
 
   function unavailable(reason, message) {
     return { ok: false, reason: reason, message: message };
   }
 
+  // The integer part of a size or count; NaN, null and undefined read as 0.
+  function wholeOr0(x) {
+    return Math.trunc(x) || 0;
+  }
+
+  function shaderError(message) {
+    var e = new Error(message);
+    e.isShaderError = true;
+    return e;
+  }
+
+  function freshGpu() {
+    return {
+      objects: [],
+      tone: null,
+      fade: null,
+      point: null,
+      line: null,
+      progLayout: null,
+      quadVao: null,
+      texX: null,
+      texXRows: 0,
+      texF: null,
+      fStage: null,
+      fWidth: 0,
+      vboPoint: null,
+      vaoPoint: null,
+      vboLine: null,
+      vaoLine: null,
+      fbo: null,
+      texHdr: null,
+      hdrW: 0,
+      hdrH: 0,
+    };
+  }
+
+  // CPU arrays for `capacity` points in layout `lay`, zero-padded to whole rows.
+  function allocate(lay, capacity) {
+    var rows = lay.rows(capacity);
+    var vec = new Float32Array(rows * lay.pointsPerRow * lay.floatsPerPoint);
+    var attr = new Float32Array(Math.max(1, capacity) * 4);
+    return { vectors: vec, attr: attr };
+  }
+
   // ---------- layout: how N points of dimension D sit in one RGBA32F texture ----------
 
   function layout(dimension, count, maxTextureSize) {
-    var d = dimension | 0;
-    var n = Math.max(0, count | 0);
-    var max = maxTextureSize | 0;
-    if (d < 1 || d !== dimension) return unavailable("bad-dimension", "Dimension must be a positive integer.");
+    var d = Math.trunc(dimension);
+    var n = Math.max(0, wholeOr0(count));
+    var max = wholeOr0(maxTextureSize);
+    if (d < 1 || d !== dimension || d > INT32_MAX) return unavailable("bad-dimension", "Dimension must be a positive integer.");
     var texels = Math.ceil(d / 4);
     if (texels > max) {
       return unavailable(
@@ -255,7 +300,7 @@ ET.renderer = (function () {
     for (key in DEFAULTS) out[key] = DEFAULTS[key];
     if (state) {
       for (key in state) {
-        if (Object.prototype.hasOwnProperty.call(state, key) && state[key] !== undefined) {
+        if (Object.hasOwn(state, key) && state[key] !== undefined) {
           out[key] = state[key];
         }
       }
@@ -264,17 +309,13 @@ ET.renderer = (function () {
   }
 
   function isFloatArray(a) {
-    return a instanceof Float32Array || (a && a.constructor && a.constructor.name === "Float32Array");
+    return a instanceof Float32Array || a?.constructor?.name === "Float32Array";
   }
 
   function isIndexArray(a) {
-    return (
-      a instanceof Uint32Array ||
-      a instanceof Int32Array ||
-      (a &&
-        a.constructor &&
-        (a.constructor.name === "Uint32Array" || a.constructor.name === "Int32Array"))
-    );
+    if (a instanceof Uint32Array || a instanceof Int32Array) return true;
+    var name = a?.constructor?.name;
+    return name === "Uint32Array" || name === "Int32Array";
   }
 
   // Check a block of points; returns its count.
@@ -306,7 +347,7 @@ ET.renderer = (function () {
     var opts = options || {};
     var gl = null;
     try {
-      if (canvas && typeof canvas.getContext === "function") {
+      if (typeof canvas?.getContext === "function") {
         gl = canvas.getContext("webgl2", {
           alpha: !!opts.alpha,
           antialias: false,
@@ -322,7 +363,7 @@ ET.renderer = (function () {
     if (!gl) return unavailable("webgl2-unavailable", "WebGL 2 is not available, so the embedding view cannot be drawn.");
 
     var onContextChange = typeof opts.onContextChange === "function" ? opts.onContextChange : null;
-    var maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) | 0;
+    var maxTextureSize = wholeOr0(gl.getParameter(gl.MAX_TEXTURE_SIZE));
 
     // Data kept on the CPU: the source for appends and for a rebuild after context loss.
     var store = {
@@ -347,42 +388,11 @@ ET.renderer = (function () {
       return obj;
     }
 
-    function freshGpu() {
-      return {
-        objects: [],
-        tone: null,
-        fade: null,
-        point: null,
-        line: null,
-        progLayout: null,
-        quadVao: null,
-        texX: null,
-        texXRows: 0,
-        texF: null,
-        fStage: null,
-        fWidth: 0,
-        vboPoint: null,
-        vaoPoint: null,
-        vboLine: null,
-        vaoLine: null,
-        fbo: null,
-        texHdr: null,
-        hdrW: 0,
-        hdrH: 0,
-      };
-    }
-
-    function shaderError(message) {
-      var e = new Error(message);
-      e.isShaderError = true;
-      return e;
-    }
-
     // A failure while building or uploading: shader-failed for compile and link errors,
     // gpu-failed for anything else a GL call threw.
     function failure(e) {
-      var msg = e && e.message ? e.message : String(e);
-      if (e && e.isShaderError) return unavailable("shader-failed", "The view could not be drawn: " + msg);
+      var msg = e?.message ? e.message : String(e);
+      if (e?.isShaderError) return unavailable("shader-failed", "The view could not be drawn: " + msg);
       return unavailable("gpu-failed", "The view could not be sent to the GPU: " + msg);
     }
 
@@ -402,14 +412,14 @@ ET.renderer = (function () {
         [gl.FRAGMENT_SHADER, fsSrc],
       ];
       var shaders = [];
-      for (var i = 0; i < pair.length; i++) {
-        var sh = gl.createShader(pair[i][0]);
+      for (var stage of pair) {
+        var sh = gl.createShader(stage[0]);
         shaders.push(sh);
-        gl.shaderSource(sh, pair[i][1]);
+        gl.shaderSource(sh, stage[1]);
         gl.compileShader(sh);
         if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
           var log = gl.getShaderInfoLog(sh);
-          for (var j = 0; j < shaders.length; j++) gl.deleteShader(shaders[j]);
+          for (var made of shaders) gl.deleteShader(made);
           throw shaderError("shader did not compile: " + log);
         }
         gl.attachShader(prog, sh);
@@ -417,13 +427,13 @@ ET.renderer = (function () {
       gl.linkProgram(prog);
       var linked = gl.getProgramParameter(prog, gl.LINK_STATUS);
       var linkLog = linked ? "" : gl.getProgramInfoLog(prog);
-      for (var k = 0; k < shaders.length; k++) {
-        gl.detachShader(prog, shaders[k]);
-        gl.deleteShader(shaders[k]);
+      for (var done of shaders) {
+        gl.detachShader(prog, done);
+        gl.deleteShader(done);
       }
       if (!linked) throw shaderError("shader program did not link: " + linkLog);
       var u = {};
-      for (var m = 0; m < uniformNames.length; m++) u[uniformNames[m]] = gl.getUniformLocation(prog, uniformNames[m]);
+      for (var name of uniformNames) u[name] = gl.getUniformLocation(prog, name);
       return { program: prog, u: u };
     }
 
@@ -487,20 +497,23 @@ ET.renderer = (function () {
       if (hdr) {
         gpu.fbo = track("framebuffer", gl.createFramebuffer());
         gpu.texHdr = track("texture", gl.createTexture());
-        if (!sizeHdr()) {
-          // Float targets advertised but not usable here: fall back to direct drawing.
-          release(gpu.fbo);
-          release(gpu.texHdr);
-          gpu.fbo = null;
-          gpu.texHdr = null;
-          hdr = false;
-        }
+        // Float targets advertised but not usable here: fall back to direct drawing.
+        if (!sizeHdr()) dropHdr();
       }
     }
 
+    // Free the HDR target and draw directly from now on.
+    function dropHdr() {
+      release(gpu.fbo);
+      release(gpu.texHdr);
+      gpu.fbo = null;
+      gpu.texHdr = null;
+      hdr = false;
+    }
+
     function sizeHdr() {
-      var w = Math.max(1, gl.drawingBufferWidth | 0);
-      var h = Math.max(1, gl.drawingBufferHeight | 0);
+      var w = Math.max(1, wholeOr0(gl.drawingBufferWidth));
+      var h = Math.max(1, wholeOr0(gl.drawingBufferHeight));
       if (w === gpu.hdrW && h === gpu.hdrH) return true;
       gl.bindTexture(gl.TEXTURE_2D, gpu.texHdr);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
@@ -520,7 +533,7 @@ ET.renderer = (function () {
 
     // Programs whose loop bound and row packing come from the layout.
     function buildPrograms(lay) {
-      if (gpu.progLayout && gpu.progLayout.texelsPerPoint === lay.texelsPerPoint && gpu.progLayout.pointsPerRow === lay.pointsPerRow) {
+      if (gpu.progLayout?.texelsPerPoint === lay.texelsPerPoint && gpu.progLayout.pointsPerRow === lay.pointsPerRow) {
         return;
       }
       if (gpu.point) release(gpu.point.program);
@@ -645,11 +658,133 @@ ET.renderer = (function () {
       }
     }
 
-    function allocate(lay, capacity) {
-      var rows = lay.rows(capacity);
-      var vec = new Float32Array(rows * lay.pointsPerRow * lay.floatsPerPoint);
-      var attr = new Float32Array(Math.max(1, capacity) * 4);
-      return { vectors: vec, attr: attr };
+    // Wire endpoints must be point indices, two per wire.
+    function checkWirePairs(pairs) {
+      if (!isIndexArray(pairs)) throw new TypeError("pairs must be a Uint32Array (or Int32Array)");
+      if (pairs.length % 2 !== 0) throw new TypeError("pairs must hold two indices per wire");
+      for (var p of pairs) {
+        if (p < 0 || p >= store.count) {
+          throw new RangeError("wire endpoint " + p + " is not a point index (count " + store.count + ")");
+        }
+      }
+    }
+
+    // The given true lengths (checked), or ones measured from the kept vectors.
+    function wireLengths(pairs, lengths, m) {
+      if (lengths !== undefined && lengths !== null) {
+        if (!isFloatArray(lengths) || lengths.length !== m) throw new TypeError("lengths must be a Float32Array, one per wire");
+        return lengths;
+      }
+      var lens = new Float32Array(m);
+      var stride = store.lay ? store.lay.floatsPerPoint : 0;
+      for (var e = 0; e < m; e++) {
+        var a = pairs[2 * e] * stride,
+          b = pairs[2 * e + 1] * stride,
+          s = 0;
+        for (var k = 0; k < stride; k++) {
+          var t = store.vectors[a + k] - store.vectors[b + k];
+          s += t * t;
+        }
+        lens[e] = Math.sqrt(s);
+      }
+      return lens;
+    }
+
+    // The frame (rows 0..2) and the centre (row 3) into the frame texture, on unit 1.
+    function uploadFrame(s, D) {
+      if (!isFloatArray(s.frame) || s.frame.length !== 3 * D) throw new TypeError("frame must be a Float32Array of length 3 * " + D);
+      if (s.centre !== undefined && s.centre !== null && (!isFloatArray(s.centre) || s.centre.length !== D)) {
+        throw new TypeError("centre must be a Float32Array of length " + D);
+      }
+      var st = gpu.fStage,
+        row = gpu.fWidth * 4;
+      st.fill(0);
+      for (var a = 0; a < 3; a++) st.set(s.frame.subarray(a * D, a * D + D), a * row);
+      if (s.centre) st.set(s.centre, 3 * row);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, gpu.texF);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gpu.fWidth, 4, gl.RGBA, gl.FLOAT, st);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
+    }
+
+    // Wipe the target, or (trails on an HDR target) dim what is already there.
+    // Returns the gain to draw with.
+    function clearOrFade(s, bg, gain) {
+      var fading = hdr && s.trails > 0;
+      if (needClear || s.clear || !fading) {
+        if (hdr) gl.clearColor(0, 0, 0, 1);
+        else gl.clearColor(bg[0], bg[1], bg[2], 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        needClear = false;
+        return gain;
+      }
+      // dim what is already there instead of wiping it: motion leaves trails
+      var k = Math.exp(-Math.max(0, s.dt) / s.trails);
+      gl.blendFunc(gl.ZERO, gl.SRC_COLOR);
+      gl.useProgram(gpu.fade.program);
+      gl.uniform1f(gpu.fade.u.uK, k);
+      gl.bindVertexArray(gpu.quadVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gain *= (1 - k) * s.trailGain;
+      return gain;
+    }
+
+    // The uniforms shared by the point and wire programs.
+    function setView(p, s, W, H, R) {
+      gl.useProgram(p.program);
+      gl.uniform1i(p.u.uX, 0);
+      gl.uniform1i(p.u.uF, 1);
+      gl.uniform4f(p.u.uRot, Math.cos(s.yaw), Math.sin(s.yaw), Math.cos(s.pitch), Math.sin(s.pitch));
+      gl.uniform2f(p.u.uView, (2 * R) / W, (2 * R) / H);
+      gl.uniform1f(p.u.uZoom, s.zoom);
+      gl.uniform1f(p.u.uFocus, s.focus);
+    }
+
+    // The wires (when shown), then the points.
+    function drawScene(s, gain, W, H) {
+      var R = Math.min(W, H) * s.radius;
+      if (wires.count && s.wires > 0.02 && gpu.vaoLine) {
+        setView(gpu.line, s, W, H, R);
+        gl.uniform1f(gpu.line.u.uGain, gain * s.wires * s.wireGain);
+        gl.uniform1f(gpu.line.u.uWireDof, s.wireDepthOfField);
+        gl.bindVertexArray(gpu.vaoLine);
+        gl.drawArrays(gl.LINES, 0, wires.count * 2);
+      }
+      var pu = gpu.point.u;
+      setView(gpu.point, s, W, H, R);
+      gl.uniform1f(pu.uPx, s.pointSize);
+      gl.uniform1f(pu.uMinPx, s.minPointSize);
+      gl.uniform1f(pu.uFog, s.fog);
+      gl.uniform1f(pu.uTime, s.time);
+      gl.uniform1f(pu.uGain, gain);
+      gl.uniform1f(pu.uDim, s.dim);
+      gl.uniform1f(pu.uTwinkle, s.twinkle);
+      gl.uniform1f(pu.uDof, s.depthOfField);
+      gl.uniform1f(pu.uFogNear, s.fogNear);
+      gl.uniform1f(pu.uFogWidth, Math.max(1e-6, s.fogWidth));
+      gl.bindVertexArray(gpu.vaoPoint);
+      gl.drawArrays(gl.POINTS, 0, store.count);
+    }
+
+    // Tone-map the HDR target onto the canvas, with the mip-chain bloom.
+    function toneMap(s, bg) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.disable(gl.BLEND);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, gpu.texHdr);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      var tu = gpu.tone.u;
+      gl.useProgram(gpu.tone.program);
+      gl.uniform1i(tu.uT, 2);
+      gl.uniform1f(tu.uBloom, s.bloom);
+      gl.uniform1f(tu.uExposure, s.exposure);
+      gl.uniform1f(tu.uGamma, s.gamma);
+      gl.uniform1f(tu.uVignette, s.vignette);
+      gl.uniform3f(tu.uBackground, bg[0], bg[1], bg[2]);
+      gl.bindVertexArray(gpu.quadVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.activeTexture(gl.TEXTURE0);
     }
 
     // True when the GPU state is whole: not disposed, not lost, no failed build.
@@ -661,7 +796,7 @@ ET.renderer = (function () {
       // Replace all points. Returns { ok: true, layout, uploaded } or { ok: false, reason, message }.
       setData: function (input) {
         if (disposed) return unavailable("disposed", "The renderer has been disposed.");
-        var d = input && input.dimension;
+        var d = input?.dimension;
         if (typeof d !== "number" || d < 1 || Math.floor(d) !== d) throw new TypeError("dimension must be a positive integer");
         var n = checkPoints(input, d);
         var lay = layout(d, n, maxTextureSize);
@@ -758,32 +893,9 @@ ET.renderer = (function () {
       // one per wire; measured from the kept vectors when absent.
       setWires: function (pairs, lengths) {
         if (disposed) return unavailable("disposed", "The renderer has been disposed.");
-        if (!isIndexArray(pairs)) throw new TypeError("pairs must be a Uint32Array (or Int32Array)");
-        if (pairs.length % 2 !== 0) throw new TypeError("pairs must hold two indices per wire");
+        checkWirePairs(pairs);
         var m = pairs.length / 2;
-        for (var i = 0; i < pairs.length; i++) {
-          if (pairs[i] < 0 || pairs[i] >= store.count) {
-            throw new RangeError("wire endpoint " + pairs[i] + " is not a point index (count " + store.count + ")");
-          }
-        }
-        var lens;
-        if (lengths !== undefined && lengths !== null) {
-          if (!isFloatArray(lengths) || lengths.length !== m) throw new TypeError("lengths must be a Float32Array, one per wire");
-          lens = lengths;
-        } else {
-          lens = new Float32Array(m);
-          var stride = store.lay ? store.lay.floatsPerPoint : 0;
-          for (var e = 0; e < m; e++) {
-            var a = pairs[2 * e] * stride,
-              b = pairs[2 * e + 1] * stride,
-              s = 0;
-            for (var k = 0; k < stride; k++) {
-              var t = store.vectors[a + k] - store.vectors[b + k];
-              s += t * t;
-            }
-            lens[e] = Math.sqrt(s);
-          }
-        }
+        var lens = wireLengths(pairs, lengths, m);
         wires = { pairs: new Uint32Array(pairs), lengths: new Float32Array(lens), count: m };
         if (!usable()) return { ok: true, uploaded: false };
         try {
@@ -827,108 +939,22 @@ ET.renderer = (function () {
       draw: function (state) {
         if (!usable()) return false;
         var s = merge(state);
-        var D = store.dimension;
         var hasData = store.count > 0 && gpu.point;
-        if (hasData) {
-          if (!isFloatArray(s.frame) || s.frame.length !== 3 * D) throw new TypeError("frame must be a Float32Array of length 3 * " + D);
-          if (s.centre !== undefined && s.centre !== null && (!isFloatArray(s.centre) || s.centre.length !== D)) {
-            throw new TypeError("centre must be a Float32Array of length " + D);
-          }
-          var st = gpu.fStage,
-            row = gpu.fWidth * 4;
-          st.fill(0);
-          for (var a = 0; a < 3; a++) st.set(s.frame.subarray(a * D, a * D + D), a * row);
-          if (s.centre) st.set(s.centre, 3 * row);
-          gl.activeTexture(gl.TEXTURE1);
-          gl.bindTexture(gl.TEXTURE_2D, gpu.texF);
-          gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gpu.fWidth, 4, gl.RGBA, gl.FLOAT, st);
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
-        }
-        if (hdr && !sizeHdr()) {
-          // the target became unusable at this size; fall back for good
-          release(gpu.fbo);
-          release(gpu.texHdr);
-          gpu.fbo = null;
-          gpu.texHdr = null;
-          hdr = false;
-        }
-        var W = Math.max(1, gl.drawingBufferWidth | 0),
-          H = Math.max(1, gl.drawingBufferHeight | 0);
+        if (hasData) uploadFrame(s, store.dimension);
+        // the target became unusable at this size; fall back for good
+        if (hdr && !sizeHdr()) dropHdr();
+        var W = Math.max(1, wholeOr0(gl.drawingBufferWidth)),
+          H = Math.max(1, wholeOr0(gl.drawingBufferHeight));
         gl.bindFramebuffer(gl.FRAMEBUFFER, hdr ? gpu.fbo : null);
         gl.viewport(0, 0, W, H);
         gl.disable(gl.DEPTH_TEST);
         gl.enable(gl.BLEND);
         var gain = s.gain * (hdr ? 1 : s.fallbackGain);
         var bg = s.background || DEFAULTS.background;
-        if (needClear || s.clear || !(s.trails > 0) || !hdr) {
-          if (hdr) gl.clearColor(0, 0, 0, 1);
-          else gl.clearColor(bg[0], bg[1], bg[2], 1);
-          gl.clear(gl.COLOR_BUFFER_BIT);
-          needClear = false;
-        } else {
-          // dim what is already there instead of wiping it: motion leaves trails
-          var k = Math.exp(-Math.max(0, s.dt) / s.trails);
-          gl.blendFunc(gl.ZERO, gl.SRC_COLOR);
-          gl.useProgram(gpu.fade.program);
-          gl.uniform1f(gpu.fade.u.uK, k);
-          gl.bindVertexArray(gpu.quadVao);
-          gl.drawArrays(gl.TRIANGLES, 0, 3);
-          gain *= (1 - k) * s.trailGain;
-        }
+        gain = clearOrFade(s, bg, gain);
         gl.blendFunc(gl.ONE, gl.ONE);
-        if (hasData) {
-          var R = Math.min(W, H) * s.radius;
-          var rot = [Math.cos(s.yaw), Math.sin(s.yaw), Math.cos(s.pitch), Math.sin(s.pitch)];
-          var setView = function (p) {
-            gl.useProgram(p.program);
-            gl.uniform1i(p.u.uX, 0);
-            gl.uniform1i(p.u.uF, 1);
-            gl.uniform4f(p.u.uRot, rot[0], rot[1], rot[2], rot[3]);
-            gl.uniform2f(p.u.uView, (2 * R) / W, (2 * R) / H);
-            gl.uniform1f(p.u.uZoom, s.zoom);
-            gl.uniform1f(p.u.uFocus, s.focus);
-          };
-          if (wires.count && s.wires > 0.02 && gpu.vaoLine) {
-            setView(gpu.line);
-            gl.uniform1f(gpu.line.u.uGain, gain * s.wires * s.wireGain);
-            gl.uniform1f(gpu.line.u.uWireDof, s.wireDepthOfField);
-            gl.bindVertexArray(gpu.vaoLine);
-            gl.drawArrays(gl.LINES, 0, wires.count * 2);
-          }
-          var pu = gpu.point.u;
-          setView(gpu.point);
-          gl.uniform1f(pu.uPx, s.pointSize);
-          gl.uniform1f(pu.uMinPx, s.minPointSize);
-          gl.uniform1f(pu.uFog, s.fog);
-          gl.uniform1f(pu.uTime, s.time);
-          gl.uniform1f(pu.uGain, gain);
-          gl.uniform1f(pu.uDim, s.dim);
-          gl.uniform1f(pu.uTwinkle, s.twinkle);
-          gl.uniform1f(pu.uDof, s.depthOfField);
-          gl.uniform1f(pu.uFogNear, s.fogNear);
-          gl.uniform1f(pu.uFogWidth, Math.max(1e-6, s.fogWidth));
-          gl.bindVertexArray(gpu.vaoPoint);
-          gl.drawArrays(gl.POINTS, 0, store.count);
-        }
-        if (hdr) {
-          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-          gl.disable(gl.BLEND);
-          gl.activeTexture(gl.TEXTURE2);
-          gl.bindTexture(gl.TEXTURE_2D, gpu.texHdr);
-          gl.generateMipmap(gl.TEXTURE_2D);
-          var tu = gpu.tone.u;
-          gl.useProgram(gpu.tone.program);
-          gl.uniform1i(tu.uT, 2);
-          gl.uniform1f(tu.uBloom, s.bloom);
-          gl.uniform1f(tu.uExposure, s.exposure);
-          gl.uniform1f(tu.uGamma, s.gamma);
-          gl.uniform1f(tu.uVignette, s.vignette);
-          gl.uniform3f(tu.uBackground, bg[0], bg[1], bg[2]);
-          gl.bindVertexArray(gpu.quadVao);
-          gl.drawArrays(gl.TRIANGLES, 0, 3);
-          gl.activeTexture(gl.TEXTURE0);
-        }
+        if (hasData) drawScene(s, gain, W, H);
+        if (hdr) toneMap(s, bg);
         gl.bindVertexArray(null);
         return true;
       },
@@ -972,7 +998,7 @@ ET.renderer = (function () {
     }
 
     function onLost(ev) {
-      if (ev && typeof ev.preventDefault === "function") ev.preventDefault(); // allow a restore
+      if (typeof ev?.preventDefault === "function") ev.preventDefault(); // allow a restore
       lost = true;
       if (gpu) gpu = null; // the GPU objects are gone with the context; nothing to delete
       notify("lost", "The graphics context was lost; drawing is paused until it is restored.");

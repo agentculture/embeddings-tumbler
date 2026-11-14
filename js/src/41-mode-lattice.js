@@ -33,7 +33,7 @@
 
   function create(options) {
     var opt = {};
-    for (var k in DEFAULTS) opt[k] = options && options[k] !== undefined ? options[k] : DEFAULTS[k];
+    for (var k in DEFAULTS) opt[k] = options?.[k] === undefined ? DEFAULTS[k] : options[k];
 
     var self = {
       time: 0,
@@ -107,7 +107,7 @@
         run: function () {
           if (!job.run()) return false;
           st = job.result;
-          var start = entry && entry.centre ? entry.centre : st.mean;
+          var start = entry?.centre ? entry.centre : st.mean;
           glide = M.makeGlide(start, st.mean, opt.centreTau, D);
           return true;
         },
@@ -255,7 +255,7 @@
     }
 
     function lastT() {
-      return lists.length ? lists[lists.length - 1].T : -Infinity;
+      return lists.length ? lists.at(-1).T : -Infinity;
     }
 
     function fixWires(T) {
@@ -346,8 +346,8 @@
         var from = entry;
         if (isReady()) {
           var s = stateAt(t);
-          from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
-          if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
+          from = { frame: new Float32Array(s.frame), centre: null, draw: { ...s.draw } };
+          if (!empty || entry?.centre) from.centre = new Float32Array(s.centre);
         }
         enter(newSet, { seed: seed, from: from });
         return M.changed(prepare(), true);
@@ -361,7 +361,7 @@
     }
 
     function describe() {
-      var last = lists.length ? lists[lists.length - 1] : null;
+      var last = lists.length ? lists.at(-1) : null;
       return {
         id: "lattice",
         projection: "linear: an orthonormal 3-frame; one axis at a time turns a quarter turn into a hidden direction",
@@ -372,7 +372,7 @@
         neighbourLimit: opt.neighbourLimit,
         wireNeighbours: opt.wireNeighbours,
         wires: last ? last.wires.pairs.length / 2 : 0,
-        neighboursMeasured: !!(knn && knn.done),
+        neighboursMeasured: !!knn?.done,
         wiresShownAt: lists.length ? lists[0].T : null,
         wiresReplacedAt: lists.length > 1 ? last.T : null,
         wiresPending: pendingWires !== null,

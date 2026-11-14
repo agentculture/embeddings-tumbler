@@ -35,14 +35,14 @@ ET.modes = (function () {
     if (typeof def.title !== "string" || def.title.length === 0) throw new TypeError("a mode needs a title");
     if (typeof def.summary !== "string") throw new TypeError("a mode needs a summary string");
     if (typeof def.create !== "function") throw new TypeError("a mode needs a create(options) function");
-    for (var i = 0; i < registry.length; i++) {
-      if (registry[i].id === def.id) throw new Error("mode '" + def.id + "' is already registered");
+    for (var known of registry) {
+      if (known.id === def.id) throw new Error("mode '" + def.id + "' is already registered");
     }
     registry.push(copyDef(def));
   }
 
   function find(id) {
-    for (var i = 0; i < registry.length; i++) if (registry[i].id === id) return registry[i];
+    for (var d of registry) if (d.id === id) return d;
     return null;
   }
 
@@ -81,7 +81,7 @@ ET.modes = (function () {
   // ----- bounded preparation ------------------------------------------------
 
   function now() {
-    if (typeof performance !== "undefined" && performance && typeof performance.now === "function") {
+    if (typeof performance !== "undefined" && typeof performance?.now === "function") {
       return performance.now();
     }
     return Date.now();
@@ -122,7 +122,8 @@ ET.modes = (function () {
       }
       api.done = done;
       api.ready = ready;
-      api.progress = done ? 1 : total > 0 ? got / total : 1;
+      if (done) api.progress = 1;
+      else api.progress = total > 0 ? got / total : 1;
     }
 
     function step(budgetMs) {
@@ -172,7 +173,7 @@ ET.modes = (function () {
       m2 += m * m;
     }
     var tv = n > 0 ? st.sumSq / n - m2 : 0;
-    st.totalVariance = tv > 0 ? tv : 0;
+    st.totalVariance = Math.max(tv, 0);
     // Root mean squared distance from the mean: the cloud's typical radius.
     st.radius = Math.sqrt(st.totalVariance) || 1;
   }
@@ -182,7 +183,8 @@ ET.modes = (function () {
   // equal in both. Not a proof; it catches a wrong `previous` in O(D).
   function isPrefix(previous, set) {
     var D = set.dimension;
-    if (!previous || previous.dimension !== D || !(previous.count <= set.count)) return false;
+    var grows = previous?.count <= set.count; // false for a missing or NaN count too
+    if (!previous || previous.dimension !== D || !grows) return false;
     var n = previous.count;
     if (n === 0) return true;
     var a = previous.vectors;
@@ -200,7 +202,7 @@ ET.modes = (function () {
   // Precondition: `set` is `previous` with points appended. A `previous` that
   // fails the cheap check (isPrefix) is ignored and the stats are recomputed.
   function stats(set, previous) {
-    if (statsCache && statsCache.has(set)) return statsCache.get(set);
+    if (statsCache?.has(set)) return statsCache.get(set);
     var D = set.dimension;
     var st;
     var prev = previous && statsCache ? statsCache.get(previous) : null;
@@ -228,11 +230,12 @@ ET.modes = (function () {
     var job = {
       result: null,
       progress: function () {
-        return job.result ? 1 : st && set.count > 0 ? st.count / set.count : 0;
+        if (job.result) return 1;
+        return st && set.count > 0 ? st.count / set.count : 0;
       },
       run: function () {
         if (job.result) return true;
-        if (!st && statsCache && statsCache.has(set)) {
+        if (!st && statsCache?.has(set)) {
           job.result = statsCache.get(set);
           return true;
         }
@@ -316,13 +319,13 @@ ET.modes = (function () {
 
   // Copy of an entry state handed to enter({ from }), or null.
   function entryFrom(from, D) {
-    if (!from || !from.frame || from.frame.length !== 3 * D) return null;
+    if (!from?.frame || from.frame.length !== 3 * D) return null;
     var e = { frame: new Float32Array(from.frame), centre: null, draw: {} };
     ET.math.orthonormalize(e.frame, 3, D);
-    if (from.centre && from.centre.length === D) e.centre = new Float32Array(from.centre);
+    if (from.centre?.length === D) e.centre = new Float32Array(from.centre);
     if (from.draw && typeof from.draw === "object") {
       for (var k in from.draw) {
-        if (Object.prototype.hasOwnProperty.call(from.draw, k) && typeof from.draw[k] === "number" && isFinite(from.draw[k])) {
+        if (Object.hasOwn(from.draw, k) && typeof from.draw[k] === "number" && Number.isFinite(from.draw[k])) {
           e.draw[k] = from.draw[k];
         }
       }
@@ -333,10 +336,11 @@ ET.modes = (function () {
   // Blend numeric draw parameters from the entry's toward the mode's own over
   // `duration` seconds (smoothstep). Keys the entry lacks are the mode's at once.
   function blendDraw(draw, entry, t, duration) {
-    if (!entry || !(t < duration)) return draw;
+    var blending = t < duration; // false for a NaN duration too
+    if (!entry || !blending) return draw;
     var e = ET.math.smoothstep(t / duration);
     for (var k in draw) {
-      if (Object.prototype.hasOwnProperty.call(entry.draw, k)) draw[k] = entry.draw[k] + (draw[k] - entry.draw[k]) * e;
+      if (Object.hasOwn(entry.draw, k)) draw[k] = entry.draw[k] + (draw[k] - entry.draw[k]) * e;
     }
     return draw;
   }
@@ -382,7 +386,8 @@ ET.modes = (function () {
       radii[i] = r2;
     }
     var rms = Math.sqrt(sq / n);
-    if (!(rms > 0)) return 1;
+    var spread = rms > 0; // false for NaN too
+    if (!spread) return 1;
     var view = radii.subarray(0, n);
     view.sort();
     var p98 = Math.sqrt(view[Math.min(n - 1, Math.floor(0.98 * (n - 1)))]);
@@ -399,7 +404,7 @@ ET.modes = (function () {
   // "12,345": a fixed thousands separator (no locale dependence).
   function thousands(n) {
     var s = String(Math.round(n));
-    var neg = s.charAt(0) === "-";
+    var neg = s.startsWith("-");
     if (neg) s = s.slice(1);
     var out = "";
     while (s.length > 3) {
@@ -412,13 +417,14 @@ ET.modes = (function () {
   // A point is labelled when its label is non-empty and is not just its id
   // (a labels-only set repeats the id as the label).
   function isLabelled(p) {
-    return !!p && typeof p.label === "string" && p.label.trim() !== "" && p.label !== p.id;
+    return typeof p?.label === "string" && p.label.trim() !== "" && p.label !== p.id;
   }
 
   // Throws a RangeError naming the data when a set has too few dimensions.
   function requireDimension(set, min, title) {
-    var D = set && set.dimension;
-    if (!(D >= min)) {
+    var D = set ? set.dimension : set; // a missing set names itself in the message
+    var enough = D >= min; // false for a missing or non-numeric dimension too
+    if (!enough) {
       throw new RangeError(
         "the set has dimension " + D + "; " + title + " needs at least " + min + " dimensions",
       );
@@ -431,9 +437,9 @@ ET.modes = (function () {
   function holdState(out, frame, entry, t, status) {
     out.t = t;
     out.frame.set(frame);
-    if (entry && entry.centre) out.centre.set(entry.centre);
+    if (entry?.centre) out.centre.set(entry.centre);
     else out.centre.fill(0);
-    out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0, fog: 0 };
+    out.draw = entry ? { ...entry.draw } : { wires: 0, fog: 0 };
     out.wires = null;
     out.focus = null;
     out.status = status;
@@ -450,8 +456,10 @@ ET.modes = (function () {
   var EMPTY_STATUS = "no points yet";
 
   function checkTime(t) {
-    if (typeof t !== "number" || !isFinite(t)) throw new RangeError("time must be a finite number");
-    return t < 0 ? 0 : t;
+    if (!Number.isFinite(t)) throw new RangeError("time must be a finite number");
+    // Not Math.max(t, 0): that turns -0 into +0, and -0 is passed through as given.
+    if (t < 0) return 0;
+    return t;
   }
 
   return {
