@@ -2,7 +2,7 @@
   "plan_slug": "embeddable-space-viewer",
   "schema_version": 2,
   "created": "2026-11-13T19:07:38Z",
-  "updated": "2026-11-14T01:30:16Z",
+  "updated": "2026-11-14T01:37:50Z",
   "deviations": [
     {
       "id": "d1",
@@ -42,7 +42,7 @@
         "t16"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 3
     }
