@@ -1979,18 +1979,63 @@ ET.renderer = (function () {
   });
 
   var MAX_ROW_WIDTH = 4096; // preferred texture row width (texels) before widening
+  var INT32_MAX = 2147483647;
 
   function unavailable(reason, message) {
     return { ok: false, reason: reason, message: message };
   }
 
+  // The integer part of a size or count; NaN, null and undefined read as 0.
+  function wholeOr0(x) {
+    return Math.trunc(x) || 0;
+  }
+
+  function shaderError(message) {
+    var e = new Error(message);
+    e.isShaderError = true;
+    return e;
+  }
+
+  function freshGpu() {
+    return {
+      objects: [],
+      tone: null,
+      fade: null,
+      point: null,
+      line: null,
+      progLayout: null,
+      quadVao: null,
+      texX: null,
+      texXRows: 0,
+      texF: null,
+      fStage: null,
+      fWidth: 0,
+      vboPoint: null,
+      vaoPoint: null,
+      vboLine: null,
+      vaoLine: null,
+      fbo: null,
+      texHdr: null,
+      hdrW: 0,
+      hdrH: 0,
+    };
+  }
+
+  // CPU arrays for `capacity` points in layout `lay`, zero-padded to whole rows.
+  function allocate(lay, capacity) {
+    var rows = lay.rows(capacity);
+    var vec = new Float32Array(rows * lay.pointsPerRow * lay.floatsPerPoint);
+    var attr = new Float32Array(Math.max(1, capacity) * 4);
+    return { vectors: vec, attr: attr };
+  }
+
   // ---------- layout: how N points of dimension D sit in one RGBA32F texture ----------
 
   function layout(dimension, count, maxTextureSize) {
-    var d = dimension | 0;
-    var n = Math.max(0, count | 0);
-    var max = maxTextureSize | 0;
-    if (d < 1 || d !== dimension) return unavailable("bad-dimension", "Dimension must be a positive integer.");
+    var d = Math.trunc(dimension);
+    var n = Math.max(0, wholeOr0(count));
+    var max = wholeOr0(maxTextureSize);
+    if (d < 1 || d !== dimension || d > INT32_MAX) return unavailable("bad-dimension", "Dimension must be a positive integer.");
     var texels = Math.ceil(d / 4);
     if (texels > max) {
       return unavailable(
@@ -2180,7 +2225,7 @@ ET.renderer = (function () {
     for (key in DEFAULTS) out[key] = DEFAULTS[key];
     if (state) {
       for (key in state) {
-        if (Object.prototype.hasOwnProperty.call(state, key) && state[key] !== undefined) {
+        if (Object.hasOwn(state, key) && state[key] !== undefined) {
           out[key] = state[key];
         }
       }
@@ -2189,17 +2234,13 @@ ET.renderer = (function () {
   }
 
   function isFloatArray(a) {
-    return a instanceof Float32Array || (a && a.constructor && a.constructor.name === "Float32Array");
+    return a instanceof Float32Array || a?.constructor?.name === "Float32Array";
   }
 
   function isIndexArray(a) {
-    return (
-      a instanceof Uint32Array ||
-      a instanceof Int32Array ||
-      (a &&
-        a.constructor &&
-        (a.constructor.name === "Uint32Array" || a.constructor.name === "Int32Array"))
-    );
+    if (a instanceof Uint32Array || a instanceof Int32Array) return true;
+    var name = a?.constructor?.name;
+    return name === "Uint32Array" || name === "Int32Array";
   }
 
   // Check a block of points; returns its count.
@@ -2231,7 +2272,7 @@ ET.renderer = (function () {
     var opts = options || {};
     var gl = null;
     try {
-      if (canvas && typeof canvas.getContext === "function") {
+      if (typeof canvas?.getContext === "function") {
         gl = canvas.getContext("webgl2", {
           alpha: !!opts.alpha,
           antialias: false,
@@ -2247,7 +2288,7 @@ ET.renderer = (function () {
     if (!gl) return unavailable("webgl2-unavailable", "WebGL 2 is not available, so the embedding view cannot be drawn.");
 
     var onContextChange = typeof opts.onContextChange === "function" ? opts.onContextChange : null;
-    var maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) | 0;
+    var maxTextureSize = wholeOr0(gl.getParameter(gl.MAX_TEXTURE_SIZE));
 
     // Data kept on the CPU: the source for appends and for a rebuild after context loss.
     var store = {
@@ -2272,42 +2313,11 @@ ET.renderer = (function () {
       return obj;
     }
 
-    function freshGpu() {
-      return {
-        objects: [],
-        tone: null,
-        fade: null,
-        point: null,
-        line: null,
-        progLayout: null,
-        quadVao: null,
-        texX: null,
-        texXRows: 0,
-        texF: null,
-        fStage: null,
-        fWidth: 0,
-        vboPoint: null,
-        vaoPoint: null,
-        vboLine: null,
-        vaoLine: null,
-        fbo: null,
-        texHdr: null,
-        hdrW: 0,
-        hdrH: 0,
-      };
-    }
-
-    function shaderError(message) {
-      var e = new Error(message);
-      e.isShaderError = true;
-      return e;
-    }
-
     // A failure while building or uploading: shader-failed for compile and link errors,
     // gpu-failed for anything else a GL call threw.
     function failure(e) {
-      var msg = e && e.message ? e.message : String(e);
-      if (e && e.isShaderError) return unavailable("shader-failed", "The view could not be drawn: " + msg);
+      var msg = e?.message ? e.message : String(e);
+      if (e?.isShaderError) return unavailable("shader-failed", "The view could not be drawn: " + msg);
       return unavailable("gpu-failed", "The view could not be sent to the GPU: " + msg);
     }
 
@@ -2327,14 +2337,14 @@ ET.renderer = (function () {
         [gl.FRAGMENT_SHADER, fsSrc],
       ];
       var shaders = [];
-      for (var i = 0; i < pair.length; i++) {
-        var sh = gl.createShader(pair[i][0]);
+      for (var stage of pair) {
+        var sh = gl.createShader(stage[0]);
         shaders.push(sh);
-        gl.shaderSource(sh, pair[i][1]);
+        gl.shaderSource(sh, stage[1]);
         gl.compileShader(sh);
         if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
           var log = gl.getShaderInfoLog(sh);
-          for (var j = 0; j < shaders.length; j++) gl.deleteShader(shaders[j]);
+          for (var made of shaders) gl.deleteShader(made);
           throw shaderError("shader did not compile: " + log);
         }
         gl.attachShader(prog, sh);
@@ -2342,13 +2352,13 @@ ET.renderer = (function () {
       gl.linkProgram(prog);
       var linked = gl.getProgramParameter(prog, gl.LINK_STATUS);
       var linkLog = linked ? "" : gl.getProgramInfoLog(prog);
-      for (var k = 0; k < shaders.length; k++) {
-        gl.detachShader(prog, shaders[k]);
-        gl.deleteShader(shaders[k]);
+      for (var done of shaders) {
+        gl.detachShader(prog, done);
+        gl.deleteShader(done);
       }
       if (!linked) throw shaderError("shader program did not link: " + linkLog);
       var u = {};
-      for (var m = 0; m < uniformNames.length; m++) u[uniformNames[m]] = gl.getUniformLocation(prog, uniformNames[m]);
+      for (var name of uniformNames) u[name] = gl.getUniformLocation(prog, name);
       return { program: prog, u: u };
     }
 
@@ -2412,20 +2422,23 @@ ET.renderer = (function () {
       if (hdr) {
         gpu.fbo = track("framebuffer", gl.createFramebuffer());
         gpu.texHdr = track("texture", gl.createTexture());
-        if (!sizeHdr()) {
-          // Float targets advertised but not usable here: fall back to direct drawing.
-          release(gpu.fbo);
-          release(gpu.texHdr);
-          gpu.fbo = null;
-          gpu.texHdr = null;
-          hdr = false;
-        }
+        // Float targets advertised but not usable here: fall back to direct drawing.
+        if (!sizeHdr()) dropHdr();
       }
     }
 
+    // Free the HDR target and draw directly from now on.
+    function dropHdr() {
+      release(gpu.fbo);
+      release(gpu.texHdr);
+      gpu.fbo = null;
+      gpu.texHdr = null;
+      hdr = false;
+    }
+
     function sizeHdr() {
-      var w = Math.max(1, gl.drawingBufferWidth | 0);
-      var h = Math.max(1, gl.drawingBufferHeight | 0);
+      var w = Math.max(1, wholeOr0(gl.drawingBufferWidth));
+      var h = Math.max(1, wholeOr0(gl.drawingBufferHeight));
       if (w === gpu.hdrW && h === gpu.hdrH) return true;
       gl.bindTexture(gl.TEXTURE_2D, gpu.texHdr);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
@@ -2445,7 +2458,7 @@ ET.renderer = (function () {
 
     // Programs whose loop bound and row packing come from the layout.
     function buildPrograms(lay) {
-      if (gpu.progLayout && gpu.progLayout.texelsPerPoint === lay.texelsPerPoint && gpu.progLayout.pointsPerRow === lay.pointsPerRow) {
+      if (gpu.progLayout?.texelsPerPoint === lay.texelsPerPoint && gpu.progLayout.pointsPerRow === lay.pointsPerRow) {
         return;
       }
       if (gpu.point) release(gpu.point.program);
@@ -2570,11 +2583,133 @@ ET.renderer = (function () {
       }
     }
 
-    function allocate(lay, capacity) {
-      var rows = lay.rows(capacity);
-      var vec = new Float32Array(rows * lay.pointsPerRow * lay.floatsPerPoint);
-      var attr = new Float32Array(Math.max(1, capacity) * 4);
-      return { vectors: vec, attr: attr };
+    // Wire endpoints must be point indices, two per wire.
+    function checkWirePairs(pairs) {
+      if (!isIndexArray(pairs)) throw new TypeError("pairs must be a Uint32Array (or Int32Array)");
+      if (pairs.length % 2 !== 0) throw new TypeError("pairs must hold two indices per wire");
+      for (var p of pairs) {
+        if (p < 0 || p >= store.count) {
+          throw new RangeError("wire endpoint " + p + " is not a point index (count " + store.count + ")");
+        }
+      }
+    }
+
+    // The given true lengths (checked), or ones measured from the kept vectors.
+    function wireLengths(pairs, lengths, m) {
+      if (lengths !== undefined && lengths !== null) {
+        if (!isFloatArray(lengths) || lengths.length !== m) throw new TypeError("lengths must be a Float32Array, one per wire");
+        return lengths;
+      }
+      var lens = new Float32Array(m);
+      var stride = store.lay ? store.lay.floatsPerPoint : 0;
+      for (var e = 0; e < m; e++) {
+        var a = pairs[2 * e] * stride,
+          b = pairs[2 * e + 1] * stride,
+          s = 0;
+        for (var k = 0; k < stride; k++) {
+          var t = store.vectors[a + k] - store.vectors[b + k];
+          s += t * t;
+        }
+        lens[e] = Math.sqrt(s);
+      }
+      return lens;
+    }
+
+    // The frame (rows 0..2) and the centre (row 3) into the frame texture, on unit 1.
+    function uploadFrame(s, D) {
+      if (!isFloatArray(s.frame) || s.frame.length !== 3 * D) throw new TypeError("frame must be a Float32Array of length 3 * " + D);
+      if (s.centre !== undefined && s.centre !== null && (!isFloatArray(s.centre) || s.centre.length !== D)) {
+        throw new TypeError("centre must be a Float32Array of length " + D);
+      }
+      var st = gpu.fStage,
+        row = gpu.fWidth * 4;
+      st.fill(0);
+      for (var a = 0; a < 3; a++) st.set(s.frame.subarray(a * D, a * D + D), a * row);
+      if (s.centre) st.set(s.centre, 3 * row);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, gpu.texF);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gpu.fWidth, 4, gl.RGBA, gl.FLOAT, st);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
+    }
+
+    // Wipe the target, or (trails on an HDR target) dim what is already there.
+    // Returns the gain to draw with.
+    function clearOrFade(s, bg, gain) {
+      var fading = hdr && s.trails > 0;
+      if (needClear || s.clear || !fading) {
+        if (hdr) gl.clearColor(0, 0, 0, 1);
+        else gl.clearColor(bg[0], bg[1], bg[2], 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        needClear = false;
+        return gain;
+      }
+      // dim what is already there instead of wiping it: motion leaves trails
+      var k = Math.exp(-Math.max(0, s.dt) / s.trails);
+      gl.blendFunc(gl.ZERO, gl.SRC_COLOR);
+      gl.useProgram(gpu.fade.program);
+      gl.uniform1f(gpu.fade.u.uK, k);
+      gl.bindVertexArray(gpu.quadVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gain *= (1 - k) * s.trailGain;
+      return gain;
+    }
+
+    // The uniforms shared by the point and wire programs.
+    function setView(p, s, W, H, R) {
+      gl.useProgram(p.program);
+      gl.uniform1i(p.u.uX, 0);
+      gl.uniform1i(p.u.uF, 1);
+      gl.uniform4f(p.u.uRot, Math.cos(s.yaw), Math.sin(s.yaw), Math.cos(s.pitch), Math.sin(s.pitch));
+      gl.uniform2f(p.u.uView, (2 * R) / W, (2 * R) / H);
+      gl.uniform1f(p.u.uZoom, s.zoom);
+      gl.uniform1f(p.u.uFocus, s.focus);
+    }
+
+    // The wires (when shown), then the points.
+    function drawScene(s, gain, W, H) {
+      var R = Math.min(W, H) * s.radius;
+      if (wires.count && s.wires > 0.02 && gpu.vaoLine) {
+        setView(gpu.line, s, W, H, R);
+        gl.uniform1f(gpu.line.u.uGain, gain * s.wires * s.wireGain);
+        gl.uniform1f(gpu.line.u.uWireDof, s.wireDepthOfField);
+        gl.bindVertexArray(gpu.vaoLine);
+        gl.drawArrays(gl.LINES, 0, wires.count * 2);
+      }
+      var pu = gpu.point.u;
+      setView(gpu.point, s, W, H, R);
+      gl.uniform1f(pu.uPx, s.pointSize);
+      gl.uniform1f(pu.uMinPx, s.minPointSize);
+      gl.uniform1f(pu.uFog, s.fog);
+      gl.uniform1f(pu.uTime, s.time);
+      gl.uniform1f(pu.uGain, gain);
+      gl.uniform1f(pu.uDim, s.dim);
+      gl.uniform1f(pu.uTwinkle, s.twinkle);
+      gl.uniform1f(pu.uDof, s.depthOfField);
+      gl.uniform1f(pu.uFogNear, s.fogNear);
+      gl.uniform1f(pu.uFogWidth, Math.max(1e-6, s.fogWidth));
+      gl.bindVertexArray(gpu.vaoPoint);
+      gl.drawArrays(gl.POINTS, 0, store.count);
+    }
+
+    // Tone-map the HDR target onto the canvas, with the mip-chain bloom.
+    function toneMap(s, bg) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.disable(gl.BLEND);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, gpu.texHdr);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      var tu = gpu.tone.u;
+      gl.useProgram(gpu.tone.program);
+      gl.uniform1i(tu.uT, 2);
+      gl.uniform1f(tu.uBloom, s.bloom);
+      gl.uniform1f(tu.uExposure, s.exposure);
+      gl.uniform1f(tu.uGamma, s.gamma);
+      gl.uniform1f(tu.uVignette, s.vignette);
+      gl.uniform3f(tu.uBackground, bg[0], bg[1], bg[2]);
+      gl.bindVertexArray(gpu.quadVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.activeTexture(gl.TEXTURE0);
     }
 
     // True when the GPU state is whole: not disposed, not lost, no failed build.
@@ -2586,7 +2721,7 @@ ET.renderer = (function () {
       // Replace all points. Returns { ok: true, layout, uploaded } or { ok: false, reason, message }.
       setData: function (input) {
         if (disposed) return unavailable("disposed", "The renderer has been disposed.");
-        var d = input && input.dimension;
+        var d = input?.dimension;
         if (typeof d !== "number" || d < 1 || Math.floor(d) !== d) throw new TypeError("dimension must be a positive integer");
         var n = checkPoints(input, d);
         var lay = layout(d, n, maxTextureSize);
@@ -2683,32 +2818,9 @@ ET.renderer = (function () {
       // one per wire; measured from the kept vectors when absent.
       setWires: function (pairs, lengths) {
         if (disposed) return unavailable("disposed", "The renderer has been disposed.");
-        if (!isIndexArray(pairs)) throw new TypeError("pairs must be a Uint32Array (or Int32Array)");
-        if (pairs.length % 2 !== 0) throw new TypeError("pairs must hold two indices per wire");
+        checkWirePairs(pairs);
         var m = pairs.length / 2;
-        for (var i = 0; i < pairs.length; i++) {
-          if (pairs[i] < 0 || pairs[i] >= store.count) {
-            throw new RangeError("wire endpoint " + pairs[i] + " is not a point index (count " + store.count + ")");
-          }
-        }
-        var lens;
-        if (lengths !== undefined && lengths !== null) {
-          if (!isFloatArray(lengths) || lengths.length !== m) throw new TypeError("lengths must be a Float32Array, one per wire");
-          lens = lengths;
-        } else {
-          lens = new Float32Array(m);
-          var stride = store.lay ? store.lay.floatsPerPoint : 0;
-          for (var e = 0; e < m; e++) {
-            var a = pairs[2 * e] * stride,
-              b = pairs[2 * e + 1] * stride,
-              s = 0;
-            for (var k = 0; k < stride; k++) {
-              var t = store.vectors[a + k] - store.vectors[b + k];
-              s += t * t;
-            }
-            lens[e] = Math.sqrt(s);
-          }
-        }
+        var lens = wireLengths(pairs, lengths, m);
         wires = { pairs: new Uint32Array(pairs), lengths: new Float32Array(lens), count: m };
         if (!usable()) return { ok: true, uploaded: false };
         try {
@@ -2752,108 +2864,22 @@ ET.renderer = (function () {
       draw: function (state) {
         if (!usable()) return false;
         var s = merge(state);
-        var D = store.dimension;
         var hasData = store.count > 0 && gpu.point;
-        if (hasData) {
-          if (!isFloatArray(s.frame) || s.frame.length !== 3 * D) throw new TypeError("frame must be a Float32Array of length 3 * " + D);
-          if (s.centre !== undefined && s.centre !== null && (!isFloatArray(s.centre) || s.centre.length !== D)) {
-            throw new TypeError("centre must be a Float32Array of length " + D);
-          }
-          var st = gpu.fStage,
-            row = gpu.fWidth * 4;
-          st.fill(0);
-          for (var a = 0; a < 3; a++) st.set(s.frame.subarray(a * D, a * D + D), a * row);
-          if (s.centre) st.set(s.centre, 3 * row);
-          gl.activeTexture(gl.TEXTURE1);
-          gl.bindTexture(gl.TEXTURE_2D, gpu.texF);
-          gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gpu.fWidth, 4, gl.RGBA, gl.FLOAT, st);
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
-        }
-        if (hdr && !sizeHdr()) {
-          // the target became unusable at this size; fall back for good
-          release(gpu.fbo);
-          release(gpu.texHdr);
-          gpu.fbo = null;
-          gpu.texHdr = null;
-          hdr = false;
-        }
-        var W = Math.max(1, gl.drawingBufferWidth | 0),
-          H = Math.max(1, gl.drawingBufferHeight | 0);
+        if (hasData) uploadFrame(s, store.dimension);
+        // the target became unusable at this size; fall back for good
+        if (hdr && !sizeHdr()) dropHdr();
+        var W = Math.max(1, wholeOr0(gl.drawingBufferWidth)),
+          H = Math.max(1, wholeOr0(gl.drawingBufferHeight));
         gl.bindFramebuffer(gl.FRAMEBUFFER, hdr ? gpu.fbo : null);
         gl.viewport(0, 0, W, H);
         gl.disable(gl.DEPTH_TEST);
         gl.enable(gl.BLEND);
         var gain = s.gain * (hdr ? 1 : s.fallbackGain);
         var bg = s.background || DEFAULTS.background;
-        if (needClear || s.clear || !(s.trails > 0) || !hdr) {
-          if (hdr) gl.clearColor(0, 0, 0, 1);
-          else gl.clearColor(bg[0], bg[1], bg[2], 1);
-          gl.clear(gl.COLOR_BUFFER_BIT);
-          needClear = false;
-        } else {
-          // dim what is already there instead of wiping it: motion leaves trails
-          var k = Math.exp(-Math.max(0, s.dt) / s.trails);
-          gl.blendFunc(gl.ZERO, gl.SRC_COLOR);
-          gl.useProgram(gpu.fade.program);
-          gl.uniform1f(gpu.fade.u.uK, k);
-          gl.bindVertexArray(gpu.quadVao);
-          gl.drawArrays(gl.TRIANGLES, 0, 3);
-          gain *= (1 - k) * s.trailGain;
-        }
+        gain = clearOrFade(s, bg, gain);
         gl.blendFunc(gl.ONE, gl.ONE);
-        if (hasData) {
-          var R = Math.min(W, H) * s.radius;
-          var rot = [Math.cos(s.yaw), Math.sin(s.yaw), Math.cos(s.pitch), Math.sin(s.pitch)];
-          var setView = function (p) {
-            gl.useProgram(p.program);
-            gl.uniform1i(p.u.uX, 0);
-            gl.uniform1i(p.u.uF, 1);
-            gl.uniform4f(p.u.uRot, rot[0], rot[1], rot[2], rot[3]);
-            gl.uniform2f(p.u.uView, (2 * R) / W, (2 * R) / H);
-            gl.uniform1f(p.u.uZoom, s.zoom);
-            gl.uniform1f(p.u.uFocus, s.focus);
-          };
-          if (wires.count && s.wires > 0.02 && gpu.vaoLine) {
-            setView(gpu.line);
-            gl.uniform1f(gpu.line.u.uGain, gain * s.wires * s.wireGain);
-            gl.uniform1f(gpu.line.u.uWireDof, s.wireDepthOfField);
-            gl.bindVertexArray(gpu.vaoLine);
-            gl.drawArrays(gl.LINES, 0, wires.count * 2);
-          }
-          var pu = gpu.point.u;
-          setView(gpu.point);
-          gl.uniform1f(pu.uPx, s.pointSize);
-          gl.uniform1f(pu.uMinPx, s.minPointSize);
-          gl.uniform1f(pu.uFog, s.fog);
-          gl.uniform1f(pu.uTime, s.time);
-          gl.uniform1f(pu.uGain, gain);
-          gl.uniform1f(pu.uDim, s.dim);
-          gl.uniform1f(pu.uTwinkle, s.twinkle);
-          gl.uniform1f(pu.uDof, s.depthOfField);
-          gl.uniform1f(pu.uFogNear, s.fogNear);
-          gl.uniform1f(pu.uFogWidth, Math.max(1e-6, s.fogWidth));
-          gl.bindVertexArray(gpu.vaoPoint);
-          gl.drawArrays(gl.POINTS, 0, store.count);
-        }
-        if (hdr) {
-          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-          gl.disable(gl.BLEND);
-          gl.activeTexture(gl.TEXTURE2);
-          gl.bindTexture(gl.TEXTURE_2D, gpu.texHdr);
-          gl.generateMipmap(gl.TEXTURE_2D);
-          var tu = gpu.tone.u;
-          gl.useProgram(gpu.tone.program);
-          gl.uniform1i(tu.uT, 2);
-          gl.uniform1f(tu.uBloom, s.bloom);
-          gl.uniform1f(tu.uExposure, s.exposure);
-          gl.uniform1f(tu.uGamma, s.gamma);
-          gl.uniform1f(tu.uVignette, s.vignette);
-          gl.uniform3f(tu.uBackground, bg[0], bg[1], bg[2]);
-          gl.bindVertexArray(gpu.quadVao);
-          gl.drawArrays(gl.TRIANGLES, 0, 3);
-          gl.activeTexture(gl.TEXTURE0);
-        }
+        if (hasData) drawScene(s, gain, W, H);
+        if (hdr) toneMap(s, bg);
         gl.bindVertexArray(null);
         return true;
       },
@@ -2897,7 +2923,7 @@ ET.renderer = (function () {
     }
 
     function onLost(ev) {
-      if (ev && typeof ev.preventDefault === "function") ev.preventDefault(); // allow a restore
+      if (typeof ev?.preventDefault === "function") ev.preventDefault(); // allow a restore
       lost = true;
       if (gpu) gpu = null; // the GPU objects are gone with the context; nothing to delete
       notify("lost", "The graphics context was lost; drawing is paused until it is restored.");
@@ -2972,14 +2998,14 @@ ET.modes = (function () {
     if (typeof def.title !== "string" || def.title.length === 0) throw new TypeError("a mode needs a title");
     if (typeof def.summary !== "string") throw new TypeError("a mode needs a summary string");
     if (typeof def.create !== "function") throw new TypeError("a mode needs a create(options) function");
-    for (var i = 0; i < registry.length; i++) {
-      if (registry[i].id === def.id) throw new Error("mode '" + def.id + "' is already registered");
+    for (var known of registry) {
+      if (known.id === def.id) throw new Error("mode '" + def.id + "' is already registered");
     }
     registry.push(copyDef(def));
   }
 
   function find(id) {
-    for (var i = 0; i < registry.length; i++) if (registry[i].id === id) return registry[i];
+    for (var d of registry) if (d.id === id) return d;
     return null;
   }
 
@@ -3018,7 +3044,7 @@ ET.modes = (function () {
   // ----- bounded preparation ------------------------------------------------
 
   function now() {
-    if (typeof performance !== "undefined" && performance && typeof performance.now === "function") {
+    if (typeof performance !== "undefined" && typeof performance?.now === "function") {
       return performance.now();
     }
     return Date.now();
@@ -3059,7 +3085,8 @@ ET.modes = (function () {
       }
       api.done = done;
       api.ready = ready;
-      api.progress = done ? 1 : total > 0 ? got / total : 1;
+      if (done) api.progress = 1;
+      else api.progress = total > 0 ? got / total : 1;
     }
 
     function step(budgetMs) {
@@ -3109,7 +3136,7 @@ ET.modes = (function () {
       m2 += m * m;
     }
     var tv = n > 0 ? st.sumSq / n - m2 : 0;
-    st.totalVariance = tv > 0 ? tv : 0;
+    st.totalVariance = Math.max(tv, 0);
     // Root mean squared distance from the mean: the cloud's typical radius.
     st.radius = Math.sqrt(st.totalVariance) || 1;
   }
@@ -3119,7 +3146,8 @@ ET.modes = (function () {
   // equal in both. Not a proof; it catches a wrong `previous` in O(D).
   function isPrefix(previous, set) {
     var D = set.dimension;
-    if (!previous || previous.dimension !== D || !(previous.count <= set.count)) return false;
+    var grows = previous?.count <= set.count; // false for a missing or NaN count too
+    if (!previous || previous.dimension !== D || !grows) return false;
     var n = previous.count;
     if (n === 0) return true;
     var a = previous.vectors;
@@ -3137,7 +3165,7 @@ ET.modes = (function () {
   // Precondition: `set` is `previous` with points appended. A `previous` that
   // fails the cheap check (isPrefix) is ignored and the stats are recomputed.
   function stats(set, previous) {
-    if (statsCache && statsCache.has(set)) return statsCache.get(set);
+    if (statsCache?.has(set)) return statsCache.get(set);
     var D = set.dimension;
     var st;
     var prev = previous && statsCache ? statsCache.get(previous) : null;
@@ -3165,11 +3193,12 @@ ET.modes = (function () {
     var job = {
       result: null,
       progress: function () {
-        return job.result ? 1 : st && set.count > 0 ? st.count / set.count : 0;
+        if (job.result) return 1;
+        return st && set.count > 0 ? st.count / set.count : 0;
       },
       run: function () {
         if (job.result) return true;
-        if (!st && statsCache && statsCache.has(set)) {
+        if (!st && statsCache?.has(set)) {
           job.result = statsCache.get(set);
           return true;
         }
@@ -3253,13 +3282,13 @@ ET.modes = (function () {
 
   // Copy of an entry state handed to enter({ from }), or null.
   function entryFrom(from, D) {
-    if (!from || !from.frame || from.frame.length !== 3 * D) return null;
+    if (!from?.frame || from.frame.length !== 3 * D) return null;
     var e = { frame: new Float32Array(from.frame), centre: null, draw: {} };
     ET.math.orthonormalize(e.frame, 3, D);
-    if (from.centre && from.centre.length === D) e.centre = new Float32Array(from.centre);
+    if (from.centre?.length === D) e.centre = new Float32Array(from.centre);
     if (from.draw && typeof from.draw === "object") {
       for (var k in from.draw) {
-        if (Object.prototype.hasOwnProperty.call(from.draw, k) && typeof from.draw[k] === "number" && isFinite(from.draw[k])) {
+        if (Object.hasOwn(from.draw, k) && typeof from.draw[k] === "number" && Number.isFinite(from.draw[k])) {
           e.draw[k] = from.draw[k];
         }
       }
@@ -3270,10 +3299,11 @@ ET.modes = (function () {
   // Blend numeric draw parameters from the entry's toward the mode's own over
   // `duration` seconds (smoothstep). Keys the entry lacks are the mode's at once.
   function blendDraw(draw, entry, t, duration) {
-    if (!entry || !(t < duration)) return draw;
+    var blending = t < duration; // false for a NaN duration too
+    if (!entry || !blending) return draw;
     var e = ET.math.smoothstep(t / duration);
     for (var k in draw) {
-      if (Object.prototype.hasOwnProperty.call(entry.draw, k)) draw[k] = entry.draw[k] + (draw[k] - entry.draw[k]) * e;
+      if (Object.hasOwn(entry.draw, k)) draw[k] = entry.draw[k] + (draw[k] - entry.draw[k]) * e;
     }
     return draw;
   }
@@ -3319,7 +3349,8 @@ ET.modes = (function () {
       radii[i] = r2;
     }
     var rms = Math.sqrt(sq / n);
-    if (!(rms > 0)) return 1;
+    var spread = rms > 0; // false for NaN too
+    if (!spread) return 1;
     var view = radii.subarray(0, n);
     view.sort();
     var p98 = Math.sqrt(view[Math.min(n - 1, Math.floor(0.98 * (n - 1)))]);
@@ -3336,7 +3367,7 @@ ET.modes = (function () {
   // "12,345": a fixed thousands separator (no locale dependence).
   function thousands(n) {
     var s = String(Math.round(n));
-    var neg = s.charAt(0) === "-";
+    var neg = s.startsWith("-");
     if (neg) s = s.slice(1);
     var out = "";
     while (s.length > 3) {
@@ -3349,13 +3380,14 @@ ET.modes = (function () {
   // A point is labelled when its label is non-empty and is not just its id
   // (a labels-only set repeats the id as the label).
   function isLabelled(p) {
-    return !!p && typeof p.label === "string" && p.label.trim() !== "" && p.label !== p.id;
+    return typeof p?.label === "string" && p.label.trim() !== "" && p.label !== p.id;
   }
 
   // Throws a RangeError naming the data when a set has too few dimensions.
   function requireDimension(set, min, title) {
-    var D = set && set.dimension;
-    if (!(D >= min)) {
+    var D = set ? set.dimension : set; // a missing set names itself in the message
+    var enough = D >= min; // false for a missing or non-numeric dimension too
+    if (!enough) {
       throw new RangeError(
         "the set has dimension " + D + "; " + title + " needs at least " + min + " dimensions",
       );
@@ -3368,9 +3400,9 @@ ET.modes = (function () {
   function holdState(out, frame, entry, t, status) {
     out.t = t;
     out.frame.set(frame);
-    if (entry && entry.centre) out.centre.set(entry.centre);
+    if (entry?.centre) out.centre.set(entry.centre);
     else out.centre.fill(0);
-    out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0, fog: 0 };
+    out.draw = entry ? { ...entry.draw } : { wires: 0, fog: 0 };
     out.wires = null;
     out.focus = null;
     out.status = status;
@@ -3387,8 +3419,10 @@ ET.modes = (function () {
   var EMPTY_STATUS = "no points yet";
 
   function checkTime(t) {
-    if (typeof t !== "number" || !isFinite(t)) throw new RangeError("time must be a finite number");
-    return t < 0 ? 0 : t;
+    if (!Number.isFinite(t)) throw new RangeError("time must be a finite number");
+    // Not Math.max(t, 0): that turns -0 into +0, and -0 is passed through as given.
+    if (t < 0) return 0;
+    return t;
   }
 
   return {
@@ -3449,7 +3483,7 @@ ET.modes = (function () {
 
   function create(options) {
     var opt = {};
-    for (var k in DEFAULTS) opt[k] = options && options[k] !== undefined ? options[k] : DEFAULTS[k];
+    for (var k in DEFAULTS) opt[k] = options?.[k] === undefined ? DEFAULTS[k] : options[k];
 
     var self = {
       time: 0,
@@ -3606,7 +3640,7 @@ ET.modes = (function () {
             if (!live()) return true;
             if (!job.run()) return false;
             st = job.result;
-            var start = entry && entry.centre ? entry.centre : st.mean;
+            var start = entry?.centre ? entry.centre : st.mean;
             glide = M.makeGlide(start, st.mean, opt.centreTau, D);
             return true;
           },
@@ -3658,7 +3692,7 @@ ET.modes = (function () {
     }
 
     function lastSwitch() {
-      return tours.length ? tours[tours.length - 1].t0 : -Infinity;
+      return tours.length ? tours.at(-1).t0 : -Infinity;
     }
 
     // Fix a finished refit's switch time. Never earlier than the last switch,
@@ -3691,7 +3725,10 @@ ET.modes = (function () {
       var hi = Math.max(lo, opt.refitTransitionMax);
       var v = tourRate(tour, t0);
       var need = v > 0 ? (REFIT_PEAK * bl.rate) / (REFIT_EXTRA * v) : hi;
-      return need < lo ? lo : need > hi ? hi : need;
+      // Not Math.min(hi, Math.max(lo, need)): a NaN refitTransitionMin keeps `need` here.
+      if (need < lo) return lo;
+      if (need > hi) return hi;
+      return need;
     }
 
     function drawFor(frame, centre, t) {
@@ -3742,8 +3779,8 @@ ET.modes = (function () {
 
     function snapshot(t) {
       var s = stateAt(t);
-      var from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
-      if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
+      var from = { frame: new Float32Array(s.frame), centre: null, draw: { ...s.draw } };
+      if (!empty || entry?.centre) from.centre = new Float32Array(s.centre);
       return from;
     }
 
@@ -3797,7 +3834,7 @@ ET.modes = (function () {
     }
 
     function describe() {
-      var last = tours.length ? tours[tours.length - 1] : null;
+      var last = tours.length ? tours.at(-1) : null;
       var fittedCount = last ? last.count : 0;
       return {
         id: "tumble",
@@ -3808,10 +3845,10 @@ ET.modes = (function () {
         varianceShare: self.varianceShare,
         varianceShareStale: isReady() && !empty ? set.count !== fittedCount : false,
         pointsSinceFit: isReady() && !empty ? set.count - fittedCount : 0,
-        fittedRows: last && last.tour.pca ? last.tour.pca.sampledRows : 0,
-        method: last && last.tour.pca ? last.tour.pca.method : null,
-        refitAt: last && last.t0 > -Infinity ? last.t0 : null,
-        refitTransition: last && last.blend ? last.blend.duration : null,
+        fittedRows: last?.tour.pca ? last.tour.pca.sampledRows : 0,
+        method: last?.tour.pca ? last.tour.pca.method : null,
+        refitAt: last?.t0 > -Infinity ? last.t0 : null,
+        refitTransition: last?.blend ? last.blend.duration : null,
         refitPending: refitRunning,
         empty: empty,
       };
@@ -3849,7 +3886,7 @@ ET.modes = (function () {
 
   // Progress 0..1 with an even rate in the middle and smooth ends.
   function refitEase(u) {
-    var x = u <= 0 ? 0 : u >= 1 ? 1 : u;
+    var x = Math.min(1, Math.max(0, u));
     var a = REFIT_RAMP;
     if (x > 1 - a) return 1 - refitEase(1 - x);
     if (x < a) {
@@ -3867,8 +3904,29 @@ ET.modes = (function () {
 
   function makeRefitBlend(A, B, D) {
     // M = A B^T (3 x 3) = U S V^T by the eigenvectors of M^T M.
+    var Mt = crossDots(A, B, D);
+    var V = ET.math.symmetricEigen(columnGram(Mt), 3).vectors; // row j: v_j
+    var U = new Float64Array(9); // row j: u_j
+    leftVector(Mt, V, U, 0);
+    leftVector(Mt, V, U, 1);
+    completeRotation(U, V);
+    var pv = principalVectors(A, B, U, V, D);
+    var turns = planeTurns(pv.Ap, pv.Bp, D);
+    var span = axisAngle(spanRotation(V, U));
+    var bl = { Bp: pv.Bp, Tp: turns.Tp, theta: turns.theta, K: span.K, phi: span.phi, duration: 0, rate: 0 };
+    bl.rate = blendRate(bl, B, D);
+    return bl;
+  }
+
+  // M = A B^T as 3 x 3, row-major: M[i][j] = A_i . B_j.
+  function crossDots(A, B, D) {
     var Mt = new Float64Array(9);
     for (var i = 0; i < 3; i++) for (var j = 0; j < 3; j++) Mt[i * 3 + j] = dotRows(A, i, B, j, D);
+    return Mt;
+  }
+
+  // M^T M (3 x 3).
+  function columnGram(Mt) {
     var MtM = new Float64Array(9);
     for (var a = 0; a < 3; a++) {
       for (var b = 0; b < 3; b++) {
@@ -3877,55 +3935,75 @@ ET.modes = (function () {
         MtM[a * 3 + b] = s0;
       }
     }
-    var V = ET.math.symmetricEigen(MtM, 3).vectors; // row j: v_j
-    var U = new Float64Array(9); // row j: u_j
-    for (var jj = 0; jj < 2; jj++) {
-      var n = 0;
-      for (var r = 0; r < 3; r++) {
-        var x = 0;
-        for (var c = 0; c < 3; c++) x += Mt[r * 3 + c] * V[jj * 3 + c];
-        U[jj * 3 + r] = x;
-      }
-      if (jj === 1) {
-        var dp = U[3] * U[0] + U[4] * U[1] + U[5] * U[2];
-        for (var r1 = 0; r1 < 3; r1++) U[3 + r1] -= dp * U[r1];
-      }
-      for (var r2 = 0; r2 < 3; r2++) n += U[jj * 3 + r2] * U[jj * 3 + r2];
-      if (n > 1e-18) {
-        n = Math.sqrt(n);
-        for (var r3 = 0; r3 < 3; r3++) U[jj * 3 + r3] /= n;
-      } else {
-        // M has (almost) no part here: any unit vector orthogonal to the earlier ones
-        var best = 0;
-        var bestCover = Infinity;
-        for (var e = 0; e < 3; e++) {
-          var cover = jj === 0 ? 0 : Math.abs(U[e]);
-          if (cover < bestCover) {
-            bestCover = cover;
-            best = e;
-          }
-        }
-        for (var r4 = 0; r4 < 3; r4++) U[jj * 3 + r4] = r4 === best ? 1 : 0;
-        if (jj === 1) {
-          var dp2 = U[3] * U[0] + U[4] * U[1] + U[5] * U[2];
-          var n2 = 0;
-          for (var r5 = 0; r5 < 3; r5++) {
-            U[3 + r5] -= dp2 * U[r5];
-            n2 += U[3 + r5] * U[3 + r5];
-          }
-          n2 = Math.sqrt(n2);
-          for (var r6 = 0; r6 < 3; r6++) U[3 + r6] /= n2;
-        }
+    return MtM;
+  }
+
+  // Row jj (0 or 1) of U: M v_jj, made orthogonal to u_0 (row 1) and normalised.
+  function leftVector(Mt, V, U, jj) {
+    var n = 0;
+    for (var r = 0; r < 3; r++) {
+      var x = 0;
+      for (var c = 0; c < 3; c++) x += Mt[r * 3 + c] * V[jj * 3 + c];
+      U[jj * 3 + r] = x;
+    }
+    if (jj === 1) {
+      var dp = U[3] * U[0] + U[4] * U[1] + U[5] * U[2];
+      for (var r1 = 0; r1 < 3; r1++) U[3 + r1] -= dp * U[r1];
+    }
+    for (var r2 = 0; r2 < 3; r2++) n += U[jj * 3 + r2] * U[jj * 3 + r2];
+    if (n > 1e-18) {
+      n = Math.sqrt(n);
+      for (var r3 = 0; r3 < 3; r3++) U[jj * 3 + r3] /= n;
+    } else {
+      fallbackLeftVector(U, jj);
+    }
+  }
+
+  // M has (almost) no part along v_jj: any unit vector orthogonal to the earlier ones.
+  function fallbackLeftVector(U, jj) {
+    var best = leastCoveredAxis(U, jj);
+    for (var r4 = 0; r4 < 3; r4++) U[jj * 3 + r4] = r4 === best ? 1 : 0;
+    if (jj === 1) orthonormaliseSecondRow(U);
+  }
+
+  // The standard axis least covered by u_0 (axis 0 for row 0).
+  function leastCoveredAxis(U, jj) {
+    var best = 0;
+    var bestCover = Infinity;
+    for (var e = 0; e < 3; e++) {
+      var cover = jj === 0 ? 0 : Math.abs(U[e]);
+      if (cover < bestCover) {
+        bestCover = cover;
+        best = e;
       }
     }
-    // u_2 completes U so that Z = V^T U is a rotation (det +1).
+    return best;
+  }
+
+  // Row 1 of U made orthogonal to row 0, then unit length.
+  function orthonormaliseSecondRow(U) {
+    var dp2 = U[3] * U[0] + U[4] * U[1] + U[5] * U[2];
+    var n2 = 0;
+    for (var r5 = 0; r5 < 3; r5++) {
+      U[3 + r5] -= dp2 * U[r5];
+      n2 += U[3 + r5] * U[3 + r5];
+    }
+    n2 = Math.sqrt(n2);
+    for (var r6 = 0; r6 < 3; r6++) U[3 + r6] /= n2;
+  }
+
+  // u_2 completes U so that Z = V^T U is a rotation (det +1).
+  function completeRotation(U, V) {
     var detV =
       V[0] * (V[4] * V[8] - V[5] * V[7]) - V[1] * (V[3] * V[8] - V[5] * V[6]) + V[2] * (V[3] * V[7] - V[4] * V[6]);
     var sg = detV < 0 ? -1 : 1;
     U[6] = sg * (U[1] * U[5] - U[2] * U[4]);
     U[7] = sg * (U[2] * U[3] - U[0] * U[5]);
     U[8] = sg * (U[0] * U[4] - U[1] * U[3]);
-    // Principal vectors B'_j = sum_k v_j[k] B_k and A'_j = sum_k u_j[k] A_k.
+  }
+
+  // Principal vectors B'_j = sum_k v_j[k] B_k and A'_j = sum_k u_j[k] A_k.
+  function principalVectors(A, B, U, V, D) {
     var Bp = new Float64Array(3 * D);
     var Ap = new Float64Array(3 * D);
     for (var j2 = 0; j2 < 3; j2++) {
@@ -3938,54 +4016,56 @@ ET.modes = (function () {
         }
       }
     }
-    // Plane j turns B'_j toward T_j by theta_j, ending at A'_j. T_j is the part
-    // of A'_j off B's span, so it is made orthogonal to all three B'_k (in exact
-    // arithmetic it already is). When that part is below REFIT_TINY (float32
-    // frames carry noise near 1e-7) the plane does not turn: dividing by it would
-    // only blow noise up into a direction. The one exception is a reversed
-    // principal vector (A'_j = -B'_j, a half turn), which turns through a
-    // direction off B's span and off the planes before it; with no room for one
-    // (D = 3) it is left as it is.
+    return { Bp: Bp, Ap: Ap };
+  }
+
+  // Plane j turns B'_j toward T_j by theta_j, ending at A'_j. T_j is the part
+  // of A'_j off B's span, so it is made orthogonal to all three B'_k (in exact
+  // arithmetic it already is). When that part is below REFIT_TINY (float32
+  // frames carry noise near 1e-7) the plane does not turn: dividing by it would
+  // only blow noise up into a direction. The one exception is a reversed
+  // principal vector (A'_j = -B'_j, a half turn), which turns through a
+  // direction off B's span and off the planes before it; with no room for one
+  // (D = 3) it is left as it is.
+  function planeTurns(Ap, Bp, D) {
     var Tp = new Float64Array(3 * D);
     var theta = new Float64Array(3);
-    for (var j3 = 0; j3 < 3; j3++) {
-      var cth = dotRows(Ap, j3, Bp, j3, D);
-      for (var d2 = 0; d2 < D; d2++) Tp[j3 * D + d2] = Ap[j3 * D + d2];
-      var nn = offSpan(Tp, j3, Bp, Tp, 0, D);
-      if (nn > REFIT_TINY) {
-        for (var d3 = 0; d3 < D; d3++) Tp[j3 * D + d3] /= nn;
-        theta[j3] = Math.atan2(nn, cth);
-      } else if (cth < 0 && halfTurnDirection(Tp, j3, Bp, D)) {
-        theta[j3] = Math.PI;
-      } else {
-        for (var d4 = 0; d4 < D; d4++) Tp[j3 * D + d4] = 0;
-        theta[j3] = 0;
-      }
+    for (var j3 = 0; j3 < 3; j3++) theta[j3] = planeTurn(Ap, Bp, Tp, j3, D);
+    return { Tp: Tp, theta: theta };
+  }
+
+  // Plane j's direction (written into row j of Tp) and angle.
+  function planeTurn(Ap, Bp, Tp, j3, D) {
+    var cth = dotRows(Ap, j3, Bp, j3, D);
+    for (var d2 = 0; d2 < D; d2++) Tp[j3 * D + d2] = Ap[j3 * D + d2];
+    var nn = offSpan(Tp, j3, Bp, Tp, 0, D);
+    if (nn > REFIT_TINY) {
+      for (var d3 = 0; d3 < D; d3++) Tp[j3 * D + d3] /= nn;
+      return Math.atan2(nn, cth);
     }
-    // Z = V^T U: Z[i][j] = v_i . u_j, as an axis and angle (Z = exp(phi K)).
+    if (cth < 0 && halfTurnDirection(Tp, j3, Bp, D)) return Math.PI;
+    for (var d4 = 0; d4 < D; d4++) Tp[j3 * D + d4] = 0;
+    return 0;
+  }
+
+  // Z = V^T U: Z[i][j] = v_i . u_j.
+  function spanRotation(V, U) {
     var Z = new Float64Array(9);
     for (var zi = 0; zi < 3; zi++) {
       for (var zj = 0; zj < 3; zj++) {
         Z[zi * 3 + zj] = V[zi * 3] * U[zj * 3] + V[zi * 3 + 1] * U[zj * 3 + 1] + V[zi * 3 + 2] * U[zj * 3 + 2];
       }
     }
+    return Z;
+  }
+
+  // Z as an axis and angle (Z = exp(phi K)): { K, phi }, with phi 0 and K zero
+  // when there is no turn inside the span.
+  function axisAngle(Z) {
     var cphi = (Z[0] + Z[4] + Z[8] - 1) / 2;
-    var phi = Math.acos(cphi > 1 ? 1 : cphi < -1 ? -1 : cphi);
+    var phi = Math.acos(Math.max(-1, Math.min(1, cphi)));
     var K = new Float64Array(9);
-    var sphi = Math.sin(phi);
-    var axis = null;
-    // Below REFIT_TINY there is no turn inside the span (its axis would be noise).
-    // A small sine with a large angle is a half turn, found from Z + I.
-    if (phi > REFIT_TINY && sphi > 1e-6) {
-      axis = [(Z[7] - Z[5]) / (2 * sphi), (Z[2] - Z[6]) / (2 * sphi), (Z[3] - Z[1]) / (2 * sphi)];
-    } else if (phi > Math.PI / 2) {
-      // a half turn: Z + I = 2 n n^T
-      var bi = 0;
-      for (var q = 1; q < 3; q++) if (Z[q * 4] > Z[bi * 4]) bi = q;
-      var len = Math.sqrt(Math.max((Z[bi * 4] + 1) / 2, 1e-300));
-      axis = [0, 0, 0];
-      for (var q2 = 0; q2 < 3; q2++) axis[q2] = (Z[q2 * 3 + bi] + (q2 === bi ? 1 : 0)) / (4 * len);
-    }
+    var axis = turnAxis(Z, phi);
     if (axis) {
       K[1] = -axis[2];
       K[2] = axis[1];
@@ -3996,9 +4076,28 @@ ET.modes = (function () {
     } else {
       phi = 0;
     }
-    var bl = { Bp: Bp, Tp: Tp, theta: theta, K: K, phi: phi, duration: 0, rate: 0 };
-    bl.rate = blendRate(bl, B, D);
-    return bl;
+    return { K: K, phi: phi };
+  }
+
+  // Below REFIT_TINY there is no turn inside the span (its axis would be noise):
+  // null. A small sine with a large angle is a half turn, found from Z + I.
+  function turnAxis(Z, phi) {
+    var sphi = Math.sin(phi);
+    if (phi > REFIT_TINY && sphi > 1e-6) {
+      return [(Z[7] - Z[5]) / (2 * sphi), (Z[2] - Z[6]) / (2 * sphi), (Z[3] - Z[1]) / (2 * sphi)];
+    }
+    if (phi > Math.PI / 2) return halfTurnAxis(Z);
+    return null;
+  }
+
+  // A half turn: Z + I = 2 n n^T.
+  function halfTurnAxis(Z) {
+    var bi = 0;
+    for (var q = 1; q < 3; q++) if (Z[q * 4] > Z[bi * 4]) bi = q;
+    var len = Math.sqrt(Math.max((Z[bi * 4] + 1) / 2, 1e-300));
+    var axis = [0, 0, 0];
+    for (var q2 = 0; q2 < 3; q2++) axis[q2] = (Z[q2 * 3 + bi] + (q2 === bi ? 1 : 0)) / (4 * len);
+    return axis;
   }
 
   // Row j of T made orthogonal (twice) to the three rows of B and to rows 0..k-1
@@ -4007,16 +4106,20 @@ ET.modes = (function () {
     var o = j * D;
     for (var pass = 0; pass < 2; pass++) {
       for (var r = 0; r < 3 + k; r++) {
-        var R = r < 3 ? B : P;
-        var orr = (r < 3 ? r : r - 3) * D;
-        var dp = 0;
-        for (var d = 0; d < D; d++) dp += T[o + d] * R[orr + d];
-        for (var d2 = 0; d2 < D; d2++) T[o + d2] -= dp * R[orr + d2];
+        if (r < 3) removeComponent(T, o, B, r * D, D);
+        else removeComponent(T, o, P, (r - 3) * D, D);
       }
     }
     var n = 0;
     for (var d3 = 0; d3 < D; d3++) n += T[o + d3] * T[o + d3];
     return Math.sqrt(n);
+  }
+
+  // The row of T at offset o minus its component along the row of R at offset orr.
+  function removeComponent(T, o, R, orr, D) {
+    var dp = 0;
+    for (var d = 0; d < D; d++) dp += T[o + d] * R[orr + d];
+    for (var d2 = 0; d2 < D; d2++) T[o + d2] -= dp * R[orr + d2];
   }
 
   // A unit direction for a half turn of plane j: the standard basis vector that
@@ -4054,9 +4157,17 @@ ET.modes = (function () {
 
   function rotateRows(bl, s, x, D) {
     if (s === 0) return x;
-    var K = bl.K;
-    var sn = Math.sin(s * bl.phi);
-    var cm = 1 - Math.cos(s * bl.phi);
+    var Z = spanTurnAt(bl.K, Math.sin(s * bl.phi), 1 - Math.cos(s * bl.phi));
+    for (var r = 0; r < 3; r++) {
+      var o = r * D;
+      turnRowInSpan(x, o, bl.Bp, Z, D);
+      turnRowInPlanes(x, o, bl, s, D);
+    }
+    return x;
+  }
+
+  // The turn inside B's span at this point of the blend: I + sn K + cm K^2.
+  function spanTurnAt(K, sn, cm) {
     var Z = new Float64Array(9);
     for (var a = 0; a < 3; a++) {
       for (var b = 0; b < 3; b++) {
@@ -4064,40 +4175,45 @@ ET.modes = (function () {
         Z[a * 3 + b] = (a === b ? 1 : 0) + sn * K[a * 3 + b] + cm * k2;
       }
     }
+    return Z;
+  }
+
+  // The row at offset o, its part in the span of Bp turned by Z.
+  function turnRowInSpan(x, o, Bp, Z, D) {
+    var c0 = 0;
+    var c1 = 0;
+    var c2 = 0;
+    for (var d = 0; d < D; d++) {
+      c0 += x[o + d] * Bp[d];
+      c1 += x[o + d] * Bp[D + d];
+      c2 += x[o + d] * Bp[2 * D + d];
+    }
+    var e0 = c0 * Z[0] + c1 * Z[3] + c2 * Z[6] - c0;
+    var e1 = c0 * Z[1] + c1 * Z[4] + c2 * Z[7] - c1;
+    var e2 = c0 * Z[2] + c1 * Z[5] + c2 * Z[8] - c2;
+    for (var d2 = 0; d2 < D; d2++) x[o + d2] += e0 * Bp[d2] + e1 * Bp[D + d2] + e2 * Bp[2 * D + d2];
+  }
+
+  // The row at offset o turned in each plane (B'_j, T_j) by s * theta_j.
+  function turnRowInPlanes(x, o, bl, s, D) {
     var Bp = bl.Bp;
     var Tp = bl.Tp;
-    for (var r = 0; r < 3; r++) {
-      var o = r * D;
-      var c0 = 0;
-      var c1 = 0;
-      var c2 = 0;
-      for (var d = 0; d < D; d++) {
-        c0 += x[o + d] * Bp[d];
-        c1 += x[o + d] * Bp[D + d];
-        c2 += x[o + d] * Bp[2 * D + d];
+    for (var j = 0; j < 3; j++) {
+      var th = s * bl.theta[j];
+      if (th === 0) continue;
+      var oj = j * D;
+      var p = 0;
+      var q = 0;
+      for (var d3 = 0; d3 < D; d3++) {
+        p += x[o + d3] * Bp[oj + d3];
+        q += x[o + d3] * Tp[oj + d3];
       }
-      var e0 = c0 * Z[0] + c1 * Z[3] + c2 * Z[6] - c0;
-      var e1 = c0 * Z[1] + c1 * Z[4] + c2 * Z[7] - c1;
-      var e2 = c0 * Z[2] + c1 * Z[5] + c2 * Z[8] - c2;
-      for (var d2 = 0; d2 < D; d2++) x[o + d2] += e0 * Bp[d2] + e1 * Bp[D + d2] + e2 * Bp[2 * D + d2];
-      for (var j = 0; j < 3; j++) {
-        var th = s * bl.theta[j];
-        if (th === 0) continue;
-        var oj = j * D;
-        var p = 0;
-        var q = 0;
-        for (var d3 = 0; d3 < D; d3++) {
-          p += x[o + d3] * Bp[oj + d3];
-          q += x[o + d3] * Tp[oj + d3];
-        }
-        var cs = Math.cos(th) - 1;
-        var si = Math.sin(th);
-        var wb = p * cs - q * si;
-        var wt = p * si + q * cs;
-        for (var d4 = 0; d4 < D; d4++) x[o + d4] += wb * Bp[oj + d4] + wt * Tp[oj + d4];
-      }
+      var cs = Math.cos(th) - 1;
+      var si = Math.sin(th);
+      var wb = p * cs - q * si;
+      var wt = p * si + q * cs;
+      for (var d4 = 0; d4 < D; d4++) x[o + d4] += wb * Bp[oj + d4] + wt * Tp[oj + d4];
     }
-    return x;
   }
 
   // How fast the turn moves the frame per unit of s (Frobenius norm of the
@@ -4195,7 +4311,7 @@ ET.modes = (function () {
 
   function create(options) {
     var opt = {};
-    for (var k in DEFAULTS) opt[k] = options && options[k] !== undefined ? options[k] : DEFAULTS[k];
+    for (var k in DEFAULTS) opt[k] = options?.[k] === undefined ? DEFAULTS[k] : options[k];
 
     var self = {
       time: 0,
@@ -4269,7 +4385,7 @@ ET.modes = (function () {
         run: function () {
           if (!job.run()) return false;
           st = job.result;
-          var start = entry && entry.centre ? entry.centre : st.mean;
+          var start = entry?.centre ? entry.centre : st.mean;
           glide = M.makeGlide(start, st.mean, opt.centreTau, D);
           return true;
         },
@@ -4417,7 +4533,7 @@ ET.modes = (function () {
     }
 
     function lastT() {
-      return lists.length ? lists[lists.length - 1].T : -Infinity;
+      return lists.length ? lists.at(-1).T : -Infinity;
     }
 
     function fixWires(T) {
@@ -4508,8 +4624,8 @@ ET.modes = (function () {
         var from = entry;
         if (isReady()) {
           var s = stateAt(t);
-          from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
-          if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
+          from = { frame: new Float32Array(s.frame), centre: null, draw: { ...s.draw } };
+          if (!empty || entry?.centre) from.centre = new Float32Array(s.centre);
         }
         enter(newSet, { seed: seed, from: from });
         return M.changed(prepare(), true);
@@ -4523,7 +4639,7 @@ ET.modes = (function () {
     }
 
     function describe() {
-      var last = lists.length ? lists[lists.length - 1] : null;
+      var last = lists.length ? lists.at(-1) : null;
       return {
         id: "lattice",
         projection: "linear: an orthonormal 3-frame; one axis at a time turns a quarter turn into a hidden direction",
@@ -4534,7 +4650,7 @@ ET.modes = (function () {
         neighbourLimit: opt.neighbourLimit,
         wireNeighbours: opt.wireNeighbours,
         wires: last ? last.wires.pairs.length / 2 : 0,
-        neighboursMeasured: !!(knn && knn.done),
+        neighboursMeasured: !!knn?.done,
         wiresShownAt: lists.length ? lists[0].T : null,
         wiresReplacedAt: lists.length > 1 ? last.T : null,
         wiresPending: pendingWires !== null,
@@ -4603,9 +4719,31 @@ ET.modes = (function () {
     spokes: 6, // labelled neighbours listed in `focus` for the viewer's spokes
   };
 
+  // Insert pool point i, at squared distance s, into a scan's best lists (nearest
+  // first, ties to the lower index, at most K kept). Returns the new fill count.
+  function insertNearest(bestD, bestI, filled, K, s, i) {
+    if (filled === K && (s > bestD[K - 1] || (s === bestD[K - 1] && i > bestI[K - 1]))) return filled;
+    var pos = filled < K ? filled : K - 1;
+    while (pos > 0 && (bestD[pos - 1] > s || (bestD[pos - 1] === s && bestI[pos - 1] > i))) {
+      bestD[pos] = bestD[pos - 1];
+      bestI[pos] = bestI[pos - 1];
+      pos--;
+    }
+    bestD[pos] = s;
+    bestI[pos] = i;
+    return filled < K ? filled + 1 : filled;
+  }
+
+  // A finished scan: its neighbours, nearest first, cached on its context.
+  function scanFinish(sc) {
+    var nb = sc.bestI.subarray(0, sc.filled);
+    sc.c.nbr.set(sc.j, nb);
+    return nb;
+  }
+
   function create(options) {
     var opt = {};
-    for (var k in DEFAULTS) opt[k] = options && options[k] !== undefined ? options[k] : DEFAULTS[k];
+    for (var k in DEFAULTS) opt[k] = options?.[k] === undefined ? DEFAULTS[k] : options[k];
     var cycle = opt.travel + opt.dwell;
 
     var self = {
@@ -4688,15 +4826,15 @@ ET.modes = (function () {
         p.push(a);
         mark[a] = 1;
       }
-      for (var b = 0; b < lab.length; b++) {
-        if (!mark[lab[b]]) {
-          p.push(lab[b]);
-          mark[lab[b]] = 1;
+      for (var l of lab) {
+        if (!mark[l]) {
+          p.push(l);
+          mark[l] = 1;
         }
       }
       var visit = lab.length >= 2 ? Int32Array.from(lab) : Int32Array.from(p);
       var inVisit = new Uint8Array(N);
-      for (var c = 0; c < visit.length; c++) inVisit[visit[c]] = 1;
+      for (var v of visit) inVisit[v] = 1;
       return { n: N, visit: visit, inVisit: inVisit, pool: Int32Array.from(p), labelled: lab.length, nbr: new Map() };
     }
 
@@ -4736,7 +4874,7 @@ ET.modes = (function () {
             if (!job.run()) return false;
             var st = job.result;
             scale = st.radius / M.REFERENCE_RADIUS;
-            startCentre = entry && entry.centre ? new Float32Array(entry.centre) : new Float32Array(st.mean);
+            startCentre = entry?.centre ? new Float32Array(entry.centre) : new Float32Array(st.mean);
             return true;
           },
         },
@@ -4798,26 +4936,11 @@ ET.modes = (function () {
           var x = X[oi + d] - X[oj + d];
           s += x * x;
         }
-        if (filled === K && (s > bestD[K - 1] || (s === bestD[K - 1] && i > bestI[K - 1]))) continue;
-        var pos = filled < K ? filled : K - 1;
-        while (pos > 0 && (bestD[pos - 1] > s || (bestD[pos - 1] === s && bestI[pos - 1] > i))) {
-          bestD[pos] = bestD[pos - 1];
-          bestI[pos] = bestI[pos - 1];
-          pos--;
-        }
-        bestD[pos] = s;
-        bestI[pos] = i;
-        if (filled < K) filled++;
+        filled = insertNearest(bestD, bestI, filled, K, s, i);
       }
       sc.q = stop;
       sc.filled = filled;
       return stop >= pool.length;
-    }
-
-    function scanFinish(sc) {
-      var nb = sc.bestI.subarray(0, sc.filled);
-      sc.c.nbr.set(sc.j, nb);
-      return nb;
     }
 
     function nearVisits(c, i, max) {
@@ -4841,14 +4964,14 @@ ET.modes = (function () {
       var hopNo = h + 1;
       if (i >= 0 && hopNo % opt.leapEvery !== 0) {
         var near = nearVisits(c, i, opt.neighbours).filter(function (j) {
-          return recent.indexOf(j) < 0;
+          return !recent.includes(j);
         });
         if (near.length) return near[Math.floor(rng.next() * Math.min(near.length, opt.nearChoices))];
       }
       var gi = groupOf(i);
       for (var tries = 0; tries < 40; tries++) {
         var j = visit[Math.floor(rng.next() * visit.length)];
-        if (j !== i && recent.indexOf(j) < 0 && (gi === "" || groupOf(j) !== gi)) return j;
+        if (j !== i && !recent.includes(j) && (gi === "" || groupOf(j) !== gi)) return j;
       }
       var idx = Math.floor(rng.next() * visit.length);
       if (visit[idx] === i && visit.length > 1) idx = (idx + 1) % visit.length;
@@ -5069,8 +5192,8 @@ ET.modes = (function () {
         var from = entry;
         if (ready) {
           var s = stateAt(t);
-          from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
-          if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
+          from = { frame: new Float32Array(s.frame), centre: null, draw: { ...s.draw } };
+          if (!empty || entry?.centre) from.centre = new Float32Array(s.centre);
         }
         enter(newSet, { seed: seed, from: from });
         return M.changed(prepare(), true);
@@ -5133,7 +5256,7 @@ ET.modes = (function () {
         travel: opt.travel,
         dwell: opt.dwell,
         labelled: ctx ? ctx.labelled : 0,
-        visiting: ctx && ctx.labelled >= 2 ? "labelled points" : "any point",
+        visiting: ctx?.labelled >= 2 ? "labelled points" : "any point",
         empty: empty,
         varianceShare: null,
       };
