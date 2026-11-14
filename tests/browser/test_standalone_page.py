@@ -26,12 +26,16 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 from pathlib import Path
 
 import pytest
 
+from embeddings_tumbler import _static_server
+from embeddings_tumbler._embed_route import EmbedRoute
 from embeddings_tumbler.cli import main
 from tests.browser import harness
+from tests.test_embed_route import QUERY, _config, _Gateway
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "contract"
@@ -240,3 +244,140 @@ def test_a_descriptor_declaring_another_dtype_is_refused(browser, base_url):
     assert r["csp"] == []
     assert r["console_errors"] == []
     assert r["foreign"] == []
+
+
+# --------------------------------------------------------------------------- search helper
+
+ROUTE_PATH = "/_tumbler/search"
+FIXTURE_MODEL = "fixture/model-a"
+BROWSER_ERRORS = [r"status of (404|405|501)"]  # the browser's own line for a refused probe
+SEARCH = """async (text) => {
+  const h = window.EmbeddingsTumbler.get(document.getElementById('space'));
+  const result = await h.setSearches([text]);
+  const s = h.info().search;
+  return { result, search: {
+    embedder: s.embedder, reranker: s.reranker,
+    searches: s.searches.map((x) => ({ kind: x.kind, text: x.text, sentTo: x.sentTo,
+      model: x.model, queryForm: x.queryForm })) } };
+}"""
+STATE = """() => {
+  const h = window.EmbeddingsTumbler.get(document.getElementById('space'));
+  const s = h.info().search;
+  return { embedder: s.embedder, reranker: s.reranker };
+}"""
+
+
+@pytest.fixture
+def helper_origin(host_folder):
+    """The real server the CLI builds, with the embed route, over a fake gateway."""
+    gateway = _Gateway()
+    gateway.dimension = 384  # the fixture set's dimension
+    gateway.model_in_answer = FIXTURE_MODEL
+    route = EmbedRoute(_config(gateway.base, embed_model=FIXTURE_MODEL, rerank_model=None))
+    server = _static_server.make_server(host_folder, port=0, quiet=True, embed=route)
+    thread = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    yield origin, gateway
+    server.shutdown()
+    server.server_close()
+    thread.join(5)
+    gateway.close()
+
+
+def _tab_on(browser, origin, query):
+    tab = harness.Tab(browser, viewport=VIEWPORTS["desktop"])
+    tab.page.goto(origin + "/index.html" + query)
+    tab.wait_for(
+        PROBE,
+        lambda r: r["state"] == "ready" and bool(r["info"]["ready"]),
+        timeout=90,
+        what="the page to be ready",
+    )
+    return tab
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "?data=valid-384.json",
+        "?data=valid-384.json&helper=http://foreign.invalid&route=http://foreign.invalid/x",
+    ],
+    ids=["plain", "query-names-another-helper"],
+)
+def test_served_with_the_embed_route_typed_text_is_embedded(browser, helper_origin, query):
+    origin, gateway = helper_origin
+    tab = _tab_on(browser, origin, query)
+    try:
+        assert tab.page.evaluate(STATE)["embedder"] == {"available": True}
+        answer = tab.page.evaluate(SEARCH, QUERY)
+        assert answer["result"]["ok"], answer
+        first = answer["search"]["searches"][0]
+        assert first["kind"] == "embedded"
+        assert first["sentTo"] == "embedder"
+        assert first["model"] == FIXTURE_MODEL
+        assert first["queryForm"] == "plain"
+        assert [g["body"]["input"] for g in gateway.seen] == [[QUERY]], "the gateway got the text"
+        posts = [r for r in tab.requests if r["method"] == "POST"]
+        assert [urlpath(r["url"]) for r in posts] == [ROUTE_PATH, ROUTE_PATH], posts
+        assert tab.foreign_requests(origin) == []
+        assert tab.csp == []
+        assert tab.console_errors() == []
+    finally:
+        tab.close()
+
+
+def urlpath(url):
+    return "/" + url.split("/", 3)[3]
+
+
+def test_a_gateway_that_fails_leaves_a_plain_refusal_and_a_working_page(browser, helper_origin):
+    origin, gateway = helper_origin
+    gateway.mode = "error"
+    tab = _tab_on(browser, origin, "?data=valid-384.json")
+    try:
+        answer = tab.page.evaluate(SEARCH, "some words")
+        assert not answer["result"]["ok"]
+        assert answer["result"]["code"] == "embed-failed"
+        assert "SENTINEL" not in json.dumps(answer), "the gateway's text never reaches the page"
+        assert tab.page.evaluate(STATE)["embedder"] == {"available": True}
+        assert tab.foreign_requests(origin) == []
+        # The browser's own line for the route's 502 is the only console entry.
+        assert tab.console_errors(allow=[r"status of 502"]) == []
+    finally:
+        tab.close()
+
+
+def test_served_as_plain_files_search_matches_the_loaded_points(browser, base_url):
+    # base_url is the static test server: a POST to the route is refused there (501).
+    tab = _tab_on(browser, base_url, "?data=valid-384.json")
+    try:
+        assert tab.page.evaluate(STATE)["embedder"] == {"available": False}
+        answer = tab.page.evaluate(SEARCH, "gateway")
+        first = answer["search"]["searches"][0]
+        assert first["sentTo"] == "nowhere"
+        assert first["kind"] == "words"
+        refused = tab.page.evaluate("""async () => {
+              const h = window.EmbeddingsTumbler.get(document.getElementById('space'));
+              return await h.setSearches([{ text: 'x', via: 'embed' }]);
+            }""")
+        assert refused["code"] == "no-embedder"
+        posts = [r for r in tab.requests if r["method"] == "POST"]
+        assert len(posts) == 1, "one describe request and no retry"
+        assert tab.foreign_requests(base_url) == []
+        assert tab.csp == []
+        assert tab.console_errors(allow=BROWSER_ERRORS) == []
+    finally:
+        tab.close()
+
+
+def test_opened_as_a_plain_file_the_page_works_and_asks_for_nothing(browser, host_folder):
+    tab = _tab_on(browser, "file://" + str(host_folder), "")
+    try:
+        assert tab.page.evaluate(STATE)["embedder"] == {"available": False}
+        assert [r for r in tab.requests if r["method"] == "POST"] == []
+        assert not [r for r in tab.requests if r["url"].startswith(("http:", "https:"))]
+        assert tab.csp == []
+        assert tab.console_errors() == []
+    finally:
+        tab.close()
