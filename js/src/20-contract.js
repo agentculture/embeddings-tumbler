@@ -222,6 +222,35 @@
     return out;
   }
 
+  // Appends write into spare capacity instead of copying the base's vectors.
+  // A set's `vectors` is a Float32Array view of exactly count * dimension
+  // values over a buffer that may be longer. `head` maps a buffer to the end
+  // (in values) of the newest view over it. An append onto the set whose view
+  // ends at the head writes its rows just after it and returns a longer view
+  // over the same buffer: the older, shorter view is untouched, so the older
+  // set stays valid. An append onto any other set (a fork, or a set that never
+  // had spare room) copies into a new buffer of twice the needed length, so
+  // the cost of appends is proportional to the points added, amortised.
+  var head = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function appendValues(baseValues, values) {
+    var n0 = baseValues.length;
+    var n1 = n0 + values.length;
+    var buf = baseValues.buffer;
+    var off = baseValues.byteOffset / 4;
+    if (head && head.get(buf) === off + n0 && off + n1 <= buf.byteLength / 4) {
+      var grown = new Float32Array(buf, baseValues.byteOffset, n1);
+      grown.set(values, n0);
+      head.set(buf, off + n1);
+      return grown;
+    }
+    var fresh = new Float32Array(Math.max(2 * n1, 64));
+    fresh.set(baseValues, 0);
+    fresh.set(values, n0);
+    if (head) head.set(fresh.buffer, n1);
+    return fresh.subarray(0, n1);
+  }
+
   function copyPoints(pts) {
     var out = [];
     for (var i = 0; i < pts.length; i++) {
@@ -289,9 +318,7 @@
       for (var n = 0; n < points.length; n++) {
         if (has(held, points[n].id)) return refuse("id-exists", { id: points[n].id }, base);
       }
-      var merged = new Float32Array(base.vectors.length + values.length);
-      merged.set(base.vectors, 0);
-      merged.set(values, base.vectors.length);
+      var merged = appendValues(base.vectors, values);
       var allPoints = base.points.concat(points);
       return {
         ok: true,

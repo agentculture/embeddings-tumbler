@@ -10,12 +10,13 @@
 // ---------------------------------------------------------------------------
 (function () {
   var M = ET.modes;
+  var KNN_SLICE_MS = 1; // a unit of neighbour work stops after its first row once this has passed
 
   var DEFAULTS = {
     period: 3.4, // seconds per axis swap (the reference's)
     neighbourLimit: 1000, // only the first this-many points get neighbours (the reference's 1,000)
     wireNeighbours: 3, // wires per point (the reference's 3)
-    sliceRows: 16, // query rows per unit of neighbour work (the reference's 16)
+    sliceRows: 16, // at most this many query rows per unit of neighbour work (the reference's 16)
     transition: 1.2, // seconds to blend draw parameters in from the previous view
     wireFade: 1.2, // seconds for the wires to fade in once measured
     centreTau: 0.7, // seconds: the camera glides to the data's mean
@@ -80,11 +81,14 @@
     }
 
     function statsTask() {
+      var job = M.statsJob(set);
       return {
         required: true,
         weight: 1,
+        progress: job.progress,
         run: function () {
-          st = M.stats(set);
+          if (!job.run()) return false;
+          st = job.result;
           var start = entry && entry.centre ? entry.centre : st.mean;
           glide = M.makeGlide(start, st.mean, opt.centreTau, D);
           return true;
@@ -105,7 +109,16 @@
         },
         run: function () {
           if (knn !== stepper) return true; // superseded by a newer measurement
-          if (!stepper.step(opt.sliceRows)) return false;
+          // Query rows one at a time until about KNN_SLICE_MS has passed (at
+          // least one row, at most sliceRows). The rows are measured in order
+          // whatever the slicing, so the wires never depend on it.
+          var start = M.now();
+          var rows = 0;
+          while (!stepper.done && rows < opt.sliceRows && (rows === 0 || M.now() - start < KNN_SLICE_MS)) {
+            stepper.step(1);
+            rows++;
+          }
+          if (!stepper.done) return false;
           buildWires(s, stepper);
           return true;
         },
