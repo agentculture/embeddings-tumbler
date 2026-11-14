@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T02:32:41Z",
+  "updated": "2026-11-14T02:37:52Z",
   "claims": [
     {
       "id": "c1",
@@ -1100,6 +1100,17 @@
       "skipped_check": "second cold read after guide fixes; standalone example run",
       "refs": [
         "t18"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l18",
+      "code": "control-absent",
+      "what": "t11: merged before its colleague reviews returned (main agent's choice, to complete wave 5 for the user's hand-off); no measurement on a real phone or board (emulated viewports only); the Wander note and overflow at 390 px were checked for the sample set and one Lattice data run only; fallback fonts on Windows and macOS are inferred from the stack order, not checked; the reference and the page were not compared at the same seed and time; reduced motion was not tested on the page; page.css overrides documented viewer class names with !important for spacing. Main agent loaded the page through the tailnet address on the GPU at 1280 and 390 px, with a data file, and the three guide examples: state ready, no console errors.",
+      "skipped_check": "independent review before merge; real-device layout check; same-seed side-by-side (t17)",
+      "refs": [
+        "t11"
       ],
       "origin": "llm",
       "status": "proposed"
