@@ -13,6 +13,7 @@
 (function () {
   var M = ET.modes;
   var SALT_WANDER = 0x3a7d3e;
+  var SCAN_WORK = 1 << 17; // values compared per piece of a neighbour scan done ahead of need
 
   var DEFAULTS = {
     neighbours: 24, // neighbours a local frame is fitted to (the reference's K)
@@ -65,6 +66,7 @@
     var nbrCache = {};
     var targets = []; // stop of hop h
     var toFrames = []; // aligned local frame of hop h
+    var ahead = null; // the next hop's work in progress: { h, j, scan, fit }
     var out = null;
     var tmpC = null;
 
@@ -83,6 +85,7 @@
       nbrCache = {};
       targets = [];
       toFrames = [];
+      ahead = null;
       self.time = 0;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
       tmpC = new Float64Array(D);
@@ -114,20 +117,47 @@
       for (var c = 0; c < visit.length; c++) inVisit[visit[c]] = 1;
     }
 
+    // Preparation: the set's statistics (sliced), the visit list and the
+    // neighbour pool (one unit, O(N)), then the first stop, computed in slices
+    // as every later stop is (see workAhead), so the first frame does no heavy
+    // work. The stops are the same whenever and however they are computed.
     function prepare() {
+      if (empty) {
+        return M.stepper([
+          {
+            required: true,
+            run: function () {
+              ready = true;
+              return true;
+            },
+          },
+        ]);
+      }
+      var job = M.statsJob(set);
+      var pooled = false;
       return M.stepper([
         {
           required: true,
           weight: 1,
+          progress: job.progress,
           run: function () {
-            if (empty) {
-              ready = true;
-              return true;
-            }
-            var st = M.stats(set);
+            if (!job.run()) return false;
+            var st = job.result;
             scale = st.radius / M.REFERENCE_RADIUS;
             startCentre = entry && entry.centre ? new Float32Array(entry.centre) : new Float32Array(st.mean);
-            buildPool();
+            return true;
+          },
+        },
+        {
+          required: true,
+          weight: 1,
+          run: function () {
+            if (!pooled) {
+              buildPool();
+              pooled = true;
+              return false;
+            }
+            if (!workAhead(0)) return false;
             ready = true;
             return true;
           },
@@ -143,13 +173,29 @@
     // nearest first, ties to the lower index. O(pool * D), cached per point.
     function nearest(j) {
       if (nbrCache[j]) return nbrCache[j];
-      var X = set.vectors;
+      var sc = scanStart(j);
+      scanRows(sc, pool.length);
+      return scanFinish(sc);
+    }
+
+    // The same search, resumable: scanRows(sc, rows) measures the next `rows`
+    // pool points. The pool is scanned in order, so the result does not depend
+    // on how the scan was sliced.
+    function scanStart(j) {
       var K = Math.max(0, Math.min(opt.neighbours, pool.length - 1));
-      var bestD = new Float64Array(K);
-      var bestI = new Int32Array(K);
-      var filled = 0;
+      return { j: j, K: K, q: 0, filled: 0, bestD: new Float64Array(K), bestI: new Int32Array(K) };
+    }
+
+    function scanRows(sc, rows) {
+      var X = set.vectors;
+      var K = sc.K;
+      var bestD = sc.bestD;
+      var bestI = sc.bestI;
+      var filled = sc.filled;
+      var j = sc.j;
       var oj = j * D;
-      for (var q = 0; q < pool.length; q++) {
+      var stop = Math.min(pool.length, sc.q + rows);
+      for (var q = sc.q; q < stop; q++) {
         var i = pool[q];
         if (i === j) continue;
         var oi = i * D;
@@ -169,8 +215,14 @@
         bestI[pos] = i;
         if (filled < K) filled++;
       }
-      nbrCache[j] = bestI.subarray(0, filled);
-      return nbrCache[j];
+      sc.q = stop;
+      sc.filled = filled;
+      return stop >= pool.length;
+    }
+
+    function scanFinish(sc) {
+      nbrCache[sc.j] = sc.bestI.subarray(0, sc.filled);
+      return nbrCache[sc.j];
     }
 
     function nearVisits(i, max) {
@@ -209,12 +261,49 @@
     function ensure(h) {
       while (targets.length <= h) {
         var n = targets.length;
-        var j = pick(n);
-        targets.push(j);
-        var ids = [j].concat(Array.prototype.slice.call(nearest(j)));
-        var lf = ET.math.localFrame(set.vectors, set.count, D, ids);
-        toFrames.push(ET.math.alignTo(lf, n > 0 ? toFrames[n - 1] : startFrame, D));
+        addStop(n, pick(n));
       }
+    }
+
+    // Hop n's local frame (fitted to stop j and its neighbours, aligned to the
+    // previous hop's), appended to the route.
+    function stopIds(j) {
+      return [j].concat(Array.prototype.slice.call(nearest(j)));
+    }
+
+    function addStop(n, j, fitted) {
+      var lf = fitted || ET.math.localFrame(set.vectors, set.count, D, stopIds(j));
+      targets.push(j);
+      toFrames.push(ET.math.alignTo(lf, n > 0 ? toFrames[n - 1] : startFrame, D));
+      ahead = null;
+    }
+
+    // One small piece of the work for hop h, ahead of need: pick its stop,
+    // then scan the pool for the stop's neighbours SCAN_WORK values at a time,
+    // then fit its frame (ET.math.makeLocalFrame, one unit per call) and align
+    // it. Returns true once hop h is in the route.
+    // stateAt calls it every frame for the next hop, so by the time the flight
+    // reaches a stop (4.8 s later) nothing is left to compute in that frame.
+    // The pieces compute exactly what ensure(h) computes in one go.
+    function workAhead(h) {
+      if (targets.length > h) return true;
+      if (targets.length < h) return false; // only the next hop is worked on ahead
+      if (!ahead || ahead.h !== h) {
+        var j = pick(h);
+        ahead = { h: h, j: j, scan: nbrCache[j] ? null : scanStart(j), fit: null };
+        return false;
+      }
+      if (ahead.scan) {
+        if (scanRows(ahead.scan, Math.max(1, Math.floor(SCAN_WORK / D)))) {
+          scanFinish(ahead.scan);
+          ahead.scan = null;
+        }
+        return false;
+      }
+      if (!ahead.fit) ahead.fit = ET.math.makeLocalFrame(set.vectors, set.count, D, stopIds(ahead.j));
+      if (!ahead.fit.step(0)) return false;
+      addStop(h, ahead.j, ahead.fit.result);
+      return true;
     }
 
     function hopAt(t) {
@@ -229,6 +318,7 @@
       var hp = hopAt(t);
       var h = hp.h;
       ensure(h);
+      workAhead(h + 1);
       var j = targets[h];
       var fromF = h > 0 ? toFrames[h - 1] : startFrame;
       var X = set.vectors;
@@ -328,6 +418,7 @@
       ensure(h);
       targets.length = h + 1;
       toFrames.length = h + 1;
+      ahead = null;
       set = newSet;
       nbrCache = {};
       buildPool();
@@ -365,6 +456,7 @@
       nbrCache = {};
       targets = [];
       toFrames = [];
+      ahead = null;
       ready = false;
     }
 

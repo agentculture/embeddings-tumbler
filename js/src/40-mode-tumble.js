@@ -80,30 +80,48 @@
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
     }
 
+    // The fit, in small units: centring (ET.math.makeCentre), then the
+    // principal directions and the tour (ET.math.makeGuidedTour), each pumped
+    // one unit (about a millisecond) per run(). The tour is bit-identical to
+    // the blocking ET.math.guidedTour on the same data and seed.
     function fit(onDone) {
-      var Y = null;
       var fitSet = null;
+      var cen = null;
+      var tourSt = null;
       return [
         {
           required: true,
           weight: 1,
+          progress: function () {
+            return cen ? cen.progress : 0;
+          },
           run: function () {
-            fitSet = set;
-            Y = ET.math.centre(fitSet.vectors, fitSet.count, D).data;
-            return true;
+            if (!cen) {
+              fitSet = set;
+              cen = ET.math.makeCentre(fitSet.vectors, fitSet.count, D);
+            }
+            return cen.step(0);
           },
         },
         {
           required: true,
           weight: 8,
+          progress: function () {
+            return tourSt ? tourSt.progress : 0;
+          },
           run: function () {
-            var tour = ET.math.guidedTour(Y, fitSet.count, D, {
-              seed: seed,
-              subspace: opt.subspace,
-              speed: opt.speed,
-              sampleRows: fitSet.count > opt.fitRows ? opt.fitRows : undefined,
-            });
-            Y = null; // the centred copy is not kept
+            if (!tourSt) {
+              tourSt = ET.math.makeGuidedTour(cen.result.data, fitSet.count, D, {
+                seed: seed,
+                subspace: opt.subspace,
+                speed: opt.speed,
+                sampleRows: fitSet.count > opt.fitRows ? opt.fitRows : undefined,
+              });
+            }
+            if (!tourSt.step(0)) return false;
+            var tour = tourSt.result;
+            cen = null; // the centred copy is not kept
+            tourSt = null;
             onDone(tour, fitSet.count);
             return true;
           },
@@ -133,12 +151,15 @@
           },
         ]);
       }
+      var job = M.statsJob(set);
       var tasks = [
         {
           required: true,
           weight: 1,
+          progress: job.progress,
           run: function () {
-            st = M.stats(set);
+            if (!job.run()) return false;
+            st = job.result;
             var start = entry && entry.centre ? entry.centre : st.mean;
             glide = M.makeGlide(start, st.mean, opt.centreTau, D);
             return true;
