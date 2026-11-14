@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-11-14T13:25:21Z",
-  "updated": "2026-11-14T17:26:20Z",
+  "updated": "2026-11-14T17:30:38Z",
   "targets": [
     {
       "id": "c1",
@@ -978,6 +978,14 @@
       "text": "Only Chromium is tested automatically; search adds DOM and input behaviour that may differ in Firefox and Safari.",
       "kind": "follow_up",
       "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "Decided by the owner on 2026-11-14, for its own spec after this build: the producer step computes the strongest directions and each point's nearest neighbours once and writes them into the data file as an optional section; the viewer uses them when present and computes them itself when missing. Reason: on a phone drawing at 17 frames a second, Lattice had measured 22 percent of its neighbours after 30 seconds. Not part of this build; needs a change to the data contract and to embeddings export.",
+      "kind": "follow_up",
+      "task_id": null,
       "resolved": false,
       "resolution": ""
     }
