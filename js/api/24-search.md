@@ -28,14 +28,34 @@ wrapper, or as `api._internal.search` from tests.
   zeros) has no direction. Its similarity is defined as 0 and its distance as 1.
   Decided here: it keeps the scan total and finite, and puts such a point at
   "unrelated" rather than nearest or farthest.
-- **Results** are the `k` nearest points in the full space by that measure, `k`
-  from 3 to 20, 8 by default. Ties are broken by the lower point index, so a
-  ranking is a pure function of the set, the query vector, `k` and the scale.
-  On-screen position is never an input to any function in this module.
-- **Any loaded point can be a result**, labelled or not. Decided here: the sky
-  reference lists only its named stars as results because its other points are
-  stand-ins without text, but in a real Atlas every point carries text, and a
-  labels-only set has no names at all.
+- **Results** are the `k` nearest **named** points in the full space by that
+  measure, `k` from 3 to 20, 8 by default. Ties are broken by the lower point
+  index, so a ranking is a pure function of the set, the query vector, `k` and
+  the scale. On-screen position is never an input to any function in this
+  module.
+- **Named points** (`isNamed`, below): a point is named when it carries
+  something a person can read that is not just its id: its `metadata.text`, or
+  else its `label`, is a string with at least one character that is not white
+  space, and differs from the point's id. This is the stage's rule for a
+  labelled point (`ET.modes.isLabelled`, `js/api/50-viewer.md`, "Labels"),
+  widened by `metadata.text`, which `pointText` shows first. `pointText` is the
+  id exactly when the point is not named. The sky reference does this: its
+  results are its named stars, and every point at least as near as the last of
+  them is lit, named or not. On a real file every point carries text, so every
+  point is named and nothing is restricted.
+- **The result radius** is the distance of the farthest result. Distances are
+  worked out for every loaded point, named or not (`distances`), so what is lit
+  and `insideCount` (`js/api/26-search-sets.md`) count every point at least that
+  near.
+- **No named point at all** (a labels-only set, where each label is the id, or
+  a set whose labels are empty): every point is a candidate, as if all were
+  named, and the result list shows ids. **Fewer named points than `k`**: the
+  results are all the named points, nearest first (`hits` is shorter than `k`).
+- **A reranker's pool** is taken from the candidates too: the `3 x k` nearest
+  named points (every point when none is named).
+- **The query may be any point.** Search from a picked point and word search
+  make a query from unnamed points as well; only the results are named points.
+  A named picked point is its own first result at distance 0.
 
 ## Shapes and units
 
@@ -51,12 +71,12 @@ A **hit** (one result):
   id,             // set.ids[index]
   distance,       // cosine distance to the query, in this search's measure (scaled when a scale is given)
   similarity,     // 1 - distance
-  embeddingRank,  // 1-based rank by `distance` among all N points
+  embeddingRank,  // 1-based rank by `distance` among the candidates (the named points, or all N when none is named)
   rank,           // 1-based final rank: equals embeddingRank until rerankOrder reorders
   moved,          // embeddingRank - rank: positive moved up, negative moved down, 0 same place
   score,          // the reranker's score, or null when not reranked
   plainDistance,  // cosine distance with no scale (equals distance when no scale is given)
-  plainRank,      // 1-based rank by plainDistance among all N points (equals embeddingRank with no scale)
+  plainRank,      // 1-based rank by plainDistance among the candidates (equals embeddingRank with no scale)
   gap,            // distance - the smallest distance among the final hits (0 for the nearest)
 }
 ```
@@ -68,9 +88,10 @@ A **ranking** (the result of `rank` and of the stepper from `makeRank`):
   measure: "cosine",
   k,                       // the clamped k asked for
   count,                   // N when the scan ran
+  named,                   // how many points are named; 0 means every point was a candidate
   scaled,                  // true when a scale was given
-  hits,                    // Hit[], min(k, N) of them, ordered by rank
-  pool,                    // Hit[], the min(3k, N) nearest by distance, in embeddingRank order;
+  hits,                    // Hit[], min(k, C) of them, ordered by rank (C: candidates, below)
+  pool,                    // Hit[], the min(3k, C) nearest candidates, in embeddingRank order;
                            // hits are pool[0 .. k) (the same objects) until rerankOrder runs
   near,                    // the smallest distance among hits, or null when there are none
   radius,                  // the largest distance among hits (the result radius), or null
@@ -79,6 +100,7 @@ A **ranking** (the result of `rank` and of the stepper from `makeRank`):
 }
 ```
 
+`C` is the number of candidates: `named` when it is above 0, otherwise `N`.
 `distances` is what the several-search functions read for lit values and the
 shared mark (`js/api/26-search-sets.md`), so it is in the same measure as
 `radius`. A refusal is always `{ ok: false, code, message }` with `message` the
@@ -152,6 +174,7 @@ rank
 rerankOrder
 pointQuery
 pointText
+isNamed
 tokens
 makeWordQuery
 wordQuery
@@ -261,19 +284,32 @@ in is not changed; the viewer keeps a copy of it with `hits`, `near` and
 ### `ET.search.pointQuery(set, id) -> { ok: true, index, id, vector } | { ok: false, code, message }`
 
 The query for a search from a loaded point: `vector` is a new `Float32Array(D)`
-copy of the point's row. The point is its own nearest result, at distance 0
-(as in the Focus reference). Refusals: `no-data`, `point-unknown`. Works for any
+copy of the point's row. A named point is its own nearest result, at distance 0
+(as in the Focus reference); an unnamed point is only the query, and its
+results are the nearest named points. Refusals: `no-data`, `point-unknown`. Works for any
 reduction kind and with no embed callback.
 
 ### `ET.search.pointText(set, index) -> string`
 
 The text to show for a point in a result list and to send to a reranker:
-`points[index].metadata.text` when it is a non-empty string, otherwise the
-label when it is a non-empty string, otherwise the id. Decided here: a producer
+`points[index].metadata.text` when it is readable, otherwise the label when it
+is readable, otherwise the id. Readable is the rule of `isNamed`: a string with
+a character that is not white space, other than the id. So `pointText` is the
+id exactly when the point is not named. Decided here: a producer
 following `docs/guides/producer.md` writes the record's text as the label, and
 a richer text may sit in `metadata.text`; the longer text is the better one to
 read and to rerank. It is untrusted text: insert it with `textContent`. Never
 cut here; the panel decides what to cut on screen.
+
+### `ET.search.isNamed(set, index) -> boolean`
+
+Whether point `index` is named (the rule under "What this module answers"):
+`points[index].metadata.text` or `points[index].label` is a string with a
+character that is not white space and differs from `ids[index]`. A missing
+point record, or a set without `points`, is not named. Added after the first
+browser run (`docs/search-interface.md`, "Corrected after the first browser
+run"). The scan finds the named points once per set object and keeps them in a
+cache keyed by the set, which changes no result (a set is never mutated).
 
 ### `ET.search.tokens(text) -> string[]`
 
@@ -357,3 +393,18 @@ the one search it belongs to. A reranker gets the texts of `ranking.pool`
   a word of at least `PREFIX_MIN` characters counts characters by code point.
 - Refusals from `makeWordQuery` for `no-data` list every word as unmatched.
 - The scale's values are not checked for finiteness (only type and length).
+
+## Measured after the named-points correction
+
+10,000 points of 1,024 dimensions, a third named, `k = 8`, node on the
+development machine under a load average of about 58 on 12 cores (other
+agents' builds), a fresh set object each run (so the named points are found
+every time), median of 20 runs, three rounds each. Before the correction:
+whole scan 14.3 to 15.8 ms plain and 27.3 to 31.3 ms with a scale; the longest
+unit 1.0 ms plain and 0.9 to 1.2 ms scaled. After: whole scan 14.3 to 15.3 ms
+plain and 26.1 to 31.4 ms scaled; the longest unit 1.0 ms plain and 1.0 to 1.1
+ms scaled. No difference shows above the noise. The slowest single unit in 20
+runs was up to 4.8 ms before and up to 12 ms after (one scaled round; the
+others 1.6 to 4.2 ms), both at that load. Finding the named points costs one
+string test per point, counted as 64 multiply-adds of work, inside the same
+units; the row loop adds one byte test per row.

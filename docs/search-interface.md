@@ -49,8 +49,9 @@ the renderer, the modes, the viewer and a new panel, all specified below.
 | Distance | Cosine distance, `1 - cosine similarity`, over every dimension of the data, in double precision. Shown as "cosine distance (1 minus cosine similarity)" (`ET.search.MEASURE_TEXT`). Numbers in `[0, 2]`. It is the same number used for ranking, for what is lit, for the pair reports and for what the Distance difference control writes; never a length in the picture. |
 | Search | One query (embedded text, a host's vector, words matched among loaded points, or a loaded point) and its ranking. Up to 4 at once, lettered A to D in the order given. |
 | Kind | How a search's query was made: `"embedded"` (typed text through the host's `embed` callback), `"vector"` (a vector the host passed), `"words"` (words matched among loaded points, no embedding), `"point"` (a loaded point's own vector). |
-| Results, named results | The `k` nearest points of a search (3 to 20, 8 by default), after reranking when a reranker ran. Any loaded point can be a result. |
-| Result radius | The distance of a search's farthest named result. A point is inside a search when it is at most that far. |
+| Named point | A point that carries something a person can read that is not just its id: its `metadata.text` or its `label` is a string with a character that is not white space and differs from its id (`ET.search.isNamed`). On a real file every point is named; in the built-in sample set 290 of 12,288 are; in a labels-only set none is. |
+| Results, named results | The `k` nearest named points of a search (3 to 20, 8 by default), after reranking when a reranker ran. With no named point in the set every point is a candidate and results show ids; with fewer named points than `k`, the results are all of them. The query itself can come from any point. |
+| Result radius | The distance of a search's farthest named result. A point is inside a search when it is at most that far, named or not. |
 | Lit value | Per point, a number in `[0, 1]`: how strongly the searches light it. Set by the lit setting (`"even"`, `"close"`, `"named"`). |
 | Shared mark | On a point that is lit and inside two or more searches. |
 | Point of view | An option on one chosen search: every dimension scaled by the absolute value of that search's query in that dimension, for its ranking, its shown distances and the fitted picture. |
@@ -418,7 +419,8 @@ removed callback is superseded.
 ### Reranking
 
 With `rerank` on and a `rerank` callback set, each search's `pool` (the
-`3 x k` nearest, `ET.search.POOL_FACTOR`) is sent as candidate texts
+`3 x k` nearest named points, `ET.search.POOL_FACTOR`; every point is a
+candidate when none is named) is sent as candidate texts
 (`ET.search.pointText`) with the query text, and the answer goes through
 `ET.search.rerankOrder`. The query text is the typed text (embedded and word
 searches), the point's text (point searches) or the `label` given (vector
@@ -466,9 +468,9 @@ search: {
     k,
     note,              // a message about this search (fallback to words, rerank failure), or null
     radius,            // the result radius
-    insideCount,       // points inside the result radius
+    insideCount,       // points inside the result radius, named or not
     results: [{ id, index, rank, embeddingRank, plainRank, distance, plainDistance,
-                gap, moved, score, text }],      // ET.search hits plus pointText
+                gap, moved, score, text }],      // ET.search hits plus pointText: named points
   }],
   pairs: [{ a, b, shared, common, commonIds, closest }],
                        // a, b letters; commonIds ids; closest null or { a: id, b: id, distance }
@@ -833,18 +835,49 @@ Other paths are served exactly as today (static files, GET and HEAD).
 - Wander does not visit results; facing a chosen pair of searches and
   decluttering labels in a tight cluster are parked follow-ups in the spec.
 
+## Corrected after the first browser run
+
+The first run of search in a real browser (Chromium, the shipped standalone
+page, the built-in sample set of 12,288 points of which 290 carry a word)
+found that the build ranked every loaded point, as decision 1 then said. The
+query `tide harbor` returned eight unnamed points (`p03048`, `p03613`, ...)
+whose result text was the point id, a radius of 0.0169 and 8 lit points: the
+typed words were not among the results. The spec's assumptions, confirmed by
+the owner, say otherwise: "Every loaded point at least as near as the last
+named result is lit too, as the sky reference does". The sky reference ranks
+only its named points, takes the radius from the farthest of them and lights
+every point at least that near; for `tide harbor` it gives tide, harbor, surf,
+kelp, reef, atoll, estuary, mooring and lights 422 points.
+
+Corrected: results are the `k` nearest named points (`ET.search.isNamed`;
+glossary above, `js/api/24-search.md`), the result radius is the farthest of
+them, and every point at least that near, named or not, is inside and lit.
+After the correction the same query on the same set gives tide, harbor, surf,
+kelp, reef, atoll, estuary, mooring (the reference's list, in its order) at a
+radius of 0.0431 (cosine distance), with 423 points inside (measured in node on
+the assembled file, `js/test/search-named.test.js`; the reference's 422 is
+straight-line distance). A set with no named point keeps the earlier
+behaviour (every point a candidate, results showing ids); a set with fewer
+named points than `k` gives all of them; a reranker's pool is drawn from the
+named points. A real data file, where every point carries text, is unchanged.
+
 ## Decisions made here
 
 Each choice the spec left open, with its reason:
 
-1. Any loaded point can be a result, labelled or not: real files carry text on
-   every point, and labels-only files have no names.
+1. Results are the nearest named points, and every point at least as near as
+   the last of them is lit, named or not (the sky reference, confirmed by the
+   owner in the spec's assumptions). A set with no named point ranks every
+   point. Real files carry text on every point, so there nothing is restricted.
+   This replaces "any loaded point can be a result"; see "Corrected after the
+   first browser run".
 2. A zero row has similarity 0 and distance 1: keeps the scan finite and puts a
    directionless point at "unrelated".
 3. Ties in ranking go to the lower index: makes rankings a pure function of
    their inputs.
-4. A point's text is `metadata.text` when present, else its label, else its id:
-   the longer text is the better one to read and to rerank.
+4. A point's text is `metadata.text` when readable, else its label when
+   readable, else its id (readable as for a named point): the longer text is
+   the better one to read and to rerank.
 5. Word search places the query at the mean of per-word means, each matched
    word one share (the sky reference): a word naming a large group does not
    drown one naming a single point.
