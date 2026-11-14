@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'">
+<title>Viewer demo (dev only)</title>
+<link rel="stylesheet" href="demo.css">
+</head>
+<body>
+<header class="top">
+  <h1>Viewer API demo <small>development only, not shipped</small></h1>
+  <p>Two independent viewers mounted from the script API (<code>mount</code>, <code>update</code>, <code>destroy</code>)
+    under <code>script-src 'self'; style-src 'self'</code>. CSP violations seen: <b id="csp">0</b>.</p>
+</header>
+<main class="pair">
+  <section class="side" data-side="a">
+    <div class="bar">
+      <button type="button" data-act="mount">mount</button>
+      <button type="button" data-act="update">update (sample)</button>
+      <button type="button" data-act="append">append 200 points</button>
+      <button type="button" data-act="invalid">send invalid data</button>
+      <button type="button" data-act="markup">send a label with markup</button>
+      <button type="button" data-act="theme">theme: dark</button>
+      <button type="button" data-act="destroy">destroy</button>
+    </div>
+    <div class="space" id="space-a"></div>
+    <pre class="info" id="info-a">not mounted</pre>
+  </section>
+  <section class="side" data-side="b">
+    <div class="bar">
+      <button type="button" data-act="mount">mount</button>
+      <button type="button" data-act="update">update (sample)</button>
+      <button type="button" data-act="append">append 200 points</button>
+      <button type="button" data-act="invalid">send invalid data</button>
+      <button type="button" data-act="markup">send a label with markup</button>
+      <button type="button" data-act="theme">theme: dark</button>
+      <button type="button" data-act="destroy">destroy</button>
+    </div>
+    <div class="space" id="space-b"></div>
+    <pre class="info" id="info-b">not mounted</pre>
+  </section>
+</main>
+<script src="/embeddings_tumbler/static/embeddings-tumbler.js"></script>
+<script src="/embeddings_tumbler/static/sample-data.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>
