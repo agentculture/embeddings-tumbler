@@ -16,6 +16,8 @@
 //   * It has a lifecycle: dispose() frees every GPU object it made, a lost context
 //     is rebuilt from the data it keeps, and without WebGL 2 it reports instead of
 //     throwing.
+//   * Search: setLit() gives per-point lit values and a shared mark, drawn by a second
+//     point program only when they apply; without them the frame is drawn as before.
 //
 // The API is documented in js/api/30-renderer.md.
 // ---------------------------------------------------------------------------
@@ -51,7 +53,13 @@ ET.renderer = (function () {
     gamma: 0.92, // output curve
     vignette: 0.72, // brightness at the corners (1 = no vignette)
     background: Object.freeze([0, 0, 0]), // added under the image, linear RGB 0..1
+    filter: 0, // 0..1: how much the lit values (setLit) apply this frame; 0 = drawn as without search
+    unlitGain: 0.07, // brightness factor of a point with lit value 0, at filter 1
   });
+
+  // The point program's uniforms (the lit program adds uFilter and uUnlit).
+  var POINT_UNIFORMS = ["uPx", "uMinPx", "uFog", "uTime", "uGain", "uDim", "uTwinkle", "uDof", "uFogNear", "uFogWidth"];
+  var VIEW_UNIFORMS = ["uX", "uF", "uRot", "uView", "uZoom", "uFocus"];
 
   var MAX_ROW_WIDTH = 4096; // preferred texture row width (texels) before widening
   var INT32_MAX = 2147483647;
@@ -77,6 +85,7 @@ ET.renderer = (function () {
       tone: null,
       fade: null,
       point: null,
+      pointLit: null, // the point program that reads lit values, compiled on first setLit
       line: null,
       progLayout: null,
       quadVao: null,
@@ -87,6 +96,9 @@ ET.renderer = (function () {
       fWidth: 0,
       vboPoint: null,
       vaoPoint: null,
+      vboLit: null, // one float per point: lit value, plus 2 for the shared mark
+      vaoPointLit: null, // vboPoint at location 0 and vboLit at location 1
+      litCapacity: 0, // points vboLit was allocated for
       vboLine: null,
       vaoLine: null,
       fbo: null,
@@ -144,6 +156,43 @@ ET.renderer = (function () {
 
   // ---------- shaders, generated from the layout ----------
 
+  // The point vertex shader's body. lit false gives the program drawn whenever no search
+  // applies, line for line the shader that existed before search, so that picture cannot
+  // change. lit true is a second program that also reads the per-point lit value (aLit:
+  // the value in 0..1, plus 2 when the shared mark is drawn) and the draw keys filter
+  // (uFilter) and unlitGain (uUnlit): results swell and brighten, the rest shrink and dim,
+  // and a marked point adds white.
+  function pointMain(lit) {
+    var sizeTail = lit ? " * mix(1.0, mix(0.8, 1.5, l), uFilter)" : "";
+    var colourTail = lit ? " * mix(1.0, mix(uUnlit, 2.2, l), uFilter)" : "";
+    return ["uniform float uPx, uMinPx, uFog, uTime, uGain, uDim, uTwinkle, uDof, uFogNear, uFogWidth;"]
+      .concat(lit ? ["uniform float uFilter, uUnlit;"] : [])
+      .concat(["layout(location = 0) in vec4 aCol;"])
+      .concat(lit ? ["layout(location = 1) in float aLit;"] : [])
+      .concat([
+        "out vec3 vCol;",
+        "void main() {",
+        "  float fid = float(gl_VertexID);",
+        "  float dist, zf;",
+        "  vec4 q = place(proj(gl_VertexID, dist), zf);",
+        "  gl_Position = vec4(q.xy, 0.0, 1.0);",
+        "  float fog = clamp((uFogNear - dist) / uFogWidth, 0.0, 1.0);",
+        "  float w = aCol.a;",
+        "  float blur = 1.0 + uDof * zf * zf;", // out-of-focus points swell and dim
+      ])
+      .concat(lit ? ["  float mark = step(1.5, aLit);", "  float l = clamp(aLit - 2.0 * mark, 0.0, 1.0);"] : [])
+      .concat([
+        "  float size = uPx * q.w * (0.55 + 1.5 * w) * blur * mix(1.0, 0.45 + 1.25 * fog, uFog)" + sizeTail + ";",
+        "  gl_PointSize = max(size, uMinPx);",
+        "  float tw = (1.0 - uTwinkle) + uTwinkle * sin(uTime * (1.3 + fract(fid * 0.618) * 2.2) + fid * 12.9898);",
+        "  float a = (0.16 + 0.84 * w * w) * tw / pow(blur, 1.5) * mix(1.0, 0.22 + 0.78 * fog * fog, uFog);",
+        "  vCol = aCol.rgb * a * uGain * mix(1.0, uDim, step(w, 0.99))" + colourTail + ";",
+      ])
+      .concat(lit ? ["  vCol += vec3(0.9) * a * uGain * mark * uFilter;"] : [])
+      .concat(["}"])
+      .join("\n");
+  }
+
   function shaderSources(lay) {
     var T = lay.texelsPerPoint;
     var P = lay.pointsPerRow;
@@ -179,29 +228,8 @@ ET.renderer = (function () {
       "  return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);",
       "}",
     ].join("\n");
-    var pointVertex =
-      head +
-      proj +
-      "\n" +
-      [
-        "uniform float uPx, uMinPx, uFog, uTime, uGain, uDim, uTwinkle, uDof, uFogNear, uFogWidth;",
-        "layout(location = 0) in vec4 aCol;",
-        "out vec3 vCol;",
-        "void main() {",
-        "  float fid = float(gl_VertexID);",
-        "  float dist, zf;",
-        "  vec4 q = place(proj(gl_VertexID, dist), zf);",
-        "  gl_Position = vec4(q.xy, 0.0, 1.0);",
-        "  float fog = clamp((uFogNear - dist) / uFogWidth, 0.0, 1.0);",
-        "  float w = aCol.a;",
-        "  float blur = 1.0 + uDof * zf * zf;", // out-of-focus points swell and dim
-        "  float size = uPx * q.w * (0.55 + 1.5 * w) * blur * mix(1.0, 0.45 + 1.25 * fog, uFog);",
-        "  gl_PointSize = max(size, uMinPx);",
-        "  float tw = (1.0 - uTwinkle) + uTwinkle * sin(uTime * (1.3 + fract(fid * 0.618) * 2.2) + fid * 12.9898);",
-        "  float a = (0.16 + 0.84 * w * w) * tw / pow(blur, 1.5) * mix(1.0, 0.22 + 0.78 * fog * fog, uFog);",
-        "  vCol = aCol.rgb * a * uGain * mix(1.0, uDim, step(w, 0.99));",
-        "}",
-      ].join("\n");
+    var pointVertex = head + proj + "\n" + pointMain(false);
+    var pointVertexLit = head + proj + "\n" + pointMain(true);
     var pointFragment = [
       "#version 300 es",
       "precision mediump float;",
@@ -263,6 +291,7 @@ ET.renderer = (function () {
     ].join("\n");
     return {
       pointVertex: pointVertex,
+      pointVertexLit: pointVertexLit,
       pointFragment: pointFragment,
       lineVertex: lineVertex,
       lineFragment: lineFragment,
@@ -310,6 +339,19 @@ ET.renderer = (function () {
 
   function isFloatArray(a) {
     return a instanceof Float32Array || a?.constructor?.name === "Float32Array";
+  }
+
+  function isByteArray(a) {
+    return a instanceof Uint8Array || a?.constructor?.name === "Uint8Array";
+  }
+
+  // The GPU form of the lit values: each clamped to 0..1 (NaN reads as 0), plus 2 where
+  // the shared mark is drawn. Written into out[0 .. lit.length).
+  function encodeLit(lit, shared, out) {
+    for (var i = 0; i < lit.length; i++) {
+      var v = lit[i] > 0 ? Math.min(1, lit[i]) : 0;
+      out[i] = shared?.[i] ? v + 2 : v;
+    }
   }
 
   function isIndexArray(a) {
@@ -373,6 +415,7 @@ ET.renderer = (function () {
       lay: null,
       vectors: null, // Float32Array(capacityRows * pointsPerRow * floatsPerPoint), zero-padded
       attr: null, // Float32Array(capacity * 4): r, g, b, weight
+      lit: null, // Float32Array(capacity), encoded lit values (encodeLit), or null: no search
     };
     var wires = { pairs: null, lengths: null, count: 0 };
 
@@ -536,18 +579,13 @@ ET.renderer = (function () {
       if (gpu.progLayout?.texelsPerPoint === lay.texelsPerPoint && gpu.progLayout.pointsPerRow === lay.pointsPerRow) {
         return;
       }
-      if (gpu.point) release(gpu.point.program);
-      if (gpu.line) release(gpu.line.program);
-      gpu.point = null;
-      gpu.line = null;
+      for (var key of ["point", "pointLit", "line"]) {
+        if (gpu[key]) release(gpu[key].program);
+        gpu[key] = null;
+      }
       var src = shaderSources(lay);
-      var view = ["uX", "uF", "uRot", "uView", "uZoom", "uFocus"];
-      gpu.point = compile(
-        src.pointVertex,
-        src.pointFragment,
-        view.concat(["uPx", "uMinPx", "uFog", "uTime", "uGain", "uDim", "uTwinkle", "uDof", "uFogNear", "uFogWidth"])
-      );
-      gpu.line = compile(src.lineVertex, src.lineFragment, view.concat(["uGain", "uWireDof"]));
+      gpu.point = compile(src.pointVertex, src.pointFragment, VIEW_UNIFORMS.concat(POINT_UNIFORMS));
+      gpu.line = compile(src.lineVertex, src.lineFragment, VIEW_UNIFORMS.concat(["uGain", "uWireDof"]));
       gpu.progLayout = lay;
       // the frame texture: rows 0..2 the frame, row 3 the centre
       if (gpu.texF) release(gpu.texF);
@@ -574,6 +612,52 @@ ET.renderer = (function () {
       gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 16, 0);
       gl.bindVertexArray(null);
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      // the lit vertex array names the colour buffer just replaced: make it again
+      dropLit();
+      if (store.lit) uploadLit();
+    }
+
+    // Free the lit buffer and its vertex array (the lit program is kept).
+    function dropLit() {
+      if (gpu.vaoPointLit) release(gpu.vaoPointLit);
+      if (gpu.vboLit) release(gpu.vboLit);
+      gpu.vaoPointLit = null;
+      gpu.vboLit = null;
+      gpu.litCapacity = 0;
+    }
+
+    // Send the CPU lit values to the GPU: one bufferSubData of the current points when the
+    // buffer is already the right size, else a new buffer (bufferData of the whole store)
+    // and its vertex array. The point vectors and colours are never re-sent here.
+    function uploadLit() {
+      if (!gpu.pointLit) {
+        var src = shaderSources(gpu.progLayout);
+        gpu.pointLit = compile(
+          src.pointVertexLit,
+          src.pointFragment,
+          VIEW_UNIFORMS.concat(POINT_UNIFORMS, ["uFilter", "uUnlit"])
+        );
+      }
+      if (gpu.vboLit && gpu.litCapacity === store.capacity) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, store.lit.subarray(0, store.count));
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        return;
+      }
+      dropLit();
+      gpu.vaoPointLit = track("vertexArray", gl.createVertexArray());
+      gl.bindVertexArray(gpu.vaoPointLit);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 16, 0);
+      gpu.vboLit = track("buffer", gl.createBuffer());
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
+      gl.bufferData(gl.ARRAY_BUFFER, store.lit, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(1);
+      gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 4, 0);
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gpu.litCapacity = store.capacity;
     }
 
     function uploadWires() {
@@ -741,6 +825,12 @@ ET.renderer = (function () {
       gl.uniform1f(p.u.uFocus, s.focus);
     }
 
+    // True when this frame draws with the lit values: some are set and filter is above 0.
+    // Otherwise the points are drawn by the program and calls used before search existed.
+    function litApplies(s) {
+      return store.lit !== null && s.filter > 0 && gpu.vaoPointLit !== null;
+    }
+
     // The wires (when shown), then the points.
     function drawScene(s, gain, W, H) {
       var R = Math.min(W, H) * s.radius;
@@ -751,8 +841,10 @@ ET.renderer = (function () {
         gl.bindVertexArray(gpu.vaoLine);
         gl.drawArrays(gl.LINES, 0, wires.count * 2);
       }
-      var pu = gpu.point.u;
-      setView(gpu.point, s, W, H, R);
+      var lit = litApplies(s);
+      var prog = lit ? gpu.pointLit : gpu.point;
+      var pu = prog.u;
+      setView(prog, s, W, H, R);
       gl.uniform1f(pu.uPx, s.pointSize);
       gl.uniform1f(pu.uMinPx, s.minPointSize);
       gl.uniform1f(pu.uFog, s.fog);
@@ -763,7 +855,11 @@ ET.renderer = (function () {
       gl.uniform1f(pu.uDof, s.depthOfField);
       gl.uniform1f(pu.uFogNear, s.fogNear);
       gl.uniform1f(pu.uFogWidth, Math.max(1e-6, s.fogWidth));
-      gl.bindVertexArray(gpu.vaoPoint);
+      if (lit) {
+        gl.uniform1f(pu.uFilter, Math.min(1, s.filter));
+        gl.uniform1f(pu.uUnlit, Math.max(0, s.unlitGain));
+      }
+      gl.bindVertexArray(lit ? gpu.vaoPointLit : gpu.vaoPoint);
       gl.drawArrays(gl.POINTS, 0, store.count);
     }
 
@@ -809,6 +905,7 @@ ET.renderer = (function () {
         store.lay = lay;
         store.vectors = mem.vectors;
         store.attr = mem.attr;
+        store.lit = null; // a replace starts with no search
         writePoints(input, n, 0);
         wires = { pairs: null, lengths: null, count: 0 };
         needClear = true;
@@ -849,12 +946,18 @@ ET.renderer = (function () {
           mem.attr.set(store.attr.subarray(0, store.count * 4));
           store.vectors = mem.vectors;
           store.attr = mem.attr;
+          if (store.lit) {
+            var grown = new Float32Array(cap); // appended points: lit value 0, no mark
+            grown.set(store.lit.subarray(0, store.count));
+            store.lit = grown;
+          }
           store.capacity = cap;
           store.lay = lay;
           reallocated = true;
         }
         var first = store.count;
         writePoints(input, n, first);
+        if (store.lit) store.lit.fill(0, first, total); // appended points: lit value 0, no mark
         store.count = total;
         if (!usable()) return { ok: true, reallocated: reallocated, uploaded: false };
         try {
@@ -881,6 +984,10 @@ ET.renderer = (function () {
             );
             gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
             gl.bufferSubData(gl.ARRAY_BUFFER, first * 16, store.attr.subarray(first * 4, total * 4));
+            if (gpu.vboLit) {
+              gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
+              gl.bufferSubData(gl.ARRAY_BUFFER, first * 4, store.lit.subarray(first, total));
+            }
             gl.bindBuffer(gl.ARRAY_BUFFER, null);
           }
         } catch (e) {
@@ -900,6 +1007,34 @@ ET.renderer = (function () {
         if (!usable()) return { ok: true, uploaded: false };
         try {
           uploadWires();
+        } catch (e) {
+          return failGpu(e);
+        }
+        return { ok: true, uploaded: true };
+      },
+
+      // Per-point lit values (Float32Array(count), read as 0..1) and an optional shared mark
+      // (Uint8Array(count), 1 = marked); null clears them. Only the lit buffer is uploaded.
+      // Returns { ok: true, uploaded } or { ok: false, reason, message }.
+      setLit: function (lit, shared) {
+        if (disposed) return unavailable("disposed", "The renderer has been disposed.");
+        if (lit === null) {
+          store.lit = null;
+          if (usable()) dropLit();
+          return { ok: true, uploaded: usable() };
+        }
+        if (!store.lay) throw new TypeError("setLit needs a prior setData");
+        if (!isFloatArray(lit) || lit.length !== store.count) {
+          throw new TypeError("lit must be a Float32Array of length count (" + store.count + ")");
+        }
+        if (shared !== undefined && shared !== null && (!isByteArray(shared) || shared.length !== store.count)) {
+          throw new TypeError("shared must be a Uint8Array of length count (" + store.count + ")");
+        }
+        if (store.lit?.length !== store.capacity) store.lit = new Float32Array(store.capacity);
+        encodeLit(lit, shared, store.lit);
+        if (!usable()) return { ok: true, uploaded: false };
+        try {
+          uploadLit();
         } catch (e) {
           return failGpu(e);
         }
@@ -971,6 +1106,7 @@ ET.renderer = (function () {
           count: store.count,
           capacity: store.capacity,
           wires: wires.count,
+          lit: store.lit !== null,
           maxTextureSize: maxTextureSize,
           layout: store.lay,
         };
@@ -985,6 +1121,7 @@ ET.renderer = (function () {
         disposed = true;
         store.vectors = null;
         store.attr = null;
+        store.lit = null;
         wires = { pairs: null, lengths: null, count: 0 };
         if (opts.releaseContext && !lost) {
           var ext = gl.getExtension("WEBGL_lose_context");
