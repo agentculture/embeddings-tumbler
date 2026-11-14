@@ -252,6 +252,7 @@ def test_sample_set_renders_with_modes_provenance_and_controls_swiftshader(sampl
 
 def test_sample_page_is_clean_and_fits_the_width_swiftshader(sample_run):
     name, r = sample_run
+    assert r["state"] == "ready", r["wait"]
     assert r["csp"] == []
     assert r["console_errors"] == []
     assert r["foreign"] == []

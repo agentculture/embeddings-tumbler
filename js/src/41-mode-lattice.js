@@ -307,7 +307,7 @@
   M.register({
     id: "lattice",
     title: "Lattice",
-    summary: "True neighbours wired together, one axis swapped at a time.",
+    summary: "True neighbours wired together, one axis swapped at a time",
     create: create,
   });
 })();

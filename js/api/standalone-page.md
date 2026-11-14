@@ -19,7 +19,7 @@ index.html  page.css  page.js  embeddings-tumbler.js  sample-data.js
 | Parameter | Meaning |
 |-----------|---------|
 | (none) | Show the built-in sample set (`EmbeddingsTumbler.sample.generate()`, its defaults). |
-| `data` | Address of a data file (the contract's file form, a `.json` with its `.f32` block beside it), relative to the page or an absolute URL **on the page's own origin**. Anything else is refused with a plain message and nothing is requested. An empty `data=` means no data file. |
+| `data` | Address of a data file (the contract's file form, a `.json` with its `.f32` block beside it), relative to the page or an absolute URL **on the page's own origin**. Anything else is refused with a plain message and nothing is requested. An empty `data=`, or one of only spaces, means no data file: the sample set. |
 | `mode` | Starting mode: `tumble` (default), `lattice` or `wander`. An unknown id falls back to `tumble` (the viewer's rule). |
 | `seed` | The view seed. Digits (optionally signed, with a decimal part) are read as a number, anything else as a string. Not the data's `provenance.seed`; the provenance block shows both. |
 
@@ -35,6 +35,16 @@ fetches that block beside the JSON into an `ArrayBuffer`, and calls
 block })`). The viewer validates it and shows any refusal itself, over the
 stage.
 
+The records file (the `.json`) may be at most **64 MB**: a response whose
+`Content-Length` is larger is refused before its body is read, and one sent
+without a `Content-Length` is refused after reading if its text is longer. The
+binary `.f32` block is not limited by this.
+
+Leaving the page (`pagehide`) abandons a load still in flight: both requests
+are aborted with an `AbortController`, and anything that arrives afterwards
+changes nothing (no message, no viewer). If the browser restores the page from
+its back-forward cache (`pageshow` with `persisted`), the load starts again.
+
 The page reports these cases itself, before any viewer is mounted, as plain
 text in the loading panel (`role="alert"`):
 
@@ -46,6 +56,7 @@ text in the loading panel (`role="alert"`):
 | HTTP error | `The data file "x.json" could not be loaded: the server answered 404.` |
 | Network failure | `The data file "x.json" could not be loaded.` |
 | Not JSON | `The data file "x.json" is not valid JSON.` |
+| Records file over 64 MB | `The data file "x.json" is too large: this page reads records files of up to 64 MB.` |
 | `vectors.file` not a plain name | the contract's `vector-file-path` message |
 | Block missing or unreadable | the contract's `block-unreadable` message |
 | `embeddings-tumbler.js` missing | `The viewer is not available: …` |

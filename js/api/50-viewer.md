@@ -417,7 +417,9 @@ screen relative to an even share: `e = (f0[d]^2 + f1[d]^2 + f2[d]^2) * D / 3`
 the accent, its green channel lowered by `min(60, 12 e)` (exactly the
 reference's colours with the default accent). The caption names dimension 1
 and dimension D. At large D several cells share a screen pixel and the browser
-resamples them.
+resamples them. Sizes are the reference's: 22 px of cells (`box-sizing:
+content-box`, so a host's border-box reset does not shrink it) between a 1 px
+line above and below in `--tumbler-line`, and the caption 6 px beneath.
 
 ## Labels
 
@@ -431,10 +433,26 @@ non-empty string other than its id. Labels longer than 40 characters are cut
 with `…`. All label text goes in with `textContent`; group names are shown in
 capitals by CSS (`text-transform`), so the text itself is unchanged.
 
+The look is the reference's. Every name has a dark outline standing in for the
+reference's 4 px canvas stroke at 0.85: a ring of 16 hard text shadows (8 at
+1.5 px with 0.5 px blur at 0.85, 8 at 2 px at 0.5) in the stage's background
+colour, so on a light stage the outline is light. Group names are 11 px, the
+group colour with its lightness raised from the reference's 62% to 72% (the
+same lift for a host's `--tumbler-group-*` colours; on a light stage they are
+darkened instead). Wander's stop name is 26 px italic in the display font,
+white on a dark stage (the stage foreground on a light one); its neighbours'
+names are the foreground three-eighths of the way to `--tumbler-muted`
+(`#c5cddb` with the defaults); the ring and spokes use the group colour at 72%
+lightness on a dark stage, the plain group colour on a light one. The hover
+name and its ring use the stop's colour.
+
 ## Controls and input
 
 - Mode buttons (real `<button>`s with `aria-pressed`, at least 44 px tall),
   Pause/Play, Reset zoom, a speed slider, Labels and Trails checkboxes, a hint.
+  Pause/Play and Reset zoom are the reference's button (12 px type, 6 by 16 px
+  padding, at least 76 px wide and 28 px tall); under 600 px wide they are at
+  least 32 px tall for touch. The speed slider is 130 px wide.
 - **Keys** only while focus is inside the viewer (the root is focusable and a
   pointer press on the stage focuses it): `Escape` dismisses the notice,
   `1`..`9` modes in button order,

@@ -16,6 +16,11 @@
   var SCHEMA_VERSION = 1; // the version this page's copy of the core reads
   var PLAIN_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
   var TITLE = "Embedding Tumbler";
+  // The largest records file (the .json) the page reads, judged by its
+  // Content-Length before the body is read, and by its length after reading
+  // when the server sends none. The binary .f32 block is not limited here.
+  var MAX_RECORDS_BYTES = 64 * 1024 * 1024;
+  var MAX_RECORDS_TEXT = "64 MB";
 
   var doc = document;
   var body = doc.body;
@@ -72,7 +77,10 @@
       var trimmed = seed.trim();
       options.seed = /^-?\d+(\.\d+)?$/.test(trimmed) && isFinite(Number(trimmed)) ? Number(trimmed) : seed;
     }
-    return { data: get("data"), options: options };
+    // A data address of only spaces is no address: the sample set, as for data=.
+    var data = get("data");
+    if (data !== null && data.trim() === "") data = null;
+    return { data: data, options: options };
   }
 
   // ---------- the per-mode notes below the viewer ----------
@@ -214,14 +222,45 @@
     var name = fileName(url);
     say("Loading " + name + "…");
 
+    // Leaving the page (pagehide) abandons the load: the requests are aborted and
+    // nothing that arrives later touches a page that has moved on. If the browser
+    // brings the page back from its back-forward cache, the load starts again.
+    var load = { abandoned: false, controller: null };
+    try {
+      load.controller = typeof AbortController === "function" ? new AbortController() : null;
+    } catch (err) {
+      load.controller = null;
+    }
+    var init = { credentials: "same-origin" };
+    if (load.controller) init.signal = load.controller.signal;
+    window.addEventListener("pagehide", function () {
+      if (load.abandoned || load.done) return;
+      load.abandoned = true;
+      if (load.controller) load.controller.abort();
+      window.addEventListener("pageshow", function again(ev) {
+        if (!ev || !ev.persisted) return;
+        if (typeof window.removeEventListener === "function") window.removeEventListener("pageshow", again);
+        showFile(address, options);
+      });
+    });
+    function live() {
+      return !load.abandoned;
+    }
+    function tooLarge() {
+      return new PageError(
+        'The data file "' + name + '" is too large: this page reads records files of up to ' + MAX_RECORDS_TEXT + "."
+      );
+    }
+
     function blockFailed(file) {
       return new PageError('Vector file "' + file + '" could not be read.');
     }
 
     window
-      .fetch(url.href, { credentials: "same-origin" })
+      .fetch(url.href, init)
       .then(
         function (res) {
+          if (!live()) return null;
           if (res.url && !sameOrigin(new URL(res.url))) {
             throw new PageError('Refused: "' + name + '" was redirected to another origin.');
           }
@@ -230,6 +269,8 @@
               'The data file "' + name + '" could not be loaded: the server answered ' + res.status + "."
             );
           }
+          var size = res.headers && typeof res.headers.get === "function" ? res.headers.get("content-length") : null;
+          if (size !== null && Number(size) > MAX_RECORDS_BYTES) throw tooLarge();
           return res.text();
         },
         function () {
@@ -237,6 +278,8 @@
         }
       )
       .then(function (text) {
+        if (!live() || text === null) return null;
+        if (text.length > MAX_RECORDS_BYTES) throw tooLarge();
         var records;
         try {
           records = JSON.parse(text);
@@ -256,6 +299,7 @@
           typeof v.file === "string";
         if (!fileForm) {
           // Not a readable file-form set: the viewer refuses it with its own message.
+          load.done = true;
           show(records, options, { sample: false, name: name });
           return null;
         }
@@ -266,9 +310,10 @@
         }
         var blockUrl = new URL(v.file, url.href);
         return window
-          .fetch(blockUrl.href, { credentials: "same-origin" })
+          .fetch(blockUrl.href, init)
           .then(
             function (res) {
+              if (!live()) return null;
               if (!res.ok || (res.url && !sameOrigin(new URL(res.url)))) throw blockFailed(v.file);
               return res.arrayBuffer();
             },
@@ -277,11 +322,15 @@
             }
           )
           .then(function (block) {
+            if (!live() || block === null) return;
+            load.done = true;
             var data = Object.assign({}, records, { vectors: block });
             show(data, options, { sample: false, name: name });
           });
       })
       .catch(function (err) {
+        if (!live()) return; // abandoned: the page has moved on
+        load.done = true;
         fail(err && err.pageMessage ? err.pageMessage : 'The data file "' + name + '" could not be shown.');
       });
   }

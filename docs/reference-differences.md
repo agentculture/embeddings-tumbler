@@ -137,6 +137,13 @@ not done; see "Not yet compared or not yet decided".
 - **Why:** a random frame is not reproducible, and the top three directions are the best-grouped view.
 - **Visible on the sample set:** no, apart from the first seconds *(read from the code)*.
 
+### Tumble's summary under its tab
+
+- **Reference:** "The window turns through every dimension at once".
+- **Build:** "The window turns through the strongest directions", of the same length and, like the reference's summaries, without a full stop. Lattice's and Wander's summaries are the reference's words exactly.
+- **Why:** a guided tour turns only through the strongest directions, so the reference's words would not be true of it.
+- **Visible on the sample set:** yes, under the Tumble tab at 1280 px wide (summaries are hidden under 600 px).
+
 ## Lattice
 
 ### Hidden directions are seeded per swap
@@ -211,7 +218,14 @@ not done; see "Not yet compared or not yet decided".
 - **Reference:** the zoom that frames the cloud is computed from the 290 named points.
 - **Build:** from the first 512 points, a fixed sample, so an append past it does not move the framing.
 - **Why:** appends must not change the framing.
-- **Visible on the sample set:** yes, in the framing; see "Tumble fills the stage and reaches its edges" under the unintended differences.
+- **Visible on the sample set:** no; on the sample set the 290 named points are the first 290 of the 512 *(read from the data)*.
+
+### Auto-framing keeps the outermost regions and their names inside the stage
+
+- **Reference:** zoom = 0.78 divided by the root mean square of the projected coordinates.
+- **Build:** the same, but never more than puts the 98th-percentile radius of the sample at 0.88 units, which leaves room for the group names inside the stage's shorter side (the edge is at 1.087 units). Tumble and Lattice use it; Wander's flight keeps the reference's fixed zoom.
+- **Why:** on the guided tour the regions are compact blobs far apart and the names sit on the outermost ones, so with the reference's rule alone "ASTRONOMY" and "MUSIC" were cut off at 390 px wide and the cloud reached the title at 1280. Measured over 120 seconds on the sample set, as the 98th-percentile distance of the points from the stage's centre in shares of half the stage (1.0 is the edge): Tumble, median 0.95 and at most 1.38 at 390 px wide before, median 0.67 and at most 0.85 after; at 1280 px, median 0.90 and at most 1.33 before, 0.63 and 0.85 after. Lattice: at 390 px, 1.02 and 1.54 before, 0.66 and 0.82 after; at 1280 px, 0.93 and 1.50 before, 0.63 and 0.77 after. Group names, with their width: Tumble at 390 px at most 1.44 before, 0.99 after. The reference's own rule on random frames measured median 0.97 and at most 1.59 at 390 px: it also leaves the stage, but there the outermost points are dim dust and the names sit near the middle, so it does not show.
+- **Visible on the sample set:** yes: Tumble and Lattice show a smaller cloud than before with every name inside the stage (`after-build-tumble-390.png`).
 
 ## Status lines
 
@@ -243,7 +257,7 @@ not done; see "Not yet compared or not yet decided".
 - **Reference:** group names, the stop's name, its neighbours' names and the hover name are drawn on a 2-D canvas over the sky.
 - **Build:** they are text elements over the sky, filled in with `textContent`, at most 64 at once, taken from at most 300 labelled points per frame. Names longer than 40 characters are cut. Group names are capitals by style sheet, so the text itself is unchanged.
 - **Why:** untrusted text must be inserted as text; text is selectable and takes the page's fonts *(read from the code)*.
-- **Visible on the sample set:** slightly: the layout is the same; the look of the lettering differs, see the unintended differences about outlines and the stop's name.
+- **Visible on the sample set:** slightly: the layout, sizes, colours and the dark outline are the reference's (the outline is a ring of text shadows standing in for the canvas stroke); the typeface differs as under "Fonts".
 
 ### Which points are labelled
 
@@ -259,7 +273,7 @@ not done; see "Not yet compared or not yet decided".
 - **Reference:** 384 cells, and the caption says "384 dimensions" and "dimension 384".
 - **Build:** one cell per dimension of the loaded data (a canvas that many pixels wide, stretched), and the caption names the real number, with a thousands separator ("2,560"). The formula and the colours are the reference's.
 - **Why:** the dimension comes from the data.
-- **Visible on the sample set:** no, apart from the spacing recorded under the unintended differences.
+- **Visible on the sample set:** no. The strip's size (22 px between two 1 px lines) and the 6 px gap before its caption are the reference's (measured at 1280 and 390 px wide).
 
 ## Controls and input
 
@@ -279,10 +293,10 @@ not done; see "Not yet compared or not yet decided".
 
 ### Touch-friendly buttons
 
-- **Reference:** a Pause button of 76 by 28 px; mode buttons without a minimum height.
-- **Build:** the mode buttons are real buttons at least 44 px tall; the Pause button measures 64 by 32 px and Reset zoom 97 by 32 px at 1280 px wide.
-- **Why:** the user asked for touch-friendly buttons during live testing on an iPhone 13.
-- **Visible on the sample set:** yes, slightly. The Pause button is smaller than the reference's, not larger; see the unintended differences.
+- **Reference:** a Pause button of 76 by 28 px at every width; mode buttons without a minimum height.
+- **Build:** the mode buttons are real buttons at least 44 px tall. The Pause button is the reference's 76 by 28 px at 600 px wide and over (Reset zoom the same height); under 600 px wide both are 32 px tall. The speed slider is the reference's 130 px.
+- **Why:** the user asked for touch-friendly buttons during live testing on an iPhone 13; 32 px is the height that was tested there.
+- **Visible on the sample set:** yes, slightly, at 390 px wide (Pause 76 by 32 px against 76 by 28).
 
 ### Keys 1 to 3 switch modes, only while the viewer has focus
 
@@ -428,6 +442,13 @@ screenshot, its character set or its compatibility mode.
 - **Why:** the same bug. Quirks mode can change spacing and sizes in ways that are hard to separate from the differences above.
 - **Visible on the sample set:** unknown: not separated; see "Not yet compared or not yet decided".
 
+### No style reset, so the reference has an 8 px page margin
+
+- **Reference:** the sky is inset 8 px from the top and the sides (stage at x = 8, y = 8, 1264 px wide at 1280; 374 px wide at 390), and the title and status start 8 px further in, because the browser's default body margin applies.
+- **Build:** the sky starts at the corner and spans the full width; the title and status start at 20 px.
+- **Why:** the reference means a full-bleed sky; the margin is the browser's default, not a choice.
+- **Visible on the sample set:** yes, in every mode.
+
 ## What the user has said so far
 
 These are decisions already made during live testing on a desktop, an iPhone 13
@@ -446,63 +467,23 @@ These are decisions already made during live testing on a desktop, an iPhone 13
 
 ## Unintended differences found
 
-These were seen in the side-by-side on 2026-11-14 and are not recorded anywhere
-else as intended. For each: the screenshot pair, and the best reading of the
-cause. The causes were read from the code and the measurements; none was
-confirmed by changing the code, which was not allowed here. Whether each is
-accepted or fixed is the user's call.
+None remain from the side-by-side of 2026-11-14. It found seven; six were put
+back to the reference and checked again in new screenshot pairs the same day
+(headless Chromium on the same GPU, 1280 by 800 and 390 by 844, 9 seconds in
+each mode):
+
+- the names' dark outline and weight, in every mode;
+- Wander's stop name (26 px, white), neighbour names (`#c5cddb`), ring and spokes (72% lightness);
+- Tumble's framing, now inside the stage at both widths (see "Auto-framing keeps the outermost regions and their names inside the stage");
+- the readout strip's 24 px with its two lines and the 6 px gap before the caption;
+- the speed slider's 130 px and the Pause button's 76 by 28 px (32 px tall under 600 px wide, see "Touch-friendly buttons");
+- Lattice's and Wander's summaries, now the reference's words (Tumble's is recorded under "Tumble's summary under its tab").
+
+The seventh, the reference's 8 px page margin, is the reference's own defect and
+is now listed under "No style reset, so the reference has an 8 px page margin".
 
 The screenshots are not committed; they are kept with this run's working files
 and can be made again with the side-by-side page.
-
-### Group names and Wander's names lack the reference's dark outline
-
-- **Reference:** each name is drawn with a 4-pixel dark outline, so it stands out on bright regions (`ref-tumble-1280.png`, `ref-lattice-1280.png`).
-- **Build:** the names have only a soft glow of the background colour behind them; they read fainter and in Lattice are nearly lost among the wires (`build-tumble-1280.png`, `build-lattice-1280.png`).
-- **Likely cause:** `label()` in `js/src/50-viewer.js` sets `textShadow` to a 4 px and a 2 px glow, where the reference's `text()` strokes the text with `lineWidth = 4 * dpr` in `rgba(4,6,11,0.85)`.
-- **Visible on the sample set:** yes, in every mode.
-
-### Wander's stop name, neighbour names and ring are styled differently
-
-- **Reference:** the stop's name is 26 px italic in white; its neighbours' names are `#c5cddb`; the ring and spokes use the group colour at 72% lightness (`ref-wander-1280.png`, `ref-wander-390.png`).
-- **Build:** the stop's name is 22 px in the page's foreground colour (`#e9eef6`); neighbours' names are the foreground colour at 85% opacity; the ring and spokes use the group colour at 62% lightness (`build-wander-1280.png`, `build-wander-390.png`). The stop's name looks visibly smaller in the pictures.
-- **Likely cause:** `label()` sets the stop's size to 22 px and `spokes()` uses the foreground colour and `groupColour`, both in `js/src/50-viewer.js` *(sizes and colours read from the code; the smaller name is visible in the pictures)*.
-- **Visible on the sample set:** yes, in Wander.
-
-### Tumble fills the stage and reaches its edges
-
-- **Reference:** the whole cloud sits inside the stage at both widths (`ref-tumble-1280.png`, `ref-tumble-390.png`).
-- **Build:** the cloud fills the stage's height and touches the title at 1280 px wide; at 390 px wide the outermost regions are cut off at the left and right edges (the names "ASTRONOMY" and "MUSIC" are clipped in `build-tumble-390.png`).
-- **Likely cause:** the zoom that frames the cloud is the reference's rule (0.78 divided by the root mean square of the first 512 points' projected coordinates), but the guided tour's frame puts the far regions farther out than a random frame does, so the same rule frames them more loosely *(a reading of the code; not tested by changing the framing)*. It follows from the guided tour and the fixed sample; it is not a separate setting.
-- **Visible on the sample set:** yes, in Tumble.
-
-### The readout strip has no borders and no gap before its caption
-
-- **Reference:** the strip is 24 px tall including a 1 px line above and below, and its caption sits 6 px beneath it (`ref-tumble-1280.png`, and the crops `strip-ref.png`).
-- **Build:** the strip is 22 px tall with no lines, and its caption touches it (`build-tumble-1280.png`, `strip-build.png`). Measured at 1280 px wide: strip 22 px against 24, caption starting at the strip's bottom edge against 6 px below it.
-- **Likely cause:** the viewer's own styling of `.tumbler-strip` and `.tumbler-readout`; `js/page/page.css` sets only the height (22 px) and the caption's size, and its comment says it matches the reference's spacing.
-- **Visible on the sample set:** yes, in every mode.
-
-### The speed slider is narrower and the Pause button smaller
-
-- **Reference:** the speed slider is 130 px wide; the Pause button is 76 by 28 px (`min-width: 76px`).
-- **Build:** the slider is 120 px wide and the Pause button 64 by 32 px.
-- **Likely cause:** the viewer's control styling in `js/src/50-viewer.js` *(measured in the page; the code was not searched for the exact setting)*.
-- **Visible on the sample set:** yes, slightly, in every mode.
-
-### The reference's page has an 8 px margin; the build is truly full-bleed
-
-- **Reference:** the sky is inset 8 px from the top and the sides (stage at x = 8, y = 8, 1264 px wide at 1280; 374 px wide at 390), and the title and status start 8 px further in, because the reference has no style reset and the browser's default body margin applies.
-- **Build:** the sky starts at the corner and spans the full width; the title and status start at 20 px.
-- **Likely cause:** `js/page/page.css` sets `body { margin: 0 }`; the reference does not. This is a defect in the reference that the build does not copy, listed here because nobody wrote it down.
-- **Visible on the sample set:** yes, in every mode.
-
-### The mode summaries are worded differently
-
-- **Reference:** "The window turns through every dimension at once", "True neighbours wired together, one axis swapped at a time", "Fly through the space, hopping neighbour to neighbour" (no full stops).
-- **Build:** "The window turns through the strongest directions of the space on a guided tour.", "True neighbours wired together, one axis swapped at a time.", "Fly through the space, hopping from neighbour to neighbour." (compared as text; at 1280 px wide Tumble's now wraps to two lines).
-- **Likely cause:** the `summary` strings registered in `js/src/40-mode-tumble.js`, `41-mode-lattice.js` and `42-mode-wander.js`. Tumble's looks deliberate, since it no longer turns through every dimension; the full stops and "from" look like edits nobody recorded.
-- **Visible on the sample set:** yes, in every mode.
 
 ## Looked the same
 
@@ -546,7 +527,7 @@ Checked in the screenshots or measured on 2026-11-14; none of these differ.
   looks like on the sample set") has not been judged by the user, and the
   sample set's tight regions are the reason it looks so different from the
   reference.
-- **The unintended differences above** are not yet accepted or fixed.
+- **The fixes to the unintended differences** were checked in Chromium on the GPU only.
 - **Real vectors** were not compared: the reference cannot show them.
 
 ## Sign-off
