@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T14:30:12Z",
+  "updated": "2026-11-14T14:36:29Z",
   "claims": [
     {
       "id": "c1",
@@ -917,7 +917,17 @@
       ]
     }
   ],
-  "lapses": [],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "assumption-for-measurement",
+      "what": "t16: the agent never saw the coloured strip rendered; every check ran on the fake canvas and DOM, and its contrast figures are its own calculation. The darker colours for a light background are the agent's choice; the owner approved only the dark three. Main agent then loaded the shipped standalone page in Chromium: 384 cells, about 31 distinct colours, cells led by each axis roughly in thirds, legend colours as specified on dark and on light, no errors.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
   "obligations": [
     {
       "id": "o1",
