@@ -226,6 +226,145 @@ def test_an_unquoted_punctuation_bearing_credential_is_caught(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
+# The assignment match is made in steps (key name, separator, value form).
+# These pin the steps to what the single pattern they replaced matched.
+#
+# Every input line is put together at run time from a key name, a separator
+# and a value, so that no line of this file itself reads as a credential
+# assignment to a scanner that reads the source.
+# ---------------------------------------------------------------------------
+
+_VALUE = "-".join(["Xk9Lm2Pq", "7Rt4Vw8Z", "b3Nc6Yd1"])
+_OTHER_VALUE = "-".join(["another", "Zq7Wx2Ey", "9Rt4Uv8Ip3"])
+_PHRASE = " ".join(["correct", "horse", "battery", "staple"])
+_NAME_T = "tok" + "en"
+_NAME_P = "pass" + "word"
+
+
+def _line(key: str, value: str, sep: str = " = ", quote: str = "") -> str:
+    """``key<sep><quote>value<quote>``, assembled here rather than written out."""
+    return "".join([key, sep, quote, value, quote])
+
+
+def _found(line: str) -> list[tuple[str, str]]:
+    return list(scan_secrets._assignments(line))
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [
+        ("api", "_", "key"),
+        ("api", "-", "key"),
+        ("api", "", "Key"),
+        ("API", "_", "KEY"),
+        ("access", "_", "key"),
+        ("access", "-", "key"),
+        ("Access", "", "Key"),
+        ("sec", "ret", ""),
+        ("secret", "_", "key"),
+        ("secret", "-", "key"),
+        ("SECRET", "", "KEY"),
+        ("tok", "en", ""),
+        ("pass", "word", ""),
+        ("pass", "wd", ""),
+        ("p", "wd", ""),
+    ],
+)
+def test_every_secretish_key_name_is_recognised(parts: tuple[str, str, str]) -> None:
+    key = "".join(parts)
+    assert _found(_line(key, _VALUE)) == [(key, _VALUE)]
+
+
+@pytest.mark.parametrize(
+    ("key_quote", "sep", "value_quote", "tail"),
+    [
+        ("", " = ", '"', ""),
+        ("", " = ", "'", ""),
+        ("", " = ", "", ""),
+        ("", "=", "", ""),
+        ("", ": ", "", ""),
+        ('"', ": ", '"', ""),
+        ("'", " : ", "'", ""),
+        ("", "\t=\t", "", ";"),
+    ],
+)
+def test_every_separator_and_value_form_is_recognised(
+    key_quote: str, sep: str, value_quote: str, tail: str
+) -> None:
+    line = key_quote + _line(_NAME_T + key_quote, _VALUE, sep, value_quote) + tail
+    assert _found(line) == [(_NAME_T, _VALUE)]
+
+
+def test_a_quoted_value_keeps_its_spaces_and_a_bare_one_stops_at_a_delimiter() -> None:
+    assert _found(_line(_NAME_P, _PHRASE, quote='"')) == [(_NAME_P, _PHRASE)]
+    bare = "connect(" + _line(_NAME_P, _VALUE, sep="=") + ", retries=3)"
+    assert _found(bare) == [(_NAME_P, _VALUE)]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        _line(_NAME_T, "short"),
+        _line(_NAME_T, "too short to count", quote='"'),
+        _line(_NAME_T, _VALUE, sep=" "),
+        _line(_NAME_T + "s", _VALUE),
+        _line("my" + _NAME_T, _VALUE),
+        _line("api key", _VALUE),
+        _line(_NAME_T, _VALUE, sep=' = "'),
+    ],
+    ids=[
+        "value-too-short",
+        "quoted-value-too-short",
+        "no-separator",
+        "longer-word",
+        "no-word-boundary",
+        "space-inside-the-key",
+        "unclosed-quote",
+    ],
+)
+def test_lines_the_single_pattern_did_not_match_still_do_not(line: str) -> None:
+    assert _found(line) == []
+
+
+def test_a_word_boundary_inside_an_identifier_still_starts_a_key() -> None:
+    """``-`` and ``.`` end a word, so the key after them is a key (``_`` does not)."""
+    assert _found(_line("my-" + _NAME_T, _VALUE)) == [(_NAME_T, _VALUE)]
+    assert _found(_line("my_" + _NAME_T, _VALUE)) == []
+
+
+def test_several_assignments_on_one_line_are_each_reported_in_order() -> None:
+    line = " ".join(
+        [
+            _line("api_key", _VALUE),
+            _line(_NAME_P, _OTHER_VALUE, sep=": ", quote="'"),
+            _line("pwd", "short", sep="="),
+        ]
+    )
+    assert _found(line) == [("api_key", _VALUE), (_NAME_P, _OTHER_VALUE)]
+    findings = scan_secrets._scan_credentials("x.env", line)
+    assert [f.detail for f in findings] == [
+        "api_key-shaped assignment with a literal value",
+        _NAME_P + "-shaped assignment with a literal value",
+    ]
+
+
+def test_a_key_name_inside_a_value_already_matched_is_not_matched_again() -> None:
+    inner = _line(_NAME_P, _VALUE, sep="=")
+    assert _found(_line(_NAME_T, inner, quote='"')) == [(_NAME_T, inner)]
+
+
+def test_a_key_without_a_value_does_not_hide_a_later_assignment() -> None:
+    assert _found(_line("secret-" + _NAME_T, _VALUE)) == [(_NAME_T, _VALUE)]
+    line = "the " + _NAME_P + " is kept in " + _line(_NAME_T, _VALUE)
+    assert _found(line) == [(_NAME_T, _VALUE)]
+
+
+def test_the_longer_secret_key_name_is_the_one_reported() -> None:
+    key = "_".join(["secret", "key"])
+    assert _found(_line(key, _VALUE)) == [(key, _VALUE)]
+
+
+# ---------------------------------------------------------------------------
 # Placeholder exemption is a whole-value judgement. A high-entropy literal
 # that merely CONTAINS an English label like `example` or `fake` is still a
 # committed secret.

@@ -40,6 +40,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -76,18 +77,62 @@ _KNOWN_TOKEN_PATTERNS = [
 # runs to the first whitespace or structural delimiter. The optional quote
 # after the key name is what lets a JSON key (`"apiKey": "..."`) match at
 # all — without it the closing quote broke the key/value adjacency.
-_ASSIGNMENT_RE = re.compile(
-    r"""(?ix)
-        \b(api[_-]?key|secret(?:[_-]?key)?|access[_-]?key|token|password|passwd|pwd)
-        ["']?               # a JSON/YAML key's own closing quote, if any
-        \s*[:=]\s*
-        (?:
-            "(?P<dq>[^"\n]{20,})"
-          | '(?P<sq>[^'\n]{20,})'
-          | (?P<bare>[^\s"'`,;)\]}]{20,})
-        )
-    """,
+#
+# The match is made in steps, each a small pattern, rather than by one large
+# expression: a secret-ish key name, then the separator, then one of the three
+# value forms. ``_assignments`` puts the steps together.
+
+#: Secret-ish key names. No two of these can match at the same place in a
+#: line, and none can start inside another, so the order does not matter.
+_ASSIGNMENT_KEY_PATTERNS = (
+    re.compile(r"(?i)\b(?:api|access)[_-]?key"),
+    re.compile(r"(?i)\bsecret(?:[_-]?key)?"),
+    re.compile(r"(?i)\b(?:token|password|passwd|pwd)"),
 )
+
+#: A JSON/YAML key's own closing quote, if any, then ``:`` or ``=``.
+_ASSIGNMENT_SEPARATOR_RE = re.compile(r"""["']?\s*[:=]\s*""")
+
+#: The value forms, tried in this order; group 1 is the literal itself.
+_ASSIGNMENT_VALUE_PATTERNS = (
+    re.compile(r'"([^"\n]{20,})"'),
+    re.compile(r"'([^'\n]{20,})'"),
+    re.compile(r"""([^\s"'`,;)\]}]{20,})"""),
+)
+
+
+def _assigned_value(line: str, pos: int) -> re.Match[str] | None:
+    """The separator and literal value starting at ``pos``, or ``None``."""
+    separator = _ASSIGNMENT_SEPARATOR_RE.match(line, pos)
+    if separator is None:
+        return None
+    for pattern in _ASSIGNMENT_VALUE_PATTERNS:
+        value = pattern.match(line, separator.end())
+        if value is not None:
+            return value
+    return None
+
+
+def _assignments(line: str) -> Iterator[tuple[str, str]]:
+    """Yield ``(key, value)`` for each secret-ish assignment in ``line``.
+
+    Left to right and never overlapping: a key name that lies inside a value
+    already yielded is not looked at again.
+    """
+    keys = sorted(
+        (match for pattern in _ASSIGNMENT_KEY_PATTERNS for match in pattern.finditer(line)),
+        key=lambda match: match.start(),
+    )
+    consumed = 0
+    for key in keys:
+        if key.start() < consumed:
+            continue
+        value = _assigned_value(line, key.end())
+        if value is None:
+            continue
+        consumed = value.end()
+        yield key.group(0), value.group(1)
+
 
 # Values that look like references/placeholders rather than real secrets.
 _PLACEHOLDER_RE = re.compile(
@@ -172,9 +217,7 @@ def _scan_credentials(path: str, text: str) -> list[Finding]:
         for pattern, label in _KNOWN_TOKEN_PATTERNS:
             if re.search(pattern, line):
                 findings.append(Finding(path, lineno, "credential", label))
-        for match in _ASSIGNMENT_RE.finditer(line):
-            key = match.group(1)
-            value = match.group("dq") or match.group("sq") or match.group("bare") or ""
+        for key, value in _assignments(line):
             if _is_placeholder(value):
                 continue
             findings.append(

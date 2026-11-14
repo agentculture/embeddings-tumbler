@@ -23,8 +23,10 @@ demo's data is synthetic; this is the first look at real vectors.
     uv run python ../embeddings-tumbler/docs/evidence/real_vector_probe.py "$PWD"
   ```
 
-  It writes `vectors.npy` and `groups.json` beside itself; those outputs are
-  not committed.
+  The folder named on the command line must be the current folder or one
+  inside it; the script refuses a path outside the current folder. It writes
+  `vectors.npy` and `groups.json` beside itself; those outputs are not
+  committed.
 
 ## Results
 

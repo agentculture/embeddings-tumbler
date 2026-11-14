@@ -438,3 +438,230 @@ def test_guild_exiting_nonzero_with_no_output_skips_loudly(on_path: Path, clone:
     _fake_tool(on_path, "guild", "", "guild: not installed", 127)
     results = smoke.check_guild_create(clone, smoke.load_invocations(clone), 30)
     assert all(r.status == "SKIP" for r in results), [r.detail for r in results]
+
+
+# --- the helpers behind stage_config and check_guild_create, branch by branch ---
+#
+# The two stage functions are thin loops over these helpers; each helper is
+# called here directly, with a stub in place of the tool, once per outcome.
+
+
+def test_resolve_problems_is_empty_for_a_registered_present_file(clone: Path) -> None:
+    by_backend = smoke.registry_prompts_by_backend(clone)
+    assert smoke._resolve_problems(clone, "claude", ["CLAUDE.md"], by_backend) == []
+
+
+def test_resolve_problems_names_each_fault(clone: Path) -> None:
+    by_backend = smoke.registry_prompts_by_backend(clone)
+    assert smoke._resolve_problems(clone, "claude", [], by_backend) == [
+        "the YAML lists no `resolves` paths for this harness"
+    ]
+    (clone / "CLAUDE.md").write_text("  \n", encoding="utf-8")
+    problems = smoke._resolve_problems(clone, "claude", ["CLAUDE.md", "nope.md"], by_backend)
+    assert problems[0] == "CLAUDE.md is empty"
+    assert problems[1] == "nope.md is missing"
+    assert problems[2].startswith("nope.md is not registered under backend 'claude' in ")
+    assert len(problems) == 3
+
+
+def test_config_harness_result_passes_and_fails(clone: Path) -> None:
+    by_backend = smoke.registry_prompts_by_backend(clone)
+    spec = smoke.load_invocations(clone)["claude"]
+    good = smoke._config_harness_result(clone, "claude", spec, by_backend)
+    assert (good.stage, good.name, good.status) == ("config", "claude", "PASS")
+    assert good.detail == "resolves CLAUDE.md; skills discovery wired"
+    bad = smoke._config_harness_result(clone, "claude", {"resolves": ["nope.md"]}, by_backend)
+    assert (bad.stage, bad.name, bad.status) == ("config", "claude", "FAIL")
+    assert bad.detail.startswith("nope.md is missing; nope.md is not registered")
+
+
+def test_fingerprint_registry_result_passes_and_fails() -> None:
+    good = smoke._fingerprint_registry_result({"claude": ("CLAUDE.md",), "pi": ("a", "b")})
+    assert (good.name, good.status) == ("fingerprint-registry", "PASS")
+    assert "registers 3 prompt path(s) across 2 backend(s)" in good.detail
+    bad = smoke._fingerprint_registry_result({})
+    assert (bad.name, bad.status) == ("fingerprint-registry", "FAIL")
+    assert "missing, unreadable, or registers no prompt paths" in bad.detail
+
+
+def test_bare_agents_md_result_passes_and_fails(clone: Path) -> None:
+    good = smoke._bare_agents_md_result(clone)
+    assert (good.name, good.status) == ("no-bare-agents-md", "PASS")
+    (clone / "AGENTS.md").write_text("x\n", encoding="utf-8")
+    bad = smoke._bare_agents_md_result(clone)
+    assert (bad.name, bad.status) == ("no-bare-agents-md", "FAIL")
+    assert bad.detail.startswith("AGENTS.md exists")
+
+
+def test_stage_config_reports_an_unreadable_registry(clone: Path) -> None:
+    (clone / smoke.FINGERPRINTS_REL).unlink()
+    results = smoke.stage_config(clone, smoke.load_invocations(clone))
+    statuses = {r.name: r.status for r in results}
+    assert statuses["fingerprint-registry"] == "FAIL"
+    assert statuses["no-bare-agents-md"] == "PASS"
+    assert all(statuses[name] == "FAIL" for name in smoke.HARNESSES)
+
+
+def _guild_payload(expected: str, **changes: object) -> dict:
+    payload: dict = {"prompt_file": expected, "plan": {"steps": ["mkdir", f"write {expected}"]}}
+    payload.update(changes)
+    return payload
+
+
+def test_guild_payload_result_accepts_a_plan_that_names_and_writes_the_file() -> None:
+    result = smoke._guild_payload_result(
+        "claude", "claude", "CLAUDE.md", _guild_payload("CLAUDE.md")
+    )
+    assert (result.stage, result.name, result.status) == (
+        "toolchain",
+        "guild-create/claude",
+        "PASS",
+    )
+    assert result.detail == "--harness claude names and writes CLAUDE.md"
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected_detail"),
+    [
+        ({"applied": True}, "guild create reported applied=true for a dry-run"),
+        (
+            {"prompt_file": "X.md"},
+            "--harness claude named prompt_file 'X.md', expected 'CLAUDE.md'",
+        ),
+        (
+            {"plan": {"steps": ["write other"]}},
+            "--harness claude declares prompt_file 'CLAUDE.md' but no planned step "
+            "writes it: write other",
+        ),
+        (
+            {"plan": None},
+            "--harness claude declares prompt_file 'CLAUDE.md' but no planned step writes it: ",
+        ),
+    ],
+    ids=["applied", "wrong-prompt-file", "no-step-writes-it", "no-plan"],
+)
+def test_guild_payload_result_fails_each_wrong_plan(changes: dict, expected_detail: str) -> None:
+    payload = _guild_payload("CLAUDE.md", **changes)
+    result = smoke._guild_payload_result("claude", "claude", "CLAUDE.md", payload)
+    assert (result.name, result.status) == ("guild-create/claude", "FAIL")
+    assert result.detail == expected_detail
+
+
+def test_guild_exit_result_skips_without_output_and_fails_with_it() -> None:
+    silent = subprocess.CompletedProcess(["guild"], 127, "  \n", "not installed\n")
+    skipped = smoke._guild_exit_result("pi", "pi", silent)
+    assert (skipped.name, skipped.status) == ("guild-create/pi", "SKIP")
+    assert skipped.detail == "guild create unavailable (exit 127): not installed"
+    spoke = subprocess.CompletedProcess(["guild"], 3, "{}", "backend down")
+    failed = smoke._guild_exit_result("pi", "pi", spoke)
+    assert (failed.name, failed.status) == ("guild-create/pi", "FAIL")
+    assert failed.detail == "guild create exited 3 for --harness pi: backend down"
+
+
+def _stub_guild(monkeypatch: pytest.MonkeyPatch, outcome) -> list[list[str]]:
+    """Replace the tool runner; ``outcome(argv, expected)`` answers or raises."""
+    calls: list[list[str]] = []
+    expected_by_guild_name = dict(smoke.GUILD_HARNESS.values())
+
+    def fake_run(argv: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
+        calls.append(argv)
+        return outcome(argv, expected_by_guild_name[argv[argv.index("--harness") + 1]])
+
+    monkeypatch.setattr(smoke, "_run", fake_run)
+    return calls
+
+
+def _guild_one(clone: Path, name: str, harnesses: dict | None = None):
+    harnesses = harnesses or smoke.load_invocations(clone)
+    return smoke._guild_create_result(clone, ["guild"], name, harnesses, 5)
+
+
+def test_guild_create_result_passes_on_a_good_dry_run(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _stub_guild(
+        monkeypatch,
+        lambda argv, expected: subprocess.CompletedProcess(
+            argv, 0, json.dumps(_guild_payload(expected)), ""
+        ),
+    )
+    for name in smoke.HARNESSES:
+        result = _guild_one(clone, name)
+        assert (result.name, result.status) == (f"guild-create/{name}", "PASS"), result.detail
+    assert len(calls) == len(smoke.HARNESSES)
+    assert calls[0][:2] == ["guild", "create"]
+    assert calls[0][-1] == "--json"
+
+
+def test_guild_create_result_fails_without_running_when_the_yaml_drops_the_file(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _stub_guild(monkeypatch, lambda argv, expected: pytest.fail("guild must not be run"))
+    harnesses = smoke.load_invocations(clone)
+    harnesses["qwen"] = dict(harnesses["qwen"], resolves=[])
+    result = _guild_one(clone, "qwen", harnesses)
+    assert (result.name, result.status) == ("guild-create/qwen", "FAIL")
+    assert "is not among this harness's resolves []" in result.detail
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError("boom"), subprocess.TimeoutExpired(["guild"], 5)],
+    ids=["os-error", "timeout"],
+)
+def test_guild_create_result_skips_when_guild_cannot_be_run(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def outcome(argv: list[str], expected: str):
+        raise error
+
+    _stub_guild(monkeypatch, outcome)
+    result = _guild_one(clone, "claude")
+    assert (result.name, result.status) == ("guild-create/claude", "SKIP")
+    assert result.detail.startswith("could not run guild: ")
+
+
+def test_guild_create_result_judges_a_nonzero_exit(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_guild(
+        monkeypatch, lambda argv, expected: subprocess.CompletedProcess(argv, 2, "", "gone")
+    )
+    result = _guild_one(clone, "claude")
+    assert (result.status, result.detail) == ("SKIP", "guild create unavailable (exit 2): gone")
+
+
+def test_guild_create_result_fails_on_unparseable_output(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_guild(
+        monkeypatch, lambda argv, expected: subprocess.CompletedProcess(argv, 0, "not json", "")
+    )
+    result = _guild_one(clone, "claude")
+    assert result.status == "FAIL"
+    assert result.detail == "guild create --json emitted unparseable output: not json"
+
+
+def test_check_guild_create_skips_once_when_no_tool_is_available(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smoke, "_tool_argv", lambda binary, dist: None)
+    results = smoke.check_guild_create(clone, smoke.load_invocations(clone), 5)
+    assert [(r.name, r.status) for r in results] == [("guild-create", "SKIP")]
+    assert "were NOT run" in results[0].detail
+
+
+def test_check_guild_create_gives_one_result_per_harness(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smoke, "_tool_argv", lambda binary, dist: [binary])
+    _stub_guild(
+        monkeypatch,
+        lambda argv, expected: subprocess.CompletedProcess(
+            argv, 0, json.dumps(_guild_payload(expected)), ""
+        ),
+    )
+    results = smoke.check_guild_create(clone, smoke.load_invocations(clone), 5)
+    assert [r.name for r in results] == [f"guild-create/{name}" for name in smoke.HARNESSES]
+    assert all(r.status == "PASS" for r in results)

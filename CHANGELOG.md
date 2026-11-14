@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-11-14
+
+### Fixed
+
+- Thirteen SonarCloud findings on main are addressed: the two example command-line scripts (the real-vector probe and the workforce data-file example) now refuse a path outside the current folder, and the harness smoke check and the secret scanner are split into smaller steps with unchanged results.
+
 ## [0.11.1] - 2026-11-14
 
 ### Fixed
