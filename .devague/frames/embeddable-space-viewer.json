@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T02:17:50Z",
+  "updated": "2026-11-14T02:32:41Z",
   "claims": [
     {
       "id": "c1",
@@ -1078,6 +1078,28 @@
       "skipped_check": "red run of the lost-time tests; browser tests of robustness paths and light styles",
       "refs": [
         "t8"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l16",
+      "code": "assumption-for-measurement",
+      "what": "t10: the dev demo page was never opened in a browser; mode and seed attribute changes are tested on the fake DOM only; redirect handling is covered only by a node test with a fake response URL; the browser test's lit-pixel check depends on frame ordering (stable in 4 runs); the wheel was not rebuilt by the agent after the last commit. Main agent rebuilt the wheel after merge and it carries web-component.js.",
+      "skipped_check": "browser run of the dev demo; browser test of mode and seed changes and of a real redirect",
+      "refs": [
+        "t10"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l17",
+      "code": "grader-unverified",
+      "what": "t18: the guide fixes made after the cold reader's feedback (count-0 dimension, what counts as corpus text, float32 overflow, dimensions 1 and 2) were not re-read by a second cold reader; the text given to the cold reader omitted some non-format paragraphs so it was not byte-identical to producer.md; the standalone-page example test has never run (shipped files absent until t11 merges); host-guide performance numbers are copied from API documents, not measured. The agent reported an intermittent remount failure in its script-example browser test without finding the cause: main agent traced it to the test's wait helper returning the first non-empty note text (failed 4 of 6 runs), fixed the helper, and the test then passed 8 of 8. The web-component example now passes against the real component.",
+      "skipped_check": "second cold read after guide fixes; standalone example run",
+      "refs": [
+        "t18"
       ],
       "origin": "llm",
       "status": "proposed"

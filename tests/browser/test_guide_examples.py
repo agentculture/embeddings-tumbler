@@ -144,6 +144,22 @@ def _wait(page, probe, ms=30000):
     return page.evaluate(probe)
 
 
+def _wait_text(page, selector, needle, ms=30000):
+    """Poll until the element's text contains ``needle``; return the last text seen.
+
+    ``_wait`` returns the first truthy value, so it cannot wait for a note that
+    already holds older text to change.
+    """
+    probe = _text(page, selector)
+    text = page.evaluate(probe)
+    for _ in range(ms // 100):
+        if needle in text:
+            break
+        page.wait_for_timeout(100)
+        text = page.evaluate(probe)
+    return text
+
+
 def _text(page, selector):
     return f"() => (document.querySelector('{selector}') || {{}}).textContent || ''"
 
@@ -174,15 +190,21 @@ def test_script_form_page_draws_appends_and_destroys_swiftshader(opened):
     if form != "script":
         pytest.skip("not this form")
     _open(page, base, "/example.html")
-    assert "Showing 320 points." in _wait(page, _text(page, "#note")), "never showed the data"
+    assert "Showing 320 points." in _wait_text(
+        page, "#note", "Showing 320 points."
+    ), "never showed the data"
     assert _lit(page) > 50, "the picture is blank"
     page.click("#add")
-    assert "Showing 321 points." in _wait(page, _text(page, "#note")), "append did not land"
+    assert "Showing 321 points." in _wait_text(
+        page, "#note", "Showing 321 points."
+    ), "append did not land"
     page.click("#toggle")
     assert page.evaluate("() => document.getElementById('space').children.length") == 0
     assert "removed" in page.evaluate(_text(page, "#note"))
     page.click("#toggle")
-    assert "Showing 320 points." in _wait(page, _text(page, "#note")), "remount failed"
+    assert "Showing 320 points." in _wait_text(
+        page, "#note", "Showing 320 points."
+    ), "remount failed"
     assert _lit(page) > 50
     _clean(base, errors, requests, page)
 
@@ -192,10 +214,14 @@ def test_web_component_form_page_draws_appends_and_releases_swiftshader(opened):
     if form != "web-component":
         pytest.skip("not this form")
     _open(page, base, "/example.html")
-    assert "Showing 320 points." in _wait(page, _text(page, "#note")), "never showed the data"
+    assert "Showing 320 points." in _wait_text(
+        page, "#note", "Showing 320 points."
+    ), "never showed the data"
     assert _lit(page) > 50, "the picture is blank"
     page.click("#add")
-    assert "Showing 321 points." in _wait(page, _text(page, "#note")), "append did not land"
+    assert "Showing 321 points." in _wait_text(
+        page, "#note", "Showing 321 points."
+    ), "append did not land"
     # Removing the element releases the viewer (the guide says so).
     released = page.evaluate("""() => { const el = document.getElementById('space'); el.remove();
                    return new Promise((ok) => setTimeout(

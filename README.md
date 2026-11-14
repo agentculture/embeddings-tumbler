@@ -60,6 +60,15 @@ What it will be (planned):
   package.
 - **Data stays put.** The viewer sends text, labels and vectors nowhere.
 
+## Guides
+
+- [Host guide](docs/guides/host.md): put the viewer on your own page as a
+  script, a web component or a standalone page; theming, lifecycle, refusals.
+- [Producer guide](docs/guides/producer.md): write a data file from your own
+  vectors. It says what the file carries and how to leave text out.
+- [Data contract](docs/data-contract.md): the authority the producer guide
+  restates.
+
 ## Repository scaffold
 
 The repository was scaffolded from `culture-agent-template`, which provides the
