@@ -4,27 +4,54 @@ A ready page around one viewer, after the reference demo: a full-bleed night
 sky with the instrument panel beneath it and a note for each mode. Sources
 `js/page/index.html`, `js/page/page.css` and `js/page/page.js`, shipped
 byte-identical and flat in `embeddings_tumbler/static/` by
-`python3 scripts/sync_static.py`. It needs the core file and, for the sample
-set, `sample-data.js` in the same folder:
+`python3 scripts/sync_static.py`. It needs the core file and, in the same
+folder, the Wikipedia pair for its default data and `sample-data.js` for the
+synthetic sample set:
 
 ```text
-index.html  page.css  page.js  embeddings-tumbler.js  sample-data.js
+index.html  page.css  page.js  embeddings-tumbler.js
+demo-wikipedia.json  demo-wikipedia.f32  sample-data.js
 ```
 
-`embeddings-tumbler viewer write <folder> --apply` puts all five in a folder;
+`embeddings-tumbler viewer write <folder> --apply` puts them all in a folder
+(with `web-component.js`, which the page does not use);
 `embeddings-tumbler viewer serve <folder>` serves it on loopback.
 
 ## Query parameters
 
 | Parameter | Meaning |
 |-----------|---------|
-| (none) | Show the built-in sample set (`EmbeddingsTumbler.sample.generate()`, its defaults). |
-| `data` | Address of a data file (the contract's file form, a `.json` with its `.f32` block beside it), relative to the page or an absolute URL **on the page's own origin**. Anything else is refused with a plain message and nothing is requested. An empty `data=`, or one of only spaces, means no data file: the sample set. |
-| `mode` | Starting mode: `tumble` (default), `lattice` or `wander`. An unknown id falls back to `tumble` (the viewer's rule). |
+| (none) | Show the Wikipedia pair shipped beside the page (`demo-wikipedia.json` and its `.f32` block): 999 of English Wikipedia's vital articles (Level 3), text under CC BY-SA 4.0 (see `NOTICE`). When the pair cannot be read (a `file:` page, a folder without it) or the viewer refuses it, the page shows the synthetic sample set instead, with a line saying why. |
+| `sample` | `sample=synthetic` shows the built-in synthetic sample set (`EmbeddingsTumbler.sample.generate()`, its defaults). Any other value is ignored. A link under the notes switches between the two sets. |
+| `data` | Address of a data file (the contract's file form, a `.json` with its `.f32` block beside it), relative to the page or an absolute URL **on the page's own origin**. Anything else is refused with a plain message and nothing is requested. An empty `data=`, or one of only spaces, means no data file: the default set. |
+| `mode` | Starting mode: `tumble` (default), `lattice`, `wander` or `focus`. An unknown id falls back to `tumble` (the viewer's rule). |
 | `seed` | The view seed. Digits (optionally signed, with a decimal part) are read as a number, anything else as a string. Not the data's `provenance.seed`; the provenance block shows both. |
 
-Examples: `index.html`, `index.html?data=sets/atlas.json`,
+Examples: `index.html`, `index.html?sample=synthetic`,
+`index.html?data=sets/atlas.json`,
 `index.html?data=atlas.json&mode=wander&seed=7`.
+
+## Search
+
+The viewer's search panel is on the page as on any mount. Before mounting, the
+page asks its own origin whether the helper route of `viewer serve --embed` is
+there: `POST /_tumbler/search` with `{ "op": "describe" }`. The address is fixed
+in `page.js`; no query parameter and no data file field can change it.
+
+- A `200` JSON answer with `"ok": true` and an embed model: the viewer is
+  mounted with an `embed` callback that posts `{ "op": "embed", "text" }` to the
+  same route and returns `{ vector, model, queryForm }`, and, when the answer
+  offers `rerank`, a `rerank` callback that posts `{ "op": "rerank", "query",
+  "candidates" }` and returns `{ scores, model }`. Each candidate is cut to the
+  route's `maxCandidateChars`, and a call with more candidates than its
+  `maxCandidates` is not sent.
+- Anything else (a 404 or 501 from a static server, a network error, an answer
+  that is not JSON): no callbacks, and search matches the loaded points.
+
+The page makes requests only to its own origin. The gateway address and key
+stay in the helper's server process (`docs/search-interface.md`, "Helper route
+(t5)"); the host guide (`docs/guides/host.md`, "Search") and the search guide
+(`docs/guides/search.md`) describe both sides for readers.
 
 ## Loading a data file
 
@@ -78,7 +105,7 @@ the block problem. The core's `loadFile` reports the field first. Both refuse.
 
 - **The viewer** (mounted once, by `EmbeddingsTumbler.mount`) with
   `title: "Embedding Tumbler"` and `provenanceOpen: false`: the stage with the
-  masthead (title and the counts line), the status line, the three mode tabs,
+  masthead (title and the counts line), the status line, the four mode tabs,
   the readout strip, the controls and the provenance block. The block starts
   collapsed; its summary line still names the source, model, dimension, item
   count, seeds, "synthetic" when it is, and that a projection is a shadow of
@@ -88,8 +115,9 @@ the block problem. The core's `loadFile` reports the field first. Both refuse.
   and the Lattice wire count are filled in from the data after the set loads;
   nothing in the page hard-codes a dimension. A mode with no note (one a host
   registered) hides the notes.
-- **A closing note**: for the sample set, the reference's "The data is
-  synthetic: …"; for a data file, that the vectors came from that file and
+- **A closing note**: for the Wikipedia set, what the vectors are, how many
+  articles, the model and the text's licence; for the sample set, the
+  reference's "The data is synthetic: …"; for a data file, that the vectors came from that file and
   that the provenance block says where they came from.
 
 All text the page writes is set with `textContent`. Everything shown from the

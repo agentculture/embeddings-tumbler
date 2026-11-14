@@ -81,6 +81,7 @@
       neighboursOf: neighboursOf,
       retained: retained,
       mark: function () {}, // Wander has no events to fix
+      face: face,
       leave: leave,
     };
 
@@ -108,6 +109,7 @@
     var ahead = null; // the next hop's work in progress: { h, j, c, scan, fit }
     var out = null;
     var tmpC = null;
+    var swings = null; // the swings toward the searches (M.makeSwings)
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Wander");
@@ -130,6 +132,7 @@
       cur = { h: -1, prev: -1, recent: [], frame: startFrame };
       hopsComputed = 0;
       ahead = null;
+      swings = M.makeSwings(D, seed);
       self.time = 0;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
       tmpC = new Float64Array(D);
@@ -411,47 +414,119 @@
       return { h: h, local: t - h * cycle };
     }
 
+    // The hop at t (not during a swing): with no swing before t, hopAt(t). After
+    // a swing (sw, ended by t) a new leg starts at its end U with the hop after
+    // the one the swing interrupted (sw.info.hT); `first` marks the leg's first
+    // hop, which flies from the frame and centre shown at U.
+    function legAt(sw, t) {
+      if (!sw) return hopAt(t);
+      var lt = t - sw.U;
+      var k = Math.floor(lt / cycle);
+      return { h: sw.info.hT + 1 + k, local: lt - k * cycle, first: k === 0 };
+    }
+
+    // The hop in progress at t: during a swing, the hop it interrupted.
+    function hopInProgress(t) {
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return sw.info.hT;
+      return legAt(sw, t).h;
+    }
+
+    // A route frame as shown in the leg after swing sw: its axes relabelled
+    // (order and sign) to match the frame shown at the swing's end, the same
+    // relabelling for every hop of the leg, so the hops stay aligned to each other.
+    function legFrame(sw, f) {
+      return sw ? M.applyAlignment(f, sw.cache.al, D) : f;
+    }
+
     function stateAt(time) {
       var t = M.checkTime(time);
       out.t = t;
       if (!ready || empty) return M.holdState(out, startFrame, entry, t, status(t));
-      var hp = hopAt(t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return swingingState(sw, t);
+      var hp = legAt(sw, t);
       var h = hp.h;
+      var end = sw ? legEnd(sw) : null;
       ensure(h - 1);
       ensure(h);
       var prevRec = rec(h - 1);
       var hereRec = rec(h);
       workAhead(h + 1);
+      var first = !!hp.first;
       var j = hereRec.target;
-      var fromF = prevRec.frame;
-      var toF = hereRec.frame;
-      var X = set.vectors;
-      var oj = j * D;
-      var phase;
-      var e;
-      if (hp.local < opt.travel) {
-        phase = "travel";
-        e = ET.math.smoothstep(hp.local / opt.travel);
-        var oc = h > 0 ? prevRec.target * D : -1;
-        for (var d = 0; d < D; d++) {
-          var a = oc >= 0 ? X[oc + d] : startCentre[d];
-          tmpC[d] = a + (X[oj + d] - a) * e;
-        }
-        for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
-        ET.math.blendFrames(fromF, toF, e, D, out.frame);
-      } else {
-        phase = "dwell";
-        e = 1;
-        for (var d3 = 0; d3 < D; d3++) out.centre[d3] = X[oj + d3];
-        ET.math.blendFrames(fromF, toF, 1, D, out.frame);
-      }
+      var prev = h > 0 && !first ? prevRec.target : -1; // the stop flown from, or -1
+      var travelling = hp.local < opt.travel;
+      var e = travelling ? ET.math.smoothstep(hp.local / opt.travel) : 1;
+      var from = flightStart(sw, first, prevRec);
+      if (travelling) travelCentre(prev, from.centre, j, e);
+      else stopCentre(j);
+      ET.math.blendFrames(from.frame, legFrame(sw, hereRec.frame), e, D, out.frame);
       out.focus = {
-        phase: phase,
-        from: h > 0 ? prevRec.target : -1,
+        phase: travelling ? "travel" : "dwell",
+        from: prev,
         to: j,
         e: e,
         neighbours: Int32Array.from(nearVisits(ctx, j, opt.spokes)),
       };
+      out.draw = drawAt(t);
+      // The centre needs no blend: the leg's first hop flies from the centre shown at U.
+      if (sw) out.draw.zoom = end.zoom + (out.draw.zoom - end.zoom) * M.swingRelease(sw, t, opt.transition);
+      out.status = status(t);
+      return out;
+    }
+
+    // The centre during a flight: e of the way from stop `prev` (from `fromC` when there is
+    // no previous stop, prev < 0) to stop j.
+    function travelCentre(prev, fromC, j, e) {
+      var X = set.vectors;
+      var oc = prev * D;
+      var oj = j * D;
+      for (var d = 0; d < D; d++) {
+        var a = prev >= 0 ? X[oc + d] : fromC[d];
+        tmpC[d] = a + (X[oj + d] - a) * e;
+      }
+      for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
+    }
+
+    // The centre while the camera dwells at stop j: the stop itself.
+    function stopCentre(j) {
+      var X = set.vectors;
+      var oj = j * D;
+      for (var d = 0; d < D; d++) out.centre[d] = X[oj + d];
+    }
+
+    // The state shown at swing sw's end, with the leg's relabelling of route
+    // frames worked out (once) against it.
+    function legEnd(sw) {
+      var end = M.swingEnd(sw);
+      if (!sw.cache.al) {
+        ensure(sw.info.hT + 1);
+        sw.cache.al = M.alignment(rec(sw.info.hT + 1).frame, end.frame, D);
+      }
+      return end;
+    }
+
+    // Where a flight starts: the frame and the centre used when there is no
+    // previous stop. A leg's first hop starts from the state shown at the swing's end.
+    function flightStart(sw, first, prevRec) {
+      if (first) return M.swingEnd(sw);
+      return { frame: legFrame(sw, prevRec.frame), centre: startCentre };
+    }
+
+    // During a swing: the swing's frame, centre and zoom; the spokes of the hop
+    // it interrupted, as they were at its start.
+    function swingingState(sw, t) {
+      var zoom = M.swingState(sw, t, out.frame, out.centre);
+      workAhead(sw.info.hT + 1); // the next leg's first stop, ahead of need
+      out.focus = sw.info.focus;
+      out.draw = drawAt(t);
+      out.draw.zoom = zoom;
+      out.status = status(t);
+      return out;
+    }
+
+    function drawAt(t) {
       var draw = {
         zoom: opt.zoom / scale,
         wires: 0,
@@ -463,9 +538,27 @@
         twinkle: 0.18,
         depthOfField: 1.1,
       };
-      out.draw = M.blendDraw(draw, entry, t, opt.transition);
-      out.status = status(t);
-      return out;
+      return M.blendDraw(draw, entry, t, opt.transition);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t. The swing remembers the hop it
+    // interrupts (hT) and that hop's spokes.
+    function face(target, time, options) {
+      if (!ready || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var prior = swings.at(T);
+        var hT = prior && T < prior.U ? prior.info.hT : legAt(prior, T).h;
+        var s = stateAt(T);
+        var f = s.focus ? { ...s.focus, neighbours: new Int32Array(s.focus.neighbours) } : null;
+        return {
+          frame: new Float32Array(s.frame),
+          centre: new Float32Array(s.centre),
+          zoom: s.draw.zoom,
+          info: { hT: hT, focus: f },
+        };
+      });
     }
 
     // A point's name for the status line, cut to 24 characters so the line
@@ -476,13 +569,13 @@
       return n.length > 24 ? n.slice(0, 23) + "…" : n;
     }
 
-    function describeStop(h, phase) {
+    function describeStop(h, phase, first) {
       var j = rec(h).target;
       if (phase === "dwell") {
         var g = groupOf(j);
         return 'at "' + nameOf(j) + '"' + (g ? " · " + g : "") + " · stop " + (h + 1);
       }
-      var i = h > 0 ? rec(h - 1).target : -1;
+      var i = h > 0 && !first ? rec(h - 1).target : -1;
       var gj = groupOf(j);
       var far = i >= 0 && gj !== "" && groupOf(i) !== gj;
       return (i >= 0 ? '"' + nameOf(i) + '" → ' : "heading to ") + '"' + nameOf(j) + '"' + (far ? " · long leap to " + gj : "");
@@ -497,10 +590,12 @@
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
       if (!ready) return "getting ready to wander …";
-      var hp = hopAt(t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return M.swingStatus(sw, "wandering");
+      var hp = legAt(sw, t);
       ensure(hp.h - 1);
       ensure(hp.h);
-      return describeStop(hp.h, hp.local < opt.travel ? "travel" : "dwell");
+      return describeStop(hp.h, hp.local < opt.travel ? "travel" : "dwell", hp.first);
     }
 
     // Append: the hops up to the one in progress at time t are kept (so the view
@@ -519,7 +614,9 @@
         enter(newSet, { seed: seed, from: from });
         return M.changed(prepare(), true);
       }
-      var h = hopAt(t).h;
+      var h = hopInProgress(t);
+      // A leg that starts after h re-relabels its frames against the stops chosen again.
+      for (var sw of swings.list) if (sw.info.hT >= h) sw.cache.al = null;
       // Keep the route up to hop h (computed with the data so far); drop the rest.
       ensure(h);
       if (cur.h > h) {
@@ -578,6 +675,7 @@
         dwell: opt.dwell,
         labelled: ctx ? ctx.labelled : 0,
         visiting: ctx?.labelled >= 2 ? "labelled points" : "any point",
+        facing: swings ? swings.describe() : null,
         empty: empty,
         varianceShare: null,
       };

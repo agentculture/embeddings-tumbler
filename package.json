@@ -1,6 +1,6 @@
 {
   "name": "@culture.dev/embeddings-tumbler",
-  "version": "0.11.6",
+  "version": "0.12.0",
   "description": "Drop-in viewer for embedding spaces: a moving 3-D window through the full-dimensional space. One dependency-free script with mount, update and destroy.",
   "keywords": [
     "embeddings",
@@ -30,6 +30,8 @@
     "./index.html": "./embeddings_tumbler/static/index.html",
     "./page.css": "./embeddings_tumbler/static/page.css",
     "./page.js": "./embeddings_tumbler/static/page.js",
+    "./demo-wikipedia.json": "./embeddings_tumbler/static/demo-wikipedia.json",
+    "./demo-wikipedia.f32": "./embeddings_tumbler/static/demo-wikipedia.f32",
     "./package.json": "./package.json"
   },
   "files": [
@@ -39,8 +41,11 @@
     "embeddings_tumbler/static/index.html",
     "embeddings_tumbler/static/page.css",
     "embeddings_tumbler/static/page.js",
+    "embeddings_tumbler/static/demo-wikipedia.json",
+    "embeddings_tumbler/static/demo-wikipedia.f32",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "sideEffects": true,
   "publishConfig": {

@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T14:30:12Z",
+  "updated": "2026-11-14T21:05:07Z",
   "claims": [
     {
       "id": "c1",
@@ -807,6 +807,44 @@
       "links": [],
       "instruction": "docs/specs/reference/tumbler-sky-search.html shows it: the share of each axis in the cell's contribution weights three fixed colours, and a legend names them.",
       "revisions": []
+    },
+    {
+      "id": "c48",
+      "kind": "requirement",
+      "text": "The demo's default data is real: about 1,000 items taken from Wikipedia and embedded by a real model, small enough to ship (about 4 MB). The synthetic set from the reference stays available.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h35",
+          "text": "The provenance on the page names the source (Wikipedia, with the list and the retrieval date), the model and the licence of the text; the set is produced by a committed script from a committed list so it can be rebuilt; the package stays under 5 MB; and the synthetic set still loads when asked for.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Owner's words on 2026-11-14: 'keep existing fake or use wikipedia real data, but keep the size small (4m, 1000 items is fine)'. Asked for after seeing that 'sear' and 'searing' are unrelated in the synthetic set, where a real model puts them at 0.212.",
+      "revisions": []
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "A search takes more candidates and can keep the best of them: the nearest N by embedding are the candidates (3 to 100, 50 by default), and with the reranker on the top X of them are kept (20 by default). With no reranker the results stay at 8 by default and can be raised to 100.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h36",
+          "text": "The number of candidates and the number kept are both shown wherever a search states what it used; the lit radius follows the results actually kept; the reranker never sees more than the stated number of candidates; and the embed route's own limit admits 100 candidates.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Owner's words on 2026-11-14: 'we need more results, 50 or 100, and add reranker and top x out of that (top 20?)', then chose '50 candidates, top 20'. This replaces the earlier range of 3 to 20 results.",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -917,7 +955,182 @@
       ]
     }
   ],
-  "lapses": [],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "assumption-for-measurement",
+      "what": "t16: the agent never saw the coloured strip rendered; every check ran on the fake canvas and DOM, and its contrast figures are its own calculation. The darker colours for a light background are the agent's choice; the owner approved only the dark three. Main agent then loaded the shipped standalone page in Chromium: 384 cells, about 31 distinct colours, cells led by each axis roughly in thirds, legend colours as specified on dark and on light, no errors.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l2",
+      "code": "assumption-for-measurement",
+      "what": "t1: the helper route's rerank request and answer shape is an assumption about the gateway, not checked; the limits and timeouts in the interface (text length, candidates, rate, body size, 15 s and 20 s) and the under-4-ms stepper rule are judgement, not measurement; the cost of the pair reports is estimated, not timed; the Focus reference page and the viewer and web component sources were read only in part. The plan names js/api/39-modes.md, which is js/api/40-modes.md.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "assumption-for-measurement",
+      "what": "t2: line coverage was not measured by the agent (its loader hides the module from node's coverage); the under-4-ms unit was met in warm runs but a cold first unit under load took 4.1 ms plain and 13 ms scaled; nothing was run in a browser. Main agent measured coverage with the CI method after merge.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "assumption-for-measurement",
+      "what": "t5: built and tested only against a fake gateway; SonarCloud has not scanned it; cognitive complexity was judged by reading; idle connections are not capped and one rate window covers all tabs. Main agent then ran the route against the real gateway: embed returned a 1,024-d unit vector with its model id, rerank returned scores from the gateway's reranker (so the assumed request shape is correct), a foreign Origin got 403 and text/plain got 415, no CORS header was sent, and the server log held neither the gateway address, a key nor the query text.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l5",
+      "code": "control-absent",
+      "what": "t4: tests were written after the implementation; the old-build-against-new frame comparison was a one-time check, not a permanent test; the relayout path with lit values set is untested (it needs about 16 million points); the light-stage check uses a page that copies the viewer's light treatment, not the viewer; thresholds were set after seeing the numbers, with the tightest margin on the light stage; the object leak count is the agent's own wrapper.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l6",
+      "code": "assumption-for-measurement",
+      "what": "t3: all timings were taken at load averages of 18 to 32 and are noisy; cold first calls of the pair reports exceeded 8 ms under that load, and it stays one blocking call; no test asserts a time, only that work is split into units; the committed tests use hand-built rankings, and the check against the real ranking module was a scratch script; one interface clarification (when the closest pair is null) rests on the agent's reading of the reference.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l7",
+      "code": "control-absent",
+      "what": "t7: the module was written before its tests; the stepper returned by searchChanged is the agent's own decision and the viewer task had not been checked against it; the view was not looked at in a browser; the cost of re-fitting on every append was not measured; the full suite was not re-run by the agent after its last fix (main agent ran it after merge: all pass).",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l8",
+      "code": "n-below-claim",
+      "what": "t6: implementation before tests; coverage not re-measured after the last test; the swing's speed and jump figures come from one 48-d sample set and one seed, and the test bounds were chosen from those same measurements; lazily cached values after a swing could depend on query order in an untested edge case; nothing was run in a browser. Criterion 1 does not hold literally for Wander, which already holds its frame for 2 s at each stop with or without a search.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l9",
+      "code": "assumption-for-measurement",
+      "what": "t8: nothing in a browser exercised search; the cost of the pair reports inside the viewer was not measured; complexity under 15 is the agent's estimate; 24 added lines (defensive branches) are uncovered. Main agent then drove search through the handle in Chromium: it works in all four modes with no errors, but found that results on the sample set are unnamed points (the build ranks every point, where the spec and the reference rank named points and light everything as near), that Wander with a search is almost dark (2 lit pixels of 57,600), and that Focus changes only 12 to 15 percent of its lit pixels per second.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l10",
+      "code": "assumption-for-measurement",
+      "what": "t10: no coverage figure for the web component's new lines (the shell is run through a function evaluation that the coverage tool cannot attribute, as before this change); the example embeds point ids only because the sample data carries no text; the search panel was not part of what was tested; the full suite was not re-run by the agent after its last comment edit (main agent ran it after merge).",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l11",
+      "code": "assumption-for-measurement",
+      "what": "t11: its browser tests import private helpers from another test file; the 'data file cannot redirect the route' case is tested only on a fake browser; only Chromium. Named-results fix: timings were taken at a load average near 58 and one single unit reached 12 ms; the sample-set result was measured in node, not a browser; the 4 ms unit limit is not proven because its test skips under load. Main agent then ran free-text search end to end on the real 311-point file through viewer serve --embed and the real gateway: two typed texts were embedded and lit their true neighbours, the reranker reordered them, every browser request stayed on the page's origin, and the server log held no key, gateway address or query text.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l12",
+      "code": "assumption-for-measurement",
+      "what": "t9: cognitive complexity not measured; a screen reader, keyboard-only use and focus order were not checked in a real browser; the light treatment was tested by changing the standalone page's properties at run time, not on a real light host; no browser test runs the panel against viewer serve --embed; the full Python suite was not re-run by the agent after its last fix (main agent ran it after merge: all pass). Differences from the two reference pages that it found were not written into the differences document (task t15 does that).",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l13",
+      "code": "control-absent",
+      "what": "Task agents ran node tests with no memory limit. One failed assertion on two fake page elements made node print and diff the whole object graph; the process passed 40 GB, was killed by the kernel at 19:35 and 19:45, the agent ran it a third time, and the machine was reset at about 20:04. Scratchpad files (briefs, rules, test page, state file) were lost with it.",
+      "skipped_check": "a memory cap and a timeout on every test run by an agent",
+      "refs": [
+        "js/test/search-panel.test.js in agent/search-morek; fixed in 02a4296"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l14",
+      "code": "provenance-missing",
+      "what": "t18 timings (scan, pair reports, facing frame at 100 results) are single-machine medians of 20 on a machine under varying load; the 'before' figures for 100 results used hit lists built by hand because the old code capped k at 20; the bench scripts were lost in the reset so the table in docs/search-interface.md cannot be re-run as written.",
+      "skipped_check": "",
+      "refs": [
+        "docs/search-interface.md, Measured with 100 candidates"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l15",
+      "code": "n-below-claim",
+      "what": "t18's new browser test ran only in Chromium at desktop width; the Candidates and Keep top controls were not looked at on a phone-width page or by the owner.",
+      "skipped_check": "",
+      "refs": [
+        "tests/browser/test_search_candidates.py"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l16",
+      "code": "assumption-for-measurement",
+      "what": "The phone fix was measured only in Chromium standing in for a phone (frame gate, CPU throttle, busy-wait in draw) on a loaded machine; ranges come from 2 to 4 runs, some of an earlier rule; no WebKit and no real phone. The Lattice target of about 5 s was met only in the best runs (5.9 to 20 s).",
+      "skipped_check": "a reading on the owner's phone",
+      "refs": [
+        "js/api/50-viewer.md, Slow devices"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l17",
+      "code": "grader-unverified",
+      "what": "tests/browser/test_search_look.py::test_lattice_wires_follow_the_search failed once on the unmodified base branch under heavy machine load (the wiki agent's control run); it passes in my full runs. A timing-sensitive test is in the suite and its threshold was not re-examined.",
+      "skipped_check": "",
+      "refs": [
+        "tests/browser/test_search_look.py"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l18",
+      "code": "n-below-claim",
+      "what": "t14: frame rate with four searches on software rendering is 11.6 to 16.3 frames per second against the 30 target (a miss, recorded); the corpus is a rebuild, not the earlier proof's; the reranker, a query prefix and the first-lit frame's pixels were not measured on real data.",
+      "skipped_check": "",
+      "refs": [
+        "docs/evidence/2026-11-14-real-search-proof.md"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
   "obligations": [
     {
       "id": "o1",
@@ -1060,6 +1273,24 @@
       "seam": "viewing frame -> readout strip",
       "behavior": "A cell's colour is the mix of the three axis colours weighted by that dimension's squared component on each axis; a dimension that feeds only one axis shows that axis's colour exactly; opacity equals the existing contribution formula.",
       "source_text": "Each cell of the readout strip is coloured by which screen axis its dimension feeds: it mixes three colours according to how much that dimension contributes to the picture's horizontal, vertical and depth axes. Opacity keeps meaning what it means now, the size of the contribution.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o17",
+      "claim_id": "c48",
+      "seam": "demo data -> person trying the viewer",
+      "behavior": "The standalone page opens on real vectors by default and says where they came from, by which model and under which licence; neighbours in it reflect meaning (a real model's distances), and the synthetic set is one explicit choice away.",
+      "source_text": "The demo's default data is real: about 1,000 items taken from Wikipedia and embedded by a real model, small enough to ship (about 4 MB). The synthetic set from the reference stays available.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o18",
+      "claim_id": "c49",
+      "seam": "candidates -> reranker -> results",
+      "behavior": "N candidates are taken by full-space distance among named points; with a reranker the top X by its scores are the results; without one the first K by distance are; every count is stated.",
+      "source_text": "A search takes more candidates and can keep the best of them: the nearest N by embedding are the candidates (3 to 100, 50 by default), and with the reranker on the top X of them are kept (20 by default). With no reranker the results stay at 8 by default and can be raised to 100.",
       "origin": "llm",
       "status": "approved"
     }

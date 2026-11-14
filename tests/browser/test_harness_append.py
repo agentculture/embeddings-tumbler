@@ -182,7 +182,7 @@ def test_c5_negative_control_a_reload_is_detected(open_tab, site):
 
 def test_tumble_finishes_preparing_under_reduced_motion_without_input(open_tab, site, webgl):
     tab = open_tab(reduced_motion="reduce")
-    tab.goto(site().url("index.html"))  # the shipped page with the built-in sample set
+    tab.goto(site().url("index.html?sample=synthetic"))  # the built-in sample set
     tab.wait_for(INFO, lambda i: bool(i and i["count"] and i["frames"]), arg="space")
     tab.page.wait_for_timeout(1000)
     status = tab.wait_for(

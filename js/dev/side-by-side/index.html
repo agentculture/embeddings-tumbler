@@ -9,29 +9,46 @@
 </head>
 <body>
 <header class="top">
-  <h1>Reference and build, side by side <small>development only, not shipped</small></h1>
-  <p>Left: the reference demo. Right: the built standalone page. The list below is
+  <h1>References and build, side by side <small>development only, not shipped</small></h1>
+  <p>Left: a reference page. Right: what was built, on the same or comparable data. The list below is
     <code>docs/reference-differences.md</code>, to check off as you compare. Ticking a box here
-    is not the sign-off; that is recorded in the document's last section.</p>
-  <fieldset class="bar" aria-label="Switch both pages">
+    is not the sign-off; that is recorded in the document.</p>
+  <fieldset class="bar" aria-label="Choose what to compare">
+    <span class="bar-label">Compare</span>
+    <button type="button" data-pair="first" aria-pressed="true"
+      data-ref="/docs/specs/reference/embedding-tumbler-demo.html"
+      data-build="/embeddings_tumbler/static/index.html?sample=synthetic">The first demo</button>
+    <button type="button" data-pair="sky" aria-pressed="false"
+      data-ref="/docs/specs/reference/tumbler-sky-search.html"
+      data-build="/embeddings_tumbler/static/index.html?sample=synthetic">Search in the views</button>
+    <button type="button" data-pair="focus" aria-pressed="false"
+      data-ref="/docs/specs/reference/tumbler-focus-view.html"
+      data-build="/js/dev/side-by-side/focus-build.html">Focus</button>
+  </fieldset>
+  <fieldset class="bar" id="mode-bar" aria-label="Switch both pages">
     <span class="bar-label">Show both in</span>
     <button type="button" data-mode="tumble" aria-pressed="true">Tumble</button>
     <button type="button" data-mode="lattice" aria-pressed="false">Lattice</button>
     <button type="button" data-mode="wander" aria-pressed="false">Wander</button>
     <button type="button" id="restart">Restart both</button>
   </fieldset>
+  <form class="both" id="search-bar" hidden>
+    <label for="both-query">Search both for <small id="both-hint"></small></label>
+    <textarea id="both-query" rows="3" spellcheck="false" autocomplete="off"></textarea>
+    <button type="submit">Search both</button>
+  </form>
   <output class="status" id="status">Loading both pages.</output>
 </header>
 
 <main>
   <section class="pair" aria-label="The two pages">
     <figure class="side">
-      <figcaption>Reference <small>embedding-tumbler-demo.html</small></figcaption>
+      <figcaption>Reference <small id="cap-ref">embedding-tumbler-demo.html</small></figcaption>
       <iframe id="frame-ref" title="The reference demo" src="/docs/specs/reference/embedding-tumbler-demo.html#tumble"></iframe>
     </figure>
     <figure class="side">
-      <figcaption>Build <small>embeddings_tumbler/static/index.html</small></figcaption>
-      <iframe id="frame-build" title="The built standalone page" src="/embeddings_tumbler/static/index.html?mode=tumble"></iframe>
+      <figcaption>Build <small id="cap-build">embeddings_tumbler/static/index.html, the synthetic sample set</small></figcaption>
+      <iframe id="frame-build" title="The built standalone page" src="/embeddings_tumbler/static/index.html?sample=synthetic&amp;mode=tumble"></iframe>
     </figure>
   </section>
 

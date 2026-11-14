@@ -77,6 +77,10 @@
     {
      "title": "The dimming, trails and wires no longer wait for the neighbours",
      "visible": "yes"
+    },
+    {
+     "title": "Crowded wires are dimmed instead of burning out to white",
+     "visible": "yes"
     }
    ]
   },
@@ -158,6 +162,10 @@
     {
      "title": "One cell per dimension of the data",
      "visible": "no"
+    },
+    {
+     "title": "The strip's cells are coloured by screen axis",
+     "visible": "yes"
     }
    ]
   },
@@ -208,6 +216,10 @@
     },
     {
      "title": "The same vectors, with the point weights and bridge colours rebuilt",
+     "visible": "slightly"
+    },
+    {
+     "title": "The page opens on real vectors, and the generated set is one choice away",
      "visible": "slightly"
     },
     {
@@ -274,6 +286,164 @@
     },
     {
      "title": "No style reset, so the reference has an 8 px page margin",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Search: where a query comes from and how it is ranked",
+   "items": [
+    {
+     "title": "A typed query is embedded by the host, or matched among the loaded points",
+     "visible": "no"
+    },
+    {
+     "title": "Which words a word search understands",
+     "visible": "yes"
+    },
+    {
+     "title": "Distance is cosine distance",
+     "visible": "slightly"
+    },
+    {
+     "title": "The reranker comes from the host",
+     "visible": "yes"
+    },
+    {
+     "title": "Candidates and Keep top, and up to 100 results",
+     "visible": "yes"
+    },
+    {
+     "title": "Every point as near as the last named result is lit, in Focus too",
+     "visible": "no"
+    },
+    {
+     "title": "The point of view is offered in every view, and the picture stays one linear frame",
+     "visible": "yes"
+    },
+    {
+     "title": "Refusals, waiting, stale results and latest-wins",
+     "visible": "slightly"
+    }
+   ]
+  },
+  {
+   "group": "Search: the panel",
+   "items": [
+    {
+     "title": "The panel starts empty",
+     "visible": "yes"
+    },
+    {
+     "title": "The wording of the bar, the note and the lists",
+     "visible": "yes"
+    },
+    {
+     "title": "Suggestions under the box in every view",
+     "visible": "yes"
+    },
+    {
+     "title": "Names and distances on the stage are page text and do not overlap",
+     "visible": "yes"
+    },
+    {
+     "title": "Links fade with rank",
+     "visible": "slightly"
+    },
+    {
+     "title": "Result lists show the text, not its group",
+     "visible": "yes"
+    },
+    {
+     "title": "A search line in the provenance block",
+     "visible": "yes"
+    },
+    {
+     "title": "Search colours for a light background",
+     "visible": "no"
+    }
+   ]
+  },
+  {
+   "group": "Search: Tumble, Lattice and Wander",
+   "items": [
+    {
+     "title": "The swing toward the searches is seeded and the same in every view",
+     "visible": "no"
+    },
+    {
+     "title": "Lattice's wires follow the search, and crowded wires are scaled down",
+     "visible": "yes"
+    },
+    {
+     "title": "Results are not fogged away in Wander",
+     "visible": "yes"
+    },
+    {
+     "title": "The view keeps turning while a mode prepares",
+     "visible": "slightly"
+    }
+   ]
+  },
+  {
+   "group": "Search: Focus",
+   "items": [
+    {
+     "title": "Focus is drawn by the viewer, not on a plain canvas",
+     "visible": "yes"
+    },
+    {
+     "title": "Focus is a view of the viewer, not a page of its own",
+     "visible": "yes"
+    },
+    {
+     "title": "Up to four searches in Focus",
+     "visible": "slightly"
+    },
+    {
+     "title": "Focus is always fitted to the results",
+     "visible": "yes"
+    },
+    {
+     "title": "Turning onto a new fit",
+     "visible": "slightly"
+    },
+    {
+     "title": "Points that are not results are fainter",
+     "visible": "unknown"
+    },
+    {
+     "title": "Hovering and the list",
+     "visible": "yes"
+    },
+    {
+     "title": "The status line",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Search: the page and its data",
+   "items": [
+    {
+     "title": "The page opens on real articles, not on the references' data",
+     "visible": "no"
+    },
+    {
+     "title": "Typed text can be embedded through a local helper",
+     "visible": "no"
+    }
+   ]
+  },
+  {
+   "group": "Search: open questions",
+   "items": [
+    {
+     "title": "The readout strip's axis colours on a light background",
+     "visible": "no"
+    },
+    {
+     "title": "Search A's amber beside the strip's orange",
      "visible": "yes"
     }
    ]

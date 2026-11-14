@@ -22,9 +22,9 @@ test("criterion 1: each mode lives in its own file and registers only itself", (
   }
 });
 
-test("criterion 1: with every module loaded the three modes are listed in order", () => {
+test("criterion 1: with every module loaded the four modes are listed in order", () => {
   const ET = F.freshET();
-  assert.deepStrictEqual(Array.from(ET.modes.ids()), ["tumble", "lattice", "wander"]);
+  assert.deepStrictEqual(Array.from(ET.modes.ids()), ["tumble", "lattice", "wander", "focus"]);
   for (const def of ET.modes.list()) {
     assert.strictEqual(typeof def.title, "string");
     assert.ok(def.title.length > 0);
@@ -120,7 +120,7 @@ test("criterion 2: a fourth dummy mode registers without editing any existing fi
       };
     },
   });
-  assert.deepStrictEqual(Array.from(ET.modes.ids()), ["tumble", "lattice", "wander", "still"]);
+  assert.deepStrictEqual(Array.from(ET.modes.ids()), ["tumble", "lattice", "wander", "focus", "still"]);
   const inst = ET.modes.create("still");
   assert.strictEqual(ET.modes.check(inst).length, 0);
   inst.enter(set, { seed: 1 });
@@ -161,7 +161,7 @@ test("list() hands out copies: callers cannot rewrite the registry", () => {
   const l = ET.modes.list();
   l.pop();
   l[0].id = "changed";
-  assert.deepStrictEqual(Array.from(ET.modes.ids()), ["tumble", "lattice", "wander"]);
+  assert.deepStrictEqual(Array.from(ET.modes.ids()), ["tumble", "lattice", "wander", "focus"]);
 });
 
 test("stepper: bounded slices, progress and readiness", () => {

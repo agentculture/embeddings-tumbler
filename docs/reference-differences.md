@@ -175,6 +175,13 @@ not done; see "Not yet compared or not yet decided".
 - **Why:** the mode responds at once and the wires do not make the rest wait.
 - **Visible on the sample set:** yes, for the first seconds after switching to Lattice. After that both pages show the same 1,870 wires.
 
+### Crowded wires are dimmed instead of burning out to white
+
+- **Reference:** every wire is drawn at the same gain however many pile up in the same part of the picture. On the sample set the lattice burns out to a white mass, most of all when a swap is nearly through and the lattice collapses to a thin shape: 3,435 near-white pixels (channel sum above 600) on a 320 by 180 copy of the build's stage before this change, with the same rule.
+- **Build:** the viewer measures the wire light per pixel where the wires' light lands, from the number of wires and how tightly the current frame packs them on the stage, and scales all wires down by the same factor when it is above a fixed load (`js/api/50-viewer.md`, "Crowded wires"; the renderer's draw key `wireLoad`). A wire seen near its true length still flares against one that is not. The same rule applies with a search shown, on top of the wires following the search.
+- **Why:** the owner found Lattice "very bright" and asked for it to be toned down ("Please do", 2026-11-14), an approved deviation from the rule that the no-search picture must not change. Tumble, Wander and Focus draw exactly as before.
+- **Visible on the sample set:** yes. At a swap 90% through the near-white count falls from 3,435 to 693 (about 360 of those are the cores of labelled points), at 10% from 3,130 to 686; the wires stay visible as thin coloured lines, and the blocky glow around the brightest parts mostly goes with the burn-out (GPU, 1280 by 900, 2026-11-14).
+
 ## Wander
 
 ### Wander starts at once
@@ -279,9 +286,16 @@ not done; see "Not yet compared or not yet decided".
 ### One cell per dimension of the data
 
 - **Reference:** 384 cells, and the caption says "384 dimensions" and "dimension 384".
-- **Build:** one cell per dimension of the loaded data (a canvas that many pixels wide, stretched), and the caption names the real number, with a thousands separator ("2,560"). The formula and the colours are the reference's.
+- **Build:** one cell per dimension of the loaded data (a canvas that many pixels wide, stretched), and the caption names the real number, with a thousands separator ("2,560"). The formula is the reference's (the colours are not; see the next item).
 - **Why:** the dimension comes from the data.
 - **Visible on the sample set:** no. The strip's size (22 px between two 1 px lines) and the 6 px gap before its caption are the reference's (measured at 1280 and 390 px wide).
+
+### The strip's cells are coloured by screen axis
+
+- **Reference:** the demo's strip draws every cell in the one accent colour, its green channel lowered a little where the contribution is large.
+- **Build:** each cell mixes three colours (horizontal orange, vertical green, depth blue-violet) by how much its dimension feeds each of the three screen axes, so a dimension that feeds only one axis shows that axis's colour. The opacity is the reference's formula, unchanged. The caption gains a legend naming the three colours. On a light background the three colours are darker so they stay readable; the colours are fixed and not themable.
+- **Why:** the user asked for it (2026-11-14): it shows which dimensions are carrying which direction of the view.
+- **Visible on the sample set:** yes: the strip is orange, green and blue-violet where the reference's is amber, and the caption ends with the three coloured words *(read from the code; not yet seen in a rendered picture)*.
 
 ## Controls and input
 
@@ -351,6 +365,13 @@ not done; see "Not yet compared or not yet decided".
 - **Build:** the sample vectors are bit-identical to the reference's (tested), but the data contract has no per-point weights or colours. The viewer derives weight from the point's index with the reference's ranges (labelled points full weight, other points 0.1 to 0.65, the unstructured halo 0.05 to 0.25), takes colours from the group, and gives a bridge point the colour of the nearer end instead of a blend.
 - **Why:** the contract carries labels and groups only.
 - **Visible on the sample set:** slightly: the same kinds of point in the same proportions, but not the same individual points, and bridges are not graded in colour *(read from the code; not isolated in a picture)*.
+
+### The page opens on real vectors, and the generated set is one choice away
+
+- **Reference:** the page always shows its generated sample set (12,288 points, 384 dimensions); none of its numbers come from a model.
+- **Build:** with no address the page shows about a thousand English Wikipedia articles (the Level 3 list of vital articles), each embedded from the first sentences of its introduction by a real model, and says so in a note, with the source, the model and the licence of the text (CC BY-SA 4.0) in the provenance block. The generated set is shown with `?sample=synthetic` or by the link under the notes ("Show the synthetic sample set instead"), and it is shown, with a line saying why, when the Wikipedia pair is missing beside the page, when the page is opened as a file, or when the viewer refuses the pair.
+- **Why:** the owner searched the generated set and asked whether "sear" and "searing" were unconnected because the numbers are fake; they are. A real model puts the two words next to each other. The owner asked for real vectors as the default, about 1,000 items and about 4 MB, with the generated set kept.
+- **Visible on the sample set:** slightly: chosen with `?sample=synthetic`, the sample set looks as before, with one extra line under the notes that links back to the Wikipedia set.
 
 ### A view seed
 
@@ -504,7 +525,6 @@ Checked in the screenshots or measured on 2026-11-14; none of these differ.
 | The masthead | the same counts text, the same title size and the same offsets (20 px from the left and 22 px from the top, plus the reference's 8 px margin) |
 | Mode buttons | the same size (28 px titles, 24 px under 600 px), the selected title in italics and amber, summaries hidden under 600 px |
 | Lattice's wires | 1,870 wires on both pages, and the same status wording |
-| The readout strip's colours | the same amber cells *(by eye)* |
 | The text of the three notes and of the closing note | identical, compared as text |
 | The panel's width and position | 1,120 px, centred (x = 80 at 1280 px wide) |
 | The renderer's settings (point size 6.5 px, depth of field 1.1, bloom 0.55, exposure 1.35, gamma 0.92, vignette 0.72, trails 0.17 s, twinkle 0.18) | the reference's values, per the renderer's notes *(read from the code; the renderer's picture could not be compared frame for frame, see below)* |
@@ -555,3 +575,377 @@ Signed off by the user on YYYY-MM-DD: <the user's words>
 ```
 
 Signed off by the user on 2026-11-14: confirmed, light -> soft ink is ok, the two others not.
+
+## Search: the two references and how they were compared
+
+Everything from here on is a second comparison, made for search. It leaves the
+first comparison above, and its sign-off, as they are.
+
+Search has two reference pages:
+
+- `docs/specs/reference/tumbler-sky-search.html` (the sky reference): the first
+  demo with search added on top of Tumble, Lattice and Wander. Up to four
+  searches, one per line; a panel that opens and closes; a choice of what is
+  lit; a Reranker and a Distance difference control; and the readout strip
+  coloured by screen axis.
+- `docs/specs/reference/tumbler-focus-view.html` (the Focus reference): one
+  search on a plain 2-D canvas, with the ranked results beside the stage,
+  suggestions under the box and the point-of-view option.
+
+What was built is the search code in the core file (ranking, several searches,
+the Focus view, the panel) and the standalone page over it;
+`docs/search-interface.md` is its written interface, including what was
+corrected while building.
+
+How to read this part:
+
+- Each difference has five lines: what the reference does, what the build does,
+  why, whether it can be seen **on comparable data**, and who decided it.
+- **Comparable data** means the same vectors on both sides. For the sky
+  reference that is the built-in synthetic sample set (`?sample=synthetic`;
+  12,288 points, 384 dimensions, 290 of them named), whose vectors are
+  bit-identical to the reference's, with the reference's own three starting
+  searches (`tide harbor`, `reef kelp`, `comet nebula`) typed into both. For the
+  Focus reference it is the reference's own 124 texts and their vectors, which
+  the development page reads out of the reference page and hands to the built
+  viewer, with the reference's own starting search (`water`). No embedder and no
+  reranker is connected on the sample set. On the Focus data a stand-in embed
+  callback places a typed text from the reference's stored vectors exactly as
+  the reference does, and there is no reranker.
+- **Decided by** is one of four words. `owner`: the owner asked for it or
+  approved it, and the line says where that is recorded. `spec`: the confirmed
+  spec requires it. `build`: chosen while building and recorded in
+  `docs/search-interface.md`; the owner has not been asked about it one by one,
+  and the sign-off at the end is where it is accepted or not. `open`: put to the
+  owner, or noticed, and not decided.
+- The side-by-side page `js/dev/side-by-side/` shows each reference next to the
+  build on that data: choose "Search in the views" or "Focus". It needs only
+  the repository, served from its root.
+- Statements about results, counts and wording were read from both pages in
+  that side-by-side on 2026-11-14 (headless Chromium, software rendering,
+  1500 by 1000, requests to any other origin refused). Statements about look
+  come from screenshots of the same run unless marked *(read from the code)*,
+  which means the source was read and no picture was compared.
+
+## Search: where a query comes from and how it is ranked
+
+### A typed query is embedded by the host, or matched among the loaded points
+
+- **Reference:** no model runs in either page. The sky reference places a query at the mean of the named words it mentions, one share per word. The Focus reference places it from the stored vector of the whole phrase, or else from the mean of the stored vectors of the words it knows.
+- **Build:** typed text goes to the host's `embed` callback, which returns a vector and the id of the model that made it; the viewer checks the model, the dimension and the values before using it. With no callback (or on data that was reduced), the words are matched among the labels and texts of the loaded points and the query is the mean of the matches, one share per word, and the panel says which of the two happened and that nothing was sent.
+- **Why:** real text needs a real embedder, and the gateway's address and key must never reach a page, so the host supplies the function.
+- **Visible on comparable data:** no. With no embedder the sample set gives the same eight named results for each of the three starting searches as the sky reference (the third in a slightly different order, see "Distance is cosine distance"); on the Focus data `water`, `things that flow`, `interest on a loan` and `glass of water` gave the same eight results in the same order on both sides.
+- **Decided by:** spec.
+
+### Which words a word search understands
+
+- **Reference:** the sky reference also understands the eleven region names (`ocean` is placed from all of ocean's named words), skips the words `mid` and `late`, takes the first named word that starts with a typed word of three or more letters (`sea` is placed from `sear`), and splits searches at a semicolon as well as at a line end.
+- **Build:** matches words in a point's label and text only, so a group's name alone matches nothing (`ocean` is reported as not found); a word of three or more letters with no exact match is placed from every point with a word that starts with it (`sea` from `sear`, `searing` and `seabed`); a whole label or text that equals the line wins first (`mid march` is the point "mid-March"); and only a line end separates searches (`tide; reef` is one search of two words).
+- **Why:** the reference's rules are written for its own 290 words and eleven regions; the build's must work on any labels and texts.
+- **Visible on comparable data:** yes. Typing `ocean`, `sea` and `tide; reef` gave four searches in the reference (544, 233, 382 and 408 points) and two in the build (`sea` and `tide; reef`), with `ocean` listed as not found. The three starting searches are not affected.
+- **Decided by:** build.
+
+### Distance is cosine distance
+
+- **Reference:** the sky reference ranks and lights by straight-line distance in all 384 dimensions and shows it to two or three decimals. The Focus reference ranks by cosine similarity and shows "similarity", or "distance" (1 minus similarity) with Distance difference on.
+- **Build:** one measure everywhere, cosine distance (1 minus cosine similarity) in every dimension of the data, in double precision: for ranking, for what is lit, for the pair reports and for the numbers shown. The panel and the provenance block name it.
+- **Why:** the embedding models seen so far are compared by cosine; one named measure avoids two numbers for one thing.
+- **Visible on comparable data:** slightly. On the sample set the lit counts are 423, 521 and 402 points against the sky reference's 422, 525 and 403 (1,006 lit in all against 1,011; 340 found by both A and B against 339); `comet nebula` lists nebula before comet and equinox before solstice, where the reference has them the other way round; the closest pair of A and B is "0.019 apart" against "0.184 apart". On the Focus data the order is the same and the build shows no similarity figure.
+- **Decided by:** build.
+
+### The reranker comes from the host
+
+- **Reference:** both pages have a Reranker checkbox backed by a toy: the sky reference favours the topic most of the first results share, the Focus reference rewards a word shared with the query.
+- **Build:** the host supplies a `rerank` callback that scores candidate texts and names its model. Without one, or on data that carries no text, there is no Reranker control at all. A reranker that fails or is late leaves the results in embedding order and the search says so.
+- **Why:** a toy would present invented scores as a second opinion; a real reranker is a model the host has to provide.
+- **Visible on comparable data:** yes: the build shows no Reranker checkbox on either comparison, since no reranker is connected.
+- **Decided by:** spec.
+
+### Candidates and Keep top, and up to 100 results
+
+- **Reference:** Results goes from 3 to 20; with the Reranker on, the three times as many nearest are rescored and the first Results of them are kept.
+- **Build:** Results goes from 3 to 100 (8 at the start). With a reranker there are two more controls: Candidates (the nearest handed to the reranker, 3 to 100, 50 at the start) and Keep top (how many of them are kept, 20 at the start), and Results is then switched off with the reason as its title. Each result list scrolls inside its own box.
+- **Why:** the owner asked for it after trying the build: "we need more results, 50 or 100, and add reranker and top x out of that (top 20?)", and chose 50 candidates and top 20 (2026-11-14; `docs/search-interface.md`, "Candidates and top").
+- **Visible on comparable data:** yes, as the Results slider's range; Candidates and Keep top do not appear, since no reranker is connected.
+- **Decided by:** owner.
+
+### Every point as near as the last named result is lit, in Focus too
+
+- **Reference:** the sky reference lists the nearest named points and lights every point at least as near as the last of them. The Focus reference lights only its results.
+- **Build:** the sky reference's rule in every view: the results are the nearest named points (a point is named when its label or text is something other than its id) and every loaded point at least as near as the farthest result is lit, named or not. With a reranker, the farthest kept result sets that distance, so a nearer candidate that was not kept is lit without being a result.
+- **Why:** the spec's assumptions, which the owner confirmed, say so; the first browser run had ranked every point and returned eight unnamed ids for `tide harbor` (`docs/search-interface.md`, "Corrected after the first browser run").
+- **Visible on comparable data:** no. On the sample set it is the sky reference's own rule. On the Focus data every text is named, so the lit points are the results (8 lit for 8 results).
+- **Decided by:** spec.
+
+### The point of view is offered in every view, and the picture stays one linear frame
+
+- **Reference:** only the Focus reference has it, as a checkbox. It scales every vector by the size of the query's value in each dimension, makes each unit length again, and draws those scaled vectors.
+- **Build:** a choice in the panel in every view (off, or the letter of one search). Ranking and shown distances use the scaled space as the reference does; the fitted axes are then mapped back onto the loaded vectors and made orthonormal, so every point is still drawn by one linear frame.
+- **Why:** several searches need a choice of whose point of view it is, and every view must stay a linear projection of the loaded vectors.
+- **Visible on comparable data:** yes, as a select in place of a checkbox, and on the sample set as a control the sky reference does not have. Whether the picture with the option on differs from the reference's was not compared.
+- **Decided by:** build.
+
+### Refusals, waiting, stale results and latest-wins
+
+- **Reference:** a search is instant and cannot fail; words it cannot place are named in a line under the box.
+- **Build:** a query whose model or dimension does not match, an embedder that fails or does not answer in 15 seconds, and more than four searches are each refused with a plain message, and the earlier results stay. A newer search replaces one still being worked out. After points are appended the results are marked as from before the new points and worked out again. Ranking runs in slices inside the frame budget, so the view keeps moving.
+- **Why:** a real embedder is slow and can fail, and real data is appended to.
+- **Visible on comparable data:** slightly. On the Focus data a text with no known word (`zzz`) clears the reference's results and shows every text, while the build keeps the earlier results and says "The embedder failed to answer. The earlier results are kept."
+- **Decided by:** spec.
+
+## Search: the panel
+
+### The panel starts empty
+
+- **Reference:** the sky reference opens with three searches already typed (`tide harbor`, `reef kelp`, `comet nebula`), and the Focus reference with `water`.
+- **Build:** the box starts empty and nothing is lit until something is typed.
+- **Why:** the build does not know what a host's data holds, so it has no words to start with.
+- **Visible on comparable data:** yes on opening the page; the side-by-side types the reference's starting searches into the build so that the rest can be compared.
+- **Decided by:** build.
+
+### The wording of the bar, the note and the lists
+
+- **Reference:** the closed bar reads "nothing typed: the whole sky is shown"; the note reads "1,011 points lit." and then the pairs; a list's heading reads "A · tide harbor · 8 named results, 422 points · placed from tide, harbor".
+- **Build:** the closed bar reads "nothing searched: every point is shown"; the note says how many points are lit and how many of them are unnamed, where the typed text went, which measure is used, which words were not found and whether stage labels were left out; a heading reads "A · tide harbor · 8 named results and 415 unnamed points as near as the last of them · words matched: tide, harbor". The pairs have lines of their own and name the results two searches have in common ("5 named results in common (tide, surf, kelp, reef, atoll)"), where the reference gives the number.
+- **Why:** the build's data is not a sky of stars, and the spec requires the panel to say where the text went and to carry as text everything the picture shows.
+- **Visible on comparable data:** yes.
+- **Decided by:** build.
+
+### Suggestions under the box in every view
+
+- **Reference:** only the Focus reference suggests texts as you type (up to eight); the sky reference has none.
+- **Build:** suggestions in every view: up to eight texts of named points that the line being typed can match; a click puts the text on that line and searches at once.
+- **Why:** recorded in `docs/search-interface.md` as asked for in every view; the rule is the Focus reference's.
+- **Visible on comparable data:** yes, on the sample set, when typing.
+- **Decided by:** build.
+
+### Names and distances on the stage are page text and do not overlap
+
+- **Reference:** the sky reference draws every result's word on the canvas, on top of each other where results are close, and distances to two decimals.
+- **Build:** letters, result texts (cut at 28 characters), ranks and distances are text elements over the stage. A label that would overlap one already placed is left out (letters first, then nearest results) and the note says so; the lists carry every result. Distances have three decimals.
+- **Why:** untrusted text must be inserted as text; nearby results differ in the third decimal; overlapping words could not be read.
+- **Visible on comparable data:** yes. In Tumble with the three starting searches the reference shows a pile of overlapping words on each cluster and the build two or three readable ones.
+- **Decided by:** build.
+
+### Links fade with rank
+
+- **Reference:** the sky reference draws every link at the same strength; the Focus reference fades a link by how its similarity compares with the nearest and farthest result's.
+- **Build:** in every view a link's strength falls evenly from the first result to the last.
+- **Why:** one rule for all four views that needs no extra numbers *(read from the code)*.
+- **Visible on comparable data:** slightly.
+- **Decided by:** build.
+
+### Result lists show the text, not its group
+
+- **Reference:** the sky reference colours each word by its region and writes the region's name after it. The Focus reference shows a dot in the topic's colour, the topic's name and "similarity 0.828" on every result.
+- **Build:** a result is its rank (with its search's letter), its text, and, when asked for, its distance, its gap to the nearest, how the reranker moved it and where plain distance had it. No group name, no group colour and no similarity figure.
+- **Why:** not every data set has groups, and one measure is shown, as distance *(read from the code)*.
+- **Visible on comparable data:** yes.
+- **Decided by:** build.
+
+### A search line in the provenance block
+
+- **Reference:** none; the notes at the foot of each page say how queries are placed.
+- **Build:** while a search is shown, the provenance block carries a Search row (the measure, the counts, the lit setting, each query's model, the reranker or "no reranker", and where the text went) and its summary line a short clause, for example "search: searched among the loaded points, nothing sent".
+- **Why:** the spec requires every view to say what a search used and where the text went, also with the panel closed.
+- **Visible on comparable data:** yes.
+- **Decided by:** spec.
+
+### Search colours for a light background
+
+- **Reference:** dark only; searches are amber, cyan, pink and green, and a point found by more than one search burns white.
+- **Build:** the reference's four colours on a dark stage. On a light stage four darker hues of the same colours (`--tumbler-search-1` to `-4`) and a dark shared mark, since the reference's colours and white would vanish there. Every search also has its letter wherever its colour is used.
+- **Why:** hosts with a light background get the soft-ink treatment, and no meaning may rest on colour alone.
+- **Visible on comparable data:** no: both comparisons are on a dark stage.
+- **Decided by:** build.
+
+## Search: Tumble, Lattice and Wander
+
+### The swing toward the searches is seeded and the same in every view
+
+- **Reference:** for six seconds after a new search the view tumbles at half rate (from a running random stream) while it is pulled toward a frame fitted to the searches; that frame's spare axes also start from random draws.
+- **Build:** the same six seconds and the same pull, with a seeded drift at half the reference's rate in all three views and a seeded fit, so the same data, searches, seed and time give the same frames. Afterwards Tumble turns back onto its tour at a bounded rate, Lattice starts a new swap schedule and Wander its next hop, with no jump. The status line is the reference's ("swinging to face the 3 searches, then tumbling on").
+- **Why:** reproducible views are a requirement of the first spec.
+- **Visible on comparable data:** no: both swing and neither shows the same frame twice against the other *(the motion was not compared frame by frame)*.
+- **Decided by:** spec.
+
+### Lattice's wires follow the search, and crowded wires are scaled down
+
+- **Reference:** the wires are drawn the same with or without a search; only the points dim.
+- **Build:** with a search shown, a wire between two lit points keeps its strength and every other wire is dimmed like an unlit point. Wires that pile up in one part of the stage are scaled down as well, with or without a search (see "Crowded wires are dimmed instead of burning out to white" above).
+- **Why:** the owner tried the build and found Lattice with a search very bright; the wires buried the results (2,175 near-white pixels of 57,600, against 0 in Tumble). The change was approved by the owner on 2026-11-14 (deviation `d1`; `docs/search-interface.md`, "Corrected after the owner's browser look").
+- **Visible on comparable data:** yes, in Lattice with a search.
+- **Decided by:** owner.
+
+### Results are not fogged away in Wander
+
+- **Reference:** Wander dims points by their true distance from the camera's stop, results included.
+- **Build:** a lit point's distance dimming is relieved in proportion to how strongly it is lit, so results stay visible wherever the camera is; unlit points keep the fog.
+- **Why:** the owner saw Wander with a search almost black (2 lit pixels): the search dimmed every unlit point and the fog dimmed the results.
+- **Visible on comparable data:** yes, in Wander with a search.
+- **Decided by:** build.
+
+### The view keeps turning while a mode prepares
+
+- **Reference:** while the neighbours are being measured, the sky reference plays Tumble's motion in place of Lattice's or Wander's.
+- **Build:** the mode's own motion waits until its preparation is done, and meanwhile the view keeps its slow spin, so the picture is never still.
+- **Why:** approved by the owner as deviation `d3` during the search build: a view that stood still while preparing looked stuck.
+- **Visible on comparable data:** slightly, for the first moments after choosing a view.
+- **Decided by:** owner.
+
+## Search: Focus
+
+### Focus is drawn by the viewer, not on a plain canvas
+
+- **Reference:** a 2-D canvas: each text is a flat dot with a soft halo, with no glow, trails or depth of field.
+- **Build:** Focus is a fourth mode of the WebGL viewer, so its points are drawn like every other view's, with bloom and trails, and it works on any loaded set.
+- **Why:** the spec makes Focus the fourth view of the one viewer, not a second renderer.
+- **Visible on comparable data:** yes. On the reference's 124 texts the reference shows separate dots; the build shows glowing points whose trails streak while the view turns onto a new fit.
+- **Decided by:** spec.
+
+### Focus is a view of the viewer, not a page of its own
+
+- **Reference:** a page with its own title ("Embedding Search"), an always-open box under the stage, a row of texts to try, a legend of topic colours, a Pause button and three columns of notes.
+- **Build:** the viewer with Focus chosen: the viewer's title and counts line, its four view buttons (keys 1 to 4), the readout strip, the provenance block, and the Search panel under the stage, closed until opened. No row of texts to try and no legend; the results are listed beside the stage as in the reference, and below it on a narrow screen.
+- **Why:** the same reason as above.
+- **Visible on comparable data:** yes.
+- **Decided by:** spec.
+
+### Up to four searches in Focus
+
+- **Reference:** one search. Results are numbered 1 to 8 and the query is marked "query".
+- **Build:** up to four, lettered A to D. The view is fitted to all of their queries and results together; the list beside the stage has a part per search and numbers its results with the letter ("A1"); the query's mark carries its letter ("A query"). On the stage a rank has its letter only when there is more than one search.
+- **Why:** the spec gives every view the same searches.
+- **Visible on comparable data:** slightly: with the one starting search, the list reads "A1 flood" for the reference's "1 flood", under a line "A · water".
+- **Decided by:** spec.
+
+### Focus is always fitted to the results
+
+- **Reference:** a checkbox, "Turn the view to the results", on at the start; off, the view stays fitted to every text.
+- **Build:** no such control. With a search Focus is fitted to the results, and with none to every point. "Face the searches" is switched off in Focus and the note says why.
+- **Why:** the fit is what Focus is for; a second frame to swing toward would fight it (`docs/search-interface.md`, decision 16).
+- **Visible on comparable data:** yes, as a missing checkbox and a disabled button.
+- **Decided by:** build.
+
+### Turning onto a new fit
+
+- **Reference:** the view eases toward the new fit by a fixed share each frame and jumps there at once under reduced motion.
+- **Build:** a blend over 1.6 seconds of the view's own time, so the same time gives the same picture, and it waits while paused. The turning rate with a search is the reference's 0.13 radians per second.
+- **Why:** reproducibility *(read from the code)*.
+- **Visible on comparable data:** slightly, as how a change of search feels.
+- **Decided by:** build.
+
+### Points that are not results are fainter
+
+- **Reference:** a text that is not a result is drawn at 0.13 of a result's strength.
+- **Build:** at 0.05, or hidden with Only results.
+- **Why:** on the sample set's 12,288 points 0.13 piled up under the glow and read far brighter than on the reference's 124; 0.05 was picked by comparing screenshots (`docs/search-interface.md`, "Corrected after the owner's browser look").
+- **Visible on comparable data:** unknown. On the reference's 124 texts the two pictures differ too much in how a point is drawn for this to be told apart from "Focus is drawn by the viewer, not on a plain canvas".
+- **Decided by:** build.
+
+### Hovering and the list
+
+- **Reference:** hovering a point shows a box with its text, topic, rank, distance and "click to search from this text"; hovering a result in the list rings its point on the stage.
+- **Build:** hovering a point shows the viewer's usual name; the list does not ring points. A click on a point searches from it, as in the reference.
+- **Why:** not built; the spec does not ask for either *(read from the code)*.
+- **Visible on comparable data:** yes, when hovering.
+- **Decided by:** build.
+
+### The status line
+
+- **Reference:** "8 nearest of 124 · cosine in all 1024 dimensions · view fitted to the results".
+- **Build:** "fitted to the results of A"; the counts and the measure are in the list's sub line ("8 named results, plain distance · cosine distance (1 minus cosine similarity)") and in the note.
+- **Why:** the status line is the mode's, as in the other three views, and the panel carries what a search used.
+- **Visible on comparable data:** yes.
+- **Decided by:** build.
+
+## Search: the page and its data
+
+### The page opens on real articles, not on the references' data
+
+- **Reference:** the sky reference always shows its generated sample set; the Focus reference its own 124 texts.
+- **Build:** with no address the standalone page shows 999 English Wikipedia articles embedded by a real model, as recorded above under "The page opens on real vectors, and the generated set is one choice away"; the generated set is at `?sample=synthetic`.
+- **Why:** the owner searched the generated set, asked whether two related words were unconnected because the numbers are made up (they are), and asked for real vectors as the default.
+- **Visible on comparable data:** no: the comparison is made with `?sample=synthetic`. On opening the page with no address, yes.
+- **Decided by:** owner.
+
+### Typed text can be embedded through a local helper
+
+- **Reference:** neither page can embed text.
+- **Build:** `viewer serve --embed` adds a route on the page's own origin that embeds a query (and reranks, when a reranking model is named) with the gateway key held only in the server process. The page asks its own origin whether the route is there and, if it is not, matches words among the loaded points.
+- **Why:** the spec's way to search real data from the standalone page without the key or the gateway's address reaching the page.
+- **Visible on comparable data:** no: the comparison is served without it, and the sample set's vectors come from no model.
+- **Decided by:** spec.
+
+## Search: open questions
+
+Neither of these is a difference from the sky reference on a dark stage. They
+are listed as items so that they are checked off like the rest, and the search
+sign-off cannot be recorded while either is still open.
+
+### The readout strip's axis colours on a light background
+
+- **Reference:** dark only. The sky reference colours each cell of the strip by its dimension's share of the horizontal (orange), vertical (green) and depth (blue-violet) axes.
+- **Build:** the same three colours on a dark stage, which the owner approved "per the artifact" (see "The strip's cells are coloured by screen axis" above). On a light stage three darker colours are used so that they stay readable.
+- **Why:** the reference's colours are too pale on a light background; the darker three were chosen while building.
+- **Visible on comparable data:** no: the references and the standalone page are dark only.
+- **Decided by:** open: the light colours have not been shown to the owner and are not approved.
+
+### Search A's amber beside the strip's orange
+
+- **Reference:** search A is amber (`#ffc56b`) and the strip's horizontal axis is orange (`rgb(255, 150, 60)`); both are on the page at once.
+- **Build:** the same two colours, from the reference.
+- **Why:** noted by the owner's assistant during the build as a possible clash: two unrelated things in near colours. Nothing was changed.
+- **Visible on comparable data:** yes, on both pages alike.
+- **Decided by:** open: not decided.
+
+## Search: looked the same
+
+Read from both pages in the side-by-side of 2026-11-14, or from the code where
+marked.
+
+| What | Result |
+|------|--------|
+| The three starting searches' named results on the sample set | the same eight for each search; A and B in the same order |
+| The points lit by more than one search | marked white on both; 5 named results in common for A and B on both |
+| The Focus results for `water`, `things that flow`, `interest on a loan`, `glass of water` | the same eight in the same order |
+| The panel's bar, its + and − mark, and that closing it keeps the searches | the same *(read from the code)* |
+| The Lit choices | the same three, in the same words *(read from the code)* |
+| The search colours on a dark stage | the reference's four |
+| The readout strip's axis colours and its legend on a dark stage | the reference's three colours and words *(read from the code)* |
+| The status line during a swing | the reference's words, in every view |
+| The typing pause before a search runs | 140 ms, the sky reference's *(read from the code)* |
+| Focus: turning rate with a search, the zoom that frames the results, a click on a point searching from it | the reference's *(read from the code)* |
+
+## Search: not yet compared
+
+- **A real embedder and a real reranker** were not part of this comparison:
+  neither reference has one. Search with both on real vectors is covered by the
+  build's own tests and evidence, not here.
+- **Reranked results, Candidates and Keep top** cannot be compared: the
+  references' rerankers are toys and no reranker is connected on comparable
+  data.
+- **The point of view** was compared as a control only, not as a picture.
+- **Motion** (the swing, the turn onto a new fit) was not compared frame by
+  frame; the references are unseeded.
+- **Software rendering only.** The side-by-side for this part ran in headless
+  Chromium with SwiftShader, not on a GPU, at one size (1500 by 1000, each
+  frame about half of that). No narrow screen, no Firefox, no Safari.
+- **The light treatment** does not appear in either comparison; both
+  references are dark only.
+- **The screenshots are not committed**; they can be made again with the
+  side-by-side page.
+- **The deviation records `d1` and `d3`** are cited as they were reported
+  during the build; the record store itself was not read for this document.
+
+## Search: sign-off
+
+The owner's sign-off of the search comparison is **not yet recorded**. Only the
+owner gives it, after looking at the side-by-side, and it cannot be recorded
+while an item above is still marked open.
+
+The agreed form of the line is:
+
+```text
+Search signed off by the owner on YYYY-MM-DD: <the owner's words>
+```

@@ -88,3 +88,173 @@ def test_context_loss_is_survived_by_rebuilding(render_result):
     assert res["restored"] is True, res["events"]
     assert res["drew"] is True
     assert res["pixels"]["lit"] > 50, res["pixels"]
+
+
+# --------------------------------------------------------------------------- search (t4)
+# The per-point lit value and the shared mark (docs/search-interface.md, "Renderer (t4)").
+# The page draws a 5 x 5 grid whose screen positions are known; see searchCases in
+# renderer_render_page.js. Grid points 11 and 13, and 16 and 18, are mirror images.
+
+
+@pytest.fixture(scope="module")
+def search(render_result) -> dict:
+    assert render_result["fatal"] is None, render_result["fatal"]
+    return render_result["search"]
+
+
+@pytest.fixture(scope="module")
+def stage_pngs(browser, loopback_server) -> dict:
+    """Screenshots of the two stages (the composited picture a viewer shows), by name."""
+    tab = harness.Tab(browser)
+    try:
+        tab.goto(loopback_server + PAGE)
+        result = tab.wait_for(
+            "() => window.__rendererResult || null",
+            lambda r: r is not None,
+            timeout=60,
+            what="the page to report a result",
+        )
+        if result.get("unavailable"):
+            harness.unavailable(
+                f"WebGL 2 unavailable in headless Chromium: {result['unavailable']}"
+            )
+        assert result["fatal"] is None, result["fatal"]
+        pngs = {n: tab.png("#stage-" + n, hide_text=False) for n in ("dark", "light")}
+        pngs["positions"] = result["search"]["stages"]
+        return pngs
+    finally:
+        tab.close()
+
+
+def _window(png: bytes, at: dict, half: int = 2) -> tuple[float, float, float]:
+    """Mean R, G, B over a (2 * half + 1)^2 window centred on ``at`` (CSS pixels, y down)."""
+    _, _, rows = harness.decode_png(png)
+    acc = [0, 0, 0]
+    n = 0
+    for y in range(at["y"] - half, at["y"] + half + 1):
+        for x in range(at["x"] - half, at["x"] + half + 1):
+            for c in range(3):
+                acc[c] += rows[y][3 * x + c]
+            n += 1
+    return acc[0] / n, acc[1] / n, acc[2] / n
+
+
+@pytest.mark.parametrize("case", ["identity", "identityNoHdr"])
+def test_no_search_frame_is_byte_identical(search, case):
+    """Lit values set but filter 0 (with trails, twinkle and unlitGain changed), then cleared:
+    every frame equals, byte for byte, a renderer's that never had lit values."""
+    res = search[case]
+    assert res["lit"] > 500, res
+    assert res["hdr"] is (case == "identity")
+    assert res["diffs"] == [-1, -1, -1, -1], res
+
+
+@pytest.mark.parametrize("case", ["dim", "dimNoHdr"])
+def test_a_dimmed_set_has_fewer_lit_pixels_and_higher_lit_is_brighter(search, case):
+    res = search[case]
+    assert res["set"] == {"ok": True, "uploaded": True}
+    assert res["status"]["lit"] is True
+    assert res["status"]["hdr"] is (case == "dim")
+    assert res["dimmedLit"] < 0.8 * res["plainLit"], res
+    # mirror images with the same lit value read the same: the comparison below is fair
+    left, right = res["controlLeft"], res["controlRight"]
+    assert abs(left - right) < 0.02 * max(left, right), res
+    assert res["high"] > 1.5 * res["low"], res
+    assert res["low"] > 2 * res["unlit"], res
+
+
+@pytest.mark.parametrize("case", ["appendThenLit", "litThenAppend"])
+def test_lit_values_follow_the_points_through_appends(search, case):
+    res = search[case]
+    assert all(step["ok"] for step in res["log"]), res["log"]
+    reallocated = [step.get("reallocated") for step in res["log"] if "reallocated" in step]
+    assert False in reallocated, "the in-place append path is taken"
+    assert True in reallocated, "the reallocating append path is taken"
+    bright = {"appendThenLit": {"17"}, "litThenAppend": {"7", "10"}}[case]
+    sums = res["sums"]
+    assert len(sums) == res["count"]
+    dimmest_bright = min(sums[k] for k in bright)
+    brightest_other = max(v for k, v in sums.items() if k not in bright)
+    assert dimmest_bright > 10 * brightest_other, sums
+
+
+def test_the_shared_mark_is_visible_on_the_dark_stage(stage_pngs):
+    at = stage_pngs["positions"]["dark"]
+    assert at["lit"] is True
+    plain = _window(stage_pngs["dark"], at["plain"])
+    marked = _window(stage_pngs["dark"], at["marked"])
+    # both results are bright; the marked one burns toward white (its weakest channel rises)
+    assert min(plain) < 225, (plain, marked)
+    assert min(marked) > min(plain) + 25, (plain, marked)
+    assert max(marked) - min(marked) < max(plain) - min(plain), (plain, marked)
+
+
+def test_the_shared_mark_is_visible_on_the_light_stage(stage_pngs):
+    at = stage_pngs["positions"]["light"]
+    assert at["lit"] is True
+    plain = _window(stage_pngs["light"], at["plain"])
+    marked = _window(stage_pngs["light"], at["marked"])
+    # the result is coloured ink; the marked one comes back as darker, more neutral ink
+    assert max(plain) - min(plain) > 40, (plain, marked)
+    assert sum(marked) < sum(plain) - 60, (plain, marked)
+    assert max(marked) - min(marked) < max(plain) - min(plain) - 20, (plain, marked)
+
+
+def test_dispose_frees_the_lit_buffer_and_restore_brings_it_back(search):
+    leak = search["leak"]
+    assert leak["peak"] > leak["afterData"], "the lit program, buffer and vertex array were made"
+    assert leak["afterDispose"] == 0, leak
+    res = search["restore"]
+    if "skipped" in res:
+        pytest.skip(res["skipped"])
+    assert res["restored"] is True
+    assert res["drew"] is True
+    assert res["lit"] is True
+    assert res["litPixels"] > 200, res
+    assert res["diff"] == -1, "the dimmed picture after restore equals the one before"
+
+
+# --------------------------------------------------------------------------- the owner's look
+# Corrected after the owner's browser look (2026-11-14); see docs/search-interface.md.
+
+
+@pytest.mark.parametrize("case", ["wires", "wiresNoHdr"])
+def test_wires_follow_the_search(search, case):
+    res = search[case]
+    off, lit = res["off"], res["lit"]
+    # control: with the lit values not applied every wire is seen at full strength
+    assert min(off.values()) > 100, res
+    # with the search shown, a wire between two results keeps its strength ...
+    assert lit["both"] > 0.8 * off["both"], res
+    # ... and a wire with an unlit end is dimmed like an unlit point
+    assert lit["one"] < 0.3 * off["one"], res
+    assert lit["none"] < 0.3 * off["none"], res
+    assert lit["both"] > 3 * lit["one"], res
+
+
+@pytest.mark.parametrize("case", ["wires", "wiresNoHdr"])
+def test_wires_with_no_search_are_byte_identical(search, case):
+    """Lit values set but not applied, and then cleared: the wire frame is a never-lit one's."""
+    res = search[case]
+    assert res["identity"] == -1, res
+    assert res["clearedIdentity"] == -1, res
+
+
+def test_a_lit_point_is_not_fogged_away(search):
+    res = search["fog"]
+    clear, fogged = res["clear"], res["fogged"]
+    # control: the unlit point is dimmed by the fog, so the fog is on and the measure sees it
+    assert fogged["unlit"] < 0.5 * clear["unlit"], res
+    # the lit point reads (nearly) as it does with no fog
+    assert fogged["lit"] > 0.85 * clear["lit"], res
+    # and far brighter than the same point fogged with no search
+    assert fogged["lit"] > 3 * res["noSearchFogged"], res
+
+
+def test_crowded_wires_are_scaled_down(search):
+    res = search["crowd"]
+    assert res["manyOff"]["scale"] == 1, res
+    assert res["many"]["scale"] < 0.8, res
+    assert res["few"]["scale"] == 1, res  # ten times fewer wires through the same stage
+    # the scaled-down wires are still drawn
+    assert res["many"]["lit"] > 0.3 * res["manyOff"]["lit"], res

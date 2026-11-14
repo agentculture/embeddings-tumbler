@@ -6,10 +6,17 @@ viewer:
 | Channel | Name | What it carries |
 |---------|------|-----------------|
 | PyPI | `embeddings-tumbler` (wheel and sdist) | The CLI, plus the viewer files as package data under `embeddings_tumbler/static/` |
-| npm | `@culture.dev/embeddings-tumbler` | Only the viewer files, at the same paths, plus `package.json`, `README.md` and `LICENSE` |
+| npm | `@culture.dev/embeddings-tumbler` | Only the viewer files, at the same paths, plus `package.json`, `README.md`, `LICENSE` and `NOTICE` |
 
-The six viewer files are `embeddings-tumbler.js` (the core file),
-`web-component.js`, `sample-data.js`, `index.html`, `page.css` and `page.js`.
+The eight viewer files are `embeddings-tumbler.js` (the core file),
+`web-component.js`, `sample-data.js`, `index.html`, `page.css`, `page.js`, and
+the standalone page's default data pair `demo-wikipedia.json` and
+`demo-wikipedia.f32`. The pair is written by `scripts/build_demo_set.py`, not
+copied from `js/`; its Wikipedia text is under CC BY-SA 4.0, stated in
+`NOTICE`, which hatchling puts in the wheel's `.dist-info/licenses/` and
+`package.json`'s `files` puts in the npm tarball. With the full 1,000-item pair
+the wheel and the npm tarball stay under 5 MB (`tests/test_packages.py`
+measures it with a full-size pair).
 There is exactly one copy of each in the repository, under
 `embeddings_tumbler/static/`. The wheel and the sdist take them from there, and
 so does the npm tarball (`package.json`'s `files` field points into that
@@ -23,7 +30,7 @@ entries of `package.json`'s `files`.
 
 | Artefact | Uploaded to | Allowed contents |
 |----------|-------------|------------------|
-| npm tarball | npm | Exactly `package.json`, `README.md`, `LICENSE` and the expected static set. Anything else fails. |
+| npm tarball | npm | Exactly `package.json`, `README.md`, `LICENSE`, `NOTICE` and the expected static set. Anything else fails. |
 | wheel | PyPI | Its own `embeddings_tumbler-<version>.dist-info/`, `.py` modules of the `embeddings_tumbler` package, and exactly the expected static set (flat). Anything else fails, including `js/`, `tests/`, `docs/`, `.devague/` and dev pages. |
 | sdist | PyPI | A source distribution: the repository's tracked sources may travel in it (`js/src/`, `tests/`, `docs/` and so on; this is what hatchling's default sdist did before this work, and it is kept). Its `embeddings_tumbler/static/` must be exactly the expected set, and it must carry no `.npmrc`, `.pypirc` or `.env`. |
 
@@ -184,7 +191,7 @@ TARBALL="$(sed -n 's/^tarball=//p' "$WORK/paths")"
 echo "$TARBALL"
 
 # 3. Look at what will be published: exactly nine files, all under package/:
-#    package.json, README.md, LICENSE and embeddings_tumbler/static/<the six files>.
+#    package.json, README.md, LICENSE, NOTICE and embeddings_tumbler/static/<the eight files>.
 tar -tzvf "$TARBALL"
 
 # 4. The package must not exist yet (expect a 404).

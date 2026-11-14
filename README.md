@@ -70,6 +70,35 @@ What it will be (planned):
 - [Data contract](docs/data-contract.md): the authority the producer guide
   restates.
 
+## The demo data
+
+The standalone page (`index.html`) opens on real vectors: about a thousand
+English Wikipedia articles, the ones linked from the list
+"Wikipedia:Vital articles/Level 3", each embedded from the first sentences of its
+introduction. The list's section an article sits under (People, History,
+Science, ...) is its group, so the colours mean something. The pair ships beside
+the page as `demo-wikipedia.json` and `demo-wikipedia.f32`, about 3.4 MB
+together at 768 dimensions.
+
+- **Licence.** The titles and texts are Wikipedia's, written by Wikipedia
+  contributors, under the Creative Commons Attribution-ShareAlike 4.0 licence
+  (CC BY-SA 4.0), not under this project's Apache 2.0 licence. The pair and the
+  corpus it was built from are offered under CC BY-SA 4.0. Attribution, the
+  licence link and the changes made (texts cut to their first sentences, at
+  most 280 characters, web addresses removed) are in [`NOTICE`](NOTICE), which
+  both packages carry, and in the data file's provenance, which the page shows.
+- **Rebuilding.** `scripts/build_demo_corpus.py` fetches the list (a pinned
+  revision) and the texts from the MediaWiki API into
+  `data/wikipedia-vital-3/corpus.jsonl`, which is committed with the list's
+  revision id and the retrieval date in its header line.
+  `scripts/build_demo_set.py --apply` embeds the corpus through the same
+  gateway settings as `viewer serve --embed` and writes the pair.
+- **The generated set stays.** `index.html?sample=synthetic`, or the link under
+  the notes, shows the reference's synthetic sample set; the page also falls
+  back to it, and says so, when the pair is missing or the page is opened as a
+  file. The committed pair holds 999 items embedded with
+  `google/embeddinggemma-2` (768 dimensions) on 2026-11-14.
+
 ## Repository scaffold
 
 The repository was scaffolded from `culture-agent-template`, which provides the
@@ -184,4 +213,5 @@ unknown top-level keys, so the section is safe alongside `agents`.
 
 ## License
 
-Apache 2.0 — see [`LICENSE`](LICENSE).
+Apache 2.0 — see [`LICENSE`](LICENSE). The demo data set's Wikipedia text is
+under CC BY-SA 4.0 — see [`NOTICE`](NOTICE).

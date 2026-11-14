@@ -49,7 +49,7 @@ token (`docs/release.md`). What the build delivered, measured against the plan,
 is in `docs/deliveries/2026-11-13-embeddable-space-viewer.md`. Not done yet:
 only Chromium has been tested automatically. Search
 (type text, or several texts, and see what links to each) is specced and
-planned (`docs/plans/2026-11-14-search-in-the-embedding-viewer.md`, 16 tasks)
+planned (`docs/plans/2026-11-14-search-in-the-embedding-viewer.md`, 18 tasks)
 but not built `(planned)`: `docs/specs/2026-11-14-search-in-the-embedding-viewer.md`,
 its obligations in the file of the same name ending `-obligations.md`, and two
 reference pages beside the original one in `docs/specs/reference/`.
@@ -107,6 +107,17 @@ one turns out to be wrong, stop and use the `deviate` skill.
   as markup.
 
 ## Shipping
+
+Both packages ship the same static files: the core file, `web-component.js`,
+`sample-data.js`, the standalone page (`index.html`, `page.css`, `page.js`) and
+the page's default data pair, `demo-wikipedia.json` and `demo-wikipedia.f32`
+(Wikipedia's Level 3 vital articles; text under CC BY-SA 4.0, see `NOTICE`, which
+ships too). The pair is written straight into `embeddings_tumbler/static/` by
+`scripts/build_demo_set.py` from the committed corpus
+`data/wikipedia-vital-3/corpus.jsonl` (built by `scripts/build_demo_corpus.py`).
+The committed pair is the real one: 999 items, 768 dimensions, embedded with
+`google/embeddinggemma-2` through the gateway on 2026-11-14 (the owner's choice of
+model; it is also the default model of `viewer serve --embed`).
 
 Two channels carry the same unmodified core file: the Python wheel (package
 data, with CLI verbs that write the files into a host folder or serve a folder

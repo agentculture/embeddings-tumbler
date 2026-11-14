@@ -276,6 +276,18 @@ body[data-page-state="error"] .notes {
   overflow-wrap: anywhere;
 }
 
+/* The line that says which set is shown and links to the other one: as quiet as a note. */
+.set-switch a {
+  color: var(--page-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.set-switch a:hover,
+.set-switch a:focus-visible {
+  color: var(--page-accent);
+}
+
 /* The page hides a mode's notes with the hidden attribute. The class rules above
  * set display on those elements, so this rule wins by specificity (two classes'
  * worth), not by importance; it sits last so a rule of equal weight cannot undo it. */

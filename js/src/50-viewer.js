@@ -48,6 +48,11 @@ ET.viewer = (function () {
     accent: "#a35f00",
     ungrouped: "#8cadff",
   };
+  // The readout strip's three axis colours (horizontal, vertical, depth), 0-255. Fixed, not
+  // themable. The light pair is darker so cells and legend words read on a light panel.
+  var AXIS_RGB_DARK = [[255, 150, 60], [80, 220, 160], [130, 140, 255]];
+  var AXIS_RGB_LIGHT = [[176, 84, 0], [0, 128, 82], [72, 82, 214]];
+  var AXIS_NAMES = ["horizontal", "vertical", "depth"];
   var FONTS = {
     body: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
     data: 'ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
@@ -71,11 +76,27 @@ ET.viewer = (function () {
     maxPixelRatio: 2,
     preserveDrawingBuffer: false,
     prepareBudgetMs: 8,
+    // Keep the slow spin running while a mode prepares, so the view never looks frozen
+    // (owner's phone report, 2026-11-14). false: hold the picture still until ready, as 0.11.6.
+    spinWhilePreparing: true,
+    // Lower the drawing-buffer ratio in steps (never below 1) when the frame rate stays
+    // under ADAPT_FPS while nothing prepares. false: always draw at the capped device ratio.
+    adaptivePixelRatio: false, // off until the owner decides: it trades sharpness for frame rate
     refitQuietSeconds: 2,
     refitShare: 0.01,
     onError: null,
     onModeChange: null,
     onPauseChange: null,
+    // Search (docs/search-interface.md, "Viewer (t8)").
+    embed: null, // the host's embed(text) callback
+    rerank: null, // the host's rerank(query, candidates) callback
+    searchTimeoutMs: 15000,
+    searchPanel: true,
+    searchK: 8,
+    searchCandidates: 50, // candidates handed to the reranker (3 to 100)
+    searchTop: 20, // reranked candidates kept (3 to searchCandidates)
+    searchLit: "even",
+    onSearchChange: null,
   };
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
@@ -87,6 +108,25 @@ ET.viewer = (function () {
   var ZOOM_MIN = 0.2;
   var ZOOM_MAX = 12;
   var SPIN = 0.06; // rad/s of yaw while running (the reference's)
+  // Heavy work's budget per frame (see "Heavy work" in js/api/50-viewer.md): a share of the
+  // measured frame interval, between prepareBudgetMs and BUDGET_CEILING times it; cut to half
+  // of prepareBudgetMs for one frame only when the work itself overran (a unit far longer
+  // than asked: cold code, a collection): more than OVERRUN_FLOOR_MS, and more than
+  // OVERRUN_MS past the budget it had.
+  var WORK_SHARE = 1 / 3;
+  var BUDGET_CEILING = 3;
+  var OVERRUN_FLOOR_MS = 16;
+  var OVERRUN_MS = 8;
+  var PAUSED_BUDGET_MS = 40; // a paused view has no motion to keep smooth
+  var INTERVAL_GAP_MS = 250; // a longer gap between frames is a pause, not a frame interval
+  // Drawing-buffer ratio steps (adaptivePixelRatio): ADAPT_SECONDS measured seconds in a row
+  // under ADAPT_FPS, while running and not preparing, lower it by ADAPT_STEP (never below 1).
+  var ADAPT_FPS = 25; // under a 30 fps cap (iOS Low Power Mode), never below a measured 29.x
+  var ADAPT_SECONDS = 2;
+  var ADAPT_STEP = 0.5;
+  // The most wire light per pixel, where the wires' light lands, before the wires are
+  // scaled down (the renderer's draw key wireLoad; see "Crowded wires" in js/api/50-viewer.md).
+  var WIRE_LOAD = 8;
   var BUTTON_HEIGHT = "28px"; // the reference's Pause button
   var TOUCH_HEIGHT = "32px"; // the same buttons under 600 px wide
   // Spacing and sizes a host may adjust: each is set inline as var(--tumbler-<name>,
@@ -580,7 +620,16 @@ ET.viewer = (function () {
       fontSize: spaced("readout-caption-size", "11.5px"),
     });
     v.stripFirst = text(v, "span", "", "dimension 1");
-    v.stripMiddle = text(v, "span", "", "how much each dimension contributes to the view right now");
+    v.stripMiddle = make(v, "span", "");
+    v.stripText = text(v, "span", "", "how much each dimension contributes to the view right now");
+    v.stripMiddle.appendChild(v.stripText);
+    v.stripMiddle.appendChild(v.doc.createTextNode(" \u00b7 colour: "));
+    v.stripLegend = AXIS_NAMES.map(function (name, i) {
+      var word = text(v, "b", "tumbler-axis-" + name, name, { fontWeight: "400" });
+      if (i > 0) v.stripMiddle.appendChild(v.doc.createTextNode(" "));
+      v.stripMiddle.appendChild(word);
+      return word;
+    });
     v.stripLast = text(v, "span", "", "");
     caption.appendChild(v.stripFirst);
     caption.appendChild(v.stripMiddle);
@@ -823,7 +872,10 @@ ET.viewer = (function () {
     // stop takes the foreground, so it stays dark ink.
     v.stopColour = t.light ? fg : "rgb(255, 255, 255)";
     v.neighbourColour = cssRgb(mix(t.foreground, t.muted, 0.375));
-    v.accent255 = [Math.round(t.accent[0] * 255), Math.round(t.accent[1] * 255), Math.round(t.accent[2] * 255)];
+    v.axisRgb = t.light ? AXIS_RGB_LIGHT : AXIS_RGB_DARK;
+    v.stripLegend.forEach(function (word, i) {
+      word.style.color = "rgb(" + v.axisRgb[i].join(", ") + ")";
+    });
   }
 
   // Read the host's theme and, only when it differs from the one applied, apply it
@@ -1185,7 +1237,7 @@ ET.viewer = (function () {
     v.mastLine.textContent =
       thousands(set.count) + " embeddings · " + thousands(D) + " dimensions · one restless 3-D window";
     v.stripLast.textContent = "dimension " + thousands(D);
-    v.stripMiddle.textContent = "how much each of the " + thousands(D) + " dimensions contributes to the view right now";
+    v.stripText.textContent = "how much each of the " + thousands(D) + " dimensions contributes to the view right now";
   }
 
   // ---------- modes ----------
@@ -1256,6 +1308,7 @@ ET.viewer = (function () {
       inst: inst,
       jobs: [prep],
       clock: 0,
+      seeked: false, // seek() was called: hold the spin until ready (spinWhilePreparing)
       wiresVersion: -1,
       refit: null,
       readyAt: null,
@@ -1311,6 +1364,7 @@ ET.viewer = (function () {
     }
     var ok = startMode(v, id, copyState(v.last));
     if (ok) {
+      if (v.search.shown.length) notifyModeSearch(v);
       recover(v);
       call(v, v.options.onModeChange, id);
       invalidate(v);
@@ -1455,6 +1509,7 @@ ET.viewer = (function () {
         if (!rb?.ok) fatal(v, rb?.message || "The graphics card could not take the data back.");
       }
       if (v.mode) v.mode.wiresVersion = -1;
+      if (v.search.litUploaded) uploadLit(v); // setData cleared the lit values
       v.paintKey = paintKey(v);
       v.needClear = true;
     } catch (err) {
@@ -1519,6 +1574,7 @@ ET.viewer = (function () {
       return { ok: false, code: "mode-failed", message: "No view can show this data: " + (firstError || "every view refused it.") };
     }
     if (firstError) notify(v, firstError); // shown on top of the fallback view
+    dropSearchesForReplace(v);
     v.paintKey = paintKey(v);
     sizeStrip(v);
     describeSet(v);
@@ -1612,10 +1668,11 @@ ET.viewer = (function () {
     if (v.mode) {
       var modeFailed = appendToMode(v, v.mode, set, k, snap);
       if (modeFailed) return modeFailed;
-    } else startMode(v, v.modeId, null);
+    } else if (startMode(v, v.modeId, null)) notifyModeSearch(v);
     v.sinceAppend = 0;
     describeSet(v);
     renderProvenance(v);
+    searchesAfterAppend(v);
     v.timing.lastAppendMs = now(v) - t0;
     return { ok: true, op: "append", count: set.count, added: k };
   }
@@ -1651,6 +1708,7 @@ ET.viewer = (function () {
     w = w > 0 ? w : v.stage.clientWidth || 300;
     h = h > 0 ? h : v.stage.clientHeight || 150;
     var dpr = Math.min(Number(v.options.maxPixelRatio) || 2, v.win?.devicePixelRatio || 1);
+    if (v.dprCap !== null) dpr = Math.max(1, Math.min(dpr, v.dprCap));
     v.dpr = dpr;
     v.cssW = w;
     v.cssH = h;
@@ -1730,6 +1788,7 @@ ET.viewer = (function () {
     var m = v.mode;
     if (!m || !v.set || v.set.count === 0) return false;
     if (m.jobs.length || m.refit) return true;
+    if (searchBusy(v)) return true;
     // A mode that is still preparing needs frames until it is ready, even when the
     // view is paused or motion is reduced: otherwise it would wait for input forever.
     if (!readyOf(m)) return true;
@@ -1747,6 +1806,7 @@ ET.viewer = (function () {
       return; // no frame work while hidden or off screen; resume() reschedules
     }
     var start = now(v);
+    noteInterval(v, t);
     var dt = v.prev === null ? 1 / 60 : clamp((t - v.prev) / 1000, 0.001, 0.05);
     // After a long frame of the viewer's own work (a fit), count the gap as lost time,
     // not motion, so the picture does not leap ahead by a whole clamped step.
@@ -1769,6 +1829,7 @@ ET.viewer = (function () {
     }
     var spent = now(v) - start;
     v.lastSpent = spent;
+    v.lastScript = Math.max(0, spent - v.drawSpent);
     if (spent > v.timing.longestFrameMs) v.timing.longestFrameMs = spent;
     v.frames++;
     if (v.timing.firstFrameMs === null) v.timing.firstFrameMs = now(v) - v.timing.mountAt;
@@ -1778,19 +1839,57 @@ ET.viewer = (function () {
       v.fps = (v.fpsFrames * 1000) / (t - v.fpsAt);
       v.fpsAt = t;
       v.fpsFrames = 0;
+      adaptPixelRatio(v);
     }
     if (!v.broken && needsMore(v)) schedule(v);
   }
 
-  // Preparation and refit work run in small units (a few milliseconds each) inside a
-  // per-frame budget: prepareBudgetMs (8), halved after a frame that ran long, so the
-  // page keeps its frame rate while a mode prepares or refits.
-  function pump(v, m, start) {
-    var budget = Math.max(1, Number(v.options.prepareBudgetMs) || 8);
-    if (v.lastSpent > 16) budget = Math.max(1, budget / 2);
+  // The interval between animation frames (rAF timestamps), smoothed. It is measured only
+  // between frames that ran back to back: the first frame after a pause, a resume or a
+  // return from hidden starts afresh, and so does the frames-per-second window.
+  function noteInterval(v, t) {
+    var gap = v.rafAt === null ? Infinity : t - v.rafAt;
+    v.rafAt = t;
+    if (v.prev === null || gap > INTERVAL_GAP_MS) {
+      v.fpsAt = null;
+      v.fpsFrames = 0;
+      return;
+    }
+    if (gap > 0) v.interval = v.interval > 0 ? v.interval * 0.75 + gap * 0.25 : gap;
+  }
+
+  // The budget for this frame's heavy work. Where the time between frames went decides it:
+  // on a device whose frames are long because drawing is slow (the GPU, the compositor),
+  // the work may take up to WORK_SHARE of the frame interval, so it keeps making progress
+  // at any frame rate. It is cut only when the work's own script time ran well past what it
+  // was given. The rest of the frame's script (the mode's state, labels, uploads) is not
+  // made shorter by a smaller budget, so cutting the budget for it only starves the work:
+  // measured with the CPU throttled 6x, a rule on the whole script swung the budget between
+  // 24 and 4 ms every other frame. info().timing reports both (workMs, scriptMs).
+  function frameBudget(v) {
+    var base = Math.max(1, Number(v.options.prepareBudgetMs) || 8);
+    var budget = clamp(v.interval * WORK_SHARE, base, base * BUDGET_CEILING);
+    if (v.timing.workMs > Math.max(OVERRUN_FLOOR_MS, v.lastBudget + OVERRUN_MS)) budget = Math.max(1, base / 2);
     // A paused view has no motion to keep smooth, so it may spend longer per frame on
     // getting ready (it still answers input every frame).
-    if (!v.running) budget = Math.max(budget, 40);
+    if (!v.running) budget = Math.max(budget, PAUSED_BUDGET_MS);
+    v.lastBudget = budget;
+    return budget;
+  }
+
+  // Preparation and refit work run in small units (a few milliseconds each) inside the
+  // frame's budget (frameBudget), so the page keeps its frame rate while a mode prepares
+  // or refits, and the work keeps going on a device that draws slowly.
+  function pump(v, m, start) {
+    var budget = frameBudget(v);
+    v.timing.budgetMs = budget;
+    pumpJobs(v, m, start, budget);
+    if (m.refit && v.running && now(v) - start < budget) pumpRefit(v, m, start, budget);
+    pumpSearch(v, start, budget);
+    v.timing.workMs = now(v) - start;
+  }
+
+  function pumpJobs(v, m, start, budget) {
     while (m.jobs.length) {
       var job = m.jobs[0];
       var left = budget - (now(v) - start);
@@ -1799,7 +1898,6 @@ ET.viewer = (function () {
       if (job.done) m.jobs.shift();
       else break;
     }
-    if (m.refit && v.running && now(v) - start < budget) pumpRefit(v, m, start, budget);
   }
 
   // One step of a running refit inside what is left of the frame's budget.
@@ -1853,18 +1951,27 @@ ET.viewer = (function () {
     pump(v, m, start);
     var ready = m.inst.isReady();
     if (ready) advanceReady(v, m, dt);
+    else spinWhilePreparing(v, m, dt);
     var s = m.inst.stateAt(ready ? m.clock : 0);
     if (r && s.wires && s.wires.version !== m.wiresVersion) {
       r.setWires(s.wires.pairs, s.wires.lengths);
       m.wiresVersion = s.wires.version;
     }
     if (!v.reducedMotion || v.running) v.drawTime += dt;
+    easeFilter(v, dt);
+    v.search.hideUnlit = hidesUnlit(v);
     var ds = drawState(v, s, dt);
-    if (r && v.rendering) r.draw(ds);
+    v.drawSpent = 0;
+    if (r && v.rendering) {
+      var d0 = now(v);
+      r.draw(ds);
+      v.drawSpent = now(v) - d0;
+    }
     v.needClear = false;
     v.last = s;
     v.lastDraw = ds;
     drawLabels(v, s, ds);
+    drawSearchOverlay(v, s, ds);
     drawStrip(v, s.frame);
     v.statusClock += dt;
     if (v.statusClock >= STATUS_EVERY) updateStatus(v, m, s, ready);
@@ -1896,10 +2003,48 @@ ET.viewer = (function () {
     }
     if (v.running) {
       m.clock += dt * v.speed;
-      if (!v.drag.active) v.spin += dt * v.speed;
+      if (!v.drag.active) v.spin += dt * v.speed * spinFactor(m);
     }
     if (typeof m.inst.mark === "function") m.inst.mark(m.clock);
     considerRefit(v, m);
+  }
+
+  // While a mode prepares, the mode clock waits for ready (frames for a given mode time do
+  // not depend on how fast the preparation ran) but the slow spin keeps turning the frame
+  // the mode holds, so the view never stands still. It runs on the same rule as the spin
+  // after ready (running, not dragging) and stops after a seek(), which asks for an exact
+  // frame: a seek before ready shows the frame at that time once the mode is ready.
+  function spinWhilePreparing(v, m, dt) {
+    if (!v.options.spinWhilePreparing || m.seeked || !v.running || v.drag.active) return;
+    v.spin += dt * v.speed * spinFactor(m);
+  }
+
+  // A mode is preparing while it is not ready, has queued work, or refits.
+  function preparingOf(m) {
+    return !!(m && (!readyOf(m) || m.jobs.length || m.refit));
+  }
+
+  // Once a second (with the frames-per-second figure): after ADAPT_SECONDS measured seconds
+  // in a row under ADAPT_FPS, while the view moves, draws and prepares nothing, draw at a
+  // lower ratio (ADAPT_STEP less, never below 1). It is never raised again in this mount.
+  function adaptPixelRatio(v) {
+    if (!v.options.adaptivePixelRatio || !v.running || !v.rendering || preparingOf(v.mode) || v.fps >= ADAPT_FPS) {
+      v.slowSeconds = 0;
+      return;
+    }
+    v.slowSeconds++;
+    if (v.slowSeconds < ADAPT_SECONDS || v.dpr <= 1) return;
+    v.slowSeconds = 0;
+    v.dprCap = Math.max(1, v.dpr - ADAPT_STEP);
+    measure(v);
+  }
+
+  // A mode may ask for its own spin with a `spin` member (rad/s, finite, 0 or more; Focus
+  // asks for 0.13). v.spin counts seconds at SPIN, so it advances by this factor: exactly 1
+  // for a mode that does not ask, and the yaw stays continuous across a change of mode.
+  function spinFactor(m) {
+    var r = m?.inst?.spin;
+    return typeof r === "number" && Number.isFinite(r) && r >= 0 ? r / SPIN : 1;
   }
 
   // The status line, the view row and aria-busy, every STATUS_EVERY seconds.
@@ -1939,7 +2084,13 @@ ET.viewer = (function () {
     // overall brightness comes down as their number goes up.
     var crowd = crowding(v);
     if (crowd < 1) out.gain = (out.gain === undefined ? 1 : out.gain) * crowd;
+    // Many wires through the same part of the stage pile up into white: the renderer scales
+    // them down past WIRE_LOAD (the key is left out when no wires are shown).
+    if (out.wires > 0) out.wireLoad = WIRE_LOAD;
     if (v.reducedMotion) out.twinkle = 0;
+    // Search: how much the lit values apply (the key is left out with no search, so the
+    // draw state is exactly as before search).
+    if (v.search.filter > 0) out.filter = v.search.filter;
     out.clear = !!v.needClear;
     return out;
   }
@@ -2100,8 +2251,10 @@ ET.viewer = (function () {
     }
     var needSample = (v.showLabels && fogMix < 0.97) || v.hover;
     if (needSample) projectSample(v, s, ds, n);
-    // Group names at the middle of their labelled points, fading out as Wander's fog comes in.
-    if (v.showLabels && fogMix < 0.97 && v.groupNames.length) used = drawGroupNames(v, used, fogMix, n);
+    // Group names at the middle of their labelled points, fading out as Wander's fog comes in;
+    // none in Focus while a search is shown (the results are what matters there).
+    var focusSearch = v.modeId === "focus" && v.search.filter > 0;
+    if (v.showLabels && fogMix < 0.97 && v.groupNames.length && !focusSearch) used = drawGroupNames(v, used, fogMix, n);
     // Wander: the stop, its labelled neighbours and spokes to them.
     if (s.focus && v.mode) used = drawFocus(v, s, ds, used);
     // Hover: the nearest sampled point within 20 px.
@@ -2130,7 +2283,7 @@ ET.viewer = (function () {
     var cn = new Float64Array(G);
     for (var k = 0; k < n; k++) {
       var g = v.groupIndex[v.set.points[sample[k]].group];
-      if (g === undefined) continue;
+      if (g === undefined || hiddenPoint(v, sample[k])) continue;
       cx[g] += v.sx[k];
       cy[g] += v.sy[k];
       cn[g]++;
@@ -2170,6 +2323,7 @@ ET.viewer = (function () {
     var best = -1;
     var bd = 20 * dpr * (20 * dpr);
     for (var h = 0; h < n; h++) {
+      if (hiddenPoint(v, v.labelSample[h])) continue;
       var dx = v.sx[h] - v.hover.x * dpr;
       var dy = v.sy[h] - v.hover.y * dpr;
       var d2 = dx * dx + dy * dy;
@@ -2267,20 +2421,26 @@ ET.viewer = (function () {
 
   // ---------- readout strip ----------
 
-  // One cell per dimension: how much that dimension contributes to the three axes on
-  // screen, relative to an even share (the reference's (f0^2 + f1^2 + f2^2) * D / 3).
+  // One cell per dimension. Its opacity is how much that dimension contributes to the three
+  // axes on screen, relative to an even share (the reference's (f0^2 + f1^2 + f2^2) * D / 3).
+  // Its colour mixes the three axis colours by the dimension's squared component on each
+  // axis, divided by their sum: a dimension that feeds one axis shows that axis's colour.
   function drawStrip(v, F) {
     if (!v.stripCtx || !v.stripImage || !v.set) return;
     var D = v.set.dimension;
     var px = v.stripImage.data;
-    var a = v.accent255;
+    var c = v.axisRgb;
     for (var d = 0; d < D; d++) {
-      var e = ((F[d] * F[d] + F[D + d] * F[D + d] + F[2 * D + d] * F[2 * D + d]) * D) / 3;
+      var ax = F[d] * F[d];
+      var ay = F[D + d] * F[D + d];
+      var az = F[2 * D + d] * F[2 * D + d];
+      var sum = ax + ay + az;
+      var norm = sum > 0 ? sum : 1;
       var o = d * 4;
-      px[o] = a[0];
-      px[o + 1] = Math.max(0, a[1] - Math.min(60, e * 12));
-      px[o + 2] = a[2];
-      px[o + 3] = Math.min(255, e * 80);
+      px[o] = (c[0][0] * ax + c[1][0] * ay + c[2][0] * az) / norm;
+      px[o + 1] = (c[0][1] * ax + c[1][1] * ay + c[2][1] * az) / norm;
+      px[o + 2] = (c[0][2] * ax + c[1][2] * ay + c[2][2] * az) / norm;
+      px[o + 3] = Math.min(255, ((sum * D) / 3) * 80);
     }
     v.stripCtx.putImageData(v.stripImage, 0, 0);
   }
@@ -2445,6 +2605,7 @@ ET.viewer = (function () {
         v.drag.active = false;
         stage.style.cursor = "grab";
       }
+      if (e.type === "pointerup" && pt) focusClick(v, e, pt, pos(e));
       // Double tap (touch or pen) resets the zoom; a mouse uses dblclick.
       if (e.type === "pointerup" && pt && e.pointerType && e.pointerType !== "mouse") {
         var moved = Math.abs(e.clientX - pt.sx) + Math.abs(e.clientY - pt.sy);
@@ -2603,6 +2764,1217 @@ ET.viewer = (function () {
     }, 1000);
   }
 
+  // ---------- search ----------
+  //
+  // docs/search-interface.md, "Viewer (t8)". The viewer holds the searches shown, runs the
+  // host's embed and rerank callbacks (it never fetches anything itself), pumps the ranking,
+  // word-matching and facing-frame steppers inside the frame budget, hands the lit values to
+  // the renderer and the facing frame to the mode. One run (a setSearches call, a settings
+  // change or a re-run after an append) is in progress at a time; a newer run supersedes it,
+  // and every late callback answer or stepper result of a superseded run is dropped.
+
+  var SEARCH_MESSAGES = {
+    "no-embedder":
+      "Cannot embed the query: the host supplied no embed callback. Search among the loaded points still works.",
+    "embed-failed": "The embedder failed to answer. The earlier results are kept.",
+    "embed-timeout": "The embedder did not answer within {seconds} seconds. The earlier results are kept.",
+    "embed-malformed": "The embedder's answer was not a vector with a model id. The earlier results are kept.",
+    "rerank-failed": "The reranker failed to answer; the results stay in embedding order.",
+    "rerank-timeout": "The reranker did not answer within {seconds} seconds; the results stay in embedding order.",
+    "rerank-no-text": "A vector search with no label has no text to send to the reranker; it stays in embedding order.",
+    "too-many-searches": "At most 4 searches at once; {found} were given.",
+    "bad-search": "A search must be text, { text }, { vector, model } or { point }, given in an array.",
+    superseded: "A newer search replaced this one.",
+    destroyed: "This viewer has been destroyed.",
+  };
+  var FILTER_TIME = 0.35; // seconds: the reference's filterMix time constant
+  var CLICK_SLOP = 5; // px a Focus click may move between press and release
+  var CLICK_REACH = 16; // px from a point a Focus click may land
+
+  function searchRefusal(code, values) {
+    var tpl = Object.hasOwn(SEARCH_MESSAGES, code) ? SEARCH_MESSAGES[code] : null;
+    var message = tpl
+      ? tpl.replaceAll(/\{(\w+)\}/g, function (all, name) {
+          return values && Object.hasOwn(values, name) ? String(values[name]) : all;
+        })
+      : ET.search.format(code, values);
+    return { ok: false, code: code, message: message };
+  }
+
+  function plainRefusal(r) {
+    return { ok: false, code: r.code, message: r.message };
+  }
+
+  function isObj(x) {
+    return !!x && typeof x === "object";
+  }
+
+  function newSearchState(opts) {
+    var ms = Number(opts.searchTimeoutMs);
+    return {
+      embed: typeof opts.embed === "function" ? opts.embed : null,
+      rerank: typeof opts.rerank === "function" ? opts.rerank : null,
+      timeoutMs: ms > 0 ? ms : 15000,
+      settings: {
+        k: ET.search.clampK(opts.searchK),
+        candidates: ET.search.clampCandidates(opts.searchCandidates),
+        top: ET.search.clampTop(opts.searchTop, opts.searchCandidates),
+        lit: ET.searchSets.litSetting(opts.searchLit),
+        distances: false,
+        rerank: false,
+        pointOfView: null,
+        onlyResults: false,
+      },
+      run: null, // the run in progress
+      work: [], // steppers of the run in progress: { run, job, after }
+      shown: [], // the searches shown, in letter order
+      shownSet: null, // the set they were worked out on
+      shownUsed: null, // the settings they were worked out with: { k, candidates, top, pointOfView, rerank }
+      lit: null, // ET.searchSets.litValues of the searches shown
+      pairs: [],
+      unmatched: [],
+      code: null,
+      message: null,
+      facingJob: null, // { job, swing }
+      facingTarget: null, // the facing frame of the searches shown, once worked out
+      filter: 0, // eased toward 1 while a search is shown, toward 0 when none is
+      litUploaded: false,
+      hideUnlit: false, // Focus's Only results hides unlit points this frame
+      panel: null,
+    };
+  }
+
+  function isCurrent(v, run) {
+    return !v.destroyed && v.search.run === run;
+  }
+
+  // ----- timers and guarded callbacks -----
+
+  function clearRunTimers(v, run) {
+    var w = v.win;
+    for (var id of run.timers) if (typeof w?.clearTimeout === "function") w.clearTimeout(id);
+    run.timers = [];
+  }
+
+  // Call a host callback with exactly `args`. `done` gets { ok: true, value } or a refusal
+  // (<prefix>-failed, <prefix>-timeout), once, and only while the run is current: a late
+  // answer of a superseded run, or any answer after destroy, touches nothing.
+  function callHost(v, run, fn, args, prefix, done) {
+    var settled = false;
+    var timer = 0;
+    function finish(outcome) {
+      if (settled) return;
+      settled = true;
+      if (!isCurrent(v, run)) return;
+      if (timer) {
+        run.timers = run.timers.filter(function (t) {
+          return t !== timer;
+        });
+        v.win.clearTimeout(timer);
+      }
+      done(outcome);
+    }
+    var w = v.win;
+    if (typeof w?.setTimeout === "function" && typeof w.clearTimeout === "function") {
+      timer = w.setTimeout(function () {
+        finish(searchRefusal(prefix + "-timeout", { seconds: v.search.timeoutMs / 1000 }));
+      }, v.search.timeoutMs);
+      run.timers.push(timer);
+    }
+    var answer;
+    try {
+      answer = Promise.resolve(fn(...args));
+    } catch (err) {
+      // The host's error is the host's own: it may carry an address or a key, so it is
+      // not shown; the refusal says only that the callback failed.
+      finish(searchRefusal(prefix + "-failed"));
+      return;
+    }
+    answer.then(
+      function (value) {
+        finish({ ok: true, value: value });
+      },
+      function () {
+        finish(searchRefusal(prefix + "-failed"));
+      }
+    );
+  }
+
+  // ----- entries -----
+
+  // One entry of setSearches as a source: { ok: true, src } or a refusal. A text source
+  // says whether it is embedded or matched among the loaded points; a vector or point
+  // source is checked here (they need no callback).
+  function parseEntry(v, entry) {
+    if (typeof entry === "string") return textSource(v, entry, "auto");
+    if (!isObj(entry)) return searchRefusal("bad-search");
+    try {
+      if (typeof entry.text === "string") return textSource(v, entry.text, entry.via);
+      if (entry.vector !== undefined) return vectorSource(v, entry);
+      if (entry.point !== undefined) return pointSource(v, entry.point);
+    } catch {
+      // A getter on the host's entry threw: the entry is not one of the forms.
+      return searchRefusal("bad-search");
+    }
+    return searchRefusal("bad-search");
+  }
+
+  function textSource(v, text, via) {
+    if (ET.search.tokens(text).length === 0) return searchRefusal("empty-query");
+    var s = v.search;
+    var same = ET.search.checkSameSpace(v.set);
+    if (via === "words") return { ok: true, src: { kind: "words", text: text, note: null } };
+    if (via === "embed") {
+      if (!s.embed) return searchRefusal("no-embedder");
+      if (!same.ok) return plainRefusal(same);
+      return { ok: true, src: { kind: "embedded", text: text, note: null } };
+    }
+    if (s.embed && same.ok) return { ok: true, src: { kind: "embedded", text: text, note: null } };
+    var note = s.embed && same.code === "reduction-not-searchable" ? same.message : null;
+    return { ok: true, src: { kind: "words", text: text, note: note } };
+  }
+
+  function vectorSource(v, entry) {
+    var c = ET.search.checkQuery(v.set, { vector: entry.vector, model: entry.model });
+    if (!c.ok) return plainRefusal(c);
+    var label = typeof entry.label === "string" && entry.label !== "" ? entry.label : null;
+    return {
+      ok: true,
+      src: prepared("vector", label || "vector", entry.model, c.vector, { rerankText: label }),
+    };
+  }
+
+  function pointSource(v, id) {
+    var c = ET.search.pointQuery(v.set, id);
+    if (!c.ok) return plainRefusal(c);
+    return {
+      ok: true,
+      src: prepared("point", String(c.id), v.set.model, c.vector, {
+        point: c.id,
+        rerankText: ET.search.pointText(v.set, c.index),
+      }),
+    };
+  }
+
+  // A search whose query vector is known.
+  function prepared(kind, text, model, query, extra) {
+    var q = {
+      kind: kind,
+      text: text,
+      model: model,
+      queryForm: null,
+      sentTo: "nowhere",
+      words: null,
+      point: null,
+      baseNote: null,
+      query: query,
+      rerankText: null,
+      ready: true,
+    };
+    if (extra) for (var k in extra) if (Object.hasOwn(extra, k)) q[k] = extra[k];
+    return q;
+  }
+
+  // ----- runs -----
+
+  function newRun(v, kind, resolve, swing) {
+    return {
+      kind: kind, // "set" | "settings" | "rerun"
+      resolve: resolve,
+      swing: swing,
+      timers: [],
+      searches: [], // one slot per entry; null when left out
+      left: 0,
+      unmatched: [],
+      set: v.set,
+      used: null,
+      pendingEmbed: 0,
+      pendingRerank: 0,
+      pairs: null,
+    };
+  }
+
+  // End the run in progress (if any) with `result` for its caller.
+  function endRun(v, result) {
+    var s = v.search;
+    var run = s.run;
+    if (!run) return;
+    s.run = null;
+    s.work = [];
+    clearRunTimers(v, run);
+    if (run.resolve) run.resolve(result);
+  }
+
+  function beginRun(v, run) {
+    endRun(v, searchRefusal("superseded"));
+    v.search.run = run;
+  }
+
+  function refuseRun(v, run, refusal) {
+    if (!isCurrent(v, run)) return;
+    var s = v.search;
+    endRun(v, refusal);
+    s.code = refusal.code;
+    s.message = refusal.message;
+    call(v, v.options.onError, plainRefusal(refusal));
+    searchChanged(v);
+    // A refused new search leaves the earlier ones; if they were waiting to be worked out
+    // again (an append, a settings change), that starts now. A refused re-run is not retried.
+    if (run.kind === "set" && needsRerun(v)) rerun(v, "rerun", null);
+  }
+
+  function setSearches(v, list) {
+    if (v.destroyed) return Promise.resolve(searchRefusal("destroyed"));
+    if (!Array.isArray(list)) return Promise.resolve(searchRefusal("bad-search"));
+    if (list.length > ET.searchSets.MAX_SEARCHES) {
+      return Promise.resolve(searchRefusal("too-many-searches", { found: list.length }));
+    }
+    if (list.length === 0) {
+      clearSearches(v);
+      return Promise.resolve({ ok: true, search: searchInfo(v) });
+    }
+    return new Promise(function (resolve) {
+      var run = newRun(v, "set", resolve, true);
+      beginRun(v, run);
+      startSources(v, run, list);
+    });
+  }
+
+  function startSources(v, run, list) {
+    if (!v.set || v.set.count === 0) {
+      refuseRun(v, run, searchRefusal("no-data"));
+      return;
+    }
+    var sources = [];
+    for (var entry of list) {
+      var p = parseEntry(v, entry);
+      if (!p.ok) {
+        refuseRun(v, run, p);
+        return;
+      }
+      sources.push(p.src);
+    }
+    resolveSources(v, run, sources);
+    searchChanged(v); // waiting
+    invalidate(v);
+  }
+
+  // Turn every source into a prepared search: embed through the host, or match words in
+  // the frame budget; the others are ready already.
+  function resolveSources(v, run, sources) {
+    run.searches = new Array(sources.length).fill(null);
+    run.left = sources.length;
+    sources.forEach(function (src, i) {
+      if (src.ready) settleSource(v, run, i, { ok: true, search: src });
+      else if (src.kind === "embedded") embedSource(v, run, i, src);
+      else matchWords(v, run, i, src);
+    });
+  }
+
+  function settleSource(v, run, i, outcome) {
+    if (!isCurrent(v, run)) return;
+    if (!outcome.ok) {
+      refuseRun(v, run, outcome);
+      return;
+    }
+    run.searches[i] = outcome.search; // null: a words entry that matched nothing
+    run.left--;
+    if (run.left === 0) startRanking(v, run);
+  }
+
+  function embedSource(v, run, i, src) {
+    run.pendingEmbed++;
+    callHost(v, run, v.search.embed, [src.text], "embed", function (outcome) {
+      run.pendingEmbed--;
+      settleSource(v, run, i, outcome.ok ? checkEmbedded(v, src, outcome.value) : outcome);
+    });
+  }
+
+  // The embed callback's answer, checked before anything reaches the renderer.
+  function checkEmbedded(v, src, answer) {
+    var vector;
+    var model;
+    var form;
+    try {
+      if (!isObj(answer) || answer.vector === undefined) return searchRefusal("embed-malformed");
+      vector = answer.vector;
+      model = answer.model;
+      form = answer.queryForm;
+    } catch {
+      // A getter on the answer threw: not a vector with a model id.
+      return searchRefusal("embed-malformed");
+    }
+    var c = ET.search.checkQuery(v.set, { vector: vector, model: model });
+    if (!c.ok) return plainRefusal(c);
+    return {
+      ok: true,
+      search: prepared("embedded", src.text, model, c.vector, {
+        queryForm: typeof form === "string" ? form : null,
+        sentTo: "embedder",
+        rerankText: src.text,
+      }),
+    };
+  }
+
+  function matchWords(v, run, i, src) {
+    queueWork(v, run, ET.search.makeWordQuery(v.set, src.text), function (r) {
+      settleSource(v, run, i, wordOutcome(v, run, src, r));
+    });
+  }
+
+  function wordOutcome(v, run, src, r) {
+    for (var w of r.unmatched || []) if (!run.unmatched.includes(w)) run.unmatched.push(w);
+    if (!r.ok) return r.code === "words-none" ? { ok: true, search: null } : plainRefusal(r);
+    return {
+      ok: true,
+      search: prepared("words", src.text, v.set.model, r.vector, {
+        words: { used: r.used.map(copyUsed), unmatched: r.unmatched.slice() },
+        baseNote: src.note,
+        rerankText: src.text,
+      }),
+    };
+  }
+
+  function copyUsed(u) {
+    return { word: u.word, how: u.how, count: u.count };
+  }
+
+  function queueWork(v, run, job, after) {
+    v.search.work.push({ run: run, job: job, after: after });
+    invalidate(v);
+  }
+
+  // ----- ranking and reranking -----
+
+  function startRanking(v, run) {
+    var kept = run.searches.filter(Boolean);
+    if (kept.length === 0) {
+      refuseRun(v, run, searchRefusal("words-none", { words: run.unmatched.join(", ") }));
+      return;
+    }
+    var st = v.search.settings;
+    var pov = ET.searchSets.LETTERS.indexOf(st.pointOfView);
+    run.searches = kept;
+    run.set = v.set;
+    run.used = {
+      k: st.k,
+      candidates: st.candidates,
+      top: st.top,
+      pointOfView: pov >= 0 && pov < kept.length ? st.pointOfView : null,
+      rerank: st.rerank,
+    };
+    var counts = { k: st.k, candidates: st.candidates, top: st.top };
+    run.left = kept.length;
+    kept.forEach(function (q, j) {
+      q.letter = ET.searchSets.letter(j);
+      q.scale = run.used.pointOfView === q.letter ? ET.searchSets.scaleFor(q.query) : null;
+      q.reranker = null;
+      q.sent = 0;
+      q.note = q.baseNote;
+      queueWork(v, run, ET.search.makeRank(run.set, q.query, { ...counts, scale: q.scale }), function (ranking) {
+        q.ranking = ranking;
+        q.view = ranking;
+        run.left--;
+        if (run.left === 0) startRerank(v, run);
+      });
+    });
+  }
+
+  function rerankOn(v, run) {
+    return !!(run.used.rerank && v.search.rerank && run.set.text_included);
+  }
+
+  function startRerank(v, run) {
+    if (!rerankOn(v, run)) {
+      startPairs(v, run);
+      return;
+    }
+    run.left = run.searches.length;
+    run.searches.forEach(function (q) {
+      if (q.rerankText === null) {
+        q.note = searchRefusal("rerank-no-text").message;
+        rerankDone(v, run);
+        return;
+      }
+      var candidates = q.ranking.pool.map(function (hit) {
+        return ET.search.pointText(run.set, hit.index);
+      });
+      q.sent = candidates.length; // never more than the candidates stated
+      run.pendingRerank++;
+      callHost(v, run, v.search.rerank, [q.rerankText, candidates], "rerank", function (outcome) {
+        run.pendingRerank--;
+        applyRerank(q, outcome);
+        rerankDone(v, run);
+      });
+    });
+  }
+
+  function rerankDone(v, run) {
+    run.left--;
+    if (run.left === 0) startPairs(v, run);
+  }
+
+  // The pair reports, in the frame budget (with 100 results a search they cost far more than a
+  // frame), then the run is shown.
+  function startPairs(v, run) {
+    if (!isCurrent(v, run)) return;
+    var job;
+    try {
+      job = ET.searchSets.makePairReports(
+        run.set,
+        run.searches.map(function (q) {
+          return q.view;
+        })
+      );
+    } catch (err) {
+      // Rankings always index the set they were made on; nothing to pair otherwise.
+      job = null;
+    }
+    if (!job) {
+      run.pairs = [];
+      commitRun(v, run);
+      return;
+    }
+    queueWork(v, run, job, function (pairs) {
+      run.pairs = pairs;
+      commitRun(v, run);
+    });
+  }
+
+  // A reranker's answer: the new order, or a note and the embedding order kept.
+  function applyRerank(q, outcome) {
+    if (!outcome.ok) {
+      q.note = outcome.message;
+      return;
+    }
+    var scores;
+    var model;
+    try {
+      scores = isObj(outcome.value) ? outcome.value.scores : undefined;
+      model = isObj(outcome.value) ? outcome.value.model : undefined;
+    } catch {
+      // A getter on the answer threw: treated as a malformed answer below.
+      scores = undefined;
+    }
+    var r = typeof model === "string" && model !== "" ? ET.search.rerankOrder(q.ranking, scores) : null;
+    if (!r?.ok) {
+      q.note = r ? r.message : ET.search.format("rerank-malformed");
+      return;
+    }
+    q.view = { ...q.ranking, hits: r.hits, near: r.near, radius: r.radius };
+    q.reranker = model;
+  }
+
+  // ----- what is shown -----
+
+  function views(s) {
+    return s.shown.map(function (q) {
+      return q.view;
+    });
+  }
+
+  function commitRun(v, run) {
+    if (!isCurrent(v, run)) return;
+    var s = v.search;
+    s.run = null;
+    s.work = [];
+    clearRunTimers(v, run);
+    s.shown = run.searches;
+    s.shownSet = run.set;
+    s.shownUsed = run.used;
+    if (run.kind === "set") s.unmatched = run.unmatched.slice();
+    s.code = null;
+    s.message = null;
+    if (run.kind === "set" && run.used.pointOfView === null) s.settings.pointOfView = null;
+    relight(v);
+    s.pairs = run.pairs || [];
+    startFacing(v, run.swing);
+    notifyModeSearch(v);
+    if (run.resolve) run.resolve({ ok: true, search: searchInfo(v) });
+    searchChanged(v);
+    if (needsRerun(v)) rerun(v, "rerun", null);
+    invalidate(v);
+  }
+
+  // The searches shown are from before an append, or were worked out with settings that
+  // have changed since: they need working out again (with no swing).
+  function needsRerun(v) {
+    var s = v.search;
+    if (!s.shown.length || !v.set) return false;
+    var u = s.shownUsed;
+    var st = s.settings;
+    return s.shownSet !== v.set || countsChanged(u, st) || u.pointOfView !== st.pointOfView || u.rerank !== st.rerank;
+  }
+
+  function countsChanged(a, b) {
+    return a.k !== b.k || a.candidates !== b.candidates || a.top !== b.top;
+  }
+
+  // Work the searches shown out again from the query vectors held (word searches match
+  // their words again over the set now shown). No embed call, no swing.
+  function rerun(v, kind, resolve) {
+    var s = v.search;
+    var run = newRun(v, kind, resolve, false);
+    var sources = s.shown.map(function (q) {
+      if (q.kind === "words") return { kind: "words", text: q.text, note: q.baseNote };
+      return prepared(q.kind, q.text, q.model, q.query, {
+        queryForm: q.queryForm,
+        sentTo: q.sentTo,
+        point: q.point,
+        baseNote: q.baseNote,
+        rerankText: q.rerankText,
+      });
+    });
+    beginRun(v, run);
+    resolveSources(v, run, sources);
+    searchChanged(v);
+    invalidate(v);
+  }
+
+  // Lit values for the searches shown, and their upload to the renderer.
+  function relight(v) {
+    var s = v.search;
+    s.lit = s.shown.length ? ET.searchSets.litValues(views(s), v.set.count, s.settings.lit) : null;
+    uploadLit(v);
+  }
+
+  function uploadLit(v) {
+    var s = v.search;
+    var r = v.renderer;
+    if (!r || !s.lit) return;
+    var n = r.status().count;
+    var lit = new Float32Array(n);
+    var shared = new Uint8Array(n);
+    lit.set(s.lit.lit.subarray(0, Math.min(n, s.lit.lit.length)));
+    shared.set(s.lit.shared.subarray(0, Math.min(n, s.lit.shared.length)));
+    try {
+      r.setLit(lit, shared);
+      s.litUploaded = true;
+    } catch {
+      // The renderer holds no data yet: the lit values go up with the next commit.
+      s.litUploaded = false;
+    }
+  }
+
+  function dropLit(v) {
+    var s = v.search;
+    if (!s.litUploaded) return;
+    s.litUploaded = false;
+    try {
+      v.renderer?.setLit(null);
+    } catch (err) {
+      // A disposed renderer has nothing left to clear.
+    }
+  }
+
+  // Ease the filter toward 1 while a search is shown and toward 0 when none is; the lit
+  // values are cleared from the renderer once it reaches 0.
+  function easeFilter(v, dt) {
+    var s = v.search;
+    var target = s.shown.length ? 1 : 0;
+    if (s.filter === target) return;
+    s.filter += (target - s.filter) * (1 - Math.exp(-dt / FILTER_TIME));
+    if (Math.abs(target - s.filter) < 1e-3) s.filter = target;
+    if (s.filter === 0) dropLit(v);
+  }
+
+  function searchBusy(v) {
+    var s = v.search;
+    return s.work.length > 0 || !!s.facingJob || s.filter !== (s.shown.length ? 1 : 0);
+  }
+
+  // The search steppers, after the mode's own preparation, in what is left of the budget.
+  function pumpSearch(v, start, budget) {
+    var s = v.search;
+    while (s.work.length) {
+      var left = budget - (now(v) - start);
+      if (left <= 0) return;
+      var item = s.work[0];
+      if (!stepWork(v, item, left)) return;
+    }
+    if (s.facingJob && budget - (now(v) - start) > 0) pumpFacing(v, budget - (now(v) - start));
+  }
+
+  // One step of the first queued stepper; true when it finished (and was handed on).
+  function stepWork(v, item, left) {
+    try {
+      item.job.step(left);
+    } catch (err) {
+      refuseRun(v, item.run, { ok: false, code: "internal", message: "Internal error while searching: " + errorText(err, String(err)) });
+      return false;
+    }
+    if (!item.job.done) return false;
+    v.search.work.shift();
+    item.after(item.job.result);
+    return true;
+  }
+
+  // ----- the facing frame and the modes -----
+
+  function startFacing(v, swing) {
+    var s = v.search;
+    s.facingJob = null;
+    s.facingTarget = null;
+    var pov = s.shown.find(function (q) {
+      return q.scale;
+    });
+    var cur = v.last?.frame;
+    try {
+      var job = ET.searchSets.makeFacingFrame(
+        v.set,
+        s.shown.map(function (q) {
+          return { query: q.query, hits: q.view.hits };
+        }),
+        {
+          seed: v.seed,
+          current: cur?.length === 3 * v.set.dimension ? new Float32Array(cur) : null,
+          scale: pov ? pov.scale : null,
+        }
+      );
+      s.facingJob = { job: job, swing: swing };
+    } catch {
+      // Fewer than three dimensions: there is no facing frame to swing to.
+      s.facingJob = null;
+    }
+  }
+
+  function pumpFacing(v, left) {
+    var s = v.search;
+    var f = s.facingJob;
+    try {
+      f.job.step(left);
+    } catch (err) {
+      // A facing frame that cannot be worked out leaves the view as it is.
+      s.facingJob = null;
+      return;
+    }
+    if (!f.job.done) return;
+    s.facingJob = null;
+    s.facingTarget = f.job.result;
+    if (f.swing) faceNow(v);
+  }
+
+  // Ask the current mode to swing toward the facing frame. False when it has no face
+  // member, refuses, or throws.
+  function faceNow(v) {
+    var s = v.search;
+    var m = v.mode;
+    if (!m || !s.facingTarget || typeof m.inst.face !== "function") return false;
+    var took = false;
+    try {
+      took = m.inst.face(s.facingTarget, m.clock, { searches: s.shown.length }) === true;
+    } catch (err) {
+      // A host mode whose face throws keeps its own motion.
+      took = false;
+    }
+    if (took) {
+      searchChanged(v);
+      invalidate(v);
+    }
+    return took;
+  }
+
+  function endSwing(v) {
+    var m = v.mode;
+    if (!m || typeof m.inst.face !== "function") return;
+    try {
+      m.inst.face(null, m.clock);
+    } catch (err) {
+      // nothing to end
+    }
+  }
+
+  // What Focus is told about the searches (inst.searchChanged), or null.
+  function modeSearch(v) {
+    var s = v.search;
+    if (!s.shown.length) return null;
+    var pov = s.shown.find(function (q) {
+      return q.scale;
+    });
+    return {
+      searches: s.shown.map(function (q) {
+        return {
+          letter: q.letter,
+          query: q.query,
+          indices: Int32Array.from(q.view.hits, function (hit) {
+            return hit.index;
+          }),
+        };
+      }),
+      scale: pov ? pov.scale : null,
+      onlyResults: !!s.settings.onlyResults,
+    };
+  }
+
+  // Tell a mode with a searchChanged member (Focus) about the searches. If it hands back a
+  // stepper (or { work: stepper }), it is pumped with the mode's own preparation.
+  function notifyModeSearch(v) {
+    var m = v.mode;
+    if (!m || typeof m.inst.searchChanged !== "function") return;
+    var r;
+    try {
+      r = m.inst.searchChanged(modeSearch(v), m.clock);
+    } catch (err) {
+      // A host mode whose searchChanged throws keeps its current view.
+      return;
+    }
+    var work = typeof r?.step === "function" ? r : r?.work;
+    if (typeof work?.step === "function") m.jobs.push(work);
+    invalidate(v);
+  }
+
+  function swinging(v) {
+    var m = v.mode;
+    if (!m || !v.search.shown.length || typeof m.inst.face !== "function") return false;
+    try {
+      var f = m.inst.describe()?.facing;
+      return !!f && m.clock < f.until;
+    } catch {
+      // A mode whose describe throws reports no swing.
+      return false;
+    }
+  }
+
+  // ----- clearing, settings, callbacks -----
+
+  function clearSearches(v) {
+    if (v.destroyed) return false;
+    var s = v.search;
+    var had = s.shown.length > 0 || !!s.run;
+    endRun(v, searchRefusal("superseded"));
+    var wasShown = s.shown.length > 0;
+    s.shown = [];
+    s.shownSet = null;
+    s.lit = null;
+    s.pairs = [];
+    s.unmatched = [];
+    s.code = null;
+    s.message = null;
+    s.facingJob = null;
+    s.facingTarget = null;
+    if (wasShown) {
+      endSwing(v);
+      notifyModeSearch(v);
+    }
+    if (had) searchChanged(v);
+    invalidate(v);
+    return had;
+  }
+
+  // A replace starts with no search (the renderer's setData already cleared its lit values).
+  function dropSearchesForReplace(v) {
+    var s = v.search;
+    var had = s.shown.length > 0 || !!s.run;
+    endRun(v, searchRefusal("superseded"));
+    s.shown = [];
+    s.shownSet = null;
+    s.lit = null;
+    s.pairs = [];
+    s.unmatched = [];
+    s.facingJob = null;
+    s.facingTarget = null;
+    s.filter = 0;
+    s.litUploaded = false;
+    if (had) searchChanged(v);
+  }
+
+  // After an append: the results are stale until worked out again, which starts now
+  // (unless a run is already working; its commit sees the new set and re-runs).
+  function searchesAfterAppend(v) {
+    var s = v.search;
+    if (!s.shown.length) return;
+    if (!s.run) rerun(v, "rerun", null);
+    else searchChanged(v);
+  }
+
+  // Apply a settings patch; returns which kinds of work it needs.
+  function applySettings(v, patch) {
+    var s = v.search;
+    var st = s.settings;
+    var before = { ...st };
+    applyCounts(st, patch);
+    if (ET.searchSets.LIT_SETTINGS.includes(patch.lit)) st.lit = patch.lit;
+    if (typeof patch.distances === "boolean") st.distances = patch.distances;
+    if (typeof patch.onlyResults === "boolean") st.onlyResults = patch.onlyResults;
+    if (typeof patch.rerank === "boolean") st.rerank = patch.rerank && rerankOffered(v);
+    if (Object.hasOwn(patch, "pointOfView") && validPointOfView(v, patch.pointOfView)) st.pointOfView = patch.pointOfView;
+    return {
+      rank: countsChanged(st, before) || st.pointOfView !== before.pointOfView || st.rerank !== before.rerank,
+      lit: st.lit !== before.lit,
+      only: st.onlyResults !== before.onlyResults,
+    };
+  }
+
+  // A count in a patch (a number, or a string holding one, as a range input gives), or null
+  // when absent or not a number: null, booleans and empty strings are ignored, not read as 0.
+  function patchCount(patch, key) {
+    var raw = Object.hasOwn(patch, key) ? patch[key] : null;
+    var text = typeof raw === "string" && raw.trim() !== "";
+    if (typeof raw !== "number" && !text) return null;
+    var n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // k, candidates and top from a patch; candidates first, so top is cut to the new candidates.
+  function applyCounts(st, patch) {
+    var k = patchCount(patch, "k");
+    var candidates = patchCount(patch, "candidates");
+    var top = patchCount(patch, "top");
+    if (k !== null) st.k = ET.search.clampK(k);
+    if (candidates !== null) st.candidates = ET.search.clampCandidates(candidates);
+    st.top = ET.search.clampTop(top === null ? st.top : top, st.candidates);
+  }
+
+  function validPointOfView(v, value) {
+    if (value === null) return true;
+    var j = ET.searchSets.LETTERS.indexOf(value);
+    return j >= 0 && j < v.search.shown.length;
+  }
+
+  function rerankOffered(v) {
+    return !!v.search.rerank && (!v.set || v.set.text_included === true);
+  }
+
+  function setSearchSettings(v, patch) {
+    if (v.destroyed) return Promise.resolve(searchRefusal("destroyed"));
+    var s = v.search;
+    var need = applySettings(v, isObj(patch) ? patch : {});
+    var running = s.run?.kind === "set";
+    if (need.rank && s.shown.length && !running) {
+      return new Promise(function (resolve) {
+        rerun(v, "settings", resolve);
+      });
+    }
+    if (need.lit && s.shown.length) relight(v);
+    if (need.only && s.shown.length) notifyModeSearch(v);
+    searchChanged(v);
+    invalidate(v);
+    return Promise.resolve({ ok: true, search: searchInfo(v) });
+  }
+
+  function setSearchCallbacks(v, cbs) {
+    var s = v.search;
+    if (!v.destroyed && isObj(cbs)) {
+      var removedEmbed = takeCallback(s, cbs, "embed");
+      var removedRerank = takeCallback(s, cbs, "rerank");
+      if (!s.rerank) s.settings.rerank = false;
+      var run = s.run;
+      if (run && ((removedEmbed && run.pendingEmbed > 0) || (removedRerank && run.pendingRerank > 0))) {
+        endRun(v, searchRefusal("superseded"));
+      }
+      searchChanged(v);
+      if (!s.run && needsRerun(v)) rerun(v, "rerun", null);
+    }
+    return { embedder: !!s.embed && !v.destroyed, reranker: !!s.rerank && !v.destroyed };
+  }
+
+  // Set s[key] from cbs[key] (a function, or null to remove; anything else is ignored).
+  // Returns true when a callback was removed or replaced.
+  function takeCallback(s, cbs, key) {
+    if (!Object.hasOwn(cbs, key)) return false;
+    var value = cbs[key];
+    if (value !== null && typeof value !== "function") return false;
+    var replaced = !!s[key] && s[key] !== value;
+    s[key] = value;
+    return replaced;
+  }
+
+  function faceSearches(v) {
+    if (v.destroyed || !v.search.shown.length) return false;
+    return faceNow(v);
+  }
+
+  // ----- info().search -----
+
+  function searchInfo(v) {
+    var s = v.search;
+    var set = v.set;
+    var same = ET.search.checkSameSpace(set);
+    var stale = !!(s.shownSet && set && s.shownSet !== set);
+    return {
+      active: s.shown.length > 0,
+      waiting: !!s.run,
+      stale: stale,
+      staleBy: stale ? set.count - s.shownSet.count : 0,
+      code: s.code,
+      message: s.message,
+      measure: ET.search.MEASURE_TEXT,
+      settings: { ...s.settings },
+      embedder: { available: !!s.embed },
+      reranker: { available: !!s.rerank, offered: !!s.rerank && !!set && set.text_included === true },
+      sameSpace: { ok: same.ok, kind: sameSpaceKind(set, same) },
+      litCount: s.lit ? s.lit.litCount : 0,
+      sharedCount: s.lit ? s.lit.sharedCount : 0,
+      unmatched: s.unmatched.slice(),
+      facing: swinging(v),
+      faceable: typeof v.mode?.inst.face === "function",
+      searches: s.shown.map(function (q, j) {
+        return searchEntryInfo(v, q, j);
+      }),
+      pairs: s.pairs.map(function (p) {
+        return pairInfo(v, p);
+      }),
+    };
+  }
+
+  function sameSpaceKind(set, same) {
+    if (!same.ok) return same.kind || null;
+    return set.reduction ? set.reduction.kind : "none";
+  }
+
+  function searchEntryInfo(v, q, j) {
+    var s = v.search;
+    var view = q.view;
+    return {
+      letter: q.letter,
+      kind: q.kind,
+      text: q.text,
+      model: q.model,
+      queryForm: q.queryForm,
+      sentTo: q.sentTo,
+      reranker: q.reranker,
+      words: q.words ? { used: q.words.used.map(copyUsed), unmatched: q.words.unmatched.slice() } : null,
+      point: q.kind === "point" ? q.point : null,
+      pointOfView: !!q.scale,
+      k: view.k,
+      candidates: view.candidates,
+      top: view.top,
+      available: availableOf(view),
+      sent: q.sent || 0,
+      counts: countsNote(q, view),
+      note: q.note,
+      radius: view.radius,
+      insideCount: s.lit ? s.lit.insideCounts[j] : 0,
+      results: view.hits.map(function (hit) {
+        return resultInfo(v, hit);
+      }),
+    };
+  }
+
+  // How many points could be results of a ranking: the named ones, or all when none is named.
+  function availableOf(ranking) {
+    return ranking.named > 0 ? ranking.named : ranking.count;
+  }
+
+  // Says so when a number asked for is more than there is to give, or null.
+  function countsNote(q, view) {
+    var available = availableOf(view);
+    var what = available + (view.named > 0 ? " named points" : " points");
+    if (q.reranker) {
+      if (view.candidates <= available) return null;
+      return "Only " + what + " can be results, so the reranker was given " + available + " candidates, not " + view.candidates + ".";
+    }
+    if (view.k <= available) return null;
+    return "Only " + what + " can be results, so " + available + " are shown, not " + view.k + ".";
+  }
+
+  function resultInfo(v, hit) {
+    var set = v.set || v.search.shownSet;
+    return {
+      id: hit.id,
+      index: hit.index,
+      rank: hit.rank,
+      embeddingRank: hit.embeddingRank,
+      plainRank: hit.plainRank,
+      distance: hit.distance,
+      plainDistance: hit.plainDistance,
+      gap: hit.gap,
+      moved: hit.moved,
+      score: hit.score,
+      text: ET.search.pointText(set, hit.index),
+    };
+  }
+
+  function pairInfo(v, p) {
+    var ids = (v.set || v.search.shownSet).ids;
+    var L = ET.searchSets.letter;
+    return {
+      a: L(p.a),
+      b: L(p.b),
+      shared: p.shared,
+      common: p.common,
+      commonIds: Array.from(p.commonIndices, function (i) {
+        return ids[i];
+      }),
+      closest: p.closest ? { a: ids[p.closest.a], b: ids[p.closest.b], distance: p.closest.distance } : null,
+    };
+  }
+
+  // The searches changed: tell the panel and the host.
+  function searchChanged(v) {
+    if (v.destroyed) return;
+    var s = v.search;
+    var snapshot = null;
+    if (s.panel && typeof s.panel.update === "function") {
+      snapshot = searchInfo(v);
+      try {
+        s.panel.update(snapshot);
+      } catch (err) {
+        reportHostError(v, err);
+      }
+    }
+    if (typeof v.options.onSearchChange === "function") call(v, v.options.onSearchChange, snapshot || searchInfo(v));
+  }
+
+  function destroySearch(v) {
+    var s = v.search;
+    var panel = s.panel;
+    s.panel = null;
+    if (typeof panel?.destroy === "function") {
+      try {
+        panel.destroy();
+      } catch (err) {
+        reportHostError(v, err);
+      }
+    }
+    s.work = [];
+    s.facingJob = null;
+    s.facingTarget = null;
+    s.shown = [];
+    s.shownSet = null;
+    s.lit = null;
+    s.pairs = [];
+    s.litUploaded = false;
+    s.filter = 0;
+  }
+
+  // ----- hidden points (Focus's Only results) -----
+
+  // Whether unlit points are hidden this frame: Focus with Only results on (its
+  // describe().onlyResults), lit values set and the filter on. Worked out once per frame.
+  function hidesUnlit(v) {
+    var m = v.mode;
+    if (v.modeId !== "focus" || !m || !v.search.lit || v.search.filter <= 0) return false;
+    try {
+      return m.inst.describe()?.onlyResults === true;
+    } catch (err) {
+      // A mode whose describe throws hides nothing.
+      return false;
+    }
+  }
+
+  // True when point i is hidden this frame (its lit value is 0 while unlit points are
+  // hidden). Hidden points are skipped when hit-testing and labelling.
+  function hiddenPoint(v, i) {
+    var lit = v.search.lit;
+    if (!v.search.hideUnlit || !lit) return false;
+    return lit.lit[i] <= 0; // lit values are finite, in [0, 1]
+  }
+
+  // ----- the panel hook (the panel itself is js/src/45-search-panel.js, task t9) -----
+
+  // Mount the search panel when the module is in the core file and the host did not turn it
+  // off. With no ET.searchPanel this does nothing.
+  function mountSearchPanel(v) {
+    if (!v.options.searchPanel || typeof ET.searchPanel?.mount !== "function") return;
+    var parts = {
+      panel: v.panel,
+      stage: v.stage,
+      overlay: v.overlay,
+      provenanceList: v.provList,
+      provenanceSummary: v.provSummary,
+    };
+    try {
+      v.search.panel =
+        ET.searchPanel.mount(parts, v.handle, {
+          document: v.doc,
+          light: !!v.theme?.light,
+          // The panel reads the theme it styles itself with, and the set for its suggestions
+          // and for where results sit on the stage (docs/search-interface.md, "Panel (t9)").
+          theme: function () {
+            return v.theme || null;
+          },
+          data: function () {
+            return v.set;
+          },
+        }) || null;
+    } catch (err) {
+      v.search.panel = null;
+      reportHostError(v, err);
+    }
+  }
+
+  // The panel's markers, links and result labels on the overlay, once per frame.
+  function drawSearchOverlay(v, s, ds) {
+    var panel = v.search.panel;
+    if (typeof panel?.drawOverlay !== "function") return;
+    var ctx = overlayContext(v);
+    if (!ctx) return;
+    try {
+      var drew = panel.drawOverlay(
+        ctx,
+        function (vector) {
+          return projectVector(v, vector, s, ds);
+        },
+        searchFrame(v)
+      );
+      if (drew !== false) v.overlayDirty = true;
+    } catch (err) {
+      reportHostError(v, err);
+    }
+  }
+
+  // What the panel needs to draw this frame beyond the projection: each shown search's raw
+  // query vector (in letter order), the filter, the pixel ratio, whether labels are on, the
+  // mode, and which points are hidden (Focus's Only results).
+  function searchFrame(v) {
+    return {
+      queries: v.search.shown.map(function (q) {
+        return q.query;
+      }),
+      filter: v.search.filter,
+      dpr: v.dpr,
+      light: !!v.theme?.light,
+      labels: v.showLabels,
+      mode: v.modeId,
+      hidden: function (i) {
+        return hiddenPoint(v, i);
+      },
+    };
+  }
+
+  // A vector of the data's dimension through the frame shown, in overlay pixels.
+  function projectVector(v, vector, s, ds) {
+    var D = v.set.dimension;
+    var F = s.frame;
+    var C = s.centre;
+    var a = 0;
+    var b = 0;
+    var c = 0;
+    for (var d = 0; d < D; d++) {
+      var x = vector[d] - C[d];
+      a += x * F[d];
+      b += x * F[D + d];
+      c += x * F[2 * D + d];
+    }
+    return ET.renderer.place([a, b, c], ds, v.W, v.H);
+  }
+
+  // ----- Focus: a click on a point searches from it -----
+
+  function focusClick(v, e, pt, at) {
+    if (v.modeId !== "focus" || !v.last || !v.lastDraw || !v.set) return;
+    if (Math.hypot(e.clientX - pt.sx, e.clientY - pt.sy) > CLICK_SLOP) return;
+    var i = nearestPoint(v, at.x * v.dpr, at.y * v.dpr, CLICK_REACH * v.dpr);
+    if (i >= 0) void setSearches(v, [{ point: v.set.ids[i] }]); // its answer is the view itself
+  }
+
+  // The index of the shown point nearest (x, y) in device pixels within reach, or -1.
+  function nearestPoint(v, x, y, reach) {
+    var best = -1;
+    var bd = reach * reach;
+    for (var i = 0; i < v.set.count; i++) {
+      if (hiddenPoint(v, i)) continue;
+      var p = project(v, i, v.last, v.lastDraw, v.tmp3);
+      var d2 = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+      if (d2 < bd) {
+        bd = d2;
+        best = i;
+      }
+    }
+    return best;
+  }
+
   // ---------- lifecycle ----------
 
   // Every option: the host's value where it gave one, the default otherwise.
@@ -2707,11 +4079,21 @@ ET.viewer = (function () {
         lastAppendMs: null,
         refits: 0,
         lastRefit: null,
+        budgetMs: null,
+        workMs: 0,
       },
       lastSpent: 0,
+      lastScript: 0, // the last frame's script time, drawing excluded (ms)
+      lastBudget: 0,
+      drawSpent: 0,
+      interval: 0, // smoothed time between animation frames (ms)
+      rafAt: null,
+      dprCap: null, // the lowered drawing-buffer ratio (adaptivePixelRatio), or null
+      slowSeconds: 0,
       lostTime: false,
       paintKey: null,
       themeKey: null,
+      search: newSearchState(opts),
     };
     v.timing.mountAt = now(v);
     v.tick = function (t) {
@@ -2732,6 +4114,7 @@ ET.viewer = (function () {
     wire(v);
     measure(v);
     v.handle = makeHandle(v);
+    mountSearchPanel(v);
     remember(el, v);
     invalidate(v);
     return v.handle;
@@ -2739,7 +4122,9 @@ ET.viewer = (function () {
 
   function destroy(v) {
     if (v.destroyed) return false;
+    endRun(v, searchRefusal("destroyed")); // waiting promises resolve with destroyed
     v.destroyed = true;
+    destroySearch(v);
     unschedule(v);
     if (v.retryTimer && typeof v.win?.clearTimeout === "function") v.win.clearTimeout(v.retryTimer);
     v.retryTimer = 0;
@@ -2786,7 +4171,7 @@ ET.viewer = (function () {
       speed: v.speed,
       zoom: v.userZoom,
       ready: readyOf(m),
-      preparing: !!(m && (!readyOf(m) || m.jobs.length || m.refit)),
+      preparing: preparingOf(m),
       broken: v.broken,
       count: v.set ? v.set.count : 0,
       dimension: v.set ? v.set.dimension : 0,
@@ -2795,6 +4180,8 @@ ET.viewer = (function () {
       animating: !!v.raf,
       frames: v.frames,
       fps: v.fps,
+      pixelRatio: v.dpr,
+      pixelRatioLowered: v.dprCap !== null,
       status: v.statusText,
       message: v.fatalMessage || v.noticeMessage || null,
       timing: {
@@ -2804,7 +4191,13 @@ ET.viewer = (function () {
         lastAppendMs: v.timing.lastAppendMs,
         refits: v.timing.refits,
         lastRefit: v.timing.lastRefit ? { ...v.timing.lastRefit } : null,
+        budgetMs: v.timing.budgetMs,
+        workMs: v.timing.workMs,
+        scriptMs: v.lastScript,
+        drawMs: v.drawSpent,
+        intervalMs: v.interval,
       },
+      search: searchInfo(v),
     };
   }
 
@@ -2841,8 +4234,11 @@ ET.viewer = (function () {
       seek: function (t) {
         var x = Number(t);
         if (!Number.isFinite(x) || x < 0) x = 0;
-        if (v.mode) v.mode.clock = x;
-        v.spin = x;
+        if (v.mode) {
+          v.mode.clock = x;
+          v.mode.seeked = true; // an exact frame is asked for: no spin while it prepares
+        }
+        v.spin = x * spinFactor(v.mode);
         v.needClear = true;
         invalidate(v);
         return v.mode ? v.mode.clock : 0;
@@ -2870,6 +4266,25 @@ ET.viewer = (function () {
       },
       info: function () {
         return info(v);
+      },
+      // Search (docs/search-interface.md, "Viewer (t8)").
+      setSearches: function (list) {
+        return setSearches(v, list);
+      },
+      clearSearches: function () {
+        return clearSearches(v);
+      },
+      setSearchSettings: function (patch) {
+        return setSearchSettings(v, patch);
+      },
+      searchSettings: function () {
+        return { ...v.search.settings };
+      },
+      faceSearches: function () {
+        return faceSearches(v);
+      },
+      setSearchCallbacks: function (cbs) {
+        return setSearchCallbacks(v, cbs);
       },
     };
     Object.defineProperty(h, "_viewer", { value: v, enumerable: false });

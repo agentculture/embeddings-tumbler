@@ -73,13 +73,24 @@ All optional.
 | `provenanceOpen` | `true` | The provenance block is a `<details>`; `false` starts it collapsed (its summary line still names source, model, dimension, items, seed, synthetic and the shadow sentence). The block cannot be removed. |
 | `modeOptions` | `null` | Per-mode options passed to `ET.modes.create`, for example `{ tumble: { refitTransition: 6 } }` (see `js/api/40-modes.md`). The viewer adds none of its own. |
 | `maxPixelRatio` | `2` | Cap on `devicePixelRatio` for the drawing buffer (the reference's). |
+| `adaptivePixelRatio` | `false` | When `true`: lower the drawing-buffer ratio in steps of 0.5 (never below 1, never raised again in this mount) after two measured seconds in a row under 25 frames per second while the view runs, draws and prepares nothing. Trades sharpness for smoothness on a slow GPU (see "Slow devices"). `false`: always the capped device ratio. |
 | `preserveDrawingBuffer` | `false` | Keep the WebGL drawing buffer so the host (or a test) can read pixels or take a screenshot. Costs some speed. |
-| `prepareBudgetMs` | `8` | Milliseconds of mode preparation per animation frame, halved after a frame that ran over 16 ms (see "Heavy work"). While the view is paused the budget is at least 40 ms, and frames keep running until the mode is ready even when paused or under reduced motion. |
+| `prepareBudgetMs` | `8` | The least milliseconds of mode preparation per animation frame. The budget is a third of the measured frame interval, between this and three times this (24 ms by default), and half of this for one frame after the work itself overran (see "Heavy work"). While the view is paused the budget is at least 40 ms, and frames keep running until the mode is ready even when paused or under reduced motion. |
+| `spinWhilePreparing` | `true` | Keep the slow spin turning while a mode prepares, so the view never stands still (the mode clock still waits for ready; see "Time"). `false`: the picture holds still until ready. |
 | `refitQuietSeconds` | `2` | Tumble refit policy after appends (see "Appends"). `Infinity` never refits. |
 | `refitShare` | `0.01` | Tumble refits only when the points appended since the last fit are at least this share of the set (and at least one). |
 | `onError(result)` | none | Called with every refusal `{ ok: false, code, message }` (the same object `update` returns). |
 | `onModeChange(id)` | none | Called when the mode changes (button, key or `setMode`). |
 | `onPauseChange(paused)` | none | Called when play/pause changes. |
+| `embed` | none | Search: the host's `embed(text)` callback (see "Search"). |
+| `rerank` | none | Search: the host's `rerank(query, candidates)` callback. |
+| `searchTimeoutMs` | `15000` | Search: how long a callback may take before its answer is dropped. |
+| `searchPanel` | `true` | Search: `false` mounts no search panel (the handle still does everything). |
+| `searchK` | `8` | Search: results per search with no reranker (3 to 100). |
+| `searchCandidates` | `50` | Search: candidates handed to the reranker (3 to 100). |
+| `searchTop` | `20` | Search: reranked candidates kept (3 to `searchCandidates`). |
+| `searchLit` | `"even"` | Search: the starting lit setting (`"even"`, `"close"`, `"named"`). |
+| `onSearchChange(search)` | none | Search: called with `info().search` whenever it changes. |
 
 A callback that throws does not break the viewer. Its error is rethrown on a
 later task with `setTimeout`, so it reaches the host's error handling, not
@@ -106,19 +117,87 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 | `resetZoom()` | — | User zoom back to 1. |
 | `refreshTheme()` | — | Re-read the `--tumbler-*` custom properties (also done on every `update`). The viewer never polls. |
 | `info()` | object | A snapshot for hosts and tests (below). |
+| `setSearches(list)` | Promise | Search: replace the searches (text, vector or point id); see "Search". |
+| `clearSearches()` | boolean | Search: remove every search. |
+| `setSearchSettings(patch)` | Promise | Search: `k`, `candidates`, `top`, `lit`, `distances`, `rerank`, `pointOfView`, `onlyResults`. |
+| `searchSettings()` | object | Search: a copy of the settings. |
+| `faceSearches()` | boolean | Search: swing toward the searches again (false in a mode with no `face`, Focus). |
+| `setSearchCallbacks({ embed?, rerank? })` | object | Search: set or remove the callbacks after mount. |
 
 `info()` returns `{ mode, paused, broken, suspended, hidden, onScreen, destroyed,
 reducedMotion, time, seed, speed, zoom, ready, preparing, count, dimension,
-model, rendering, animating, frames, fps, status, message, timing }`.
+model, rendering, animating, frames, fps, pixelRatio, pixelRatioLowered, status,
+message, timing, search }`.
 `suspended` is true while the document is hidden or the element is off screen;
 `animating` is true while an animation frame is requested; `frames` counts
-frames that did work; `fps` is measured once a second; `status` is the status
+frames that did work; `fps` is measured once a second (a window restarts after a pause, a resume or a
+gap of more than 250 ms between frames); `pixelRatio` is the drawing-buffer ratio
+in use and `pixelRatioLowered` is true once `adaptivePixelRatio` has lowered it;
+`status` is the status
 line; `message` is the message shown, if any; `timing` is `{ firstFrameMs,
-firstReadyMs, longestFrameMs, lastAppendMs, refits, lastRefit }` in milliseconds since
-`mount`; `lastRefit` is `null` or `{ atMs, durationMs, longestStepMs }`: when the
+firstReadyMs, longestFrameMs, lastAppendMs, refits, lastRefit, budgetMs, workMs,
+scriptMs, drawMs, intervalMs }`, the first three in milliseconds since
+`mount`; `budgetMs` is the heavy-work budget of the last frame (`null` before the first
+frame with a view), `workMs` that frame's time in the work itself, `scriptMs` its whole
+callback less the renderer's draw call, `drawMs` the draw call, and `intervalMs` the
+smoothed time between animation frames (all in milliseconds); `lastRefit` is `null` or `{ atMs, durationMs, longestStepMs }`: when the
 last Tumble refit finished (milliseconds since `mount`), the main-thread time its
 work took in all, and its longest single step (`longestFrameMs` is the longest single animation-frame callback of
 this viewer, which is where mode preparation runs).
+
+`search` is the search state, always present (`docs/search-interface.md`,
+"`info().search`"); with no search it is `active: false` with empty lists, and
+every other field above is exactly as it was before search existed.
+
+## Search
+
+The full contract (entries, results, callbacks, codes, lifecycle) is
+`docs/search-interface.md`, "Viewer (t8)" and "Callback contracts", including
+its "Clarifications from the build (t8)". In short:
+
+- `setSearches(list)` takes 0 to 4 entries: a string or `{ text, via? }`
+  (embedded through `embed`, or matched among the loaded points), `{ vector,
+  model, label? }` or `{ point }`. The promise never rejects: `{ ok: true,
+  search }` or `{ ok: false, code, message }`, and a refusal changes nothing.
+  Latest wins: a newer call (or a clear, a replace, `destroy`) resolves an older
+  one with `superseded` (or `destroyed`) and drops its late callback answers.
+- The viewer calls `embed(text)` with the text only, and `rerank(query,
+  candidates)` only with `rerank` on, the set carrying text and the callback
+  set. Every call is guarded and timed out after `searchTimeoutMs`. The core
+  file still makes no request of its own.
+- Ranking, word matching and the facing frame are steppers pumped after the
+  mode's preparation inside `prepareBudgetMs`; the pair reports are one call per
+  change of the searches. The lit values go to `renderer.setLit`; the draw key
+  `filter` is eased toward 1 (time constant 0.35 s) while a search is shown and
+  toward 0 when none is, then `setLit(null)`. With no search the key is left
+  out and the draw state is exactly as before.
+- Results are the nearest named points (`ET.search.isNamed`: readable text
+  that is not just the id), and `insideCount` and the lit values count every
+  point at least as near as the last result, named or not. A set with no named
+  point ranks every point. A search from an unnamed point uses it as the query
+  only; a named one is its own first result.
+- A new search swings the current mode once (`inst.face(target, t, {
+  searches })`) when the facing frame is ready; a mode with `searchChanged`
+  (Focus) is told after every change and its returned stepper is pumped with
+  its preparation. Settings changes and re-runs do not swing.
+- After an append the results are stale (`stale`, `staleBy`) and are worked out
+  again from the query vectors held, with no new `embed` call and no swing. A
+  replace clears every search.
+- In Focus a click on a point (press and release within 5 px, within 16 px of
+  the point) searches from it (the clicked point is the query, and its first
+  result when it is named); with Only results on, unlit points are skipped
+  by the click, the hover name and the group names.
+- New viewer codes: `no-embedder`, `embed-failed`, `embed-timeout`,
+  `embed-malformed`, `too-many-searches`, `superseded`, `bad-search`, and the
+  notes `rerank-failed`, `rerank-timeout`, `rerank-no-text`; `ET.search`'s codes
+  pass through. Refusals other than `superseded` and `destroyed` go to
+  `onError`; they are not shown as the stage notice.
+- The search panel (`ET.searchPanel`, task t9, `js/api/45-search-panel.md`) is
+  mounted when it is in the core file and `searchPanel` is not `false`; it
+  drives the viewer only through the handle. In Focus it puts the ranked lists
+  beside the stage (the root becomes a wrapping flex row while in Focus).
+
+Tested in `js/test/viewer-search.test.js`.
 
 ## Results of `update`
 
@@ -241,7 +320,15 @@ texture. On "append 200 points" onto 12,288 points: 44 to 46 ms for the first
   and not suspended. After the tab or the element comes back, motion continues
   from where it stopped; there is no jump.
 - The slow spin of the cloud (0.06 rad/s of yaw, the reference's) runs on the
-  same clock and stops while dragging.
+  same clock and stops while dragging. With `spinWhilePreparing` (default on) it
+  also turns while a mode prepares, through the frame the mode holds, so the view
+  never stands still; the **mode** clock still starts at 0 when the mode is ready,
+  so the frames a ready mode draws for a mode time do not depend on how fast the
+  preparation ran. When the mode becomes ready its motion starts from the spin
+  reached, with no jump. `time()` is the mode time: 0 while preparing.
+- `seek(t)` sets the mode time and the spin. A seek during preparation also holds
+  the spin until the mode is ready, so the frame shown then is the frame at `t`
+  (the reproduction rule below holds whether the seek came before or after ready).
 - A frame is a function of: the data, the seed, the mode, its time, and the view
   it entered from. **A fresh `mount` with the same data, seed and mode, followed
   by `seek(t)`, shows the same frame** (with no drag and the same zoom and
@@ -266,11 +353,32 @@ texture. On "append 200 points" onto 12,288 points: 44 to 46 ms for the first
 
 Mode preparation (`prepare()` steppers, Lattice's neighbour search, Tumble's fit
 and refit, Wander's first stop) runs in units of a few milliseconds. The viewer
-pumps it every frame within a budget of `prepareBudgetMs` (8 ms), halved after a
-frame that ran over 16 ms. Until the mode is ready the picture holds still and
-the status shows the mode's preparing line (for Tumble, `finding the strongest
-directions in 1,024-d … 40%`). `aria-busy` is set on the root while preparing.
-The clock starts when the mode reports ready.
+pumps it every frame within a budget that follows where the time went:
+
+- **A share of the frame interval.** The budget is a third of the measured
+  (smoothed) time between animation frames, never below `prepareBudgetMs` (8 ms)
+  and never above three times it (24 ms). On a 60 Hz screen that is 8 ms, as
+  before. On a device whose frames are long because drawing is slow (the GPU or
+  the compositor), the work still gets a third of the wall time, so preparation
+  makes steady progress at any frame rate.
+- **Cut only when the work overran.** When the work itself took more than 16 ms
+  and more than 8 ms past its budget (a unit far longer than asked: cold code, a
+  garbage collection), the next frame gets half of `prepareBudgetMs`. The rest of
+  the frame's script and the draw call do not count: a smaller budget would not
+  make them shorter, and cutting it for them only starved the work. In 0.11.6
+  the budget was halved after any frame callback over 16 ms;
+  on the owner's phone, where every frame took about 59 ms, that left about
+  4 ms of work per frame, and Lattice's neighbours were at 22 percent after
+  30 seconds.
+- Paused: at least 40 ms. Hidden or off screen: no frames, so no work; a gap of
+  more than 250 ms between frames is not taken as a frame interval.
+- No unit is longer than the steppers already promise (a few milliseconds), and
+  the results are bit-identical however the work is sliced.
+
+Until the mode is ready the mode clock waits and the status shows the mode's
+preparing line (for Tumble, `finding the strongest directions in 1,024-d … 40%`);
+the slow spin keeps turning (`spinWhilePreparing`). `aria-busy` is set on the
+root while preparing.
 
 Measured on Chromium with the AMD Radeon 760M GPU, the demo page with one
 viewer, the built-in sample set of 12,288 points, two runs each:
@@ -313,6 +421,7 @@ div.tumbler                       role="group", aria-label, tabindex="0" (keys w
     div.tumbler-message           role="alert"; p.tumbler-message-text (no WebGL, lost GPU, refusal with no view)
     p.tumbler-empty               "No data yet. Call update(data) to show a set of embeddings." (no data, no message)
   div.tumbler-panel
+    section.tumbler-search        the search panel (js/api/45-search-panel.md): a one-line bar, collapsed
     div.tumbler-modes             role="group" aria-label="View"
       button.tumbler-mode         data-mode, aria-pressed; b.tumbler-mode-title + span.tumbler-mode-summary
     div.tumbler-readout           canvas.tumbler-strip + p.tumbler-readout-caption
@@ -351,12 +460,14 @@ the trails and the colours alone.
 | `--tumbler-foreground` | `#e9eef6` | `#1b2130` | text, labels |
 | `--tumbler-muted` | `#8a96ab` | `#5b6578` | secondary text |
 | `--tumbler-line` | `#1b2436` | `#d6dae2` | rules and button borders |
-| `--tumbler-accent` | `#ffc56b` | `#a35f00` | status line, selected mode, readout cells, checkboxes |
+| `--tumbler-accent` | `#ffc56b` | `#a35f00` | status line, selected mode, checkboxes |
 | `--tumbler-ungrouped` | `#8cadff` | `#8cadff` | points with no group |
 | `--tumbler-group-1` .. `--tumbler-group-24` | the reference's hues `hsl(h 90% 62%)` for h = 28, 52, 96, 140, 170, 198, 226, 266, 328, 4, 298, then golden-angle steps | same | group colours, in order of first appearance in the data |
 | `--tumbler-font` | `system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif` | same | body text |
 | `--tumbler-font-data` | `ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace` | same | status, labels, controls, provenance |
 | `--tumbler-font-display` | `"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif` | same | title, mode names, Wander's stop name |
+| `--tumbler-search-1` .. `--tumbler-search-4` | `#ffc56b` `#6be0ff` `#ff8fb3` `#b6ff8a` | `#a35f00` `#00708a` `#b0245a` `#3d7a00` | search A..D: ring, links, letters (read live by the panel, `js/api/45-search-panel.md`) |
+| `--tumbler-shared` | `#ffffff` | `#1b2130` | the shared mark in the panel |
 | `--tumbler-stage-height` | `clamp(300px, 62vh, 860px)` | same | height of the stage (any CSS length) |
 
 ### Spacing custom properties
@@ -456,15 +567,43 @@ a shadow of the space", so the facts stay visible when the block is collapsed.
 
 One cell per dimension of the data (a canvas `D` pixels wide, stretched to the
 panel width with `image-rendering: pixelated`, so 2,560 cells cost no DOM
-nodes). Cell `d` shows how much dimension `d` contributes to the three axes on
-screen relative to an even share: `e = (f0[d]^2 + f1[d]^2 + f2[d]^2) * D / 3`
-(the reference's formula). Opacity is `min(1, e * 80 / 255)` and the colour is
-the accent, its green channel lowered by `min(60, 12 e)` (exactly the
-reference's colours with the default accent). The caption names dimension 1
-and dimension D. At large D several cells share a screen pixel and the browser
-resamples them. Sizes are the reference's: 22 px of cells (`box-sizing:
-content-box`, so a host's border-box reset does not shrink it) between a 1 px
-line above and below in `--tumbler-line`, and the caption 6 px beneath.
+nodes). Cell `d` is drawn from its squared components on the three screen axes,
+`ax = f0[d]^2` (horizontal), `ay = f1[d]^2` (vertical) and `az = f2[d]^2`
+(depth), where `f0`, `f1`, `f2` are the three rows of the frame.
+
+- **Opacity** is the reference's contribution formula, unchanged:
+  `e = (ax + ay + az) * D / 3`, and the cell's alpha is `min(255, 80 e)`, that
+  is, opacity `min(1, e * 80 / 255)`.
+- **Colour** mixes three fixed colours by each axis's share of the cell:
+  `(H * ax + V * ay + Dp * az) / (ax + ay + az)`, channel by channel (a cell
+  with no share at all gets black, and is fully clear anyway). A dimension that
+  feeds only one axis shows that axis's colour exactly; one fed equally by all
+  three shows their even mix.
+
+| Axis | Dark stage | Light stage |
+|------|------------|-------------|
+| horizontal | `rgb(255, 150, 60)` | `rgb(176, 84, 0)` |
+| vertical | `rgb(80, 220, 160)` | `rgb(0, 128, 82)` |
+| depth | `rgb(130, 140, 255)` | `rgb(72, 82, 214)` |
+
+The three colours are fixed: they are not themable, and there are no custom
+properties for them (the strip no longer uses `--tumbler-accent`). The stage
+counts as light by the rule that already picks the soft-ink treatment (the
+resolved `--tumbler-background` is light). The light set is the dark set
+darkened so cells and legend words keep a contrast of at least 4.5 to 1 on the
+default light panel (`#f6f4ee`) and on white; the dark set has at least 6.9 to
+1 on `#04060b`. The strip is drawn with transparency over the panel, so a
+host's own panel colours are the host's to check.
+
+The caption sits below the strip: "dimension 1" on the left, "how much each of the
+D dimensions contributes to the view right now · colour: horizontal vertical
+depth" in the middle, and "dimension D" on the right. The three axis words are
+the legend; each is `<b class="tumbler-axis-horizontal">` (and `-vertical`,
+`-depth`) coloured in its axis colour. At large D several cells share a screen
+pixel and the browser resamples them. Sizes are the reference's: 22 px of cells
+(`box-sizing: content-box`, so a host's border-box reset does not shrink it)
+between a 1 px line above and below in `--tumbler-line`, and the caption 6 px
+beneath. The GL frame is not affected.
 
 ## Labels
 
@@ -575,6 +714,31 @@ count nothing. `n` is updated with every upload and rolled back with a failed
 one. At 600 or fewer nothing changes; the built-in sample set has 290. Found on a real 10,000-point Atlas, where every point carries text:
 `docs/evidence/2026-11-14-real-atlas-proof.md`.
 
+## Crowded wires
+
+Lattice's wires pile up where the frame packs them tightly (most of all when a
+swap is nearly through and the lattice collapses to a thin shape) and burned out
+to white. Whenever wires are shown, the viewer sets the renderer's draw key
+`wireLoad` to 8: the renderer measures the wire light per pixel where the wires'
+light lands (`ET.renderer.wireDensity`, from the number of wires and where the
+current frame puts them on the stage) and scales the wires' brightness by
+`8 / light` when the light is above 8. The factor is the same for every wire, so
+a wire seen near its true length still flares against one that is not. The key
+is left out when no wires are shown, so Tumble, Wander and Focus draw exactly as
+before. Measured on the built-in sample set (GPU, 320 x 180 copy of the stage,
+channel sum above 600): near-white pixels at a swap 90% through went from 3,435
+to 693, of which about 360 are the cores of labelled points; at 10% from 3,130
+to 686. Approved by the owner on 2026-11-14 as a change of Lattice's no-search
+picture (`docs/reference-differences.md`).
+
+## Spin and group names in Focus
+
+The view turns at 0.06 rad/s on top of the mode's frame, or at the mode's own
+`inst.spin` when it has one (Focus: 0.13; `js/api/40-modes.md`). `seek(t)` sets
+the spin to what running for `t` seconds in the current mode gives. While a
+search is shown (the filter above 0) Focus draws no group names; the results are
+what matters there. Both added after the owner's browser look (2026-11-14).
+
 ## Measured frame rates
 
 Chromium (Playwright), dev page `js/dev/viewer-demo/?one=1`, one viewer,
@@ -589,3 +753,47 @@ sample set of 12,288 points, 5 s per mode after 1.5 s to settle:
 | SwiftShader (software) | 1024 | 26.2 | 21.8 | 23.8 |
 
 On the GPU the display's 60 fps cap is reached, so the headroom is not measured. This table was measured before the performance pass and has not been re-measured since; the GPU still held 60 fps in every run of the measurements above.
+
+## Slow devices
+
+Found on the owner's iPhone (Chrome on iOS, so WebKit), 2026-11-14: the standalone
+page with the built-in sample set drew at 17 frames per second, stood still for
+seconds at start, and Lattice's neighbours were at 22 percent after 30 seconds.
+Three changes answer it: the heavy-work budget above, `spinWhilePreparing`, and
+`adaptivePixelRatio`. Nothing here was run on WebKit or on a phone.
+
+Measured in Chromium (Playwright, headless, ANGLE on the AMD Radeon 760M), 390 x 844
+window at device scale 3 (so a drawing-buffer ratio of 2), the shipped standalone
+page, CPU throttled 6x (`Emulation.setCPUThrottlingRate`), a page-level
+`requestAnimationFrame` wrapper that passes every fourth callback (15 frames per
+second at most), milliseconds from opening the page or from the switch. The
+machine was shared with other jobs (load average 1 to 7), so runs vary widely:
+
+| Setup | Build | First motion | Tumble ready | Lattice done | Wander done |
+|-------|-------|--------------|--------------|--------------|-------------|
+| 6x, 1 in 4 frames | 0.11.6 | 11,046 to 21,579 | 10,378 to 20,785 | 14,946 to 60,348 | 182 to 642 |
+| 6x, 1 in 4 frames | this | 1,206 to 2,612 | 4,202 to 15,136 | 5,908 to 20,038 | 79 to 143 |
+| 6x, 1 in 4, 30 ms in draw | 0.11.6 | 23,383 | 22,683 | 48,587 | 464 |
+| 6x, 1 in 4, 30 ms in draw | this | 1,261 to 1,906 | 5,569 to 11,586 | 7,432 to 13,867 | 108 to 503 |
+
+"30 ms in draw" busy-waits inside the renderer's draw call, standing in for WebGL
+calls that block on a GPU-bound device. Lattice's preparation includes its own fit
+of the strongest directions (588 of its 834 ms on the development machine without
+throttling), the same fit Tumble has just made.
+
+Drawing cost, SwiftShader (software rendering, the slow-GPU stand-in), same window,
+`adaptivePixelRatio` off, frames per second over 4 s:
+
+| Mode | Ratio 2 | Ratio 1.5 | Ratio 1 |
+|------|---------|-----------|---------|
+| Tumble | 10.7 | 16.7 | 29.1 |
+| Lattice | 10.0 | 15.5 | 24.0 |
+| Wander | 10.7 | 17.5 | (not measured cleanly) |
+
+What ratio 1 costs: half the drawing-buffer pixels in each direction against
+ratio 2. Points keep their CSS size, but their edges, the wires (one-pixel lines)
+and the glow are coarser, and the bloom, which samples fixed mip levels of the
+drawing buffer, spreads twice as far in CSS pixels and shows its coarse levels as
+soft blocks. The ratio is lowered only after two seconds under 25 frames per
+second (a 30 fps cap such as iOS Low Power Mode does not trigger it) and is never
+raised again in that mount, so it cannot flicker.

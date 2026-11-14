@@ -40,6 +40,7 @@
       describe: describe,
       refit: refit,
       mark: mark,
+      face: face,
       leave: leave,
     };
 
@@ -66,6 +67,7 @@
     // touches no state, so it can never make the instance ready on old data.
     var gen = 0;
     var refitGen = 0;
+    var swings = null; // the swings toward the searches (M.makeSwings)
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Tumble");
@@ -85,6 +87,7 @@
       refitRunning = false;
       requestedAt = null;
       progress = 0;
+      swings = M.makeSwings(D, seed);
       self.time = 0;
       self.varianceShare = null;
       hold = entry ? entry.frame : M.startFrame(D, seed);
@@ -294,13 +297,56 @@
       if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
       if (pending) fixSwitch(t); // no time was given: the first query fixes it
       out.t = t;
-      frameAt(t, out.frame);
-      glide.at(t, out.centre);
-      out.draw = drawFor(out.frame, out.centre, t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) {
+        var zoom = M.swingState(sw, t, out.frame, out.centre);
+        out.draw = drawFor(out.frame, out.centre, t);
+        out.draw.zoom = zoom;
+      } else {
+        frameAt(t, out.frame);
+        glide.at(t, out.centre);
+        if (sw) released(sw, t);
+        out.draw = drawFor(out.frame, out.centre, t);
+        if (sw) out.draw.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), out.centre, out.draw.zoom);
+      }
       out.wires = null;
       out.focus = null;
       out.status = status(t);
       return out;
+    }
+
+    // After a swing ends at U, Tumble turns back onto its tour from the frame
+    // shown at U the way it turns onto a refitted tour: the tour's axes are
+    // relabelled (order and sign) to match that frame, and a fixed rotation that
+    // takes the tour's frame at U to the frame shown unwinds along refitEase over
+    // a length chosen as for a refit ("auto": the turn adds at most half the
+    // tour's mean rate). A blend over `transition` seconds, as on entry, turned up
+    // to five times faster than the tour moves (measured). The centre and zoom
+    // come back over `transition` (stateAt).
+    function released(sw, t) {
+      var c = sw.cache;
+      if (!c.turn) {
+        var end = M.swingEnd(sw);
+        var raw = frameAt(sw.U, new Float32Array(3 * D));
+        c.al = M.alignment(raw, end.frame, D);
+        var start = M.applyAlignment(raw, c.al, D);
+        c.turn = makeRefitBlend(end.frame, start, D);
+        c.turn.duration = refitDuration(c.turn, tours[activeIndex(sw.U)].tour, sw.U);
+      }
+      M.applyAlignment(new Float32Array(out.frame), c.al, D, out.frame);
+      var u = (t - sw.U) / c.turn.duration;
+      if (u < 1) applyRefitBlend(c.turn, 1 - refitEase(u), out.frame, D);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t.
+    function face(target, time, options) {
+      if (!isReady() || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var s = stateAt(T);
+        return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), zoom: s.draw.zoom };
+      });
     }
 
     function step(dt) {
@@ -312,6 +358,8 @@
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
       if (!isReady()) return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return M.swingStatus(sw, "tumbling");
       var cur = tours[activeIndex(t)];
       var s = "tour of " + cur.tour.subspace + " strongest directions · " + (cur.share * 100).toFixed(1) + "% of variance";
       var since = set.count - cur.count;
@@ -392,6 +440,7 @@
         refitAt: last?.t0 > -Infinity ? last.t0 : null,
         refitTransition: last?.blend ? last.blend.duration : null,
         refitPending: refitRunning,
+        facing: swings ? swings.describe() : null,
         empty: empty,
       };
     }

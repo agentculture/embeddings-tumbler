@@ -8,6 +8,8 @@
 //   <embeddings-tumbler src="data/my-set.json" mode="tumble" seed="7"></embeddings-tumbler>
 //
 // Attributes: src (a data file on the page's own origin), mode, seed.
+// Properties (never attributes; nothing is read from markup): embed and rerank, the search
+// callbacks, set as el.embed = fn and el.rerank = fn (a function or null). See js/api/web-component.md.
 // Events (bubbling): tumbler-load (detail: the update result), tumbler-error (detail:
 // {code, message}). Property `handle` is the viewer handle or null; method update(data)
 // forwards to the viewer. See js/api/web-component.md.
@@ -60,13 +62,53 @@
       this._handle = null;
       this._token = 0; // bumped whenever a load is superseded, or the viewer is destroyed
       this._note = null;
+      this._embed = null; // the host's callbacks; they outlive every mount of this element
+      this._rerank = null;
     }
 
     get handle() {
       return this._handle;
     }
 
+    // The embed callback, or null. A property, never an attribute.
+    get embed() {
+      return this._embed;
+    }
+
+    set embed(value) {
+      this._setCallback("_embed", "embed", value);
+    }
+
+    // The rerank callback, or null. A property, never an attribute.
+    get rerank() {
+      return this._rerank;
+    }
+
+    set rerank(value) {
+      this._setCallback("_rerank", "rerank", value);
+    }
+
+    // A function is kept and, with a viewer mounted, handed to it; null removes the callback.
+    // Anything else is ignored (as the core ignores it). Not mounted (before connect, after
+    // disconnect): kept, and passed as a mount option at the next mount.
+    _setCallback(field, key, value) {
+      if (value !== null && typeof value !== "function") return;
+      this[field] = value;
+      this._handle?.setSearchCallbacks({ [key]: value });
+    }
+
+    // A property set on the element before this file defined it is an own property that
+    // hides the accessor: take it off and set it again through the accessor.
+    _upgrade(name) {
+      if (!Object.hasOwn(this, name)) return;
+      const value = this[name];
+      delete this[name];
+      this[name] = value;
+    }
+
     connectedCallback() {
+      this._upgrade("embed");
+      this._upgrade("rerank");
       this.style.display = "block";
       this._start();
     }
@@ -118,6 +160,8 @@
       if (mode) options.mode = mode;
       const seed = parseSeed(this.getAttribute("seed"));
       if (seed !== undefined) options.seed = seed;
+      if (this._embed) options.embed = this._embed;
+      if (this._rerank) options.rerank = this._rerank;
       try {
         this._handle = T.mount(this, options);
       } catch (err) {

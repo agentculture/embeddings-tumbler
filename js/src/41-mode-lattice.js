@@ -11,6 +11,7 @@
 (function () {
   var M = ET.modes;
   var KNN_SLICE_MS = 1; // a unit of neighbour work stops after its first row once this has passed
+  var SALT_RESUME = 0x1a77ce; // the swap schedule that starts after a swing draws from its own stream
 
   var DEFAULTS = {
     period: 3.4, // seconds per axis swap (the reference's)
@@ -46,6 +47,7 @@
       dataChanged: dataChanged,
       describe: describe,
       mark: mark,
+      face: face,
       leave: leave,
     };
 
@@ -61,6 +63,8 @@
     var guided = false; // the swap tour draws from the fitted directions
     var fitAtEntry = false; // decided once per entry: the entry waits for the fit
     var fitShare = null; // share of variance in those directions
+    var swapBasis = null; // { basis, rows } the swap tour draws hidden directions from, when guided
+    var swings = null; // the swings toward the searches (M.makeSwings)
     var epoch = 0; // bumped by enter and leave: work queued for an earlier entry does nothing
     var hold = null;
     var knn = null; // the stepper in progress (or finished)
@@ -93,6 +97,8 @@
       swap = ET.math.makeSwapTour(hold, D, { seed: seed, period: opt.period });
       guided = false;
       fitShare = null;
+      swapBasis = null;
+      swings = M.makeSwings(D, seed);
       fitAtEntry = wantsGuided(s);
       epoch++;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
@@ -169,6 +175,7 @@
               basisRows: tour.subspace,
             });
             guided = true;
+            swapBasis = { basis: tour.basis, rows: tour.subspace };
             fitShare = tour.varianceShare;
             return true;
           },
@@ -285,11 +292,19 @@
       if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
       if (pendingWires) fixWires(t); // no time was given: the first query fixes it
       out.t = t;
-      swap.frameAt(t, out.frame);
-      glide.at(t, out.centre);
+      var sw = swings.at(t);
+      var swinging = sw !== null && t < sw.U;
+      var zoom = 0;
+      if (swinging) {
+        zoom = M.swingState(sw, t, out.frame, out.centre);
+      } else {
+        swapAt(sw, t).frameAt(sw ? t - sw.U : t, out.frame);
+        glide.at(t, out.centre);
+        zoom = M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample);
+      }
       var sc = st.radius / M.REFERENCE_RADIUS;
       var draw = {
-        zoom: M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample),
+        zoom: zoom,
         wires: 0,
         dim: 0.55,
         trails: 0.1,
@@ -300,6 +315,8 @@
         depthOfField: 1.1,
       };
       out.draw = M.blendDraw(draw, entry, t, opt.transition);
+      if (swinging) out.draw.zoom = zoom;
+      else if (sw) out.draw.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), out.centre, out.draw.zoom);
       // the wire fade-in is its own ramp, not part of the entry blend
       out.draw.wires = wireOpacity(t);
       var list = activeList(t);
@@ -307,6 +324,37 @@
       out.focus = null;
       out.status = status(t);
       return out;
+    }
+
+    // The swap schedule in force at t: the entry's, or after a swing (sw, ended
+    // by t) a new schedule that starts from the frame shown at the swing's end, in
+    // the time since then. It keeps swapping axes from there with no jump.
+    function swapAt(sw, t) {
+      if (!sw || t < sw.U) return swap;
+      if (!sw.cache.swap) {
+        var o = { seed: ET.math.mixSeed(ET.math.mixSeed(seed, SALT_RESUME), sw.index), period: opt.period };
+        if (swapBasis) {
+          o.basis = swapBasis.basis;
+          o.basisRows = swapBasis.rows;
+        }
+        sw.cache.swap = ET.math.makeSwapTour(M.swingEnd(sw).frame, D, o);
+      }
+      return sw.cache.swap;
+    }
+
+    function swapStateAt(sw, t) {
+      return sw ? swapAt(sw, t).stateAt(t - sw.U) : swap.stateAt(t);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t.
+    function face(target, time, options) {
+      if (!isReady() || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var s = stateAt(T);
+        return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), zoom: s.draw.zoom };
+      });
     }
 
     function step(dt) {
@@ -318,7 +366,9 @@
     function status(time) {
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
-      var s = swap.stateAt(t);
+      var sw = isReady() ? swings.at(t) : null;
+      if (sw && t < sw.U) return M.swingStatus(sw, "swapping axes");
+      var s = swapStateAt(sw, t);
       var pctSwap = String(Math.round(Math.min(1, s.u) * 100));
       while (pctSwap.length < 3) pctSwap = " " + pctSwap;
       var line = "swap " + (s.cycle + 1) + " · axis " + "XYZ".charAt(s.axis) + " trading for a hidden direction · " + pctSwap + "%";
@@ -376,6 +426,7 @@
         wiresShownAt: lists.length ? lists[0].T : null,
         wiresReplacedAt: lists.length > 1 ? last.T : null,
         wiresPending: pendingWires !== null,
+        facing: swings ? swings.describe() : null,
         empty: empty,
         varianceShare: fitShare,
       };

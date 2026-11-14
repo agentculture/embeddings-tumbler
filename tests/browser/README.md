@@ -108,6 +108,21 @@ dimensions).
 | 4. Twenty mounts and destroys leave nothing | `test_harness_lifecycle.py` | `instrument.js` counts, against the baseline taken before the first mount |
 | 5. Append adds visible points without a reload | `test_harness_append.py` | navigation marker, navigation entries, document requests; count 300 to 340; new orange pixels only where the cluster went |
 
+Search (task t12 of the search plan) is proven on the same three forms, on a
+small set of its own (`search_site.py`: 960 points, 120 of them named; the
+exact ranking in Python; the real `viewer serve --embed` as a process over a
+fake gateway). The script and component forms are
+`fixtures/search-script-host.html` and `fixtures/search-component-host.html`,
+whose embed callback (`fixtures/search-embed.js`) asks the test server.
+
+| Search criterion | Test file | Measure |
+|------------------|-----------|---------|
+| Lit pixels keep changing every second in Tumble, Lattice and Wander, during and after the swing | `test_search_motion.py` | one sample per second of the mode's own time; share of lit pixels that changed; control: the paused view |
+| Lit points equal an independent exact ranking | `test_search_forms.py` | results, radius, inside and lit counts from `info()`, and the lit values handed to the renderer, against cosine distances computed from the served file |
+| No request leaves the origin while searching | `test_search_forms.py` | the request log of each form, with the callback's own requests in it; control: a callback that asks another origin |
+| No planted key or address reaches the browser or a caller | `test_search_forms.py` | every response the browser received, the helper's answers to direct requests, its output and the page's text, scanned for the sentinels |
+| A refused append or query vector leaves the lit set unchanged | `test_search_forms.py` | eight refusals per form, the lit state compared before and after; control: an accepted append changes it |
+
 The older tests (`test_renderer_render.py`, `test_modes_render.py`,
 `test_viewer_render.py`, `test_viewer_controls.py`, `test_web_component.py`,
 `test_standalone_page.py`, `test_guide_examples.py`) use the same server,

@@ -47,11 +47,29 @@ width, maxTextureSize, maxPoints, rows(points) }` or `{ ok: false, reason,
 message }` with `reason` `"bad-dimension"`, `"dimension-too-large"`
 (`ceil(D / 4) > maxTextureSize`) or `"too-many-points"` (`count > maxPoints`).
 
-### `ET.renderer.shaderSources(layout) -> { pointVertex, pointFragment, lineVertex, lineFragment, quadVertex, fadeFragment, toneFragment }`
+### `ET.renderer.shaderSources(layout) -> { pointVertex, pointVertexLit, pointFragment, lineVertex, lineVertexLit, lineFragment, quadVertex, fadeFragment, toneFragment }`
 
-Pure. The GLSL ES 3.00 sources. The projection loop bound (`const int TEXELS`),
+Pure. The GLSL ES 3.00 sources. `pointVertexLit` is the point shader that also
+reads the per-point lit value (see `renderer.setLit` below);
+`pointVertex` is the one drawn without search, unchanged by it. The projection loop bound (`const int TEXELS`),
 the row packing (`const int PER_ROW`) and the wire-brightness scale
 (`sqrt(D / 3)`) are generated from the layout. Exposed for tests.
+
+### `ET.renderer.wireDensity(src, view) -> number`
+
+How tightly the wires pile up on screen: the wire light per pixel where the
+wires' light lands, before any gain. `src`: `{ vectors, stride, dimension,
+pairs, lengths, count }` (vectors at `stride` floats per point, as the renderer
+stores them; `count` wires); `view`: a draw state with `frame` (and `centre`,
+`zoom`, `yaw`, `pitch`, `radius`, `focus`, `wireDepthOfField`) plus `width` and
+`height` in pixels. An even sample of at most 192 wires is projected (`O(192 *
+D)`); each wire's brightness as the wire shader computes it (`0.03 + 0.2 t^3`,
+over its depth of field) times its length on screen is spread along it over a
+grid of 64 cells across the stage's shorter side; the light-weighted mean of the
+cells' light per pixel is returned, scaled from the sample to every wire. It
+grows with the number of wires and with how tightly the frame packs them; 0 with
+no wires or none on the stage. Used by `draw` when `wireLoad` is above 0.
+Corrected after the owner's browser look (2026-11-14).
 
 ### `ET.renderer.place(p, state, width, height) -> { x, y, scale, depth }`
 
@@ -133,6 +151,75 @@ A wire is coloured by its endpoints' colours. Its brightness rises when its
 projected length nears its true length (the reference's `0.03 + 0.2 t^3`, with
 `t = projected / true * sqrt(D / 3)`).
 
+### `renderer.setLit(lit, shared?) -> { ok, uploaded }`
+
+The per-point lit value and shared mark of search (`docs/search-interface.md`,
+"Renderer (t4)"). The renderer computes nothing about searches: it draws the
+values it is given.
+
+- `lit`: `Float32Array(N)`, one value per point, read as clamped to `[0, 1]`
+  (`NaN` reads as 0). `null` clears the lit values: no search, and drawing is
+  exactly as before search existed.
+- `shared`: optional `Uint8Array(N)`, non-zero where the shared mark is drawn.
+  `null` or absent: no point is marked.
+- Throws `TypeError` before any `setData`, when `lit` is not a `Float32Array`
+  or `shared` not a `Uint8Array`, or when a length differs from the current
+  count.
+- Returns `{ ok: true, uploaded }` (`uploaded: false` while the context is lost
+  or after a failed build, as for `setData`), `{ ok: false, reason, message }`
+  on a GL failure (`"gpu-failed"`, or `"shader-failed"` if the lit program does
+  not compile; consequences as for `setData`), or `reason: "disposed"` after
+  `dispose`.
+
+**Storage and cost.** The renderer keeps a CPU copy, one float per point of
+capacity: the lit value plus 2 where marked (the shader decodes it with
+`step(1.5, v)`). The first call after `setData` (or after a reallocating append)
+compiles the lit point program once and makes the lit buffer with one
+`bufferData` of the capacity (`4 * capacity` bytes). Every later call is one
+`bufferSubData` of `4 * N` bytes into that buffer, even with unchanged arrays.
+**The point vectors and colours are never re-uploaded.** `setLit(null)` frees
+the lit buffer and its vertex array (the lit program is kept until a relayout or
+`dispose`).
+
+**With other calls.** `setData` clears the lit values (a replace starts with no
+search). `appendData` keeps them and gives every appended point lit value 0 and
+no mark: in place, one more `bufferSubData` of `4 * k` bytes at offset
+`4 * first`; when it reallocates, the lit buffer is made again at the new
+capacity with the old values. `setWires` does not touch them. A context restore
+and `rebuild()` re-upload the CPU copy; `dispose()` deletes the buffer, its
+vertex array and the lit program, and drops the CPU copy. `status().lit` is true
+while lit values are set.
+
+**Drawing.** The draw keys `filter` and `unlitGain` (table under `draw`) decide
+how the values apply. When lit values are set and `filter > 0`, the points are
+drawn by the lit program, with `filter` clamped to at most 1 and `unlitGain` to
+at least 0. Per point with lit value `l` and mark `m` (0 or 1):
+
+- size is multiplied by `mix(1, mix(0.8, 1.5, l), filter)`;
+- brightness is multiplied by `mix(1, mix(unlitGain, 2.2, l), filter)`;
+- a marked point adds white `0.9 * a * gain * filter` (`a` being the point's
+  brightness before colour), so it burns white on the dark stage.
+
+Wires are not affected. The no-HDR fallback applies the same terms (with its
+`fallbackGain`).
+
+**No search, no change.** With no lit values set, or with `filter` 0 (or below,
+or `NaN`), the points are drawn by the program and the GL calls used before
+search existed: the same shader source byte for byte, the same uniforms, the same
+vertex array. The frame is byte-identical to the frame without search; the
+browser test compares frames byte for byte, and a one-time comparison against the
+core file from before this change gave identical frames on SwiftShader and on a
+GPU.
+
+**Light stage.** No option is needed. On the viewer's light (soft ink) stage
+(`js/api/50-viewer.md`, "Light backgrounds") the points are uploaded in
+complementary colours and the canvas is inverted and multiplied, so the added
+white comes back as dark, neutral ink. A lit result is coloured ink, and a marked
+one is clearly darker and greyer. Measured in the browser test (SwiftShader,
+viewer settings gain 0.55 and bloom 0.3, an orange group): the centre of a lit
+result is `(153, 92, 76)` and the marked twin `(94, 76, 70)`. On the dark stage
+they are `(255, 248, 199)` and `(255, 254, 251)`.
+
 ### `renderer.resize(width, height)`
 
 Sets the drawing buffer to `width` x `height` device pixels (the caller multiplies
@@ -177,6 +264,25 @@ still clears (and fades trails).
 | `gamma` | output curve | `0.92` |
 | `vignette` | brightness at the corners (1 = none) | `0.72` |
 | `background` | `[r, g, b]` linear 0..1, added under the image | `[0, 0, 0]` |
+| `filter` | 0..1, how much the lit values (`setLit`) apply this frame; 0 draws exactly as without search. The viewer eases it toward 1 while a search is active and toward 0 when none is. | `0` |
+| `unlitGain` | brightness factor of a point with lit value 0, at `filter` 1 (Focus's Only results uses `0`: unlit points are hidden); also of a wire with an unlit end | `0.07` |
+| `wireLoad` | `0` = off. Above 0: the most wire light per pixel (`wireDensity` times `wires * wireGain * gain`) the wires may pile up to; above it the wires' gain is multiplied by `wireLoad / light`. The viewer sets `8` whenever wires are shown. | `0` |
+
+Corrected after the owner's browser look (2026-11-14); see
+`docs/search-interface.md`, "Corrected after the owner's browser look":
+
+- **Wires follow the search.** With `filter` above 0 and lit values set, the
+  wires are drawn by a second wire program (`lineVertexLit`) that reads each
+  wire's lit value (the smaller of its two ends', mark removed; one float per
+  wire end in a buffer of its own, made again by `setLit`, `setWires` and every
+  rebuild, freed by `setLit(null)` and `dispose`): brightness times
+  `mix(1, mix(unlitGain, 1, l), filter)`. With `filter` 0 or no lit values the
+  original wire program and calls are used.
+- **A lit point's fog is relieved.** In the lit point program the fog strength
+  is `fog * (1 - l * filter)` for both the size and the brightness terms, so a
+  result is not dimmed away by distance while unlit points keep the fog.
+- **Crowded wires** are scaled down with `wireLoad` (above). `status().wireScale`
+  is the factor of the last frame that drew wires (1 when off or not crowded).
 
 Mode mapping from the reference: Tumble is the defaults; Lattice sets
 `wires = 1`, `dim = 0.55`, `trails = 0.10`; Wander sets `fog = 1` and a fixed
@@ -190,7 +296,7 @@ the canvas: no bloom, no tone mapping, no trails, `fallbackGain` applied, and
 ### `renderer.rebuild() -> { ok: true } | { ok: false, reason, message }`
 
 Retries building every GPU object from the CPU copy (points, colours, weights,
-wires, layout). Use it after a `"restore-failed"` context event or after a
+wires, lit values, layout). Use it after a `"restore-failed"` context event or after a
 `setData` / `appendData` / `setWires` that returned `"shader-failed"` or
 `"gpu-failed"`. `reason` is `"disposed"`, `"context-lost"` (wait for the
 `"restored"` event instead), `"shader-failed"` or `"gpu-failed"`. `draw` never
@@ -199,8 +305,9 @@ on its own schedule.
 
 ### `renderer.status() -> object`
 
-`{ ok, available, disposed, lost, hdr, error, dimension, count, capacity, wires,
-maxTextureSize, layout }`. `ok` is false after a failed build or upload
+`{ ok, available, disposed, lost, hdr, error, dimension, count, capacity, wires, wireScale,
+lit, maxTextureSize, layout }`. `lit` is true while lit values are set
+(`setLit`). `ok` is false after a failed build or upload
 (`error` holds the message) or after dispose. `count`, `wires` and `layout`
 describe the CPU copy, which is what the GPU will show once it is whole again.
 
@@ -223,7 +330,7 @@ succeeds. The caller decides what to show and when to retry.
 ## Data while the GPU is unavailable
 
 While the context is lost, or after a failed build or upload, `setData`,
-`appendData` and `setWires` still update the CPU copy and return `ok: true`
+`appendData`, `setWires` and `setLit` still update the CPU copy and return `ok: true`
 with `uploaded: false`. Nothing reaches the GPU then; the next successful
 restore or `rebuild()` uploads the whole CPU copy, so the view shows the
 latest data. Callers can check `uploaded` on each call, or `status()` (`lost`,

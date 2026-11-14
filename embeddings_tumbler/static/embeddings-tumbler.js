@@ -1,11 +1,11 @@
-/*! embeddings-tumbler 0.11.6 | source: github.com/agentculture/embeddings-tumbler | assembled from js/src by scripts/assemble.py, do not edit by hand */
+/*! embeddings-tumbler 0.12.0 | source: github.com/agentculture/embeddings-tumbler | assembled from js/src by scripts/assemble.py, do not edit by hand */
 (function (root) {
   "use strict";
 
   // Shared internal namespace. Every later module adds its functions here
   // (ET.math = {...}, ET.contract = {...}) and reads earlier modules' from it.
   var ET = {};
-  ET.version = "0.11.6";
+  ET.version = "0.12.0";
   // The public API object. Only 50-viewer.js fills this (mount, update, destroy).
   ET.api = {};
   // ---------------------------------------------------------------------------
@@ -2139,6 +2139,1287 @@
   };
 })();
 // ---------------------------------------------------------------------------
+// 24-search.js: ranking one search (ET.search). Pure functions, no DOM, no
+// network. See js/api/24-search.md (the interface) and docs/search-interface.md.
+//
+// The measure is cosine distance (1 minus cosine), in double precision over every
+// dimension. Ties go to the lower point index. On-screen position is never an
+// input. The long scans are steppers in the convention of 10-math.js: written once
+// as generators that pause between small pieces of work, so the result is the same
+// however the work was sliced.
+// ---------------------------------------------------------------------------
+(function () {
+  var DEFAULT_K = 8;
+  var MIN_K = 3;
+  var MAX_K = 100;
+  var DEFAULT_CANDIDATES = 50;
+  var MAX_CANDIDATES = 100;
+  var DEFAULT_TOP = 20;
+  var PREFIX_MIN = 3;
+  var MEASURE = "cosine";
+  var MEASURE_TEXT = "cosine distance (1 minus cosine similarity)";
+
+  var MESSAGES = Object.freeze({
+    "no-data": "There is no data to search yet.",
+    "reduction-not-searchable":
+      'Cannot search by embedding: the vectors in this data set were changed after embedding (reduction "{kind}"), and the file does not carry what is needed to change a query the same way. Search among the loaded points still works.',
+    "query-model-missing":
+      'Cannot search: the embedder did not say which model made the query vector, so it cannot be checked against the data\'s model "{expected}".',
+    "query-model-mismatch":
+      'Cannot search: the query was embedded by model "{found}" but the data was embedded by model "{expected}". One view compares one model.',
+    "query-not-vector": "Cannot search: the query is not a list of numbers.",
+    "query-dimension-mismatch":
+      "Cannot search: the query vector has dimension {found} but the data has dimension {expected}.",
+    "query-non-finite":
+      "Cannot search: the query vector holds a value that is not a finite number (at position {index}).",
+    "query-zero":
+      "Cannot search: the query vector is all zeros, so it has no direction to compare.",
+    "point-unknown": 'No point with id "{id}" is in the view.',
+    "empty-query": "Nothing to search for: the query has no words.",
+    "words-none":
+      "None of these words matches a label or text among the loaded points: {words}.",
+    "rerank-malformed":
+      "The reranker's answer was not one score per candidate; the results stay in embedding order.",
+  });
+
+  // ----- messages and small checks -------------------------------------------
+
+  function format(code, values) {
+    if (!Object.hasOwn(MESSAGES, code)) throw new RangeError("unknown refusal code: " + code);
+    return MESSAGES[code].replace(/\{(\w+)\}/g, function (whole, name) {
+      return values && Object.hasOwn(values, name) ? String(values[name]) : whole;
+    });
+  }
+
+  function refuse(code, values) {
+    return { ok: false, code: code, message: format(code, values) };
+  }
+
+  // A count rounded and clamped into MIN_K .. most; not a finite number gives `fallback`.
+  function clampCount(n, most, fallback) {
+    if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
+    return Math.min(most, Math.max(MIN_K, Math.round(n)));
+  }
+
+  function clampK(k) {
+    return clampCount(k, MAX_K, DEFAULT_K);
+  }
+
+  function clampCandidates(n) {
+    return clampCount(n, MAX_CANDIDATES, DEFAULT_CANDIDATES);
+  }
+
+  // How many reranked candidates are kept: MIN_K .. the clamped number of candidates.
+  function clampTop(top, candidates) {
+    var most = clampCandidates(candidates);
+    return clampCount(top, most, Math.min(DEFAULT_TOP, most));
+  }
+
+  function hasPoints(set) {
+    return !!set && set.count > 0 && !!set.vectors && set.vectors.length >= set.count * set.dimension;
+  }
+
+  function checkSameSpace(set) {
+    if (!hasPoints(set)) return refuse("no-data");
+    var kind = set.reduction?.kind ?? "none";
+    if (kind === "none") return { ok: true };
+    var r = refuse("reduction-not-searchable", { kind: kind });
+    r.kind = kind;
+    return r;
+  }
+
+  function isNumericArray(v) {
+    return Array.isArray(v) || v instanceof Float32Array || v instanceof Float64Array;
+  }
+
+  function allNumbers(v) {
+    for (const x of v) if (typeof x !== "number") return false;
+    return true;
+  }
+
+  function firstNonFinite(v) {
+    for (var i = 0; i < v.length; i++) if (!Number.isFinite(v[i])) return i;
+    return -1;
+  }
+
+  function isAllZero(v) {
+    for (const x of v) if (x !== 0) return false;
+    return true;
+  }
+
+  function checkModel(set, query) {
+    var model = query?.model;
+    if (typeof model !== "string" || model === "") {
+      return refuse("query-model-missing", { expected: set.model });
+    }
+    if (model !== set.model) {
+      return refuse("query-model-mismatch", { found: model, expected: set.model });
+    }
+    return null;
+  }
+
+  function checkVector(set, raw) {
+    if (!isNumericArray(raw) || !allNumbers(raw)) return refuse("query-not-vector");
+    if (raw.length !== set.dimension) {
+      return refuse("query-dimension-mismatch", { found: raw.length, expected: set.dimension });
+    }
+    var vector = Float32Array.from(raw);
+    var bad = firstNonFinite(vector);
+    if (bad >= 0) return refuse("query-non-finite", { index: bad });
+    if (isAllZero(vector)) return refuse("query-zero");
+    return { ok: true, vector: vector };
+  }
+
+  function checkQuery(set, query) {
+    var same = checkSameSpace(set);
+    if (!same.ok) return same;
+    return checkModel(set, query) ?? checkVector(set, query?.vector);
+  }
+
+  // ----- sliced work (the convention of 10-math.js) --------------------------
+
+  var UNIT = 1 << 20; // multiply-adds per unit at most
+  var CHECK = UNIT >> 4;
+  var SLICE_MS = 1;
+
+  function clockNow() {
+    if (typeof performance !== "undefined" && typeof performance?.now === "function") {
+      return performance.now();
+    }
+    return Date.now();
+  }
+
+  // Counts work done and says when a unit is over.
+  function Tracker(total) {
+    this.total = total > 0 ? total : 1;
+    this.done = 0;
+    this.acc = 0;
+    this.nextCheck = CHECK;
+    this.t0 = 0;
+  }
+  Tracker.prototype.add = function (cost) {
+    this.done += cost;
+    this.acc += cost;
+    if (this.acc < this.nextCheck) return false;
+    if (this.acc >= UNIT || clockNow() - this.t0 >= SLICE_MS) {
+      this.acc = 0;
+      this.nextCheck = CHECK;
+      return true;
+    }
+    this.nextCheck = this.acc + CHECK;
+    return false;
+  };
+
+  // { step(budgetMs?) -> done, done, progress, result }: step(budgetMs) runs units
+  // until budgetMs ms have passed (at least one); step() runs to the end.
+  function genStepper(gen, tracker) {
+    var st = { done: false, progress: 0, result: null, step: null };
+    st.step = function (budgetMs) {
+      if (st.done) return true;
+      var limit = budgetMs === undefined ? Infinity : budgetMs;
+      var start = clockNow();
+      var first = true;
+      while (first || limit === Infinity || clockNow() - start < limit) {
+        first = false;
+        tracker.t0 = clockNow();
+        var r = gen.next();
+        if (r.done) {
+          st.done = true;
+          st.result = r.value;
+          st.progress = 1;
+          return true;
+        }
+      }
+      st.progress = Math.min(0.99, tracker.done / tracker.total);
+      return false;
+    };
+    return st;
+  }
+
+  function runToEnd(stepper) {
+    stepper.step();
+    return stepper.result;
+  }
+
+  // ----- the exact scan -------------------------------------------------------
+
+  function isF32(v, n) {
+    return v instanceof Float32Array && v.length === n;
+  }
+
+  // Row sums for one point: dot with the query and squared length, plain and
+  // (when scaled) with every dimension multiplied by the scale.
+  function rowPlain(V, o, D, q, acc) {
+    var dot = 0;
+    var nn = 0;
+    for (var d = 0; d < D; d++) {
+      var x = V[o + d];
+      dot += x * q[d];
+      nn += x * x;
+    }
+    acc.dot = dot;
+    acc.nn = nn;
+  }
+
+  function rowScaled(V, o, D, q, s2, qs2, acc) {
+    var dot = 0;
+    var nn = 0;
+    var dotS = 0;
+    var nnS = 0;
+    for (var d = 0; d < D; d++) {
+      var x = V[o + d];
+      var xx = x * x;
+      dot += x * q[d];
+      nn += xx;
+      dotS += x * qs2[d];
+      nnS += xx * s2[d];
+    }
+    acc.dot = dot;
+    acc.nn = nn;
+    acc.dotS = dotS;
+    acc.nnS = nnS;
+  }
+
+  // Cosine distance from a dot product, a squared row length and the query's length.
+  function cosineDistance(dot, nn, qn) {
+    if (nn === 0 || qn === 0) return 1; // no direction: similarity 0
+    var c = dot / (Math.sqrt(nn) * qn);
+    return 1 - Math.min(1, Math.max(-1, c));
+  }
+
+  // The best P points so far, ordered by (distance, index); rows arrive by index.
+  function Pool(P) {
+    this.cap = P;
+    this.n = 0;
+    this.dist = new Float64Array(P);
+    this.idx = new Int32Array(P);
+  }
+  Pool.prototype.offer = function (i, d) {
+    var j;
+    if (this.n === this.cap) {
+      // Not "!(d < worst)": a NaN distance must still be turned away.
+      if (d < this.dist[this.cap - 1]) j = this.cap - 1;
+      else return;
+    } else {
+      j = this.n++;
+    }
+    while (j > 0 && this.dist[j - 1] > d) {
+      this.dist[j] = this.dist[j - 1];
+      this.idx[j] = this.idx[j - 1];
+      j--;
+    }
+    this.dist[j] = d;
+    this.idx[j] = i;
+  };
+
+  function sumSquares(q, w) {
+    var s = 0;
+    for (var d = 0; d < q.length; d++) s += w ? q[d] * q[d] * w[d] : q[d] * q[d];
+    return s;
+  }
+
+  function squares(scale) {
+    var s2 = new Float64Array(scale.length);
+    for (var d = 0; d < scale.length; d++) s2[d] = scale[d] * scale[d];
+    return s2;
+  }
+
+  // How many candidates come before (dist, idx) in the order by (distance, index);
+  // `mask` null means every point is a candidate.
+  function countBefore(distances, dist, idx, mask) {
+    var c = 0;
+    for (var j = 0; j < distances.length; j++) {
+      if (mask?.[j] === 0) continue;
+      if (distances[j] < dist || (distances[j] === dist && j < idx)) c++;
+    }
+    return c;
+  }
+
+  function makeHit(set, index, distance, embeddingRank, plainDistance, plainRank) {
+    return {
+      index: index,
+      id: set.ids[index],
+      distance: distance,
+      similarity: 1 - distance,
+      embeddingRank: embeddingRank,
+      rank: embeddingRank,
+      moved: 0,
+      score: null,
+      plainDistance: plainDistance,
+      plainRank: plainRank,
+      gap: 0,
+    };
+  }
+
+  function buildRanking(set, counts, scaled, pool, scan, plainRanks) {
+    var distances = scan.distances;
+    var plainDistances = scan.plainDistances;
+    var nearest = [];
+    for (var r = 0; r < pool.n; r++) {
+      var i = pool.idx[r];
+      var plainD = scaled ? plainDistances[i] : pool.dist[r];
+      nearest.push(makeHit(set, i, pool.dist[r], r + 1, plainD, scaled ? plainRanks[r] : r + 1));
+    }
+    var hits = nearest.slice(0, counts.k);
+    var near = hits.length ? hits[0].distance : null;
+    var radius = hits.length ? hits.at(-1).distance : null;
+    for (const hit of hits) hit.gap = hit.distance - near;
+    return {
+      measure: MEASURE,
+      k: counts.k,
+      candidates: counts.candidates,
+      top: counts.top,
+      count: set.count,
+      named: scan.named,
+      scaled: scaled,
+      hits: hits,
+      pool: nearest.slice(0, counts.candidates),
+      near: near,
+      radius: radius,
+      distances: distances,
+      plainDistances: scaled ? plainDistances : null,
+    };
+  }
+
+  // What the scan needs besides the vectors: the query as doubles with its
+  // length, and (with a scale) the squared scale, the scaled query and its length.
+  function scanSetup(q32, scale, D) {
+    var q = Float64Array.from(q32);
+    var setup = { q: q, qn: Math.sqrt(sumSquares(q, null)), s2: null, qs2: null, qnS: 0 };
+    if (scale) {
+      var s2 = squares(scale);
+      var qs2 = new Float64Array(D);
+      for (var e = 0; e < D; e++) qs2[e] = q[e] * s2[e];
+      setup.s2 = s2;
+      setup.qs2 = qs2;
+      setup.qnS = Math.sqrt(sumSquares(q, s2));
+    }
+    return setup;
+  }
+
+  // One row's distance (and, when scaled, its plain distance as well).
+  function scanRow(V, i, D, setup, acc, distances, plainDistances) {
+    if (plainDistances) {
+      rowScaled(V, i * D, D, setup.q, setup.s2, setup.qs2, acc);
+      plainDistances[i] = cosineDistance(acc.dot, acc.nn, setup.qn);
+      distances[i] = cosineDistance(acc.dotS, acc.nnS, setup.qnS);
+    } else {
+      rowPlain(V, i * D, D, setup.q, acc);
+      distances[i] = cosineDistance(acc.dot, acc.nn, setup.qn);
+    }
+  }
+
+  // The plain rank of each pooled point among the candidates (a scaled search only).
+  function* pooledPlainRanks(pool, plainDistances, mask, N, wk) {
+    var plainRanks = new Int32Array(pool.n);
+    for (var r = 0; r < pool.n; r++) {
+      var pi = pool.idx[r];
+      plainRanks[r] = 1 + countBefore(plainDistances, plainDistances[pi], pi, mask);
+      if (wk.add(N)) yield;
+    }
+    return plainRanks;
+  }
+
+  // ----- named points: the candidates for results ----------------------------
+
+  // Readable text: a string with something other than white space that is not the id.
+  function readable(value, id) {
+    return typeof value === "string" && value !== id && /\S/.test(value);
+  }
+
+  // The text of a point that is more than its id, or null.
+  function namedText(set, index) {
+    var point = set.points?.[index];
+    var id = set.ids[index];
+    var text = point?.metadata?.text;
+    if (readable(text, id)) return text;
+    if (readable(point?.label, id)) return point.label;
+    return null;
+  }
+
+  function isNamed(set, index) {
+    return namedText(set, index) !== null;
+  }
+
+  var NAME_COST = 64; // work counted per point when the named points are found
+  var namedCache = new WeakMap();
+
+  // { mask: Uint8Array(N) with 1 for a named point, count }; cached per set object.
+  function* namedGen(set, wk) {
+    var cached = namedCache.get(set);
+    if (cached) return cached;
+    var N = set.count;
+    var mask = new Uint8Array(N);
+    var count = 0;
+    for (var i = 0; i < N; i++) {
+      if (isNamed(set, i)) {
+        mask[i] = 1;
+        count++;
+      }
+      if (wk.add(NAME_COST)) yield;
+    }
+    var built = { mask: mask, count: count };
+    namedCache.set(set, built);
+    return built;
+  }
+
+  function* scanGen(set, q32, scale, counts, wk) {
+    var N = set.count;
+    var D = set.dimension;
+    var V = set.vectors;
+    var scaled = !!scale;
+    var setup = scanSetup(q32, scale, D);
+    var named = yield* namedGen(set, wk);
+    // Results come from named points; with none named, every point is a candidate.
+    var mask = named.count > 0 ? named.mask : null;
+    // The nearest max(k, candidates): the results come from its start, the reranker's pool too.
+    var pool = new Pool(Math.min(Math.max(counts.k, counts.candidates), mask ? named.count : N));
+    var distances = new Float64Array(N);
+    var plainDistances = scaled ? new Float64Array(N) : null;
+    var acc = { dot: 0, nn: 0, dotS: 0, nnS: 0 };
+    for (var i = 0; i < N; i++) {
+      scanRow(V, i, D, setup, acc, distances, plainDistances);
+      if (mask === null || mask[i] === 1) pool.offer(i, distances[i]);
+      if (wk.add(scaled ? 4 * D : 2 * D)) yield;
+    }
+    var plainRanks = scaled ? yield* pooledPlainRanks(pool, plainDistances, mask, N, wk) : null;
+    var scan = { distances: distances, plainDistances: plainDistances, named: named.count };
+    return buildRanking(set, counts, scaled, pool, scan, plainRanks);
+  }
+
+  function makeRank(set, vector, options) {
+    var D = set.dimension;
+    if (!isF32(vector, D)) throw new TypeError("vector must be a Float32Array of length " + D);
+    var scale = options?.scale ?? null;
+    if (scale !== null && !isF32(scale, D)) {
+      throw new TypeError("scale must be a Float32Array of length " + D);
+    }
+    var candidates = clampCandidates(options?.candidates);
+    var counts = { k: clampK(options?.k), candidates: candidates, top: clampTop(options?.top, candidates) };
+    var wk = new Tracker(set.count * (NAME_COST + (scale ? 4 * D : 2 * D)));
+    return genStepper(scanGen(set, vector, scale, counts, wk), wk);
+  }
+
+  function rank(set, vector, options) {
+    return runToEnd(makeRank(set, vector, options));
+  }
+
+  // ----- reranking -------------------------------------------------------------
+
+  function scoresOk(ranking, scores) {
+    if (!isNumericArray(scores) || scores.length !== ranking.pool.length) return false;
+    for (const score of scores) {
+      if (typeof score !== "number" || !Number.isFinite(score)) return false;
+    }
+    return true;
+  }
+
+  function rerankOrder(ranking, scores) {
+    if (!scoresOk(ranking, scores)) return refuse("rerank-malformed");
+    var order = [];
+    for (var i = 0; i < scores.length; i++) order.push(i);
+    // Highest score first; equal scores keep embedding order (the pool's order).
+    order.sort(function (a, b) {
+      return scores[b] - scores[a] || a - b;
+    });
+    // The best `top` of the candidates by the reranker's scores (k for a ranking without one).
+    var take = Math.min(ranking.top ?? ranking.k, order.length);
+    var hits = [];
+    for (var r = 0; r < take; r++) {
+      var hit = { ...ranking.pool[order[r]] };
+      hit.rank = r + 1;
+      hit.moved = hit.embeddingRank - hit.rank;
+      hit.score = scores[order[r]];
+      hits.push(hit);
+    }
+    var near = null;
+    var radius = null;
+    for (const picked of hits) {
+      if (near === null || picked.distance < near) near = picked.distance;
+      if (radius === null || picked.distance > radius) radius = picked.distance;
+    }
+    for (const picked of hits) picked.gap = picked.distance - near;
+    return { ok: true, hits: hits, near: near, radius: radius };
+  }
+
+  // ----- search from a loaded point ---------------------------------------------
+
+  function pointQuery(set, id) {
+    if (!hasPoints(set)) return refuse("no-data");
+    var index = set.ids.indexOf(id);
+    if (index < 0) return refuse("point-unknown", { id: id });
+    var D = set.dimension;
+    return { ok: true, index: index, id: id, vector: set.vectors.slice(index * D, index * D + D) };
+  }
+
+  function pointText(set, index) {
+    return namedText(set, index) ?? set.ids[index];
+  }
+
+  // ----- search by words ----------------------------------------------------------
+
+  function tokens(text) {
+    if (typeof text !== "string") return [];
+    var found = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+    return Array.from(new Set(found));
+  }
+
+  // The words of one set: word -> ascending point indices, whole phrase -> indices.
+  function addTo(map, key, i) {
+    var list = map.get(key);
+    if (!list) map.set(key, [i]);
+    else if (list.at(-1) !== i) list.push(i);
+  }
+
+  function indexPoint(set, i, words, phrases) {
+    var label = set.points[i]?.label;
+    var text = set.points[i]?.metadata?.text;
+    var cost = 64;
+    var fields = [label, text];
+    for (var f = 0; f < 2; f++) {
+      if (typeof fields[f] !== "string") continue;
+      cost += fields[f].length;
+      var list = tokens(fields[f]);
+      if (list.length === 0) continue;
+      addTo(phrases, list.join(" "), i);
+      for (const word of list) addTo(words, word, i);
+    }
+    return cost;
+  }
+
+  var wordCache = new WeakMap();
+
+  function* indexGen(set, wk) {
+    var cached = wordCache.get(set);
+    if (cached) return cached;
+    var words = new Map();
+    var phrases = new Map();
+    for (var i = 0; i < set.count; i++) {
+      if (wk.add(indexPoint(set, i, words, phrases))) yield;
+    }
+    var built = { words: words, phrases: phrases };
+    wordCache.set(set, built);
+    return built;
+  }
+
+  // Points whose words start with `word`, ascending and each once.
+  function prefixPoints(index, word) {
+    var seen = new Set();
+    index.words.forEach(function (list, key) {
+      if (key.startsWith(word)) for (const point of list) seen.add(point);
+    });
+    return Array.from(seen).sort(function (a, b) {
+      return a - b;
+    });
+  }
+
+  // How each word matches: [{ word, how, points }] and the words that match nothing.
+  function resolveWords(index, words) {
+    var used = [];
+    var unmatched = [];
+    for (const word of words) {
+      var points = index.words.get(word);
+      var how = "exact";
+      if (!points && Array.from(word).length >= PREFIX_MIN) {
+        points = prefixPoints(index, word);
+        how = "prefix";
+      }
+      if (points && points.length > 0) used.push({ word: word, how: how, points: points });
+      else unmatched.push(word);
+    }
+    return { used: used, unmatched: unmatched };
+  }
+
+  // Adds the mean of the rows `points` (double precision) times `weight` into `total`.
+  function* addMean(set, points, weight, total, wk) {
+    var D = set.dimension;
+    var V = set.vectors;
+    var sum = new Float64Array(D);
+    for (const point of points) {
+      var o = point * D;
+      for (var d = 0; d < D; d++) sum[d] += V[o + d];
+      if (wk.add(D)) yield;
+    }
+    for (var e = 0; e < D; e++) total[e] += (sum[e] / points.length) * weight;
+  }
+
+  function wordFailure(code, words, unmatched) {
+    var r = refuse(code, { words: unmatched.join(", ") });
+    r.words = words;
+    r.unmatched = unmatched;
+    return r;
+  }
+
+  function* wordGen(set, text, wk) {
+    var words = tokens(text);
+    if (!hasPoints(set)) return wordFailure("no-data", words, words);
+    if (words.length === 0) return wordFailure("empty-query", words, []);
+    var index = yield* indexGen(set, wk);
+    var phrase = words.join(" ");
+    var whole = index.phrases.get(phrase);
+    var picked;
+    if (whole) {
+      picked = {
+        used: [{ word: phrase, how: "whole", points: whole }],
+        unmatched: [],
+      };
+    } else {
+      picked = resolveWords(index, words);
+    }
+    if (picked.used.length === 0) return wordFailure("words-none", words, picked.unmatched);
+    var total = new Float64Array(set.dimension);
+    for (const match of picked.used) {
+      yield* addMean(set, match.points, 1 / picked.used.length, total, wk);
+    }
+    var vector = Float32Array.from(total);
+    if (isAllZero(vector)) return wordFailure("query-zero", words, picked.unmatched);
+    return {
+      ok: true,
+      vector: vector,
+      words: words,
+      used: picked.used.map(function (m) {
+        return { word: m.word, how: m.how, count: m.points.length };
+      }),
+      unmatched: picked.unmatched,
+      whole: !!whole,
+    };
+  }
+
+  function makeWordQuery(set, text) {
+    var n = set?.count > 0 ? set.count : 1;
+    var wk = new Tracker(n * (set?.dimension > 0 ? set.dimension : 1));
+    return genStepper(wordGen(set, text, wk), wk);
+  }
+
+  function wordQuery(set, text) {
+    return runToEnd(makeWordQuery(set, text));
+  }
+
+  ET.search = {
+    DEFAULT_K: DEFAULT_K,
+    MIN_K: MIN_K,
+    MAX_K: MAX_K,
+    DEFAULT_CANDIDATES: DEFAULT_CANDIDATES,
+    MAX_CANDIDATES: MAX_CANDIDATES,
+    DEFAULT_TOP: DEFAULT_TOP,
+    PREFIX_MIN: PREFIX_MIN,
+    MEASURE: MEASURE,
+    MEASURE_TEXT: MEASURE_TEXT,
+    MESSAGES: MESSAGES,
+    clampK: clampK,
+    clampCandidates: clampCandidates,
+    clampTop: clampTop,
+    format: format,
+    checkSameSpace: checkSameSpace,
+    checkQuery: checkQuery,
+    makeRank: makeRank,
+    rank: rank,
+    rerankOrder: rerankOrder,
+    pointQuery: pointQuery,
+    pointText: pointText,
+    isNamed: isNamed,
+    tokens: tokens,
+    makeWordQuery: makeWordQuery,
+    wordQuery: wordQuery,
+  };
+})();
+// ---------------------------------------------------------------------------
+// 26-search-sets.js: several searches at once (ET.searchSets).
+//
+// Up to four searches are active together. Given their rankings (the shape
+// ET.search makes, js/api/24-search.md) this module answers what is lit and
+// how strongly under the three lit settings, which points carry the shared
+// mark, the report for each pair of searches, the point-of-view scale of one
+// search, and the seeded linear view that faces the searches.
+//
+// Pure: no DOM, no WebGL, no network. The only random numbers are drawn from
+// ET.math.makeRandom on a seed derived from the view seed, so the same data,
+// searches and seed give the same frame bit for bit. Every projection is
+// linear: the facing frame is three orthonormal rows applied to every point.
+//
+// Documented in js/api/26-search-sets.md.
+// ---------------------------------------------------------------------------
+ET.searchSets = (function () {
+  var MAX_SEARCHES = 4;
+  var LETTERS = Object.freeze(["A", "B", "C", "D"]);
+  var LIT_SETTINGS = Object.freeze(["even", "close", "named"]);
+  var DEFAULT_LIT = "even";
+  var LIT_THRESHOLD = 0.02;
+  var CLOSE_REACH = 2.2;
+  var CLOSE_POWER = 1.6;
+  var FACE_SALT = 0x46414345;
+  var FACE_ITERATIONS = 25;
+  var FACE_ZOOM = 0.7;
+  var FACE_MIN_REACH = 1e-3;
+  // A candidate axis is kept when what is left after removing the axes so far
+  // is longer than KEEP times its length before.
+  var KEEP = 1e-6;
+  // The facing-frame stepper pauses after this many multiply-adds (counted, not
+  // timed, so the pauses fall at the same places on every run).
+  var FACE_UNIT = 1 << 17;
+
+  // ----- small functions -----------------------------------------------------
+
+  function letter(j) {
+    if (!Number.isInteger(j) || j < 0 || j >= MAX_SEARCHES) {
+      throw new RangeError("a search position is an integer from 0 to " + (MAX_SEARCHES - 1));
+    }
+    return LETTERS[j];
+  }
+
+  function litSetting(value) {
+    return LIT_SETTINGS.includes(value) ? value : DEFAULT_LIT;
+  }
+
+  function isVectorLike(v) {
+    return v !== null && typeof v === "object" && typeof v.length === "number";
+  }
+
+  function scaleFor(vector) {
+    if (!isVectorLike(vector)) throw new TypeError("scaleFor: the query vector must be an array of numbers");
+    var s = new Float32Array(vector.length);
+    for (var d = 0; d < vector.length; d++) s[d] = Math.abs(vector[d]);
+    return s;
+  }
+
+  function checkSearches(searches) {
+    if (!Array.isArray(searches)) throw new TypeError("searches must be an array");
+    if (searches.length > MAX_SEARCHES) {
+      throw new RangeError("at most " + MAX_SEARCHES + " searches can be active at once");
+    }
+  }
+
+  function hasResults(ranking) {
+    return typeof ranking.radius === "number" && ranking.hits.length > 0;
+  }
+
+  // ----- lit values ----------------------------------------------------------
+
+  function closeValue(d, near, reach) {
+    var x = Math.min(Math.max(1 - (d - near) / (reach - near), 0), 1);
+    return x ** CLOSE_POWER;
+  }
+
+  // The value one search gives a point at distance d (named results are set apart).
+  function searchValue(how, d, isIn, near, reach) {
+    if (how === "close") return closeValue(d, near, reach);
+    return how === "even" && isIn ? 1 : 0;
+  }
+
+  function lightNamed(ranking, count, out) {
+    for (const hit of ranking.hits) {
+      var at = hit.index;
+      if (at < count) out.lit[at] = 1;
+    }
+  }
+
+  // Adds one search to `out`; returns how many points are inside it.
+  function lightSearch(ranking, count, how, out) {
+    if (!hasResults(ranking)) return 0;
+    var dist = ranking.distances;
+    var n = Math.min(count, dist.length);
+    var radius = ranking.radius;
+    var near = ranking.near;
+    var reach = near + (radius - near) * CLOSE_REACH + 1e-6;
+    var inside = 0;
+    for (var i = 0; i < n; i++) {
+      var isIn = dist[i] <= radius;
+      if (isIn) {
+        out.inside[i]++;
+        inside++;
+      }
+      var v = searchValue(how, dist[i], isIn, near, reach);
+      if (v > out.lit[i]) out.lit[i] = v;
+    }
+    if (how === "named") lightNamed(ranking, count, out);
+    return inside;
+  }
+
+  function litValues(searches, count, setting) {
+    checkSearches(searches);
+    if (!Number.isInteger(count) || count < 0) throw new RangeError("count must be a non-negative integer");
+    var how = litSetting(setting);
+    var out = {
+      lit: new Float32Array(count),
+      shared: new Uint8Array(count),
+      inside: new Uint8Array(count),
+      insideCounts: [],
+      litCount: 0,
+      sharedCount: 0,
+    };
+    for (const search of searches) out.insideCounts.push(lightSearch(search, count, how, out));
+    for (var i = 0; i < count; i++) {
+      if (out.lit[i] > LIT_THRESHOLD) out.litCount++;
+      if (out.inside[i] >= 2 && out.lit[i] > 0) {
+        out.shared[i] = 1;
+        out.sharedCount++;
+      }
+    }
+    return out;
+  }
+
+  // ----- pair reports --------------------------------------------------------
+
+  function checkIndex(index, count) {
+    if (!Number.isInteger(index) || index < 0 || index >= count) {
+      throw new RangeError("a named result's index is not a row of the set: " + index);
+    }
+  }
+
+  // The length of every named result's row, in double precision.
+  function hitLengths(X, D, count, hits) {
+    var lengths = new Float64Array(hits.length);
+    for (var h = 0; h < hits.length; h++) {
+      checkIndex(hits[h].index, count);
+      var o = hits[h].index * D;
+      var sum = 0;
+      for (var d = 0; d < D; d++) sum += X[o + d] * X[o + d];
+      lengths[h] = Math.sqrt(sum);
+    }
+    return lengths;
+  }
+
+  // Plain cosine distance between two loaded rows; a zero row is at distance 1.
+  function rowDistance(X, D, i, j, li, lj) {
+    if (li === 0 || lj === 0) return 1;
+    var oi = i * D;
+    var oj = j * D;
+    var dot = 0;
+    for (var d = 0; d < D; d++) dot += X[oi + d] * X[oj + d];
+    var cos = Math.min(Math.max(dot / (li * lj), -1), 1);
+    return 1 - cos;
+  }
+
+  function sharedBetween(ra, rb) {
+    if (!hasResults(ra) || !hasResults(rb)) return 0;
+    var n = Math.min(ra.distances.length, rb.distances.length);
+    var shared = 0;
+    for (var i = 0; i < n; i++) {
+      if (ra.distances[i] <= ra.radius && rb.distances[i] <= rb.radius) shared++;
+    }
+    return shared;
+  }
+
+  // The closest pair of different named results, one from each search; pauses when a unit
+  // of work ends (counted, so the pauses fall at the same places on every run).
+  function* closestPairGen(X, D, ra, rb, la, lb, wk) {
+    var best = null;
+    for (var x = 0; x < ra.hits.length; x++) {
+      var ia = ra.hits[x].index;
+      for (var y = 0; y < rb.hits.length; y++) {
+        var ib = rb.hits[y].index;
+        if (ia === ib) continue;
+        var dist = rowDistance(X, D, ia, ib, la[x], lb[y]);
+        if (best === null || dist < best.distance) best = { a: ia, b: ib, distance: dist };
+        if (wk.add(D)) yield;
+      }
+    }
+    return best;
+  }
+
+  // One pair's report.
+  function* pairGen(set, a, b, ra, rb, lengths, wk) {
+    var inB = new Set();
+    for (const hit of rb.hits) inB.add(hit.index);
+    var commonIndices = [];
+    for (const hit of ra.hits) {
+      if (inB.has(hit.index)) commonIndices.push(hit.index);
+    }
+    var shared = sharedBetween(ra, rb);
+    if (wk.add(Math.min(ra.distances.length, rb.distances.length))) yield;
+    var closest = yield* closestPairGen(set.vectors, set.dimension, ra, rb, lengths[a], lengths[b], wk);
+    return {
+      a: a,
+      b: b,
+      shared: shared,
+      common: commonIndices.length,
+      commonIndices: commonIndices,
+      closest: closest,
+    };
+  }
+
+  function* pairsGen(set, searches, lengths, wk) {
+    var pairs = [];
+    for (var a = 0; a < searches.length; a++) {
+      for (var b = a + 1; b < searches.length; b++) {
+        pairs.push(yield* pairGen(set, a, b, searches[a], searches[b], lengths, wk));
+      }
+    }
+    return pairs;
+  }
+
+  // The pair reports as a stepper (the facing frame's convention). The rows' lengths and the
+  // checks of every index are worked out here, so a bad index throws at once.
+  function makePairReports(set, searches) {
+    checkSearches(searches);
+    var D = set.dimension;
+    var lengths = [];
+    for (const search of searches) lengths.push(hitLengths(set.vectors, D, set.count, search.hits));
+    var total = 1;
+    for (var a = 0; a < searches.length; a++) {
+      for (var b = a + 1; b < searches.length; b++) {
+        total += searches[a].hits.length * searches[b].hits.length * D + set.count;
+      }
+    }
+    var wk = new FaceWork(total);
+    return faceStepper(pairsGen(set, searches, lengths, wk), wk);
+  }
+
+  function pairReports(set, searches) {
+    var st = makePairReports(set, searches);
+    st.step();
+    return st.result;
+  }
+
+  // ----- the facing frame: vector helpers (double precision) -----------------
+
+  function dotD(a, b, D) {
+    var s = 0;
+    for (var d = 0; d < D; d++) s += a[d] * b[d];
+    return s;
+  }
+
+  function lengthD(a, D) {
+    return Math.sqrt(dotD(a, a, D));
+  }
+
+  // Removes from v its components along each of `axes` (orthonormal rows), once.
+  function removeAxes(v, axes, D) {
+    for (const axis of axes) {
+      var p = dotD(v, axis, D);
+      for (var d = 0; d < D; d++) v[d] -= p * axis[d];
+    }
+  }
+
+  // Step 3: Gram-Schmidt against the axes so far (twice); kept when what is left
+  // is longer than KEEP times the candidate, then normalised and appended.
+  function offer(axes, candidate, D) {
+    var before = lengthD(candidate, D);
+    removeAxes(candidate, axes, D);
+    removeAxes(candidate, axes, D);
+    var after = lengthD(candidate, D);
+    if (before > 0 && after > KEEP * before) {
+      for (var d = 0; d < D; d++) candidate[d] /= after;
+      axes.push(candidate);
+      return true;
+    }
+    return false;
+  }
+
+  // Step 6: the standard basis vectors e_0, e_1, ... in order until one is kept.
+  // With fewer than three axes and D >= 3 one always is.
+  function offerBasis(axes, D) {
+    for (var d = 0; d < D; d++) {
+      var e = new Float64Array(D);
+      e[d] = 1;
+      if (offer(axes, e, D)) return;
+    }
+  }
+
+  function checkLength(v, length, what) {
+    if (!isVectorLike(v) || v.length !== length) {
+      throw new TypeError("facing frame: " + what + " must have " + length + " values");
+    }
+  }
+
+  function checkOption(v, length, what) {
+    if (v === null || v === undefined) return null;
+    if (!(v instanceof Float32Array) || v.length !== length) {
+      throw new TypeError("facing frame: " + what + " must be a Float32Array of " + length + " values");
+    }
+    return v;
+  }
+
+  function checkFacing(set, searches) {
+    var D = set.dimension;
+    for (const search of searches) {
+      checkLength(search.query, D, "each query");
+      if (!Array.isArray(search.hits)) throw new TypeError("facing frame: each search needs a hits array");
+      for (const hit of search.hits) checkIndex(hit.index, set.count);
+    }
+  }
+
+  // ----- the facing frame: the computation, as a generator --------------------
+
+  // Counts multiply-adds and says when a unit of work is over.
+  function FaceWork(total) {
+    this.total = total;
+    this.done = 0;
+    this.acc = 0;
+  }
+  FaceWork.prototype.add = function (cost) {
+    this.done += cost;
+    this.acc += cost;
+    if (this.acc < FACE_UNIT) return false;
+    this.acc = 0;
+    return true;
+  };
+
+  // One search's rows: its query and its named results' loaded vectors.
+  function searchRows(X, D, search) {
+    var mine = [search.query];
+    for (const hit of search.hits) {
+      var o = hit.index * D;
+      mine.push(X.subarray(o, o + D));
+    }
+    return mine;
+  }
+
+  // The mean of rows (each optionally scaled by s), in double precision.
+  function meanOfRows(rows, D, s) {
+    var c = new Float64Array(D);
+    for (const row of rows) {
+      for (var d = 0; d < D; d++) c[d] += s ? row[d] * s[d] : row[d];
+    }
+    for (var e = 0; e < D; e++) c[e] /= rows.length;
+    return c;
+  }
+
+  // (row * s) - c for one row, in double precision.
+  function offsetOf(row, D, s, c) {
+    var v = new Float64Array(D);
+    for (var d = 0; d < D; d++) v[d] = (s ? row[d] * s[d] : row[d]) - c[d];
+    return v;
+  }
+
+  // The rows of every search (its query and its named results), unscaled, each
+  // search's centre scaled and unscaled, and each scaled row's offset from its
+  // search's scaled centre.
+  // Pauses after each search's centres and whenever a unit of work ends among its offsets, so
+  // searches of 100 results keep units short.
+  function* gatherRows(fit, wk) {
+    var out = { scaledCentres: [], plainCentres: [], offsets: [], plainRows: [] };
+    for (const search of fit.searches) {
+      var mine = searchRows(fit.X, fit.D, search);
+      var c = meanOfRows(mine, fit.D, fit.scale);
+      out.scaledCentres.push(c);
+      out.plainCentres.push(meanOfRows(mine, fit.D, null));
+      wk.add(2 * mine.length * fit.D);
+      yield;
+      for (const row of mine) {
+        out.plainRows.push(row);
+        out.offsets.push(offsetOf(row, fit.D, fit.scale, c));
+        if (wk.add(fit.D)) yield;
+      }
+    }
+    return out;
+  }
+
+  // One pass of the power iteration over rows `from` on: w += (row . v) row for each,
+  // stopping after the row at which a unit of work ends. Returns the next row to do,
+  // or -1 when the rows ran out without a unit ending. (A plain function that resumes
+  // at `from`: the generator itself pays for a for...of over the rows, measured.)
+  function spreadPass(offsets, from, v, w, D, wk) {
+    for (var r = from; r < offsets.length; r++) {
+      var row = offsets[r];
+      var p = dotD(row, v, D);
+      for (var d = 0; d < D; d++) w[d] += p * row[d];
+      if (wk.add(2 * D)) return r + 1;
+    }
+    return -1;
+  }
+
+  // Step 5: a power iteration on the spread of the rows about their own centres,
+  // from a seeded start. Returns the candidate, or null when the spread left
+  // outside the axes so far is zero (then the basis fallback applies).
+  function* spreadAxis(fit, offsets, axes, wk) {
+    var D = fit.D;
+    var v = new Float64Array(D);
+    ET.math.makeRandom(ET.math.mixSeed(fit.seed, FACE_SALT + axes.length)).fillGauss(v);
+    for (var it = 0; it < FACE_ITERATIONS; it++) {
+      var w = new Float64Array(D);
+      var next = spreadPass(offsets, 0, v, w, D, wk);
+      while (next >= 0) {
+        yield;
+        next = spreadPass(offsets, next, v, w, D, wk);
+      }
+      var before = lengthD(w, D);
+      removeAxes(w, axes, D);
+      var after = lengthD(w, D);
+      if (after <= KEEP * before) return null;
+      for (var e = 0; e < D; e++) w[e] /= after;
+      v = w;
+    }
+    return v;
+  }
+
+  // Step 7: with a scale, axis a becomes a * s and the three are made
+  // orthonormal again in order; a degenerate one is replaced by the basis rule.
+  function mapBack(axes, origins, s, D) {
+    var mapped = [];
+    for (var k = 0; k < axes.length; k++) {
+      var m = new Float64Array(D);
+      for (var d = 0; d < D; d++) m[d] = axes[k][d] * s[d];
+      if (!offer(mapped, m, D)) {
+        offerBasis(mapped, D);
+        origins[k] = "basis";
+      }
+    }
+    return mapped;
+  }
+
+  // Step 8: the frame's rows, each negated when it points away from the same
+  // row of the current frame.
+  function signedFrame(axes, current, D) {
+    var frame = new Float32Array(3 * D);
+    for (var k = 0; k < 3; k++) {
+      var away = current !== null && dotD(axes[k], current.subarray(k * D, (k + 1) * D), D) < 0;
+      var sign = away ? -1 : 1;
+      for (var d = 0; d < D; d++) frame[k * D + d] = sign * axes[k][d];
+    }
+    return frame;
+  }
+
+  // Step 9: the length of frame (x - centre).
+  function shownLength(frame, x, centre, D) {
+    var sq = 0;
+    for (var a = 0; a < 3; a++) {
+      var p = 0;
+      for (var f = 0; f < D; f++) p += (x[f] - centre[f]) * frame[a * D + f];
+      sq += p * p;
+    }
+    return Math.sqrt(sq);
+  }
+
+  function countOf(origins, what) {
+    return origins.filter((o) => o === what).length;
+  }
+
+  // Steps 8 and 9: signs against the current frame, then centre and zoom.
+  function* finish(fit, rows, axes, origins, wk) {
+    var D = fit.D;
+    var frame = signedFrame(axes, fit.current, D);
+    var centre = Float32Array.from(meanOfRows(rows.plainCentres, D, null));
+    var reach = FACE_MIN_REACH;
+    for (const row of rows.plainRows) {
+      reach = Math.max(reach, shownLength(frame, row, centre, D));
+      if (wk.add(3 * D)) yield;
+    }
+    return {
+      frame: frame,
+      centre: centre,
+      zoom: FACE_ZOOM / reach,
+      fromCentres: countOf(origins, "centres"),
+      fromSpread: countOf(origins, "spread"),
+      fromBasis: countOf(origins, "basis"),
+    };
+  }
+
+  function* facingGen(fit, wk) {
+    var D = fit.D;
+    var rows = yield* gatherRows(fit, wk);
+    var axes = [];
+    var origins = [];
+    var cs = rows.scaledCentres;
+    for (var j = 1; j < cs.length && axes.length < 3; j++) {
+      var join = new Float64Array(D);
+      for (var d = 0; d < D; d++) join[d] = cs[j][d] - cs[0][d];
+      if (offer(axes, join, D)) origins.push("centres");
+    }
+    while (axes.length < 3) {
+      var candidate = yield* spreadAxis(fit, rows.offsets, axes, wk);
+      if (candidate && offer(axes, candidate, D)) {
+        origins.push("spread");
+      } else {
+        offerBasis(axes, D);
+        origins.push("basis");
+      }
+    }
+    if (fit.scale) axes = mapBack(axes, origins, fit.scale, D);
+    return yield* finish(fit, rows, axes, origins, wk);
+  }
+
+  function now() {
+    return performance.now();
+  }
+
+  // { step(budgetMs?) -> done, done, progress, result }, as ET.math's steppers:
+  // step(budgetMs) runs units until budgetMs ms have passed (at least one);
+  // step() runs to the end. The clock decides only how many units run per call.
+  function faceStepper(gen, wk) {
+    var st = { done: false, progress: 0, result: null, step: null };
+    st.step = function (budgetMs) {
+      if (st.done) return true;
+      var limit = budgetMs === undefined ? Infinity : budgetMs;
+      var start = now();
+      do {
+        var r = gen.next();
+        if (r.done) {
+          st.done = true;
+          st.result = r.value;
+          st.progress = 1;
+          return true;
+        }
+      } while (now() - start < limit);
+      st.progress = Math.min(0.99, wk.done / wk.total);
+      return false;
+    };
+    return st;
+  }
+
+  // Written as a comparison so that NaN (and undefined) are not enough.
+  function hasThreeDimensions(D) {
+    return D >= 3;
+  }
+
+  function makeFacingFrame(set, searches, options) {
+    var o = options || {};
+    checkSearches(searches);
+    var D = set.dimension;
+    if (!hasThreeDimensions(D)) throw new RangeError("the facing frame needs at least 3 dimensions");
+    var fit = {
+      X: set.vectors,
+      D: D,
+      searches: searches,
+      seed: ET.math.toSeed(o.seed === undefined ? 1 : o.seed),
+      scale: checkOption(o.scale, D, "scale"),
+      current: checkOption(o.current, 3 * D, "current"),
+    };
+    checkFacing(set, searches);
+    if (!searches.length) {
+      return {
+        done: true,
+        progress: 1,
+        result: null,
+        step: function () {
+          return true;
+        },
+      };
+    }
+    var rowCount = 0;
+    for (const search of searches) rowCount += 1 + search.hits.length;
+    var wk = new FaceWork(rowCount * D * (6 + 2 * FACE_ITERATIONS * 3));
+    return faceStepper(facingGen(fit, wk), wk);
+  }
+
+  function facingFrame(set, searches, options) {
+    var st = makeFacingFrame(set, searches, options);
+    st.step();
+    return st.result;
+  }
+
+  return {
+    MAX_SEARCHES: MAX_SEARCHES,
+    LETTERS: LETTERS,
+    LIT_SETTINGS: LIT_SETTINGS,
+    DEFAULT_LIT: DEFAULT_LIT,
+    LIT_THRESHOLD: LIT_THRESHOLD,
+    CLOSE_REACH: CLOSE_REACH,
+    CLOSE_POWER: CLOSE_POWER,
+    FACE_SALT: FACE_SALT,
+    FACE_ITERATIONS: FACE_ITERATIONS,
+    FACE_ZOOM: FACE_ZOOM,
+    letter: letter,
+    litSetting: litSetting,
+    scaleFor: scaleFor,
+    litValues: litValues,
+    pairReports: pairReports,
+    makePairReports: makePairReports,
+    makeFacingFrame: makeFacingFrame,
+    facingFrame: facingFrame,
+  };
+})();
+// ---------------------------------------------------------------------------
 // 30-renderer.js: WebGL 2 drawing (ET.renderer).
 //
 // Ported from the reference page (docs/specs/reference/embedding-tumbler-demo.html):
@@ -2156,6 +3437,9 @@
 //   * It has a lifecycle: dispose() frees every GPU object it made, a lost context
 //     is rebuilt from the data it keeps, and without WebGL 2 it reports instead of
 //     throwing.
+//   * Search: setLit() gives per-point lit values and a shared mark, drawn by a second
+//     point program (and, for the wires, a second wire program) only when they apply;
+//     without them the frame is drawn as before.
 //
 // The API is documented in js/api/30-renderer.md.
 // ---------------------------------------------------------------------------
@@ -2191,7 +3475,19 @@ ET.renderer = (function () {
     gamma: 0.92, // output curve
     vignette: 0.72, // brightness at the corners (1 = no vignette)
     background: Object.freeze([0, 0, 0]), // added under the image, linear RGB 0..1
+    filter: 0, // 0..1: how much the lit values (setLit) apply this frame; 0 = drawn as without search
+    unlitGain: 0.07, // brightness factor of a point with lit value 0, at filter 1
+    // 0 = off. Above 0: the most wire light per pixel, measured where the wires' light lands,
+    // that the wires may pile up to; above it the wires' brightness is scaled down (wireDensity).
+    wireLoad: 0,
   });
+
+  var WIRE_SAMPLE = 192; // wires sampled (at an even stride) to measure how they pile up
+  var WIRE_CELLS = 64; // grid cells across the stage's shorter side for that measure
+
+  // The point program's uniforms (the lit programs add uFilter and uUnlit).
+  var POINT_UNIFORMS = ["uPx", "uMinPx", "uFog", "uTime", "uGain", "uDim", "uTwinkle", "uDof", "uFogNear", "uFogWidth"];
+  var VIEW_UNIFORMS = ["uX", "uF", "uRot", "uView", "uZoom", "uFocus"];
 
   var MAX_ROW_WIDTH = 4096; // preferred texture row width (texels) before widening
   var INT32_MAX = 2147483647;
@@ -2217,7 +3513,9 @@ ET.renderer = (function () {
       tone: null,
       fade: null,
       point: null,
+      pointLit: null, // the point program that reads lit values, compiled on first setLit
       line: null,
+      lineLit: null, // the wire program that reads each wire's lit value, compiled with pointLit
       progLayout: null,
       quadVao: null,
       texX: null,
@@ -2227,8 +3525,13 @@ ET.renderer = (function () {
       fWidth: 0,
       vboPoint: null,
       vaoPoint: null,
+      vboLit: null, // one float per point: lit value, plus 2 for the shared mark
+      vaoPointLit: null, // vboPoint at location 0 and vboLit at location 1
+      litCapacity: 0, // points vboLit was allocated for
       vboLine: null,
       vaoLine: null,
+      vboWireLit: null, // one float per wire end: the smaller lit value of the wire's two ends
+      vaoLineLit: null, // vboLine at locations 0..2 and vboWireLit at location 3
       fbo: null,
       texHdr: null,
       hdrW: 0,
@@ -2284,6 +3587,80 @@ ET.renderer = (function () {
 
   // ---------- shaders, generated from the layout ----------
 
+  // The point vertex shader's body. lit false gives the program drawn whenever no search
+  // applies, line for line the shader that existed before search, so that picture cannot
+  // change. lit true is a second program that also reads the per-point lit value (aLit:
+  // the value in 0..1, plus 2 when the shared mark is drawn) and the draw keys filter
+  // (uFilter) and unlitGain (uUnlit): results swell and brighten, the rest shrink and dim,
+  // and a marked point adds white. A lit point's fog (distance dimming) is also reduced in
+  // proportion to its lit value times filter, so results stay visible wherever the camera
+  // is while unlit points keep the fog.
+  function pointMain(lit) {
+    var sizeTail = lit ? " * mix(1.0, mix(0.8, 1.5, l), uFilter)" : "";
+    var colourTail = lit ? " * mix(1.0, mix(uUnlit, 2.2, l), uFilter)" : "";
+    var fogAmount = lit ? "fogK" : "uFog";
+    return ["uniform float uPx, uMinPx, uFog, uTime, uGain, uDim, uTwinkle, uDof, uFogNear, uFogWidth;"]
+      .concat(lit ? ["uniform float uFilter, uUnlit;"] : [])
+      .concat(["layout(location = 0) in vec4 aCol;"])
+      .concat(lit ? ["layout(location = 1) in float aLit;"] : [])
+      .concat([
+        "out vec3 vCol;",
+        "void main() {",
+        "  float fid = float(gl_VertexID);",
+        "  float dist, zf;",
+        "  vec4 q = place(proj(gl_VertexID, dist), zf);",
+        "  gl_Position = vec4(q.xy, 0.0, 1.0);",
+        "  float fog = clamp((uFogNear - dist) / uFogWidth, 0.0, 1.0);",
+        "  float w = aCol.a;",
+        "  float blur = 1.0 + uDof * zf * zf;", // out-of-focus points swell and dim
+      ])
+      .concat(
+        lit
+          ? [
+              "  float mark = step(1.5, aLit);",
+              "  float l = clamp(aLit - 2.0 * mark, 0.0, 1.0);",
+              "  float fogK = uFog * (1.0 - l * uFilter);",
+            ]
+          : []
+      )
+      .concat([
+        "  float size = uPx * q.w * (0.55 + 1.5 * w) * blur * mix(1.0, 0.45 + 1.25 * fog, " + fogAmount + ")" + sizeTail + ";",
+        "  gl_PointSize = max(size, uMinPx);",
+        "  float tw = (1.0 - uTwinkle) + uTwinkle * sin(uTime * (1.3 + fract(fid * 0.618) * 2.2) + fid * 12.9898);",
+        "  float a = (0.16 + 0.84 * w * w) * tw / pow(blur, 1.5) * mix(1.0, 0.22 + 0.78 * fog * fog, " + fogAmount + ");",
+        "  vCol = aCol.rgb * a * uGain * mix(1.0, uDim, step(w, 0.99))" + colourTail + ";",
+      ])
+      .concat(lit ? ["  vCol += vec3(0.9) * a * uGain * mark * uFilter;"] : [])
+      .concat(["}"])
+      .join("\n");
+  }
+
+  // The wire vertex shader's body. lit false gives the program drawn whenever no search
+  // applies, line for line the shader that existed before search. lit true also reads the
+  // wire's lit value (aWireLit: the smaller lit value of its two ends, so 1 only when both
+  // ends are lit) and the draw keys filter and unlitGain: a wire between results keeps its
+  // full strength, any other wire is dimmed like an unlit point.
+  function lineMain(lit, wireScale) {
+    var colourTail = lit ? " * mix(1.0, mix(uUnlit, 1.0, aWireLit), uFilter)" : "";
+    return ["uniform float uGain, uWireDof;"]
+      .concat(lit ? ["uniform float uFilter, uUnlit;"] : [])
+      .concat(["layout(location = 0) in uvec2 aPair;", "layout(location = 1) in float aLen;", "layout(location = 2) in vec3 aCol;"])
+      .concat(lit ? ["layout(location = 3) in float aWireLit;"] : [])
+      .concat([
+        "out vec3 vCol;",
+        "void main() {",
+        "  float d0, d1, zf;",
+        "  vec3 p = proj(int(aPair.x), d0), p2 = proj(int(aPair.y), d1);",
+        "  vec4 q = place(p, zf);",
+        "  gl_Position = vec4(q.xy, 0.0, 1.0);",
+        // 1 = a typical shadow length; higher = seen nearer its true length
+        "  float t = length(p - p2) / max(aLen, 1e-6) * " + wireScale + ";",
+        "  vCol = aCol * (0.03 + 0.2 * t * t * t) * uGain / (1.0 + uWireDof * zf * zf)" + colourTail + ";",
+        "}",
+      ])
+      .join("\n");
+  }
+
   function shaderSources(lay) {
     var T = lay.texelsPerPoint;
     var P = lay.pointsPerRow;
@@ -2319,29 +3696,8 @@ ET.renderer = (function () {
       "  return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);",
       "}",
     ].join("\n");
-    var pointVertex =
-      head +
-      proj +
-      "\n" +
-      [
-        "uniform float uPx, uMinPx, uFog, uTime, uGain, uDim, uTwinkle, uDof, uFogNear, uFogWidth;",
-        "layout(location = 0) in vec4 aCol;",
-        "out vec3 vCol;",
-        "void main() {",
-        "  float fid = float(gl_VertexID);",
-        "  float dist, zf;",
-        "  vec4 q = place(proj(gl_VertexID, dist), zf);",
-        "  gl_Position = vec4(q.xy, 0.0, 1.0);",
-        "  float fog = clamp((uFogNear - dist) / uFogWidth, 0.0, 1.0);",
-        "  float w = aCol.a;",
-        "  float blur = 1.0 + uDof * zf * zf;", // out-of-focus points swell and dim
-        "  float size = uPx * q.w * (0.55 + 1.5 * w) * blur * mix(1.0, 0.45 + 1.25 * fog, uFog);",
-        "  gl_PointSize = max(size, uMinPx);",
-        "  float tw = (1.0 - uTwinkle) + uTwinkle * sin(uTime * (1.3 + fract(fid * 0.618) * 2.2) + fid * 12.9898);",
-        "  float a = (0.16 + 0.84 * w * w) * tw / pow(blur, 1.5) * mix(1.0, 0.22 + 0.78 * fog * fog, uFog);",
-        "  vCol = aCol.rgb * a * uGain * mix(1.0, uDim, step(w, 0.99));",
-        "}",
-      ].join("\n");
+    var pointVertex = head + proj + "\n" + pointMain(false);
+    var pointVertexLit = head + proj + "\n" + pointMain(true);
     var pointFragment = [
       "#version 300 es",
       "precision mediump float;",
@@ -2354,26 +3710,8 @@ ET.renderer = (function () {
       "  o = vec4(vCol * g, 1.0);",
       "}",
     ].join("\n");
-    var lineVertex =
-      head +
-      proj +
-      "\n" +
-      [
-        "uniform float uGain, uWireDof;",
-        "layout(location = 0) in uvec2 aPair;",
-        "layout(location = 1) in float aLen;",
-        "layout(location = 2) in vec3 aCol;",
-        "out vec3 vCol;",
-        "void main() {",
-        "  float d0, d1, zf;",
-        "  vec3 p = proj(int(aPair.x), d0), p2 = proj(int(aPair.y), d1);",
-        "  vec4 q = place(p, zf);",
-        "  gl_Position = vec4(q.xy, 0.0, 1.0);",
-        // 1 = a typical shadow length; higher = seen nearer its true length
-        "  float t = length(p - p2) / max(aLen, 1e-6) * " + wireScale + ";",
-        "  vCol = aCol * (0.03 + 0.2 * t * t * t) * uGain / (1.0 + uWireDof * zf * zf);",
-        "}",
-      ].join("\n");
+    var lineVertex = head + proj + "\n" + lineMain(false, wireScale);
+    var lineVertexLit = head + proj + "\n" + lineMain(true, wireScale);
     var lineFragment =
       "#version 300 es\nprecision mediump float; in vec3 vCol; out vec4 o; void main() { o = vec4(vCol, 1.0); }";
     var quadVertex = [
@@ -2403,13 +3741,91 @@ ET.renderer = (function () {
     ].join("\n");
     return {
       pointVertex: pointVertex,
+      pointVertexLit: pointVertexLit,
       pointFragment: pointFragment,
       lineVertex: lineVertex,
+      lineVertexLit: lineVertexLit,
       lineFragment: lineFragment,
       quadVertex: quadVertex,
       fadeFragment: fadeFragment,
       toneFragment: toneFragment,
     };
+  }
+
+  // ---------- how tightly the wires pile up on screen ----------
+
+  // The wire light per pixel where the wires' light lands, before any gain: the light of an
+  // even sample of the wires (each wire's brightness as the wire shader computes it, times
+  // its length on screen) is spread over a coarse grid of the stage, and the light-weighted
+  // mean of the cells' light per pixel is returned, scaled up from the sample to every wire.
+  // It grows when the frame packs the wires tightly (many wires through the same cells) and
+  // with the number of wires. src: { vectors (stride floats per point), stride, dimension,
+  // pairs, lengths, count }; view: a merged draw state plus width and height in pixels.
+  function wireDensity(src, view) {
+    var m = Math.min(src.count, WIRE_SAMPLE);
+    if (m <= 0) return 0;
+    var W = view.width;
+    var H = view.height;
+    var cell = Math.max(2, Math.min(W, H) / WIRE_CELLS);
+    var cols = Math.ceil(W / cell);
+    var grid = new Float64Array(cols * Math.ceil(H / cell));
+    var scale = Math.sqrt(src.dimension / 3);
+    var a = new Float64Array(6);
+    for (var k = 0; k < m; k++) {
+      var e = Math.floor((k * src.count) / m);
+      projectInto(src, view, src.pairs[2 * e], a, 0);
+      projectInto(src, view, src.pairs[2 * e + 1], a, 3);
+      var t = (Math.hypot(a[0] - a[3], a[1] - a[4], a[2] - a[5]) / Math.max(src.lengths[e], 1e-6)) * scale;
+      var ends = [screenOf(a, 0, view), screenOf(a, 3, view)];
+      var dof = 1 + (view.wireDepthOfField * (ends[0].zf * ends[0].zf + ends[1].zf * ends[1].zf)) / 2;
+      splat(grid, cols, cell, ends, ((0.03 + 0.2 * t * t * t) / dof) * (src.count / m));
+    }
+    var total = 0;
+    var squares = 0;
+    for (var c of grid) {
+      total += c;
+      squares += c * c;
+    }
+    return total > 0 ? squares / total / (cell * cell) : 0;
+  }
+
+  // Point i's coordinates along the frame (centred), into out[at .. at + 3).
+  function projectInto(src, view, i, out, at) {
+    var D = src.dimension;
+    var o = i * src.stride;
+    var x = 0;
+    var y = 0;
+    var z = 0;
+    for (var d = 0; d < D; d++) {
+      var v = src.vectors[o + d] - (view.centre ? view.centre[d] : 0);
+      x += v * view.frame[d];
+      y += v * view.frame[D + d];
+      z += v * view.frame[2 * D + d];
+    }
+    out[at] = x;
+    out[at + 1] = y;
+    out[at + 2] = z;
+  }
+
+  // Canvas pixels and depth from the focus plane of the coordinates at p[at .. at + 3).
+  function screenOf(p, at, view) {
+    var q = place([p[at], p[at + 1], p[at + 2]], view, view.width, view.height);
+    return { x: q.x, y: q.y, zf: q.depth };
+  }
+
+  // Add `light` per pixel of the segment's length along it, cell by cell.
+  function splat(grid, cols, cell, ends, light) {
+    var dx = ends[1].x - ends[0].x;
+    var dy = ends[1].y - ends[0].y;
+    var len = Math.max(1, Math.hypot(dx, dy));
+    var steps = Math.max(1, Math.ceil(len / cell));
+    var rows = grid.length / cols;
+    for (var i = 0; i < steps; i++) {
+      var f = (i + 0.5) / steps;
+      var cx = Math.floor((ends[0].x + dx * f) / cell);
+      var cy = Math.floor((ends[0].y + dy * f) / cell);
+      if (cx >= 0 && cx < cols && cy >= 0 && cy < rows) grid[cy * cols + cx] += (light * len) / steps;
+    }
   }
 
   // ---------- the screen mapping, in JavaScript (mirrors place() in the shader) ----------
@@ -2450,6 +3866,24 @@ ET.renderer = (function () {
 
   function isFloatArray(a) {
     return a instanceof Float32Array || a?.constructor?.name === "Float32Array";
+  }
+
+  function isByteArray(a) {
+    return a instanceof Uint8Array || a?.constructor?.name === "Uint8Array";
+  }
+
+  // The GPU form of the lit values: each clamped to 0..1 (NaN reads as 0), plus 2 where
+  // the shared mark is drawn. Written into out[0 .. lit.length).
+  function encodeLit(lit, shared, out) {
+    for (var i = 0; i < lit.length; i++) {
+      var v = lit[i] > 0 ? Math.min(1, lit[i]) : 0;
+      out[i] = shared?.[i] ? v + 2 : v;
+    }
+  }
+
+  // A GPU lit value without its mark: the lit value in 0..1.
+  function plainLit(x) {
+    return x >= 1.5 ? x - 2 : x;
   }
 
   function isIndexArray(a) {
@@ -2513,6 +3947,7 @@ ET.renderer = (function () {
       lay: null,
       vectors: null, // Float32Array(capacityRows * pointsPerRow * floatsPerPoint), zero-padded
       attr: null, // Float32Array(capacity * 4): r, g, b, weight
+      lit: null, // Float32Array(capacity), encoded lit values (encodeLit), or null: no search
     };
     var wires = { pairs: null, lengths: null, count: 0 };
 
@@ -2522,6 +3957,7 @@ ET.renderer = (function () {
     var error = null; // set when a rebuild failed
     var hdr = false;
     var needClear = true;
+    var wireScale = 1; // the wire crowding factor of the last frame that drew wires
 
     function track(kind, obj) {
       gpu.objects.push({ kind: kind, obj: obj });
@@ -2676,18 +4112,13 @@ ET.renderer = (function () {
       if (gpu.progLayout?.texelsPerPoint === lay.texelsPerPoint && gpu.progLayout.pointsPerRow === lay.pointsPerRow) {
         return;
       }
-      if (gpu.point) release(gpu.point.program);
-      if (gpu.line) release(gpu.line.program);
-      gpu.point = null;
-      gpu.line = null;
+      for (var key of ["point", "pointLit", "line", "lineLit"]) {
+        if (gpu[key]) release(gpu[key].program);
+        gpu[key] = null;
+      }
       var src = shaderSources(lay);
-      var view = ["uX", "uF", "uRot", "uView", "uZoom", "uFocus"];
-      gpu.point = compile(
-        src.pointVertex,
-        src.pointFragment,
-        view.concat(["uPx", "uMinPx", "uFog", "uTime", "uGain", "uDim", "uTwinkle", "uDof", "uFogNear", "uFogWidth"])
-      );
-      gpu.line = compile(src.lineVertex, src.lineFragment, view.concat(["uGain", "uWireDof"]));
+      gpu.point = compile(src.pointVertex, src.pointFragment, VIEW_UNIFORMS.concat(POINT_UNIFORMS));
+      gpu.line = compile(src.lineVertex, src.lineFragment, VIEW_UNIFORMS.concat(["uGain", "uWireDof"]));
       gpu.progLayout = lay;
       // the frame texture: rows 0..2 the frame, row 3 the centre
       if (gpu.texF) release(gpu.texF);
@@ -2714,6 +4145,96 @@ ET.renderer = (function () {
       gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 16, 0);
       gl.bindVertexArray(null);
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      // the lit vertex array names the colour buffer just replaced: make it again
+      dropLit();
+      if (store.lit) uploadLit();
+    }
+
+    // Free the lit buffers and their vertex arrays (the lit programs are kept).
+    function dropLit() {
+      dropPointLit();
+      dropWireLit();
+    }
+
+    function dropPointLit() {
+      if (gpu.vaoPointLit) release(gpu.vaoPointLit);
+      if (gpu.vboLit) release(gpu.vboLit);
+      gpu.vaoPointLit = null;
+      gpu.vboLit = null;
+      gpu.litCapacity = 0;
+    }
+
+    function dropWireLit() {
+      if (gpu.vaoLineLit) release(gpu.vaoLineLit);
+      if (gpu.vboWireLit) release(gpu.vboWireLit);
+      gpu.vaoLineLit = null;
+      gpu.vboWireLit = null;
+    }
+
+    // Each wire's lit value, the smaller of its two ends' (the mark removed), once per wire
+    // end: 1 only when both ends are lit.
+    function wireLitValues() {
+      var out = new Float32Array(wires.count * 2);
+      for (var e = 0; e < wires.count; e++) {
+        var v = Math.min(plainLit(store.lit[wires.pairs[2 * e]]), plainLit(store.lit[wires.pairs[2 * e + 1]]));
+        out[2 * e] = v;
+        out[2 * e + 1] = v;
+      }
+      return out;
+    }
+
+    // The wires' lit values on the GPU, with a vertex array that reads the wire buffer and
+    // them; dropped when there are no lit values, no wires or no wire buffer.
+    function uploadWireLit() {
+      dropWireLit();
+      if (!store.lit || !wires.count || !gpu.vboLine) return;
+      gpu.vaoLineLit = track("vertexArray", gl.createVertexArray());
+      gl.bindVertexArray(gpu.vaoLineLit);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLine);
+      lineAttributes();
+      gpu.vboWireLit = track("buffer", gl.createBuffer());
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboWireLit);
+      gl.bufferData(gl.ARRAY_BUFFER, wireLitValues(), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(3);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 4, 0);
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    }
+
+    // Send the CPU lit values to the GPU: one bufferSubData of the current points when the
+    // buffer is already the right size, else a new buffer (bufferData of the whole store)
+    // and its vertex array. The point vectors and colours are never re-sent here.
+    function uploadLit() {
+      if (!gpu.pointLit) {
+        var src = shaderSources(gpu.progLayout);
+        gpu.pointLit = compile(
+          src.pointVertexLit,
+          src.pointFragment,
+          VIEW_UNIFORMS.concat(POINT_UNIFORMS, ["uFilter", "uUnlit"])
+        );
+        gpu.lineLit = compile(src.lineVertexLit, src.lineFragment, VIEW_UNIFORMS.concat(["uGain", "uWireDof", "uFilter", "uUnlit"]));
+      }
+      uploadWireLit();
+      if (gpu.vboLit && gpu.litCapacity === store.capacity) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, store.lit.subarray(0, store.count));
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        return;
+      }
+      dropPointLit();
+      gpu.vaoPointLit = track("vertexArray", gl.createVertexArray());
+      gl.bindVertexArray(gpu.vaoPointLit);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 16, 0);
+      gpu.vboLit = track("buffer", gl.createBuffer());
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
+      gl.bufferData(gl.ARRAY_BUFFER, store.lit, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(1);
+      gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 4, 0);
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gpu.litCapacity = store.capacity;
     }
 
     function uploadWires() {
@@ -2747,14 +4268,21 @@ ET.renderer = (function () {
       gpu.vboLine = track("buffer", gl.createBuffer());
       gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLine);
       gl.bufferData(gl.ARRAY_BUFFER, buf, gl.STATIC_DRAW);
+      lineAttributes();
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      if (gpu.lineLit) uploadWireLit(); // the wires' lit vertex array named the old buffer
+    }
+
+    // The wire buffer's three attributes (pair, true length, colour) on the bound vertex
+    // array, read from the buffer bound to ARRAY_BUFFER.
+    function lineAttributes() {
       gl.enableVertexAttribArray(0);
       gl.vertexAttribIPointer(0, 2, gl.UNSIGNED_INT, 24, 0);
       gl.enableVertexAttribArray(1);
       gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 24, 8);
       gl.enableVertexAttribArray(2);
       gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
-      gl.bindVertexArray(null);
-      gl.bindBuffer(gl.ARRAY_BUFFER, null);
     }
 
     // Build (or rebuild after a context loss) every GPU object from the kept data.
@@ -2881,18 +4409,20 @@ ET.renderer = (function () {
       gl.uniform1f(p.u.uFocus, s.focus);
     }
 
+    // True when this frame draws with the lit values: some are set and filter is above 0.
+    // Otherwise the points are drawn by the program and calls used before search existed.
+    function litApplies(s) {
+      return store.lit !== null && s.filter > 0 && gpu.vaoPointLit !== null;
+    }
+
     // The wires (when shown), then the points.
     function drawScene(s, gain, W, H) {
       var R = Math.min(W, H) * s.radius;
-      if (wires.count && s.wires > 0.02 && gpu.vaoLine) {
-        setView(gpu.line, s, W, H, R);
-        gl.uniform1f(gpu.line.u.uGain, gain * s.wires * s.wireGain);
-        gl.uniform1f(gpu.line.u.uWireDof, s.wireDepthOfField);
-        gl.bindVertexArray(gpu.vaoLine);
-        gl.drawArrays(gl.LINES, 0, wires.count * 2);
-      }
-      var pu = gpu.point.u;
-      setView(gpu.point, s, W, H, R);
+      var lit = litApplies(s);
+      if (wires.count && s.wires > 0.02 && gpu.vaoLine) drawWires(s, gain, W, H, R, lit && gpu.vaoLineLit !== null);
+      var prog = lit ? gpu.pointLit : gpu.point;
+      var pu = prog.u;
+      setView(prog, s, W, H, R);
       gl.uniform1f(pu.uPx, s.pointSize);
       gl.uniform1f(pu.uMinPx, s.minPointSize);
       gl.uniform1f(pu.uFog, s.fog);
@@ -2903,8 +4433,43 @@ ET.renderer = (function () {
       gl.uniform1f(pu.uDof, s.depthOfField);
       gl.uniform1f(pu.uFogNear, s.fogNear);
       gl.uniform1f(pu.uFogWidth, Math.max(1e-6, s.fogWidth));
-      gl.bindVertexArray(gpu.vaoPoint);
+      if (lit) {
+        gl.uniform1f(pu.uFilter, Math.min(1, s.filter));
+        gl.uniform1f(pu.uUnlit, Math.max(0, s.unlitGain));
+      }
+      gl.bindVertexArray(lit ? gpu.vaoPointLit : gpu.vaoPoint);
       gl.drawArrays(gl.POINTS, 0, store.count);
+    }
+
+    // The wires. litWires false: the program and calls used before search existed.
+    function drawWires(s, gain, W, H, R, litWires) {
+      var prog = litWires ? gpu.lineLit : gpu.line;
+      setView(prog, s, W, H, R);
+      wireScale = s.wireLoad > 0 ? wireCrowding(s, W, H) : 1;
+      gl.uniform1f(prog.u.uGain, wireScale === 1 ? gain * s.wires * s.wireGain : gain * s.wires * s.wireGain * wireScale);
+      gl.uniform1f(prog.u.uWireDof, s.wireDepthOfField);
+      if (litWires) {
+        gl.uniform1f(prog.u.uFilter, Math.min(1, s.filter));
+        gl.uniform1f(prog.u.uUnlit, Math.max(0, s.unlitGain));
+      }
+      gl.bindVertexArray(litWires ? gpu.vaoLineLit : gpu.vaoLine);
+      gl.drawArrays(gl.LINES, 0, wires.count * 2);
+    }
+
+    // The factor that keeps the wires' light per pixel, where it lands, at s.wireLoad or
+    // below: 1 while the wires are spread out, less while the frame packs them tightly.
+    function wireCrowding(s, W, H) {
+      var view = { ...s, width: W, height: H };
+      var src = {
+        vectors: store.vectors,
+        stride: store.lay.floatsPerPoint,
+        dimension: store.dimension,
+        pairs: wires.pairs,
+        lengths: wires.lengths,
+        count: wires.count,
+      };
+      var light = wireDensity(src, view) * s.wires * s.wireGain * s.gain;
+      return light > s.wireLoad ? s.wireLoad / light : 1;
     }
 
     // Tone-map the HDR target onto the canvas, with the mip-chain bloom.
@@ -2932,6 +4497,63 @@ ET.renderer = (function () {
       return !disposed && !lost && gpu !== null && error === null;
     }
 
+    // Makes room for `total` points when the CPU copy is too small: a bigger layout if
+    // needed, double the capacity at least, the old points and lit values copied over.
+    // Returns { ok: true, reallocated } or the failed layout.
+    function growStorage(total) {
+      if (total <= store.capacity) return { ok: true, reallocated: false };
+      var lay = store.lay;
+      if (total > lay.maxPoints) {
+        lay = layout(store.dimension, total, maxTextureSize);
+        if (!lay.ok) return lay;
+      }
+      var cap = Math.min(lay.maxPoints, Math.max(total, store.capacity * 2));
+      var mem = allocate(lay, cap);
+      // points are contiguous at a fixed stride whatever the row packing
+      mem.vectors.set(store.vectors.subarray(0, store.count * lay.floatsPerPoint));
+      mem.attr.set(store.attr.subarray(0, store.count * 4));
+      store.vectors = mem.vectors;
+      store.attr = mem.attr;
+      if (store.lit) {
+        var grown = new Float32Array(cap); // appended points: lit value 0, no mark
+        grown.set(store.lit.subarray(0, store.count));
+        store.lit = grown;
+      }
+      store.capacity = cap;
+      store.lay = lay;
+      return { ok: true, reallocated: true };
+    }
+
+    // Uploads only the texture rows the points first..total touch, and their slice of
+    // the colour (and lit) buffers.
+    function uploadAppended(first, total) {
+      var lay = store.lay;
+      var P = lay.pointsPerRow,
+        r0 = Math.floor(first / P),
+        r1 = Math.floor((total - 1) / P),
+        rowFloats = lay.width * 4;
+      gl.activeTexture(gl.TEXTURE0); // never rely on whichever unit was left active
+      gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
+      gl.texSubImage2D(
+        gl.TEXTURE_2D,
+        0,
+        0,
+        r0,
+        lay.width,
+        r1 - r0 + 1,
+        gl.RGBA,
+        gl.FLOAT,
+        store.vectors.subarray(r0 * rowFloats, (r1 + 1) * rowFloats)
+      );
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
+      gl.bufferSubData(gl.ARRAY_BUFFER, first * 16, store.attr.subarray(first * 4, total * 4));
+      if (gpu.vboLit) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
+        gl.bufferSubData(gl.ARRAY_BUFFER, first * 4, store.lit.subarray(first, total));
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    }
+
     var api = {
       // Replace all points. Returns { ok: true, layout, uploaded } or { ok: false, reason, message }.
       setData: function (input) {
@@ -2949,6 +4571,7 @@ ET.renderer = (function () {
         store.lay = lay;
         store.vectors = mem.vectors;
         store.attr = mem.attr;
+        store.lit = null; // a replace starts with no search
         writePoints(input, n, 0);
         wires = { pairs: null, lengths: null, count: 0 };
         needClear = true;
@@ -2975,54 +4598,17 @@ ET.renderer = (function () {
         var n = checkPoints(input, store.dimension);
         if (n === 0) return { ok: true, reallocated: false, uploaded: usable() };
         var total = store.count + n;
-        var lay = store.lay;
-        var reallocated = false;
-        if (total > store.capacity) {
-          if (total > lay.maxPoints) {
-            lay = layout(store.dimension, total, maxTextureSize);
-            if (!lay.ok) return lay;
-          }
-          var cap = Math.min(lay.maxPoints, Math.max(total, store.capacity * 2));
-          var mem = allocate(lay, cap);
-          // points are contiguous at a fixed stride whatever the row packing
-          mem.vectors.set(store.vectors.subarray(0, store.count * lay.floatsPerPoint));
-          mem.attr.set(store.attr.subarray(0, store.count * 4));
-          store.vectors = mem.vectors;
-          store.attr = mem.attr;
-          store.capacity = cap;
-          store.lay = lay;
-          reallocated = true;
-        }
+        var grown = growStorage(total);
+        if (!grown.ok) return grown;
+        var reallocated = grown.reallocated;
         var first = store.count;
         writePoints(input, n, first);
+        if (store.lit) store.lit.fill(0, first, total); // appended points: lit value 0, no mark
         store.count = total;
         if (!usable()) return { ok: true, reallocated: reallocated, uploaded: false };
         try {
-          if (reallocated) {
-            uploadAllPoints();
-          } else {
-            // only the texture rows the new points touch, and their slice of the colour buffer
-            var P = lay.pointsPerRow,
-              r0 = Math.floor(first / P),
-              r1 = Math.floor((total - 1) / P),
-              rowFloats = lay.width * 4;
-            gl.activeTexture(gl.TEXTURE0); // never rely on whichever unit was left active
-            gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
-            gl.texSubImage2D(
-              gl.TEXTURE_2D,
-              0,
-              0,
-              r0,
-              lay.width,
-              r1 - r0 + 1,
-              gl.RGBA,
-              gl.FLOAT,
-              store.vectors.subarray(r0 * rowFloats, (r1 + 1) * rowFloats)
-            );
-            gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
-            gl.bufferSubData(gl.ARRAY_BUFFER, first * 16, store.attr.subarray(first * 4, total * 4));
-            gl.bindBuffer(gl.ARRAY_BUFFER, null);
-          }
+          if (reallocated) uploadAllPoints();
+          else uploadAppended(first, total);
         } catch (e) {
           return failGpu(e);
         }
@@ -3040,6 +4626,34 @@ ET.renderer = (function () {
         if (!usable()) return { ok: true, uploaded: false };
         try {
           uploadWires();
+        } catch (e) {
+          return failGpu(e);
+        }
+        return { ok: true, uploaded: true };
+      },
+
+      // Per-point lit values (Float32Array(count), read as 0..1) and an optional shared mark
+      // (Uint8Array(count), 1 = marked); null clears them. Only the lit buffer is uploaded.
+      // Returns { ok: true, uploaded } or { ok: false, reason, message }.
+      setLit: function (lit, shared) {
+        if (disposed) return unavailable("disposed", "The renderer has been disposed.");
+        if (lit === null) {
+          store.lit = null;
+          if (usable()) dropLit();
+          return { ok: true, uploaded: usable() };
+        }
+        if (!store.lay) throw new TypeError("setLit needs a prior setData");
+        if (!isFloatArray(lit) || lit.length !== store.count) {
+          throw new TypeError("lit must be a Float32Array of length count (" + store.count + ")");
+        }
+        if (shared !== undefined && shared !== null && (!isByteArray(shared) || shared.length !== store.count)) {
+          throw new TypeError("shared must be a Uint8Array of length count (" + store.count + ")");
+        }
+        if (store.lit?.length !== store.capacity) store.lit = new Float32Array(store.capacity);
+        encodeLit(lit, shared, store.lit);
+        if (!usable()) return { ok: true, uploaded: false };
+        try {
+          uploadLit();
         } catch (e) {
           return failGpu(e);
         }
@@ -3111,6 +4725,8 @@ ET.renderer = (function () {
           count: store.count,
           capacity: store.capacity,
           wires: wires.count,
+          wireScale: wireScale,
+          lit: store.lit !== null,
           maxTextureSize: maxTextureSize,
           layout: store.lay,
         };
@@ -3125,6 +4741,7 @@ ET.renderer = (function () {
         disposed = true;
         store.vectors = null;
         store.attr = null;
+        store.lit = null;
         wires = { pairs: null, lengths: null, count: 0 };
         if (opts.releaseContext && !lost) {
           var ext = gl.getExtension("WEBGL_lose_context");
@@ -3172,6 +4789,7 @@ ET.renderer = (function () {
     DEFAULTS: DEFAULTS,
     layout: layout,
     shaderSources: shaderSources,
+    wireDensity: wireDensity,
     place: place,
     create: create,
   };
@@ -3194,8 +4812,8 @@ ET.renderer = (function () {
 // ---------------------------------------------------------------------------
 ET.modes = (function () {
   // Members every mode instance must have (see js/api/40-modes.md).
-  // Optional members: mark(t) (fix the time of a finished event) and, for
-  // Tumble, refit(t).
+  // Optional members: mark(t) (fix the time of a finished event), face(target,
+  // t, options) (the swing toward the searches) and, for Tumble, refit(t).
   var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
   var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
   var registry = [];
@@ -3647,6 +5265,188 @@ ET.modes = (function () {
     return t;
   }
 
+  // ----- the swing toward the searches (js/api/40-modes.md, "Facing the searches")
+  //
+  // A swing is an event at a fixed time T. From T to its end U the frame is
+  // pulled toward the facing frame Q with weight w = 1 - exp(-PULL (t - T)) while
+  // it keeps drifting: the frame is the closed-form solution of the reference's
+  // per-frame pull (F += (Q - F)(1 - exp(-2 dt))) with a drift velocity of
+  // SWING_DRIFT rad/s per axis whose direction turns at SWING_TURN rad/s, then
+  // orthonormalised. The drift's directions are drawn from the view seed and the
+  // swing's number, so the frames are a pure function of the calls. The centre
+  // and zoom are pulled toward the target's with the same weight. After U the
+  // mode's own motion carries on from the state shown at U (each mode file).
+  var SWING_DURATION = 6; // seconds of mode time (the reference's)
+  var SWING_PULL = 2; // 1/s: the reference's pull, 1 - exp(-2 dt) per frame
+  var SWING_DRIFT = 0.21; // rad/s per axis: half the reference tumble's 0.42
+  var SWING_TURN = 1.5; // rad/s: how fast the drift's direction turns
+  var SALT_SWING = 0x5e1f0c;
+
+  function allFinite(a) {
+    for (var x of a) if (!Number.isFinite(x)) return false;
+    return true;
+  }
+
+  // A checked copy of a facing target { frame, centre, zoom }, or null.
+  function faceTarget(target, D) {
+    if (!target || typeof target !== "object") return null;
+    var f = target.frame;
+    var c = target.centre;
+    var z = target.zoom;
+    if (f?.length !== 3 * D || c?.length !== D) return null;
+    var good = z > 0 && Number.isFinite(z); // false for a missing or non-numeric zoom too
+    if (!good) return null;
+    var frame = Float32Array.from(f);
+    var centre = Float32Array.from(c);
+    if (!allFinite(frame) || !allFinite(centre)) return null;
+    ET.math.orthonormalize(frame, 3, D);
+    return { frame: frame, centre: centre, zoom: z };
+  }
+
+  // { duration, searches } from face()'s options, or null when the duration is
+  // not a positive finite number.
+  function swingOptions(options) {
+    var o = options || {};
+    var duration = o.duration === undefined ? SWING_DURATION : o.duration;
+    var good = duration > 0 && Number.isFinite(duration);
+    if (!good) return null;
+    var n = Math.round(o.searches);
+    if (Number.isNaN(n) || n < 1) n = 1; // a missing or non-numeric count is one search
+    return { duration: duration, searches: Math.min(4, n) };
+  }
+
+  function makeSwing(tg, shown, T, op, seed, index, D) {
+    var Q = tg.frame;
+    var A = shown.frame;
+    // Each target axis is flipped to the shorter turn from the frame shown, so
+    // the pull never passes through a row that cancels out.
+    for (var r = 0; r < 3; r++) {
+      var dp = 0;
+      for (var d = 0; d < D; d++) dp += Q[r * D + d] * A[r * D + d];
+      if (dp < 0) for (var d2 = 0; d2 < D; d2++) Q[r * D + d2] = -Q[r * D + d2];
+    }
+    var rng = ET.math.makeRandom(ET.math.mixSeed(ET.math.mixSeed(seed, SALT_SWING), index));
+    var H = new Float64Array(6 * D);
+    rng.fillGauss(H, 0, 6 * D);
+    for (var row = 0; row < 6; row++) {
+      var n = 0;
+      for (var d3 = 0; d3 < D; d3++) n += H[row * D + d3] * H[row * D + d3];
+      n = Math.sqrt(n) || 1;
+      for (var d4 = 0; d4 < D; d4++) H[row * D + d4] /= n;
+    }
+    return {
+      index: index,
+      T: T,
+      U: T + op.duration,
+      n: op.searches,
+      A: A,
+      C0: shown.centre,
+      Z0: shown.zoom,
+      Q: Q,
+      Qc: tg.centre,
+      Qz: tg.zoom,
+      H: H,
+      info: shown.info || null,
+      cache: {},
+    };
+  }
+
+  // The swing's frame and centre at mode time t (clamped to [T, U]) written
+  // into `frame` and `centre`; returns the zoom.
+  function swingState(s, t, frame, centre) {
+    var D = s.Qc.length;
+    var tau = Math.min(Math.max(t - s.T, 0), s.U - s.T);
+    var k = Math.exp(-SWING_PULL * tau); // 1 - w
+    var c = Math.cos(SWING_TURN * tau) - k;
+    var sn = Math.sin(SWING_TURN * tau);
+    var den = SWING_PULL * SWING_PULL + SWING_TURN * SWING_TURN;
+    // The drift's offset: the integral of exp(-PULL (tau - u)) times the turning
+    // velocity, in closed form (zero at tau = 0, so the swing starts with no jump).
+    var a = (SWING_DRIFT * (SWING_PULL * c + SWING_TURN * sn)) / den;
+    var b = (SWING_DRIFT * (SWING_PULL * sn - SWING_TURN * c)) / den;
+    var x = new Float64Array(3 * D);
+    var H = s.H;
+    for (var i = 0; i < 3 * D; i++) x[i] = s.Q[i] + k * (s.A[i] - s.Q[i]) + a * H[i] + b * H[3 * D + i];
+    ET.math.orthonormalize(x, 3, D);
+    for (var i2 = 0; i2 < 3 * D; i2++) frame[i2] = x[i2];
+    for (var d = 0; d < D; d++) centre[d] = s.Qc[d] + k * (s.C0[d] - s.Qc[d]);
+    return s.Qz + k * (s.Z0 - s.Qz);
+  }
+
+  // The state shown at the swing's end U: { frame, centre, zoom }, computed once.
+  function swingEnd(s) {
+    if (!s.cache.end) {
+      var D = s.Qc.length;
+      var e = { frame: new Float32Array(3 * D), centre: new Float32Array(D), zoom: 0 };
+      e.zoom = swingState(s, s.U, e.frame, e.centre);
+      s.cache.end = e;
+    }
+    return s.cache.end;
+  }
+
+  // How far the mode has come back after the swing: 0 at U, 1 from U + duration on.
+  function swingRelease(s, t, duration) {
+    var blending = t - s.U < duration; // false for a NaN duration too
+    return blending ? ET.math.smoothstep((t - s.U) / duration) : 1;
+  }
+
+  // centre := from + (centre - from) e, in place; returns the zoom blended the same way.
+  function releaseCentreZoom(end, e, centre, zoom) {
+    if (e >= 1) return zoom;
+    for (var d = 0; d < centre.length; d++) centre[d] = end.centre[d] + (centre[d] - end.centre[d]) * e;
+    return end.zoom + (zoom - end.zoom) * e;
+  }
+
+  function swingStatus(s, verb) {
+    return "swinging to face " + (s.n > 1 ? "the " + s.n + " searches" : "the search") + ", then " + verb + " on";
+  }
+
+  // The swings of one mode entry, in start order. shownAt(T) answers the state
+  // shown at T as { frame, centre, zoom, info? } (copies); `info` is kept on the
+  // swing for the mode's own use.
+  function makeSwings(D, seed) {
+    var list = [];
+
+    // The latest swing that has started by t (it may have ended), or null.
+    function at(t) {
+      for (var i = list.length - 1; i >= 0; i--) if (list[i].T <= t) return list[i];
+      return null;
+    }
+
+    function face(target, time, options, shownAt) {
+      var tg = faceTarget(target, D);
+      var op = swingOptions(options);
+      if (!tg || !op) return false;
+      var T = checkTime(time);
+      var last = list.length ? list.at(-1) : null;
+      if (last && last.T > T) T = last.T; // a fixed past is never rewritten
+      var shown = shownAt(T);
+      if (last && last.U > T) {
+        last.U = T; // a new swing starts from the frame shown at its time
+        last.cache = {};
+      }
+      list.push(makeSwing(tg, shown, T, op, seed, list.length, D));
+      return true;
+    }
+
+    // End the newest swing at t if it is in progress then.
+    function end(time) {
+      var t = checkTime(time);
+      var last = list.length ? list.at(-1) : null;
+      if (!last || t < last.T || t >= last.U) return false;
+      last.U = t;
+      last.cache = {};
+      return true;
+    }
+
+    function describe() {
+      var last = list.length ? list.at(-1) : null;
+      return last ? { at: last.T, until: last.U } : null;
+    }
+
+    return { at: at, face: face, end: end, describe: describe, list: list };
+  }
+
   return {
     INTERFACE: INTERFACE.slice(),
     register: register,
@@ -3676,6 +5476,13 @@ ET.modes = (function () {
     changed: changed,
     isPrefix: isPrefix,
     EMPTY_STATUS: EMPTY_STATUS,
+    SWING_DURATION: SWING_DURATION,
+    makeSwings: makeSwings,
+    swingState: swingState,
+    swingEnd: swingEnd,
+    swingRelease: swingRelease,
+    releaseCentreZoom: releaseCentreZoom,
+    swingStatus: swingStatus,
   };
 })();
 // ---------------------------------------------------------------------------
@@ -3720,6 +5527,7 @@ ET.modes = (function () {
       describe: describe,
       refit: refit,
       mark: mark,
+      face: face,
       leave: leave,
     };
 
@@ -3746,6 +5554,7 @@ ET.modes = (function () {
     // touches no state, so it can never make the instance ready on old data.
     var gen = 0;
     var refitGen = 0;
+    var swings = null; // the swings toward the searches (M.makeSwings)
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Tumble");
@@ -3765,6 +5574,7 @@ ET.modes = (function () {
       refitRunning = false;
       requestedAt = null;
       progress = 0;
+      swings = M.makeSwings(D, seed);
       self.time = 0;
       self.varianceShare = null;
       hold = entry ? entry.frame : M.startFrame(D, seed);
@@ -3974,13 +5784,56 @@ ET.modes = (function () {
       if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
       if (pending) fixSwitch(t); // no time was given: the first query fixes it
       out.t = t;
-      frameAt(t, out.frame);
-      glide.at(t, out.centre);
-      out.draw = drawFor(out.frame, out.centre, t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) {
+        var zoom = M.swingState(sw, t, out.frame, out.centre);
+        out.draw = drawFor(out.frame, out.centre, t);
+        out.draw.zoom = zoom;
+      } else {
+        frameAt(t, out.frame);
+        glide.at(t, out.centre);
+        if (sw) released(sw, t);
+        out.draw = drawFor(out.frame, out.centre, t);
+        if (sw) out.draw.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), out.centre, out.draw.zoom);
+      }
       out.wires = null;
       out.focus = null;
       out.status = status(t);
       return out;
+    }
+
+    // After a swing ends at U, Tumble turns back onto its tour from the frame
+    // shown at U the way it turns onto a refitted tour: the tour's axes are
+    // relabelled (order and sign) to match that frame, and a fixed rotation that
+    // takes the tour's frame at U to the frame shown unwinds along refitEase over
+    // a length chosen as for a refit ("auto": the turn adds at most half the
+    // tour's mean rate). A blend over `transition` seconds, as on entry, turned up
+    // to five times faster than the tour moves (measured). The centre and zoom
+    // come back over `transition` (stateAt).
+    function released(sw, t) {
+      var c = sw.cache;
+      if (!c.turn) {
+        var end = M.swingEnd(sw);
+        var raw = frameAt(sw.U, new Float32Array(3 * D));
+        c.al = M.alignment(raw, end.frame, D);
+        var start = M.applyAlignment(raw, c.al, D);
+        c.turn = makeRefitBlend(end.frame, start, D);
+        c.turn.duration = refitDuration(c.turn, tours[activeIndex(sw.U)].tour, sw.U);
+      }
+      M.applyAlignment(new Float32Array(out.frame), c.al, D, out.frame);
+      var u = (t - sw.U) / c.turn.duration;
+      if (u < 1) applyRefitBlend(c.turn, 1 - refitEase(u), out.frame, D);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t.
+    function face(target, time, options) {
+      if (!isReady() || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var s = stateAt(T);
+        return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), zoom: s.draw.zoom };
+      });
     }
 
     function step(dt) {
@@ -3992,6 +5845,8 @@ ET.modes = (function () {
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
       if (!isReady()) return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return M.swingStatus(sw, "tumbling");
       var cur = tours[activeIndex(t)];
       var s = "tour of " + cur.tour.subspace + " strongest directions · " + (cur.share * 100).toFixed(1) + "% of variance";
       var since = set.count - cur.count;
@@ -4072,6 +5927,7 @@ ET.modes = (function () {
         refitAt: last?.t0 > -Infinity ? last.t0 : null,
         refitTransition: last?.blend ? last.blend.duration : null,
         refitPending: refitRunning,
+        facing: swings ? swings.describe() : null,
         empty: empty,
       };
     }
@@ -4511,6 +6367,7 @@ ET.modes = (function () {
 (function () {
   var M = ET.modes;
   var KNN_SLICE_MS = 1; // a unit of neighbour work stops after its first row once this has passed
+  var SALT_RESUME = 0x1a77ce; // the swap schedule that starts after a swing draws from its own stream
 
   var DEFAULTS = {
     period: 3.4, // seconds per axis swap (the reference's)
@@ -4546,6 +6403,7 @@ ET.modes = (function () {
       dataChanged: dataChanged,
       describe: describe,
       mark: mark,
+      face: face,
       leave: leave,
     };
 
@@ -4561,6 +6419,8 @@ ET.modes = (function () {
     var guided = false; // the swap tour draws from the fitted directions
     var fitAtEntry = false; // decided once per entry: the entry waits for the fit
     var fitShare = null; // share of variance in those directions
+    var swapBasis = null; // { basis, rows } the swap tour draws hidden directions from, when guided
+    var swings = null; // the swings toward the searches (M.makeSwings)
     var epoch = 0; // bumped by enter and leave: work queued for an earlier entry does nothing
     var hold = null;
     var knn = null; // the stepper in progress (or finished)
@@ -4593,6 +6453,8 @@ ET.modes = (function () {
       swap = ET.math.makeSwapTour(hold, D, { seed: seed, period: opt.period });
       guided = false;
       fitShare = null;
+      swapBasis = null;
+      swings = M.makeSwings(D, seed);
       fitAtEntry = wantsGuided(s);
       epoch++;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
@@ -4669,6 +6531,7 @@ ET.modes = (function () {
               basisRows: tour.subspace,
             });
             guided = true;
+            swapBasis = { basis: tour.basis, rows: tour.subspace };
             fitShare = tour.varianceShare;
             return true;
           },
@@ -4785,11 +6648,19 @@ ET.modes = (function () {
       if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
       if (pendingWires) fixWires(t); // no time was given: the first query fixes it
       out.t = t;
-      swap.frameAt(t, out.frame);
-      glide.at(t, out.centre);
+      var sw = swings.at(t);
+      var swinging = sw !== null && t < sw.U;
+      var zoom = 0;
+      if (swinging) {
+        zoom = M.swingState(sw, t, out.frame, out.centre);
+      } else {
+        swapAt(sw, t).frameAt(sw ? t - sw.U : t, out.frame);
+        glide.at(t, out.centre);
+        zoom = M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample);
+      }
       var sc = st.radius / M.REFERENCE_RADIUS;
       var draw = {
-        zoom: M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample),
+        zoom: zoom,
         wires: 0,
         dim: 0.55,
         trails: 0.1,
@@ -4800,6 +6671,8 @@ ET.modes = (function () {
         depthOfField: 1.1,
       };
       out.draw = M.blendDraw(draw, entry, t, opt.transition);
+      if (swinging) out.draw.zoom = zoom;
+      else if (sw) out.draw.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), out.centre, out.draw.zoom);
       // the wire fade-in is its own ramp, not part of the entry blend
       out.draw.wires = wireOpacity(t);
       var list = activeList(t);
@@ -4807,6 +6680,37 @@ ET.modes = (function () {
       out.focus = null;
       out.status = status(t);
       return out;
+    }
+
+    // The swap schedule in force at t: the entry's, or after a swing (sw, ended
+    // by t) a new schedule that starts from the frame shown at the swing's end, in
+    // the time since then. It keeps swapping axes from there with no jump.
+    function swapAt(sw, t) {
+      if (!sw || t < sw.U) return swap;
+      if (!sw.cache.swap) {
+        var o = { seed: ET.math.mixSeed(ET.math.mixSeed(seed, SALT_RESUME), sw.index), period: opt.period };
+        if (swapBasis) {
+          o.basis = swapBasis.basis;
+          o.basisRows = swapBasis.rows;
+        }
+        sw.cache.swap = ET.math.makeSwapTour(M.swingEnd(sw).frame, D, o);
+      }
+      return sw.cache.swap;
+    }
+
+    function swapStateAt(sw, t) {
+      return sw ? swapAt(sw, t).stateAt(t - sw.U) : swap.stateAt(t);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t.
+    function face(target, time, options) {
+      if (!isReady() || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var s = stateAt(T);
+        return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), zoom: s.draw.zoom };
+      });
     }
 
     function step(dt) {
@@ -4818,7 +6722,9 @@ ET.modes = (function () {
     function status(time) {
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
-      var s = swap.stateAt(t);
+      var sw = isReady() ? swings.at(t) : null;
+      if (sw && t < sw.U) return M.swingStatus(sw, "swapping axes");
+      var s = swapStateAt(sw, t);
       var pctSwap = String(Math.round(Math.min(1, s.u) * 100));
       while (pctSwap.length < 3) pctSwap = " " + pctSwap;
       var line = "swap " + (s.cycle + 1) + " · axis " + "XYZ".charAt(s.axis) + " trading for a hidden direction · " + pctSwap + "%";
@@ -4876,6 +6782,7 @@ ET.modes = (function () {
         wiresShownAt: lists.length ? lists[0].T : null,
         wiresReplacedAt: lists.length > 1 ? last.T : null,
         wiresPending: pendingWires !== null,
+        facing: swings ? swings.describe() : null,
         empty: empty,
         varianceShare: fitShare,
       };
@@ -4982,6 +6889,7 @@ ET.modes = (function () {
       neighboursOf: neighboursOf,
       retained: retained,
       mark: function () {}, // Wander has no events to fix
+      face: face,
       leave: leave,
     };
 
@@ -5009,6 +6917,7 @@ ET.modes = (function () {
     var ahead = null; // the next hop's work in progress: { h, j, c, scan, fit }
     var out = null;
     var tmpC = null;
+    var swings = null; // the swings toward the searches (M.makeSwings)
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Wander");
@@ -5031,6 +6940,7 @@ ET.modes = (function () {
       cur = { h: -1, prev: -1, recent: [], frame: startFrame };
       hopsComputed = 0;
       ahead = null;
+      swings = M.makeSwings(D, seed);
       self.time = 0;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
       tmpC = new Float64Array(D);
@@ -5312,47 +7222,119 @@ ET.modes = (function () {
       return { h: h, local: t - h * cycle };
     }
 
+    // The hop at t (not during a swing): with no swing before t, hopAt(t). After
+    // a swing (sw, ended by t) a new leg starts at its end U with the hop after
+    // the one the swing interrupted (sw.info.hT); `first` marks the leg's first
+    // hop, which flies from the frame and centre shown at U.
+    function legAt(sw, t) {
+      if (!sw) return hopAt(t);
+      var lt = t - sw.U;
+      var k = Math.floor(lt / cycle);
+      return { h: sw.info.hT + 1 + k, local: lt - k * cycle, first: k === 0 };
+    }
+
+    // The hop in progress at t: during a swing, the hop it interrupted.
+    function hopInProgress(t) {
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return sw.info.hT;
+      return legAt(sw, t).h;
+    }
+
+    // A route frame as shown in the leg after swing sw: its axes relabelled
+    // (order and sign) to match the frame shown at the swing's end, the same
+    // relabelling for every hop of the leg, so the hops stay aligned to each other.
+    function legFrame(sw, f) {
+      return sw ? M.applyAlignment(f, sw.cache.al, D) : f;
+    }
+
     function stateAt(time) {
       var t = M.checkTime(time);
       out.t = t;
       if (!ready || empty) return M.holdState(out, startFrame, entry, t, status(t));
-      var hp = hopAt(t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return swingingState(sw, t);
+      var hp = legAt(sw, t);
       var h = hp.h;
+      var end = sw ? legEnd(sw) : null;
       ensure(h - 1);
       ensure(h);
       var prevRec = rec(h - 1);
       var hereRec = rec(h);
       workAhead(h + 1);
+      var first = !!hp.first;
       var j = hereRec.target;
-      var fromF = prevRec.frame;
-      var toF = hereRec.frame;
-      var X = set.vectors;
-      var oj = j * D;
-      var phase;
-      var e;
-      if (hp.local < opt.travel) {
-        phase = "travel";
-        e = ET.math.smoothstep(hp.local / opt.travel);
-        var oc = h > 0 ? prevRec.target * D : -1;
-        for (var d = 0; d < D; d++) {
-          var a = oc >= 0 ? X[oc + d] : startCentre[d];
-          tmpC[d] = a + (X[oj + d] - a) * e;
-        }
-        for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
-        ET.math.blendFrames(fromF, toF, e, D, out.frame);
-      } else {
-        phase = "dwell";
-        e = 1;
-        for (var d3 = 0; d3 < D; d3++) out.centre[d3] = X[oj + d3];
-        ET.math.blendFrames(fromF, toF, 1, D, out.frame);
-      }
+      var prev = h > 0 && !first ? prevRec.target : -1; // the stop flown from, or -1
+      var travelling = hp.local < opt.travel;
+      var e = travelling ? ET.math.smoothstep(hp.local / opt.travel) : 1;
+      var from = flightStart(sw, first, prevRec);
+      if (travelling) travelCentre(prev, from.centre, j, e);
+      else stopCentre(j);
+      ET.math.blendFrames(from.frame, legFrame(sw, hereRec.frame), e, D, out.frame);
       out.focus = {
-        phase: phase,
-        from: h > 0 ? prevRec.target : -1,
+        phase: travelling ? "travel" : "dwell",
+        from: prev,
         to: j,
         e: e,
         neighbours: Int32Array.from(nearVisits(ctx, j, opt.spokes)),
       };
+      out.draw = drawAt(t);
+      // The centre needs no blend: the leg's first hop flies from the centre shown at U.
+      if (sw) out.draw.zoom = end.zoom + (out.draw.zoom - end.zoom) * M.swingRelease(sw, t, opt.transition);
+      out.status = status(t);
+      return out;
+    }
+
+    // The centre during a flight: e of the way from stop `prev` (from `fromC` when there is
+    // no previous stop, prev < 0) to stop j.
+    function travelCentre(prev, fromC, j, e) {
+      var X = set.vectors;
+      var oc = prev * D;
+      var oj = j * D;
+      for (var d = 0; d < D; d++) {
+        var a = prev >= 0 ? X[oc + d] : fromC[d];
+        tmpC[d] = a + (X[oj + d] - a) * e;
+      }
+      for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
+    }
+
+    // The centre while the camera dwells at stop j: the stop itself.
+    function stopCentre(j) {
+      var X = set.vectors;
+      var oj = j * D;
+      for (var d = 0; d < D; d++) out.centre[d] = X[oj + d];
+    }
+
+    // The state shown at swing sw's end, with the leg's relabelling of route
+    // frames worked out (once) against it.
+    function legEnd(sw) {
+      var end = M.swingEnd(sw);
+      if (!sw.cache.al) {
+        ensure(sw.info.hT + 1);
+        sw.cache.al = M.alignment(rec(sw.info.hT + 1).frame, end.frame, D);
+      }
+      return end;
+    }
+
+    // Where a flight starts: the frame and the centre used when there is no
+    // previous stop. A leg's first hop starts from the state shown at the swing's end.
+    function flightStart(sw, first, prevRec) {
+      if (first) return M.swingEnd(sw);
+      return { frame: legFrame(sw, prevRec.frame), centre: startCentre };
+    }
+
+    // During a swing: the swing's frame, centre and zoom; the spokes of the hop
+    // it interrupted, as they were at its start.
+    function swingingState(sw, t) {
+      var zoom = M.swingState(sw, t, out.frame, out.centre);
+      workAhead(sw.info.hT + 1); // the next leg's first stop, ahead of need
+      out.focus = sw.info.focus;
+      out.draw = drawAt(t);
+      out.draw.zoom = zoom;
+      out.status = status(t);
+      return out;
+    }
+
+    function drawAt(t) {
       var draw = {
         zoom: opt.zoom / scale,
         wires: 0,
@@ -5364,9 +7346,27 @@ ET.modes = (function () {
         twinkle: 0.18,
         depthOfField: 1.1,
       };
-      out.draw = M.blendDraw(draw, entry, t, opt.transition);
-      out.status = status(t);
-      return out;
+      return M.blendDraw(draw, entry, t, opt.transition);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t. The swing remembers the hop it
+    // interrupts (hT) and that hop's spokes.
+    function face(target, time, options) {
+      if (!ready || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var prior = swings.at(T);
+        var hT = prior && T < prior.U ? prior.info.hT : legAt(prior, T).h;
+        var s = stateAt(T);
+        var f = s.focus ? { ...s.focus, neighbours: new Int32Array(s.focus.neighbours) } : null;
+        return {
+          frame: new Float32Array(s.frame),
+          centre: new Float32Array(s.centre),
+          zoom: s.draw.zoom,
+          info: { hT: hT, focus: f },
+        };
+      });
     }
 
     // A point's name for the status line, cut to 24 characters so the line
@@ -5377,13 +7377,13 @@ ET.modes = (function () {
       return n.length > 24 ? n.slice(0, 23) + "…" : n;
     }
 
-    function describeStop(h, phase) {
+    function describeStop(h, phase, first) {
       var j = rec(h).target;
       if (phase === "dwell") {
         var g = groupOf(j);
         return 'at "' + nameOf(j) + '"' + (g ? " · " + g : "") + " · stop " + (h + 1);
       }
-      var i = h > 0 ? rec(h - 1).target : -1;
+      var i = h > 0 && !first ? rec(h - 1).target : -1;
       var gj = groupOf(j);
       var far = i >= 0 && gj !== "" && groupOf(i) !== gj;
       return (i >= 0 ? '"' + nameOf(i) + '" → ' : "heading to ") + '"' + nameOf(j) + '"' + (far ? " · long leap to " + gj : "");
@@ -5398,10 +7398,12 @@ ET.modes = (function () {
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
       if (!ready) return "getting ready to wander …";
-      var hp = hopAt(t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return M.swingStatus(sw, "wandering");
+      var hp = legAt(sw, t);
       ensure(hp.h - 1);
       ensure(hp.h);
-      return describeStop(hp.h, hp.local < opt.travel ? "travel" : "dwell");
+      return describeStop(hp.h, hp.local < opt.travel ? "travel" : "dwell", hp.first);
     }
 
     // Append: the hops up to the one in progress at time t are kept (so the view
@@ -5420,7 +7422,9 @@ ET.modes = (function () {
         enter(newSet, { seed: seed, from: from });
         return M.changed(prepare(), true);
       }
-      var h = hopAt(t).h;
+      var h = hopInProgress(t);
+      // A leg that starts after h re-relabels its frames against the stops chosen again.
+      for (var sw of swings.list) if (sw.info.hT >= h) sw.cache.al = null;
       // Keep the route up to hop h (computed with the data so far); drop the rest.
       ensure(h);
       if (cur.h > h) {
@@ -5479,6 +7483,7 @@ ET.modes = (function () {
         dwell: opt.dwell,
         labelled: ctx ? ctx.labelled : 0,
         visiting: ctx?.labelled >= 2 ? "labelled points" : "any point",
+        facing: swings ? swings.describe() : null,
         empty: empty,
         varianceShare: null,
       };
@@ -5504,6 +7509,2221 @@ ET.modes = (function () {
     create: create,
   });
 })();
+// ---------------------------------------------------------------------------
+// 43-mode-focus.js: Focus (registered as ET.modes "focus").
+//
+// The view is fitted to what is being searched for: with searches active, the
+// frame is the facing frame of the union of every search's query and named
+// results (ET.searchSets.makeFacingFrame, seeded); with none it is the fit of
+// the whole set (its three strongest directions). When the searches change the
+// view turns smoothly onto the new fit. The viewer keeps spinning the cloud on
+// top of the frame (yaw); while a search is shown Focus asks for the Focus
+// reference's spin (the mode's `spin` member, 0.13 rad/s), so the view keeps
+// turning at a clearly visible speed; with none it turns as before. A results fit is zoomed the way the reference zooms it: the results'
+// reach fills 0.36 of the stage's shorter side. Unlit points are dimmer than in
+// the other modes (unlitGain FOCUS_UNLIT); the Only results setting is reported
+// as the draw key unlitGain 0, which hides points whose lit value is 0. See
+// docs/search-interface.md and js/api/43-mode-focus.md.
+// ---------------------------------------------------------------------------
+(function () {
+  var M = ET.modes;
+  var MAX_TURNS = 64; // turns kept; older ones are dropped (a seek that far back shows the oldest kept)
+  // Corrected after the owner's browser look (2026-11-14), to match
+  // docs/specs/reference/tumbler-focus-view.html:
+  var SPIN = 0.13; // rad/s of yaw the viewer turns Focus at with a search (the reference's; otherwise 0.06)
+  // The reference maps the results' reach to 0.36 of the stage's shorter side; the renderer
+  // maps one unit to 0.46 of it (ET.renderer.DEFAULTS.radius), so the reach is drawn at 0.36 / 0.46 units.
+  var FOCUS_UNIT = 0.36 / 0.46;
+  // The query may sit up to this many results' reaches from the centre (the stage's shorter
+  // half-side is 0.5 / 0.36 = 1.39 reaches), so a query far from its results stays on stage.
+  var QUERY_ROOM = 1.3;
+  var MIN_REACH = 1e-3; // a reach below this (all rows on one spot) reads as this
+  // Brightness of an unlit point in Focus while a search is shown (the renderer's default
+  // elsewhere is 0.07). The reference draws unlit points at 0.13 of a result's alpha on a
+  // 124-point page; the sample set's 12,288 points pile up under the bloom, so the value
+  // that reads as faint as the reference's is lower.
+  var FOCUS_UNLIT = 0.05;
+
+  var DEFAULTS = {
+    transition: 1.5, // seconds to turn from the entry view onto the first fit, and to blend draw parameters in
+    turn: 1.6, // seconds to turn from the view shown onto a new fit (smoothstep)
+    fitRows: 4096, // the whole-set fit uses at most this many rows (at an even stride)
+    zoomSample: 512, // points used for auto-framing of the whole-set fit
+  };
+
+  function copyOf(a) {
+    return Float32Array.from(a);
+  }
+
+  // The caller's search, copied so later changes by the caller cannot reach it.
+  function snapshotOf(search) {
+    var list = search?.searches;
+    if (!Array.isArray(list) || list.length === 0) return null;
+    return {
+      searches: list.slice(0, 4).map(function (s, j) {
+        return {
+          letter: typeof s?.letter === "string" ? s.letter : ET.searchSets.LETTERS[j],
+          query: copyOf(s?.query || []),
+          indices: Int32Array.from(s?.indices || []),
+        };
+      }),
+      scale: search.scale ? copyOf(search.scale) : null,
+      onlyResults: search.onlyResults === true,
+    };
+  }
+
+  function sameArray(a, b) {
+    if (a === b) return true;
+    if (!a || !b || a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  // Do two snapshots ask for the same fit? (The Only results setting is not part of a fit.)
+  function sameFit(a, b) {
+    if (!a || !b) return a === b;
+    if (a.searches.length !== b.searches.length || !sameArray(a.scale, b.scale)) return false;
+    for (var j = 0; j < a.searches.length; j++) {
+      if (!sameArray(a.searches[j].query, b.searches[j].query)) return false;
+      if (!sameArray(a.searches[j].indices, b.searches[j].indices)) return false;
+    }
+    return true;
+  }
+
+  function create(options) {
+    var opt = {};
+    for (var k in DEFAULTS) opt[k] = options?.[k] === undefined ? DEFAULTS[k] : options[k];
+
+    var self = {
+      time: 0,
+      spin: undefined, // SPIN while a usable search is asked for (see updateSpin)
+      enter: enter,
+      prepare: prepare,
+      isReady: isReady,
+      stateAt: stateAt,
+      step: step,
+      status: status,
+      dataChanged: dataChanged,
+      describe: describe,
+      mark: mark,
+      leave: leave,
+      searchChanged: searchChanged,
+    };
+
+    var set = null;
+    var D = 0;
+    var seed = 0;
+    var entry = null;
+    var empty = false;
+    var emptyReady = false;
+    var ready = false;
+    var hold = null;
+    var epoch = 0; // bumped by enter and leave: work queued for an earlier entry does nothing
+    var want = null; // the searches asked for now (a snapshot), or null: kept across a data change
+    var wantVersion = 0; // bumped when the fit asked for changes
+    var whole = null; // the whole-set fit, once made for this entry
+    var turns = []; // { T, from, to, dur, kind, letters }: each fixed once recorded
+    var pending = null; // a finished fit waiting for its time: { result, minT, kind, letters }
+    var prepared = null;
+    var out = null;
+
+    function enter(s, opts) {
+      M.requireDimension(s, 3, "Focus");
+      var o = opts || {};
+      set = s;
+      D = s.dimension;
+      seed = o.seed === undefined ? 0 : o.seed;
+      entry = M.entryFrom(o.from, D);
+      empty = s.count === 0;
+      emptyReady = false;
+      ready = false;
+      whole = null;
+      turns = [];
+      pending = null;
+      prepared = null;
+      self.time = 0;
+      hold = entry ? entry.frame : M.startFrame(D, seed);
+      epoch++;
+      out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
+      updateSpin();
+    }
+
+    // True when a search the set can use is asked for (a query of the set's dimension).
+    function hasUsableSearch() {
+      return !!want?.searches.some((s) => s.query.length === D);
+    }
+
+    // The reference's spin while a usable search is asked for; with none the member is left
+    // undefined, so the viewer turns Focus at its own speed and the no-search frames are as before.
+    function updateSpin() {
+      self.spin = hasUsableSearch() ? SPIN : undefined;
+    }
+
+    // ----- the fits, in bounded units -------------------------------------------
+
+    // The searches this set can use: a query of the set's dimension, hits that are rows.
+    function usableSearches() {
+      if (!want) return [];
+      var list = [];
+      for (var s of want.searches) {
+        if (s.query.length !== D) continue;
+        var hits = [];
+        for (var i of s.indices) if (i >= 0 && i < set.count) hits.push({ index: i });
+        list.push({ letter: s.letter, query: s.query, hits: hits });
+      }
+      return list;
+    }
+
+    // The whole set: its three strongest directions about its mean.
+    function wholeJob() {
+      var mine = set;
+      var phase = 0;
+      var stats = M.statsJob(mine);
+      var cen = null;
+      var pca = null;
+      var job = {
+        done: false,
+        result: null,
+        kind: "all",
+        letters: [],
+        progress: function () {
+          if (job.done) return 1;
+          return [stats.progress() * 0.1, 0.1 + (cen ? cen.progress : 0) * 0.1, 0.2 + (pca ? pca.progress : 0) * 0.8][phase];
+        },
+        unit: function () {
+          if (phase === 0) {
+            if (!stats.run()) return false;
+            cen = ET.math.makeCentre(mine.vectors, mine.count, D);
+            phase = 1;
+          } else if (phase === 1) {
+            if (!cen.step(0)) return false;
+            pca = ET.math.makePrincipalDirections(cen.result.data, mine.count, D, 3, {
+              seed: seed,
+              sampleRows: mine.count > opt.fitRows ? opt.fitRows : undefined,
+            });
+            cen = null; // the centred copy is not kept
+            phase = 2;
+          } else if (pca.step(0)) {
+            finishWhole(job, stats.result, pca.result.directions);
+          }
+          return job.done;
+        },
+      };
+      return job;
+    }
+
+    function finishWhole(job, st, directions) {
+      var frame = copyOf(directions);
+      ET.math.orthonormalize(frame, 3, D);
+      var centre = copyOf(st.mean);
+      job.result = { frame: frame, centre: centre, zoom: M.autoZoom(set.vectors, set.count, D, frame, centre, opt.zoomSample) };
+      job.done = true;
+      whole = job.result;
+    }
+
+    // The union of the searches' queries and named results, in the facing frame.
+    function resultsJob(list) {
+      var fs = ET.searchSets.makeFacingFrame(set, list, { seed: seed, scale: usableScale() });
+      var job = {
+        done: false,
+        result: null,
+        kind: "results",
+        letters: list.map(function (s) {
+          return s.letter;
+        }),
+        progress: function () {
+          return job.done ? 1 : fs.progress;
+        },
+        unit: function () {
+          if (!fs.step(0)) return false;
+          job.result = { frame: fs.result.frame, centre: fs.result.centre, zoom: resultsZoom(fs.result, list) };
+          job.done = true;
+          return true;
+        },
+      };
+      return job;
+    }
+
+    // The length of (x - centre) in the fitted frame; x is D numbers of `a` from `at`.
+    function shownLength(fit, a, at) {
+      var sq = 0;
+      for (var k = 0; k < 3; k++) {
+        var p = 0;
+        for (var d = 0; d < D; d++) p += (a[at + d] - fit.centre[d]) * fit.frame[k * D + d];
+        sq += p * p;
+      }
+      return Math.sqrt(sq);
+    }
+
+    // The reference's zoom for a results fit: the farthest named result at FOCUS_UNIT units,
+    // pulled back only as far as needed to keep each query within QUERY_ROOM of that.
+    function resultsZoom(fit, list) {
+      var hits = 0;
+      var queries = 0;
+      for (var s of list) {
+        queries = Math.max(queries, shownLength(fit, s.query, 0));
+        for (var h of s.hits) hits = Math.max(hits, shownLength(fit, set.vectors, h.index * D));
+      }
+      var reach = Math.max(hits, queries / QUERY_ROOM, MIN_REACH);
+      return Number.isFinite(reach) ? FOCUS_UNIT / reach : fit.zoom;
+    }
+
+    function usableScale() {
+      return want?.scale?.length === D ? want.scale : null;
+    }
+
+    function wantedJob() {
+      var list = usableSearches();
+      if (list.length) return resultsJob(list);
+      if (whole) return { done: true, result: whole, kind: "all", letters: [], progress: 1, unit: () => true };
+      return wholeJob();
+    }
+
+    // ----- turns ----------------------------------------------------------------
+
+    // The view shown at time t, written into `into` ({ frame, centre }); returns the zoom.
+    function sampleAt(t, into) {
+      var i = turns.length - 1;
+      while (i > 0 && turns[i].T > t) i--;
+      var tn = turns[i];
+      var e = tn.dur > 0 ? ET.math.smoothstep((t - tn.T) / tn.dur) : 1;
+      if (e >= 1 || e <= 0) {
+        // before the turn starts, and after it ends, the exact frame (no blend rounding)
+        var end = e <= 0 ? tn.from : tn.to;
+        into.frame.set(end.frame);
+        into.centre.set(end.centre);
+        return end.zoom;
+      }
+      ET.math.blendFrames(tn.from.frame, tn.to.frame, e, D, into.frame);
+      for (var d = 0; d < D; d++) into.centre[d] = tn.from.centre[d] + (tn.to.centre[d] - tn.from.centre[d]) * e;
+      return tn.from.zoom + (tn.to.zoom - tn.from.zoom) * e;
+    }
+
+    // Record the turn onto `fitted` at time T (never earlier than the last turn).
+    function record(T, fitted, kind, letters) {
+      var first = turns.length === 0;
+      var at = first ? T : Math.max(T, turns.at(-1).T);
+      var to = { frame: copyOf(fitted.frame), centre: copyOf(fitted.centre), zoom: fitted.zoom };
+      var from = to;
+      var dur = 0; // nothing to turn from: the first fit with no entry view is simply the view
+      if (!first || entry) {
+        var shown = { frame: new Float32Array(3 * D), centre: new Float32Array(D) };
+        shown.zoom = first ? to.zoom : sampleAt(at, shown);
+        if (first) {
+          shown.frame.set(entry.frame);
+          shown.centre.set(entry.centre || to.centre);
+        }
+        to.frame = ET.math.alignTo(to.frame, shown.frame, D);
+        from = shown;
+        dur = first ? opt.transition : opt.turn;
+      }
+      turns.push({ T: at, from: from, to: to, dur: dur, kind: kind, letters: letters });
+      if (turns.length > MAX_TURNS) turns.shift();
+    }
+
+    function fixPending(t) {
+      var p = pending;
+      pending = null;
+      record(Math.max(t, p.minT), p.result, p.kind, p.letters);
+    }
+
+    // ----- the interface --------------------------------------------------------
+
+    function prepare() {
+      if (empty) {
+        return M.stepper([
+          {
+            required: true,
+            run: function () {
+              emptyReady = true;
+              return true;
+            },
+          },
+        ]);
+      }
+      var mine = epoch;
+      var job = null;
+      var jobVersion = -1;
+      prepared = M.stepper([
+        {
+          required: true,
+          weight: 1,
+          progress: function () {
+            return job ? job.progress() : 0;
+          },
+          run: function () {
+            if (mine !== epoch || ready) return true;
+            // A search that changed during the preparation restarts the fit on the new one.
+            if (!job || jobVersion !== wantVersion) {
+              job = wantedJob();
+              jobVersion = wantVersion;
+            }
+            if (!job.unit()) return false;
+            record(0, job.result, job.kind, job.letters);
+            ready = true;
+            return true;
+          },
+        },
+      ]);
+      return prepared;
+    }
+
+    function isReady() {
+      return empty ? emptyReady : ready;
+    }
+
+    // The searches changed at mode time t (null: none). Returns a stepper to pump when
+    // a fit has to be made (the view keeps its place until it is done and then turns
+    // onto it), or null when there is nothing to pump.
+    function searchChanged(search, t) {
+      var next = snapshotOf(search);
+      var same = sameFit(want, next);
+      want = next;
+      updateSpin();
+      if (same) return null;
+      wantVersion++;
+      if (!ready || empty || !set) return null; // the preparation reads `want` when it runs
+      var at = M.checkTime(t === undefined ? self.time : t);
+      var job = wantedJob();
+      if (job.done) {
+        pending = { result: job.result, minT: at, kind: job.kind, letters: job.letters };
+        fixPending(at);
+        return null;
+      }
+      return fitStepper(job, at);
+    }
+
+    function fitStepper(job, at) {
+      var mine = epoch;
+      var version = wantVersion;
+      return M.stepper([
+        {
+          required: true,
+          weight: 1,
+          progress: job.progress,
+          run: function () {
+            if (mine !== epoch || version !== wantVersion) return true; // superseded
+            if (!job.unit()) return false;
+            pending = { result: job.result, minT: at, kind: job.kind, letters: job.letters };
+            return true;
+          },
+        },
+      ]);
+    }
+
+    // Fix the time of a finished fit waiting to be turned onto.
+    function mark(time) {
+      if (pending) fixPending(M.checkTime(time));
+    }
+
+    function drawFor(zoom, t) {
+      var draw = {
+        zoom: zoom,
+        wires: 0,
+        dim: 1,
+        trails: 0.17,
+        fog: 0,
+        fogNear: 1.2,
+        fogWidth: 0.8,
+        twinkle: 0.18,
+        depthOfField: 1.1,
+      };
+      if (hasUsableSearch()) draw.unlitGain = want.onlyResults ? 0 : FOCUS_UNLIT;
+      return M.blendDraw(draw, entry, t, opt.transition);
+    }
+
+    function stateAt(time) {
+      var t = M.checkTime(time);
+      if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
+      if (pending) fixPending(t); // no time was given: the first query fixes it
+      out.t = t;
+      var zoom = sampleAt(t, out);
+      out.draw = drawFor(zoom, t);
+      out.wires = null;
+      out.focus = null;
+      out.status = status(t);
+      return out;
+    }
+
+    function step(dt) {
+      self.time = Math.max(0, self.time + dt);
+      return stateAt(self.time);
+    }
+
+    function turnAt(t) {
+      var i = turns.length - 1;
+      while (i > 0 && turns[i].T > t) i--;
+      return turns[i];
+    }
+
+    function status(time) {
+      var t = M.checkTime(time === undefined ? self.time : time);
+      if (empty) return M.EMPTY_STATUS;
+      if (!isReady()) {
+        var pct = Math.round((prepared ? prepared.progress : 0) * 100);
+        return "fitting the view to the set in " + D + "-d … " + pct + "%";
+      }
+      var tn = turnAt(t);
+      return tn.kind === "results" ? "fitted to the results of " + tn.letters.join(", ") : "fitted to every point";
+    }
+
+    // Any change of the data starts the mode again from the view shown (the
+    // searches are kept: the viewer asks for them again when their results change).
+    function dataChanged(newSet, info) {
+      var i = info || {};
+      var t = i.t === undefined ? self.time : M.checkTime(i.t);
+      var from = entry;
+      if (isReady()) {
+        var s = stateAt(t);
+        from = { frame: copyOf(s.frame), centre: null, draw: { ...s.draw } };
+        if (!empty || entry?.centre) from.centre = copyOf(s.centre);
+      }
+      enter(newSet, { seed: seed, from: from });
+      return M.changed(prepare(), true);
+    }
+
+    function describe() {
+      var last = turns.length ? turns.at(-1) : null;
+      var results = last?.kind === "results";
+      return {
+        id: "focus",
+        projection: "linear: an orthonormal 3-frame fitted to the results of the searches, or to the whole set",
+        seed: seed,
+        fittedTo: results ? "results" : "all",
+        searches: results ? last.letters.slice() : [],
+        onlyResults: want?.onlyResults === true,
+        empty: empty,
+        varianceShare: null,
+      };
+    }
+
+    function leave() {
+      epoch++;
+      turns = [];
+      pending = null;
+      prepared = null;
+      whole = null;
+      set = null;
+    }
+
+    return self;
+  }
+
+  M.register({
+    id: "focus",
+    title: "Focus",
+    summary: "The view fitted to the search results",
+    create: create,
+  });
+})();
+  // ---------- the search panel (task t9 of the search plan) ----------
+  //
+  // ET.searchPanel builds the panel under the stage: a one-line bar (collapsed by
+  // default) that names the searches and how many points are lit, and, when opened, the
+  // text box (one search per line, up to four), suggestions from the loaded points, the
+  // controls, the note, the pair lines and one result list per search. It also draws the
+  // query rings and links on the overlay and puts the result labels over the stage as DOM
+  // text, and in Focus it lays the ranked lists beside the stage.
+  //
+  // It drives the viewer only through the handle (setSearches, clearSearches,
+  // setSearchSettings, faceSearches, info, mode), so everything it does can be done
+  // without it. Every query, label, result text and message goes in with textContent.
+  // Styles are set through element.style, as the viewer does. It makes no request.
+  // The interface is docs/search-interface.md, "Panel (t9)", and js/api/45-search-panel.md.
+
+  var SP_DARK = ["#ffc56b", "#6be0ff", "#ff8fb3", "#b6ff8a"];
+  var SP_LIGHT = ["#a35f00", "#00708a", "#b0245a", "#3d7a00"];
+  var SP_SHARED_DARK = "#ffffff";
+  var SP_SHARED_LIGHT = "#1b2130";
+  var SP_MAX_LINES = 4;
+  var SP_PAUSE_MS = 140; // the reference waits this long after typing before it searches
+  var SP_SUGGEST_MAX = 8; // the Focus reference lists up to eight suggestions
+  var SP_SUGGEST_CHARS = 60; // a suggestion's button text is cut here; the click uses all of it
+  var SP_STAGE_TEXT = 28; // a result's text on the stage is cut here; the list carries all of it
+  // Labels on the stage at most. With 4 searches of up to 100 results the overlap rule leaves
+  // most out long before this; the lists carry every result.
+  var SP_LABEL_POOL = 160;
+  var SP_MAX_COUNT = 100; // the most results, candidates or kept a search can ask for
+  var SP_K_RERANKED = "With the reranker on, Keep top sets how many results are kept.";
+  var SP_CHAR_W = 6.7; // estimated width of one 11 px monospace character, CSS px
+  var SP_LABEL_H = 12; // height of one stage label box, CSS px
+  var SP_LIT_TEXT = {
+    even: "the results, evenly",
+    close: "by closeness: nearer is brighter",
+    named: "named results only",
+  };
+  var SP_PALETTE_DARK = { fg: "#e9eef6", muted: "#8a96ab", line: "#1b2436", accent: "#ffc56b", bg: "#04060b" };
+  var SP_PALETTE_LIGHT = { fg: "#1b2130", muted: "#5b6578", line: "#d6dae2", accent: "#a35f00", bg: "#f6f4ee" };
+  // A value that could name a resource is not used. The "r" is written as an escape so that
+  // this file holds no CSS resource function by name (js/test/viewer-static.test.js bans it).
+  var SP_UNSAFE = /u\x72l\(|image-set|[\\;{}<>]/i;
+  var spCounter = 0;
+
+  // ----- text: the bar, the provenance line, the note, the lists -----
+
+  // 1234567 -> "1,234,567" (fixed, not the host's locale, so tests and screenshots agree).
+  function spThousands(n) {
+    var s = String(Math.round(Math.abs(Number(n) || 0)));
+    var out = "";
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 === 0) out += ",";
+      out += s[i];
+    }
+    return (Number(n) < 0 ? "-" : "") + out;
+  }
+
+  function spPlural(n, one, many) {
+    return spThousands(n) + " " + (n === 1 ? one : many);
+  }
+
+  function spShorten(s, max) {
+    var str = String(s);
+    return str.length > max ? str.slice(0, max - 1) + "…" : str;
+  }
+
+  function spActive(search) {
+    return !!search && search.active === true && Array.isArray(search.searches) && search.searches.length > 0;
+  }
+
+  // The collapsed bar's text.
+  function summaryText(search) {
+    var tail = "";
+    if (search?.waiting) tail += " · waiting";
+    if (search?.stale) tail += " · from before " + spPlural(search.staleBy, "new point", "new points");
+    if (!spActive(search)) {
+      return (search?.waiting ? "working out the search" : "nothing searched: every point is shown") + tail;
+    }
+    var names = search.searches.map(function (q) {
+      return q.letter + " " + q.text;
+    });
+    return names.join(" · ") + " · " + spThousands(search.litCount) + " points lit" + tail;
+  }
+
+  // Where one search's text went, and what made its query.
+  function spMadeBy(q) {
+    var form = q.queryForm ? " (query form " + q.queryForm + ")" : "";
+    if (q.kind === "embedded") return "embedded by " + q.model + form + "; text sent to the host's embedder";
+    if (q.kind === "words") return "words matched among the loaded points (" + q.model + "); nothing sent";
+    if (q.kind === "point") return "the loaded point " + q.point + " (" + q.model + "); nothing sent";
+    return "a vector from the host (" + q.model + "); nothing sent by the viewer";
+  }
+
+  // `others`: some other search was reranked, so a search that was not says what it kept.
+  function spRerankedBy(q, others) {
+    if (!q.reranker) return others ? "; not reranked: the " + spThousands(q.results.length) + " nearest kept" : "";
+    return (
+      "; reranked by " +
+      q.reranker +
+      " (" +
+      spKeptOf(q) +
+      "): query and candidate texts sent to the reranker"
+    );
+  }
+
+  // "top 20 of 50 candidates": what one reranked search kept, as it happened.
+  function spKeptOf(q) {
+    return "top " + spThousands(q.results.length) + " of " + spPlural(q.sent, "candidate", "candidates");
+  }
+
+  // The counts the searches used: candidates and kept when a search was reranked, k otherwise
+  // (a search the reranker failed on keeps the k nearest, and says so in its note).
+  function spCountsUsed(search, reranked) {
+    var st = search.settings || {};
+    var plain = "the " + spThousands(st.k) + " nearest kept (" + spPlural(st.k, "result", "results") + " per search)";
+    if (!reranked) return plain;
+    return "the " + spThousands(st.candidates) + " nearest as candidates, the reranker's top " + spThousands(st.top) + " kept";
+  }
+
+  // What the searches used, for the provenance row.
+  function usedText(search) {
+    if (!spActive(search)) return "no search";
+    var st = search.settings || {};
+    var reranked = search.searches.some(function (q) {
+      return !!q.reranker;
+    });
+    var parts = [search.measure, spCountsUsed(search, reranked), "lit: " + (SP_LIT_TEXT[st.lit] || SP_LIT_TEXT.even)];
+    search.searches.forEach(function (q) {
+      parts.push(q.letter + ' "' + q.text + '": ' + spMadeBy(q) + spRerankedBy(q, reranked));
+    });
+    if (!reranked) parts.push("no reranker");
+    if (st.pointOfView) parts.push("point of view: " + st.pointOfView + " (each dimension scaled by its query)");
+    return parts.join(" · ");
+  }
+
+  // The short clause added to the provenance summary.
+  function spProvenanceClause(search) {
+    if (!spActive(search)) return "";
+    var where = [];
+    var kinds = spKinds(search);
+    if (kinds.embedder) where.push("typed text sent to the host's embedder");
+    if (kinds.reranker) where.push("query and candidate texts sent to the reranker");
+    if (kinds.local) where.push("searched among the loaded points, nothing sent");
+    return " · search: " + where.join(", ");
+  }
+
+  function spKinds(search) {
+    var out = { embedder: false, reranker: false, local: false };
+    search.searches.forEach(function (q) {
+      if (q.sentTo === "embedder") out.embedder = true;
+      else out.local = true;
+      if (q.reranker) out.reranker = true;
+    });
+    return out;
+  }
+
+  // Where typed text goes, said whenever the panel is open and whenever a search is shown.
+  function spWhereText(search) {
+    var parts = [];
+    if (spActive(search)) {
+      var kinds = spKinds(search);
+      if (kinds.embedder) parts.push("The typed text was sent to the host's embedder.");
+      if (kinds.reranker) parts.push("The query and the candidate texts were sent to the reranker.");
+      if (kinds.local) parts.push("Searched among the loaded points: nothing was sent anywhere.");
+    } else if (search?.embedder?.available) {
+      parts.push("Typed text is sent to the host's embedder; nothing else leaves the page.");
+    }
+    if (!search?.embedder?.available) {
+      parts.push(
+        "No embedder is connected, so typed words are matched against the labels and texts of the loaded points, and nothing is sent."
+      );
+    }
+    return parts.join(" ");
+  }
+
+  function spLitQualifier(setting) {
+    if (setting === "close") return ", nearer ones brighter";
+    if (setting === "named") return " (named results only)";
+    return "";
+  }
+
+  // One search's counts: its named results and the other points as near as the last of them.
+  function spCountsText(q) {
+    var named = q.results.length;
+    var others = Math.max(0, (q.insideCount || 0) - named);
+    return (
+      spPlural(named, "named result", "named results") +
+      " and " +
+      (others ? spPlural(others, "unnamed point", "unnamed points") : "no unnamed point") +
+      " as near as the last of them"
+    );
+  }
+
+  function spLitSentence(search) {
+    var st = search.settings || {};
+    var lit = spThousands(search.litCount) + " points lit" + spLitQualifier(st.lit);
+    if (search.searches.length === 1) {
+      var q = search.searches[0];
+      var named = q.results.length;
+      var others = Math.max(0, (q.insideCount || 0) - named);
+      return (
+        lit +
+        ": " +
+        spPlural(named, "named result", "named results") +
+        (others ? " and every unnamed point as near as the last of them (" + spThousands(others) + ")" : "") +
+        "."
+      );
+    }
+    var each = search.searches.map(function (q) {
+      return q.letter + ": " + spCountsText(q);
+    });
+    var shared = search.sharedCount
+      ? " " + spPlural(search.sharedCount, "point is", "points are") + " inside more than one search."
+      : "";
+    return lit + ". " + each.join("; ") + "." + shared;
+  }
+
+  // Every sentence of the note, in order.
+  function spNoteParts(search, ctx) {
+    var parts = [];
+    if (spActive(search)) parts.push(spLitSentence(search));
+    else if (!search?.waiting) parts.push("Nothing searched: every point is shown.");
+    if (search?.waiting) parts.push("Working out the searches…");
+    if (search?.stale) {
+      parts.push(
+        "These results are from before " +
+          spPlural(search.staleBy, "new point", "new points") +
+          "; they are being worked out again."
+      );
+    }
+    var where = spWhereText(search);
+    if (where) parts.push(where);
+    if (spActive(search)) parts.push("Distances are " + search.measure + ", in every dimension of the data.");
+    spSearchNotes(search, parts);
+    if (search?.unmatched?.length) parts.push("Not found among the loaded points: " + search.unmatched.join(", ") + ".");
+    if (ctx.extraLines > 0) {
+      parts.push("Only the first four lines are searched; " + spPlural(ctx.extraLines, "line is", "lines are") + " left out.");
+    }
+    spTailNotes(search, ctx, parts);
+    return parts;
+  }
+
+  // Messages, refusals and the two sentences about the stage.
+  function spTailNotes(search, ctx, parts) {
+    if (search?.message) parts.push(search.message);
+    if (ctx.refusal && ctx.refusal !== search?.message) parts.push(ctx.refusal);
+    if (!spActive(search)) return;
+    if (ctx.focus && !search.faceable) {
+      parts.push("Focus is already fitted to the results, so Face the searches is off here.");
+    }
+    parts.push("Where labels on the stage would overlap, the later ones are left out; the lists carry every result.");
+  }
+
+  function spSearchNotes(search, parts) {
+    if (!spActive(search)) return;
+    search.searches.forEach(function (q) {
+      if (q.pointOfView) {
+        parts.push(
+          q.letter +
+            " is measured from its own point of view: every dimension is scaled by the size of its query's value there (a linear change); the other searches keep plain distance."
+        );
+      }
+      if (q.counts) parts.push(q.letter + ": " + q.counts);
+      if (q.note) parts.push(q.letter + ": " + q.note);
+    });
+  }
+
+  // A result's text by id, from the searches' own results.
+  function spTextOf(search, id) {
+    for (var q of search.searches) {
+      for (var r of q.results) {
+        if (r.id === id) return r.text;
+      }
+    }
+    return id;
+  }
+
+  // One pair line: shared count, named results in common, the closest pair of different results.
+  function spPairText(search, pair, sharedWord) {
+    var s = pair.a + " and " + pair.b + ": ";
+    s += pair.shared ? spPlural(pair.shared, "point", "points") + " found by both (" + sharedWord + ")" : "no point found by both";
+    if (pair.common) {
+      var common = pair.commonIds.map(function (id) {
+        return spTextOf(search, id);
+      });
+      s += "; " + spPlural(pair.common, "named result", "named results") + " in common (" + common.join(", ") + ")";
+    }
+    if (pair.closest) {
+      s +=
+        "; closest pair of different results " +
+        spTextOf(search, pair.closest.a) +
+        " and " +
+        spTextOf(search, pair.closest.b) +
+        ", " +
+        pair.closest.distance.toFixed(3) +
+        " apart";
+    }
+    return s + ".";
+  }
+
+  // How one search's query was made, for its list heading.
+  function spKindText(q) {
+    if (q.kind === "embedded") return "embedded by " + q.model;
+    if (q.kind === "point") return "from the point " + q.point;
+    if (q.kind === "vector") return "a vector from the host";
+    var used = q.words?.used || [];
+    return (
+      "words matched: " +
+      used
+        .map(function (u) {
+          return u.how === "prefix" ? u.word + "…" : u.word;
+        })
+        .join(", ")
+    );
+  }
+
+  function spListHeading(q) {
+    return (
+      q.letter +
+      " · " +
+      q.text +
+      " · " +
+      spCountsText(q) +
+      " · " +
+      spKindText(q) +
+      (q.reranker ? " · embedding order, then the reranker " + q.reranker + " (" + spKeptOf(q) + ")" : "") +
+      (q.pointOfView ? " · from its point of view" : "")
+    );
+  }
+
+  // The parts of a result's meta line, as the picture and the references show them.
+  function spResultMeta(q, r, distances) {
+    var out = [];
+    if (distances) {
+      out.push(
+        "distance " + r.distance.toFixed(3) + (q.pointOfView ? " from its point of view" : ""),
+        r.gap < 0.0005 ? "the nearest" : "+" + r.gap.toFixed(3) + " farther than the nearest"
+      );
+    }
+    if (q.reranker) out.push(spMoveText(r.embeddingRank - r.rank, r.embeddingRank));
+    if (q.pointOfView && r.plainRank !== r.embeddingRank) out.push("plain distance had it at " + r.plainRank);
+    return out;
+  }
+
+  function spMoveText(by, was) {
+    if (by > 0) return "up " + by + " (was " + was + ")";
+    if (by < 0) return "down " + -by + " (was " + was + ")";
+    return "same place";
+  }
+
+  // Suggestions: the texts of named points matching what is typed on the current line
+  // (the Focus reference: the whole line starts the text, or the last word starts a word of
+  // it), whole-line matches first, at most SP_SUGGEST_MAX, never the line itself.
+  function spSuggest(entries, typed) {
+    var t = String(typed || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+    if (!t) return [];
+    var last = t.split(" ").at(-1);
+    var first = [];
+    var rest = [];
+    for (var e of entries) {
+      if (e.lower === t) continue;
+      if (e.lower.startsWith(t)) first.push(e.text);
+      else if (last.length > 1 && spWordStarts(e.words, last)) rest.push(e.text);
+      if (first.length >= SP_SUGGEST_MAX) break;
+    }
+    return first.concat(rest).slice(0, SP_SUGGEST_MAX);
+  }
+
+  function spWordStarts(words, prefix) {
+    for (var w of words) {
+      if (w.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+
+  // The named points' texts of a set, once per set and count (an append adds to them).
+  function spEntries(p) {
+    var set = spData(p);
+    if (!set?.count || typeof ET.search?.isNamed !== "function") return [];
+    var cache = p.suggestCache;
+    if (cache.set === set && cache.count === set.count) return cache.entries;
+    var seen = new Set();
+    var entries = [];
+    for (var i = 0; i < set.count; i++) {
+      if (!ET.search.isNamed(set, i)) continue;
+      var text = String(ET.search.pointText(set, i)).trim().replace(/\s+/g, " ");
+      var lower = text.toLowerCase();
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      entries.push({ text: text, lower: lower, words: lower.split(" ") });
+    }
+    p.suggestCache = { set: set, count: set.count, entries: entries };
+    return entries;
+  }
+
+  function spData(p) {
+    try {
+      return typeof p.opts.data === "function" ? p.opts.data() : null;
+    } catch {
+      // A data getter that throws gives no suggestions.
+      return null;
+    }
+  }
+
+  // ----- colours -----
+
+  // One channel in 0..1 as 0..255.
+  function spByte(x) {
+    return Math.round(Math.min(1, Math.max(0, Number(x) || 0)) * 255);
+  }
+
+  function spHex(c) {
+    // [r, g, b] in 0..1 -> "rgb(r, g, b)"
+    return "rgb(" + spByte(c[0]) + ", " + spByte(c[1]) + ", " + spByte(c[2]) + ")";
+  }
+
+  function spTheme(p) {
+    try {
+      return typeof p.opts.theme === "function" ? p.opts.theme() || null : null;
+    } catch {
+      // A theme getter that throws: the built-in palette for the stage's lightness.
+      return null;
+    }
+  }
+
+  function spLight(p) {
+    var t = spTheme(p);
+    return t ? !!t.light : !!p.opts.light;
+  }
+
+  // The viewer's colours as CSS strings (its theme when given, else the built-in defaults).
+  function spPalette(p) {
+    var t = spTheme(p);
+    var base = spLight(p) ? SP_PALETTE_LIGHT : SP_PALETTE_DARK;
+    if (!t) return { ...base };
+    return {
+      fg: spPick(t.foreground, base.fg),
+      muted: spPick(t.muted, base.muted),
+      line: spPick(t.line, base.line),
+      accent: spPick(t.accent, base.accent),
+      bg: spPick(t.background, base.bg),
+    };
+  }
+
+  // A theme colour ([r, g, b]) as CSS, or the default when the theme does not give one.
+  function spPick(c, d) {
+    return Array.isArray(c) ? spHex(c) : d;
+  }
+
+  // A search's colour for DOM text: the host's custom property, else the default for the stage.
+  function spSearchVar(j, light) {
+    return "var(--tumbler-search-" + (j + 1) + ", " + (light ? SP_LIGHT : SP_DARK)[j] + ")";
+  }
+
+  function spSharedVar(light) {
+    return "var(--tumbler-shared, " + (light ? SP_SHARED_LIGHT : SP_SHARED_DARK) + ")";
+  }
+
+  // The colours the overlay strokes with: each custom property resolved by the 2-D context
+  // itself (an invalid or unsafe value leaves the default in place).
+  function spCanvasColours(p, ctx) {
+    var light = spLight(p);
+    var defaults = (light ? SP_LIGHT : SP_DARK).concat([light ? SP_SHARED_LIGHT : SP_SHARED_DARK]);
+    var names = ["--tumbler-search-1", "--tumbler-search-2", "--tumbler-search-3", "--tumbler-search-4", "--tumbler-shared"];
+    var cs = null;
+    try {
+      cs = p.win?.getComputedStyle ? p.win.getComputedStyle(p.parts.panel) : null;
+    } catch {
+      // No computed style: the defaults.
+      cs = null;
+    }
+    return names.map(function (name, j) {
+      var raw = cs ? String(cs.getPropertyValue(name) || "").trim() : "";
+      ctx.strokeStyle = defaults[j];
+      if (raw && !SP_UNSAFE.test(raw)) ctx.strokeStyle = raw;
+      return String(ctx.strokeStyle || defaults[j]);
+    });
+  }
+
+  // ----- DOM helpers -----
+
+  function spEl(p, tag, cls, styles) {
+    var el = p.doc.createElement(tag);
+    if (cls) el.className = cls;
+    if (styles) spStyle(el, styles);
+    return el;
+  }
+
+  function spText(p, tag, cls, str, styles) {
+    var el = spEl(p, tag, cls, styles);
+    el.textContent = str;
+    return el;
+  }
+
+  function spStyle(el, styles) {
+    for (var k in styles) {
+      if (Object.hasOwn(styles, k)) el.style[k] = styles[k];
+    }
+  }
+
+  function spListen(p, el, type, fn) {
+    el.addEventListener(type, fn);
+    p.listeners.push([el, type, fn]);
+  }
+
+  function spShow(el, on, display) {
+    el.hidden = !on;
+    el.style.display = on ? display : "none";
+  }
+
+  var SP_VISUALLY_HIDDEN = {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    margin: "-1px",
+    padding: "0",
+    border: "0",
+    overflow: "hidden",
+    clip: "rect(0 0 0 0)",
+    whiteSpace: "nowrap",
+  };
+
+  function spControlStyle(pal) {
+    return {
+      fontFamily: "inherit",
+      fontSize: "12px",
+      color: pal.fg,
+      background: pal.bg,
+      border: "1px solid " + pal.line,
+      padding: "4px 6px",
+      maxWidth: "100%",
+    };
+  }
+
+  function spButtonStyle(pal) {
+    return {
+      fontFamily: "inherit",
+      fontSize: "12px",
+      color: pal.fg,
+      background: "transparent",
+      border: "1px solid " + pal.line,
+      borderRadius: "999px",
+      padding: "6px 16px",
+      minHeight: "28px",
+      cursor: "pointer",
+    };
+  }
+
+  // ----- building the panel -----
+
+  function spBuildBar(p) {
+    var bar = spEl(p, "button", "tumbler-search-bar", {
+      display: "flex",
+      alignItems: "baseline",
+      gap: "12px",
+      width: "100%",
+      minWidth: "0",
+      textAlign: "left",
+      cursor: "pointer",
+      background: "transparent",
+      border: "0",
+      borderTop: "1px solid",
+      borderBottom: "1px solid",
+      padding: "var(--tumbler-search-bar-padding, 10px 0)",
+      font: "inherit",
+      fontSize: "12px",
+      lineHeight: "1.2",
+      color: "inherit",
+    });
+    bar.type = "button";
+    bar.setAttribute("aria-expanded", "false");
+    bar.setAttribute("aria-controls", p.bodyId);
+    p.barTitle = spText(p, "b", "", "Search", {
+      fontWeight: "400",
+      fontStyle: "italic",
+      fontSize: "var(--tumbler-search-title-size, 24px)",
+      lineHeight: "1",
+    });
+    p.barSummary = spText(p, "span", "tumbler-search-summary", summaryText(null), {
+      flex: "1",
+      minWidth: "0",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+    });
+    p.barMark = spText(p, "i", "tumbler-search-mark", "+", { fontStyle: "normal", fontSize: "16px" });
+    p.barMark.setAttribute("aria-hidden", "true");
+    bar.appendChild(p.barTitle);
+    bar.appendChild(p.barSummary);
+    bar.appendChild(p.barMark);
+    spListen(p, bar, "click", function () {
+      spToggle(p);
+    });
+    return bar;
+  }
+
+  function spBuildInput(p) {
+    var id = "tumbler-search-input-" + p.n;
+    var label = spText(p, "label", "tumbler-search-input-label", "Search: one search per line, up to four", {
+      fontSize: "12px",
+      letterSpacing: "0.06em",
+      textTransform: "uppercase",
+    });
+    label.htmlFor = id;
+    label.setAttribute("for", id);
+    var box = spEl(p, "textarea", "tumbler-search-input", {
+      width: "100%",
+      minHeight: "92px",
+      resize: "vertical",
+      padding: "10px 12px",
+      boxSizing: "border-box",
+      fontFamily: "var(--tumbler-font, inherit)",
+      fontSize: "16px",
+      lineHeight: "1.4",
+    });
+    box.id = id;
+    box.setAttribute("spellcheck", "false");
+    box.setAttribute("autocomplete", "off");
+    box.setAttribute("rows", "3");
+    p.input = box;
+    spListen(p, box, "input", function () {
+      spTyped(p);
+    });
+    p.suggestBox = spEl(p, "div", "tumbler-search-suggest", { display: "flex", flexWrap: "wrap", gap: "6px 8px", alignItems: "center" });
+    p.suggestBox.setAttribute("role", "group");
+    p.suggestBox.setAttribute("aria-label", "Suggestions from the loaded points");
+    spShow(p.suggestBox, false, "flex");
+    spListen(p, p.suggestBox, "click", function (ev) {
+      spSuggestClick(p, ev);
+    });
+    return [label, box, p.suggestBox];
+  }
+
+  function spLabelled(p, cls, words) {
+    var label = spEl(p, "label", cls, { display: "inline-flex", alignItems: "center", gap: "8px" });
+    if (words) label.appendChild(p.doc.createTextNode(words + " "));
+    return label;
+  }
+
+  function spCheckbox(p, cls, words, key) {
+    var label = spLabelled(p, cls, "");
+    var box = spEl(p, "input", "", { width: "15px", height: "15px", margin: "0" });
+    box.type = "checkbox";
+    label.appendChild(box);
+    label.appendChild(p.doc.createTextNode(" " + words));
+    spListen(p, box, "change", function () {
+      spSetting(p, key, !!box.checked);
+    });
+    return { label: label, input: box };
+  }
+
+  function spSelect(p, cls, words, options) {
+    var label = spLabelled(p, cls, words);
+    var sel = spEl(p, "select", "", {});
+    options.forEach(function (o) {
+      sel.appendChild(spOption(p, o[0], o[1]));
+    });
+    label.appendChild(sel);
+    return { label: label, input: sel };
+  }
+
+  function spOption(p, value, words) {
+    var o = spText(p, "option", "", words);
+    o.value = value;
+    return o;
+  }
+
+  // A labelled range from 3 to 100 with its value beside it; moving it sets `key`.
+  function spRange(p, cls, words, key, value) {
+    var label = spLabelled(p, cls, words);
+    var input = spEl(p, "input", "", { width: "110px" });
+    input.type = "range";
+    input.min = "3";
+    input.max = String(SP_MAX_COUNT);
+    input.step = "1";
+    input.value = String(value);
+    var out = spText(p, "output", "", String(value), { minWidth: "3ch" });
+    label.appendChild(input);
+    label.appendChild(out);
+    spListen(p, input, "input", function () {
+      out.textContent = String(input.value);
+      spSetting(p, key, Number(input.value));
+    });
+    return { label: label, input: input, out: out };
+  }
+
+  // Show a range's value from the settings (never while it is the same, so a drag is not reset).
+  function spRangeValue(r, value, max) {
+    if (max && r.input.max !== String(max)) r.input.max = String(max);
+    if (value && String(r.input.value) !== String(value)) {
+      r.input.value = String(value);
+      r.out.textContent = String(value);
+    }
+  }
+
+  function spBuildControls(p) {
+    var row = spEl(p, "div", "tumbler-search-controls", { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 22px",
+      fontSize: "12px" });
+    p.face = spText(p, "button", "tumbler-search-face", "Face the searches");
+    p.face.type = "button";
+    spListen(p, p.face, "click", function () {
+      p.handle.faceSearches();
+    });
+    var lit = spSelect(p, "tumbler-search-lit", "Lit", [
+      ["even", SP_LIT_TEXT.even],
+      ["close", SP_LIT_TEXT.close],
+      ["named", SP_LIT_TEXT.named],
+    ]);
+    p.lit = lit.input;
+    spListen(p, p.lit, "change", function () {
+      spSetting(p, "lit", p.lit.value);
+    });
+    p.rerank = spCheckbox(p, "tumbler-search-rerank", "Reranker", "rerank");
+    p.distances = spCheckbox(p, "tumbler-search-distances", "Distance difference", "distances");
+    var k = spRange(p, "tumbler-search-k", "Results", "k", 8);
+    p.kLabel = k.label;
+    p.k = k.input;
+    p.kOut = k.out;
+    // Beside the Reranker, and like it in the row only while a reranker is offered.
+    p.cand = spRange(p, "tumbler-search-candidates", "Candidates", "candidates", 50);
+    p.top = spRange(p, "tumbler-search-top", "Keep top", "top", 20);
+    var pov = spSelect(p, "tumbler-search-pov", "From this search's point of view", [["", "off"]]);
+    p.pov = pov.input;
+    p.povLabel = pov.label;
+    spListen(p, p.pov, "change", function () {
+      spSetting(p, "pointOfView", p.pov.value || null);
+    });
+    p.only = spCheckbox(p, "tumbler-search-only", "Only results", "onlyResults");
+    p.clear = spText(p, "button", "tumbler-search-clear", "Clear");
+    p.clear.type = "button";
+    spListen(p, p.clear, "click", function () {
+      spClear(p);
+    });
+    p.litLabel = lit.label;
+    [p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
+      row.appendChild(c);
+    });
+    return row;
+  }
+
+  function spBuild(p) {
+    var section = spEl(p, "section", "tumbler-search", { display: "flex", flexDirection: "column", gap: "10px", minWidth: "0" });
+    section.setAttribute("aria-label", "Search");
+    p.section = section;
+    section.appendChild(spBuildBar(p));
+    p.live = spEl(p, "p", "tumbler-search-live", SP_VISUALLY_HIDDEN);
+    p.live.setAttribute("role", "status");
+    p.live.setAttribute("aria-live", "polite");
+    section.appendChild(p.live);
+    var body = spEl(p, "div", "tumbler-search-body", { flexDirection: "column", gap: "10px", minWidth: "0" });
+    body.id = p.bodyId;
+    spShow(body, false, "flex");
+    p.body = body;
+    spBuildInput(p).forEach(function (el) {
+      body.appendChild(el);
+    });
+    body.appendChild(spBuildControls(p));
+    p.note = spEl(p, "p", "tumbler-search-note", { margin: "0", fontSize: "12px", lineHeight: "1.6" });
+    p.pairs = spEl(p, "div", "tumbler-search-pairs", { display: "flex", flexDirection: "column", gap: "4px" });
+    p.results = spEl(p, "div", "tumbler-search-results", { display: "flex", flexDirection: "column", gap: "6px" });
+    body.appendChild(p.note);
+    body.appendChild(p.pairs);
+    body.appendChild(p.results);
+    section.appendChild(body);
+    var panel = p.parts.panel;
+    panel.insertBefore(section, panel.firstChild);
+  }
+
+  // Colours that come from the viewer's theme (re-applied when the theme object changes).
+  function spApplyTheme(p) {
+    var pal = spPalette(p);
+    p.pal = pal;
+    p.light = spLight(p);
+    spStyle(p.section, { color: pal.muted, fontFamily: "var(--tumbler-font-data, inherit)" });
+    var bar = p.section.firstChild;
+    bar.style.borderTopColor = pal.line;
+    bar.style.borderBottomColor = pal.line;
+    bar.style.color = pal.muted;
+    spStyle(p.barTitle, { color: pal.fg, fontFamily: "var(--tumbler-font-display, Georgia, serif)" });
+    p.barMark.style.color = pal.accent;
+    spStyle(p.input, { color: pal.fg, background: pal.bg, border: "1px solid " + pal.line });
+    spStyle(p.lit, spControlStyle(pal));
+    spStyle(p.pov, spControlStyle(pal));
+    [p.face, p.clear].forEach(function (b) {
+      spStyle(b, spButtonStyle(pal));
+    });
+    [p.rerank.input, p.distances.input, p.only.input, p.k, p.cand.input, p.top.input].forEach(function (c) {
+      c.style.accentColor = pal.accent;
+    });
+    p.note.style.color = pal.muted;
+    p.listKey = null; // lists are rebuilt in the new colours
+    p.sideKey = null;
+    p.colours = null;
+    if (p.suggested?.length) spRenderSuggestions(p);
+  }
+
+  // ----- behaviour -----
+
+  function spToggle(p) {
+    spSetOpen(p, !p.open);
+    if (p.open) p.input.focus();
+  }
+
+  function spSetOpen(p, open) {
+    p.open = open;
+    spShow(p.body, open, "flex");
+    var bar = p.section.firstChild;
+    bar.setAttribute("aria-expanded", open ? "true" : "false");
+    p.barMark.textContent = open ? "−" : "+";
+  }
+
+  // The lines the box holds, trimmed, empty ones dropped.
+  function spLines(value) {
+    return String(value || "")
+      .split(/\n/)
+      .map(function (s) {
+        return s.trim();
+      })
+      .filter(Boolean);
+  }
+
+  function spTyped(p) {
+    spRenderSuggestions(p);
+    if (p.timer && p.win?.clearTimeout) p.win.clearTimeout(p.timer);
+    p.timer = 0;
+    if (typeof p.win?.setTimeout !== "function") {
+      spRun(p);
+      return;
+    }
+    p.timer = p.win.setTimeout(function () {
+      p.timer = 0;
+      spRun(p);
+    }, SP_PAUSE_MS);
+  }
+
+  // Send the box's first four lines to the viewer (or clear when it is empty).
+  function spRun(p) {
+    if (p.destroyed) return;
+    var lines = spLines(p.input.value);
+    p.extraLines = Math.max(0, lines.length - SP_MAX_LINES);
+    var send = lines.slice(0, SP_MAX_LINES);
+    var key = send.join("\n");
+    if (key === p.lastSent) {
+      spRender(p);
+      return;
+    }
+    p.lastSent = key;
+    p.refusal = null;
+    if (!send.length) {
+      p.handle.clearSearches();
+      spRender(p);
+      return;
+    }
+    spWatch(p, p.handle.setSearches(send));
+  }
+
+  // A refusal from the viewer is shown in the note (superseded and destroyed are not refusals).
+  function spWatch(p, promise) {
+    if (typeof promise?.then !== "function") return;
+    promise.then(function (res) {
+      if (p.destroyed || !res || res.ok) return;
+      if (res.code === "superseded" || res.code === "destroyed") return;
+      p.refusal = res.message;
+      p.lastSent = null; // the same text can be tried again
+      spRender(p);
+    });
+  }
+
+  function spSetting(p, key, value) {
+    var patch = {};
+    patch[key] = value;
+    spWatch(p, p.handle.setSearchSettings(patch));
+  }
+
+  function spClear(p) {
+    if (p.timer && p.win?.clearTimeout) p.win.clearTimeout(p.timer);
+    p.timer = 0;
+    p.input.value = "";
+    p.lastSent = "";
+    p.extraLines = 0;
+    p.refusal = null;
+    p.handle.clearSearches();
+    spRenderSuggestions(p);
+    spRender(p);
+  }
+
+  // The line the caret is on (the last line when the box cannot say).
+  function spCurrentLine(box) {
+    var value = String(box.value || "");
+    var at = typeof box.selectionStart === "number" ? box.selectionStart : value.length;
+    var start = value.lastIndexOf("\n", Math.max(0, at - 1)) + 1;
+    if (at === 0) start = 0;
+    var end = value.indexOf("\n", at);
+    return { start: start, end: end < 0 ? value.length : end };
+  }
+
+  function spRenderSuggestions(p) {
+    var box = p.suggestBox;
+    box.textContent = "";
+    var where = spCurrentLine(p.input);
+    var typed = String(p.input.value || "").slice(where.start, where.end);
+    var found = spSuggest(spEntries(p), typed);
+    p.suggested = found;
+    spShow(box, found.length > 0, "flex");
+    if (!found.length) return;
+    box.appendChild(spText(p, "span", "", "suggestions from the loaded points", { fontSize: "12px" }));
+    var pal = p.pal || SP_PALETTE_DARK;
+    found.forEach(function (text, i) {
+      var b = spText(p, "button", "tumbler-search-suggestion", spShorten(text, SP_SUGGEST_CHARS), {
+        ...spButtonStyle(pal),
+        borderRadius: "0",
+        padding: "4px 10px",
+      });
+      b.type = "button";
+      b.dataset.index = String(i);
+      if (text.length > SP_SUGGEST_CHARS) b.setAttribute("aria-label", text);
+      box.appendChild(b);
+    });
+  }
+
+  // A click on a suggestion puts its text on the current line and searches at once.
+  function spSuggestClick(p, ev) {
+    var n = ev.target;
+    while (n && n !== p.suggestBox && n.tagName !== "BUTTON") n = n.parentNode;
+    if (!n || n === p.suggestBox) return;
+    var text = p.suggested[Number(n.dataset.index)];
+    if (typeof text !== "string") return;
+    var value = String(p.input.value || "");
+    var where = spCurrentLine(p.input);
+    p.input.value = value.slice(0, where.start) + text + value.slice(where.end);
+    if (p.timer && p.win?.clearTimeout) p.win.clearTimeout(p.timer);
+    p.timer = 0;
+    spRun(p);
+    spRenderSuggestions(p);
+    p.input.focus();
+  }
+
+  // When the searches shown were not typed here (a host's call, a click in Focus), the box
+  // shows them, so editing it searches from what is shown.
+  // Text searches are synced only into an empty box, so a typed line that matched nothing
+  // (and was left out) is never wiped from what the person wrote.
+  function spSyncInput(p, search) {
+    if (!spActive(search) || p.timer || p.doc.activeElement === p.input) return;
+    var shownKey = search.searches
+      .map(function (q) {
+        return q.kind + ":" + q.text;
+      })
+      .join("\n");
+    if (shownKey === p.syncKey) return; // the same searches again (waiting, a re-run)
+    p.syncKey = shownKey;
+    var foreign = search.searches.some(function (q) {
+      return q.kind === "point" || q.kind === "vector";
+    });
+    if (!foreign && spLines(p.input.value).length) return;
+    var lines = search.searches.map(function (q) {
+      if (q.kind === "point" && q.results[0]?.id === q.point) return q.results[0].text;
+      return q.text;
+    });
+    var key = lines.join("\n");
+    p.input.value = key;
+    p.lastSent = key;
+  }
+
+  // ----- rendering from info().search -----
+
+  function spRender(p) {
+    if (p.destroyed) return;
+    var search = p.search;
+    var text = summaryText(search);
+    if (p.barSummary.textContent !== text) p.barSummary.textContent = text;
+    if (p.live.textContent !== text) p.live.textContent = text;
+    spRenderControls(p, search);
+    spRenderNote(p, search);
+    spRenderPairs(p, search);
+    spRenderLists(p, search);
+    spRenderSide(p, search);
+    spRenderProvenance(p, search);
+  }
+
+  function spRenderControls(p, search) {
+    var st = search?.settings || {};
+    var active = spActive(search);
+    p.face.disabled = !active || !search.faceable;
+    if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
+    spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
+    p.distances.input.checked = !!st.distances;
+    var offered = !!search?.reranker?.offered;
+    spPlace(p.rerank.label, offered, p.distances.label);
+    spPlace(p.cand.label, offered, p.distances.label);
+    spPlace(p.top.label, offered, p.distances.label);
+    p.rerank.input.checked = offered && !!st.rerank;
+    spRangeValue(p.cand, st.candidates, 0);
+    spRangeValue(p.top, st.top, st.candidates);
+    // With the reranker on, Keep top decides how many results there are, not Results.
+    var reranking = offered && !!st.rerank;
+    p.k.disabled = reranking;
+    p.k.title = reranking ? SP_K_RERANKED : "";
+    p.only.input.checked = !!st.onlyResults;
+    spShow(p.only.label, p.focus, "inline-flex");
+    spRenderPov(p, search);
+  }
+
+  // The Reranker, Candidates and Keep top controls are in the row only when a reranker is
+  // offered (absent, not hidden).
+  function spPlace(label, present, before) {
+    if (present && !label.parentNode && before.parentNode) before.parentNode.insertBefore(label, before);
+    if (!present && label.parentNode) label.remove();
+  }
+
+  function spRenderPov(p, search) {
+    var st = search?.settings || {};
+    var list = spActive(search) ? search.searches : [];
+    var key = list
+      .map(function (q) {
+        return q.letter + q.text;
+      })
+      .join("|");
+    if (key !== p.povKey) {
+      p.povKey = key;
+      p.pov.textContent = "";
+      p.pov.appendChild(spOption(p, "", "off"));
+      list.forEach(function (q) {
+        p.pov.appendChild(spOption(p, q.letter, q.letter + " · " + spShorten(q.text, 30)));
+      });
+    }
+    p.pov.value = st.pointOfView || "";
+    p.pov.disabled = !list.length;
+  }
+
+  function spRenderNote(p, search) {
+    var parts = spNoteParts(search, { extraLines: p.extraLines, refusal: p.refusal, focus: p.focus });
+    var text = parts.join(" ");
+    if (p.note.textContent !== text) p.note.textContent = text;
+  }
+
+  function spRenderPairs(p, search) {
+    p.pairs.textContent = "";
+    if (!spActive(search) || !search.pairs?.length) return;
+    var word = p.light ? "marked in dark ink" : "marked white";
+    search.pairs.forEach(function (pair) {
+      var line = spEl(p, "p", "tumbler-search-pair", { margin: "0", fontSize: "12px", lineHeight: "1.6" });
+      var mark = spText(p, "span", "tumbler-search-shared-mark", "◆ ", { color: spSharedVar(p.light) });
+      mark.setAttribute("aria-hidden", "true");
+      line.appendChild(mark);
+      line.appendChild(p.doc.createTextNode(spPairText(search, pair, word)));
+      p.pairs.appendChild(line);
+    });
+  }
+
+  // A key for what the lists show, so an unchanged update leaves them (and keyboard focus) alone.
+  function spListKey(p, search) {
+    if (!spActive(search)) return "none|" + p.focus;
+    return JSON.stringify([
+      p.focus,
+      search.settings,
+      search.stale,
+      search.searches.map(function (q) {
+        return [q.letter, q.text, q.reranker, q.pointOfView, q.insideCount, q.results];
+      }),
+    ]);
+  }
+
+  function spRenderLists(p, search) {
+    var key = spListKey(p, search);
+    if (key === p.listKey) return;
+    p.listKey = key;
+    spKeepOpen(p);
+    p.results.textContent = "";
+    spShow(p.results, !p.focus, "flex");
+    if (!spActive(search)) return;
+    var distances = !!search.settings?.distances;
+    search.searches.forEach(function (q, j) {
+      var box = spEl(p, "details", "tumbler-search-list", {});
+      box.dataset.letter = q.letter;
+      box.open = !!p.openLists[q.letter];
+      var summary = spText(p, "summary", "", spListHeading(q), {
+        cursor: "pointer",
+        fontSize: "12px",
+        letterSpacing: "0.04em",
+        padding: "4px 0",
+        color: spSearchVar(j, p.light),
+      });
+      box.appendChild(summary);
+      box.appendChild(spResultList(p, q, j, distances, "grid"));
+      p.results.appendChild(box);
+    });
+  }
+
+  // Remember which result lists were open, from the details themselves (no listeners).
+  function spKeepOpen(p) {
+    for (var box of p.results.children) {
+      var letter = box.dataset?.letter;
+      if (letter) p.openLists[letter] = !!box.open;
+    }
+  }
+
+  // One search's ordered list: rank, text, meta (and the gap bar with Distance difference on).
+  function spResultList(p, q, j, distances, layout) {
+    var pal = p.pal || SP_PALETTE_DARK;
+    var ol = spEl(p, "ol", "tumbler-search-hits", spListStyle(layout));
+    var widest = 1e-6;
+    q.results.forEach(function (r) {
+      widest = Math.max(widest, r.gap);
+    });
+    q.results.forEach(function (r) {
+      ol.appendChild(spResultItem(p, q, j, r, { distances: distances, widest: widest, pal: pal, layout: layout }));
+    });
+    return ol;
+  }
+
+  function spListStyle(layout) {
+    var base = { listStyle: "none", margin: "0", padding: "0" };
+    if (layout === "grid") {
+      // Up to 100 results: the list scrolls inside its own box, so the panel stays usable.
+      return {
+        ...base,
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+        gap: "6px 22px",
+        maxHeight: "var(--tumbler-search-list-height, 320px)",
+        overflowY: "auto",
+      };
+    }
+    return { ...base, display: "flex", flexDirection: "column" };
+  }
+
+  function spResultItem(p, q, j, r, o) {
+    var side = o.layout !== "grid";
+    var li = spEl(p, "li", "tumbler-search-hit", {
+      display: "grid",
+      gridTemplateColumns: "26px minmax(0, 1fr)",
+      gap: "2px 8px",
+      alignItems: "baseline",
+      minWidth: "0",
+      borderBottom: "1px solid " + o.pal.line,
+      padding: side ? "10px 16px" : "0 0 5px",
+    });
+    li.dataset.id = r.id;
+    var rank = spText(p, "span", "tumbler-search-rank", (q.letter || "") + r.rank, {
+      fontSize: "12px",
+      color: spSearchVar(j, p.light),
+      fontVariantNumeric: "tabular-nums",
+    });
+    li.appendChild(rank);
+    li.appendChild(
+      spText(p, "span", "tumbler-search-text", r.text, {
+        fontFamily: side ? "var(--tumbler-font, inherit)" : "var(--tumbler-font-display, Georgia, serif)",
+        fontSize: side ? "14px" : "19px",
+        lineHeight: side ? "1.4" : "1.15",
+        color: o.pal.fg,
+        overflowWrap: "anywhere",
+      })
+    );
+    var meta = spResultMeta(q, r, o.distances);
+    if (meta.length) {
+      li.appendChild(
+        spText(p, "span", "tumbler-search-meta", meta.join(" · "), {
+          gridColumn: "2",
+          fontSize: "11px",
+          fontVariantNumeric: "tabular-nums",
+          color: o.pal.muted,
+        })
+      );
+    }
+    if (o.distances) li.appendChild(spGapBar(p, r.gap / o.widest, j, o.pal));
+    return li;
+  }
+
+  function spGapBar(p, share, j, pal) {
+    var bar = spEl(p, "span", "tumbler-search-gap", {
+      gridColumn: "2",
+      display: "block",
+      height: "3px",
+      position: "relative",
+      background: pal.line,
+      marginTop: "2px",
+    });
+    bar.setAttribute("aria-hidden", "true");
+    var fill = spEl(p, "span", "", {
+      position: "absolute",
+      left: "0",
+      top: "0",
+      bottom: "0",
+      width: (100 * Math.min(1, Math.max(0, share))).toFixed(1) + "%",
+      background: spSearchVar(j, p.light),
+    });
+    bar.appendChild(fill);
+    return bar;
+  }
+
+  // The Search row of the provenance list and the clause in its summary; put back after the
+  // viewer re-renders the block (it does on every update of the data).
+  function spRenderProvenance(p, search) {
+    var active = spActive(search);
+    var list = p.parts.provenanceList;
+    var sum = p.parts.provenanceSummary;
+    if (!p.provDt) {
+      // The viewer's own rows' look (js/src/50-viewer.js, provRow).
+      p.provDt = spText(p, "dt", "tumbler-provenance-term tumbler-search-provenance-term", "Search", { margin: "0" });
+      p.provDd = spText(p, "dd", "tumbler-provenance-value tumbler-search-provenance-value", "", { margin: "0", minWidth: "0" });
+      p.provClause = spText(p, "span", "tumbler-search-provenance-clause", "");
+    }
+    p.provDt.style.color = p.pal.muted;
+    p.provDd.style.color = p.pal.fg;
+    var used = usedText(search);
+    if (p.provDd.textContent !== used) p.provDd.textContent = used;
+    var clause = spProvenanceClause(search);
+    if (p.provClause.textContent !== clause) p.provClause.textContent = clause;
+    spAttach(list, [p.provDt, p.provDd], active);
+    spAttach(sum, [p.provClause], active);
+  }
+
+  function spAttach(parent, nodes, on) {
+    if (!parent) return;
+    nodes.forEach(function (n) {
+      if (on && n.parentNode !== parent) parent.appendChild(n);
+      if (!on && n.parentNode) n.remove();
+    });
+  }
+
+  // ----- Focus: the ranked lists beside the stage -----
+
+  function spFreshSearch(p) {
+    try {
+      return typeof p.handle.info === "function" ? p.handle.info().search : null;
+    } catch {
+      // A handle whose info() throws: keep the snapshot the panel has.
+      return null;
+    }
+  }
+
+  function spSetFocus(p, focus) {
+    if (focus === p.focus) return;
+    p.focus = focus;
+    // What a search reports depends on the view (whether it can be faced), so the kept
+    // snapshot is read again; otherwise Face the searches keeps the other view's state.
+    if (p.search) p.search = spFreshSearch(p) || p.search;
+    var root = p.parts.stage.parentNode;
+    if (focus) {
+      if (!p.side) p.side = spBuildSide(p);
+      p.rootDisplay = root.style.display;
+      spStyle(root, { display: "flex", flexWrap: "wrap", alignItems: "flex-start", columnGap: "var(--tumbler-search-side-gap, 16px)" });
+      spStyle(p.parts.stage, { flex: "999 1 600px", minWidth: "0" });
+      p.parts.panel.style.flex = "1 1 100%";
+      p.parts.stage.after(p.side);
+      p.side.style.maxHeight = p.parts.stage.style.height || "";
+    } else {
+      p.side?.remove();
+      spStyle(root, { display: p.rootDisplay || "block", flexWrap: "", alignItems: "", columnGap: "" });
+      spStyle(p.parts.stage, { flex: "", minWidth: "" });
+      p.parts.panel.style.flex = "";
+    }
+    p.listKey = null;
+    p.sideKey = null;
+    if (p.pal) spRender(p);
+  }
+
+  function spBuildSide(p) {
+    var pal = p.pal || SP_PALETTE_DARK;
+    var side = spEl(p, "aside", "tumbler-search-side", {
+      flex: "1 1 340px",
+      minWidth: "0",
+      boxSizing: "border-box",
+      overflowY: "auto",
+      border: "1px solid " + pal.line,
+      background: pal.bg,
+      color: pal.muted,
+      fontFamily: "var(--tumbler-font-data, inherit)",
+    });
+    side.setAttribute("aria-label", "Search results");
+    return side;
+  }
+
+  function spRenderSide(p, search) {
+    if (!p.focus || !p.side) return;
+    var key = spListKey(p, search);
+    if (key === p.sideKey) return;
+    p.sideKey = key;
+    var pal = p.pal || SP_PALETTE_DARK;
+    var side = p.side;
+    side.textContent = "";
+    side.style.borderColor = pal.line;
+    side.style.background = pal.bg;
+    var head = spEl(p, "div", "tumbler-search-side-head", { padding: "14px 16px 10px", borderBottom: "1px solid " + pal.line });
+    var active = spActive(search);
+    head.appendChild(
+      spText(p, "p", "tumbler-search-side-title", active ? "Nearest texts" : "No search", {
+        margin: "0",
+        fontFamily: "var(--tumbler-font-display, Georgia, serif)",
+        fontStyle: "italic",
+        fontSize: "26px",
+        lineHeight: "1.1",
+        color: pal.fg,
+      })
+    );
+    head.appendChild(spText(p, "p", "tumbler-search-side-sub", spSideSub(search), { margin: "4px 0 0", fontSize: "12px" }));
+    side.appendChild(head);
+    if (!active) {
+      side.appendChild(
+        spText(
+          p,
+          "p",
+          "tumbler-search-side-empty",
+          "Nothing searched: every point is shown. Open Search below the view and type, or click a point to search from it.",
+          { margin: "0", padding: "16px", fontSize: "14px" }
+        )
+      );
+      return;
+    }
+    var distances = !!search.settings?.distances;
+    search.searches.forEach(function (q, j) {
+      side.appendChild(
+        spText(p, "p", "tumbler-search-side-letter", q.letter + " · " + q.text, {
+          margin: "0",
+          padding: "10px 16px 4px",
+          fontSize: "12px",
+          letterSpacing: "0.04em",
+          color: spSearchVar(j, p.light),
+        })
+      );
+      side.appendChild(spResultList(p, q, j, distances, "column"));
+    });
+  }
+
+  function spSideSub(search) {
+    if (!spActive(search)) return "every point is shown";
+    var q = search.searches[0];
+    var parts = search.searches.map(function (s) {
+      var how = s.pointOfView ? "from its point of view" : "plain distance";
+      return s.letter + ": " + s.results.length + " named results, " + how + (s.reranker ? ", then the reranker (" + spKeptOf(s) + ")" : "");
+    });
+    return (search.searches.length === 1 ? parts[0].slice(q.letter.length + 2) : parts.join("; ")) + " · " + search.measure;
+  }
+
+  // ----- the overlay: query rings, links, labels over the stage -----
+
+  function spLabelLayer(p) {
+    if (p.labelLayer) return p.labelLayer;
+    var layer = spEl(p, "div", "tumbler-search-labels", {
+      position: "absolute",
+      left: "0",
+      top: "0",
+      right: "0",
+      bottom: "0",
+      overflow: "hidden",
+      pointerEvents: "none",
+      zIndex: "1",
+    });
+    layer.setAttribute("aria-hidden", "true");
+    var overlay = p.parts.overlay;
+    if (overlay?.parentNode === p.parts.stage) overlay.after(layer);
+    else p.parts.stage.appendChild(layer);
+    p.labelLayer = layer;
+    return layer;
+  }
+
+  function spLabelAt(p, used, str, x, y, style) {
+    if (used >= SP_LABEL_POOL) return used;
+    var rec = p.labels[used];
+    if (!rec) {
+      rec = { el: spEl(p, "span", "tumbler-search-label", { position: "absolute", left: "0", top: "0", whiteSpace: "nowrap", fontSize: "11px", fontFamily: "var(--tumbler-font-data, monospace)" }), text: null, colour: null, shown: true };
+      spLabelLayer(p).appendChild(rec.el);
+      p.labels.push(rec);
+    }
+    if (rec.text !== str) {
+      rec.el.textContent = str;
+      rec.text = str;
+    }
+    if (rec.colour !== style.colour) {
+      rec.el.style.color = style.colour;
+      rec.el.style.textShadow = p.outline;
+      rec.colour = style.colour;
+    }
+    rec.el.style.transform = "translate(" + x.toFixed(1) + "px, " + y.toFixed(1) + "px) translate(" + (style.centre ? "-50%" : "0") + ", -50%)";
+    rec.el.style.opacity = String(Math.round(style.alpha * 100) / 100);
+    if (!rec.shown) {
+      rec.el.style.display = "";
+      rec.shown = true;
+    }
+    return used + 1;
+  }
+
+  function spHideLabels(p, from) {
+    for (var i = from; i < p.labels.length; i++) {
+      if (p.labels[i].shown) {
+        p.labels[i].el.style.display = "none";
+        p.labels[i].shown = false;
+      }
+    }
+  }
+
+  // A label is placed only where it overlaps none already placed (the honest, simple answer
+  // to a tight cluster: the list carries everything the stage leaves out).
+  function spFits(boxes, x, y, text, centre) {
+    var w = text.length * SP_CHAR_W + 4;
+    var left = centre ? x - w / 2 : x;
+    var box = { l: left, r: left + w, t: y - SP_LABEL_H / 2, b: y + SP_LABEL_H / 2 };
+    for (var o of boxes) {
+      if (box.l < o.r && box.r > o.l && box.t < o.b && box.b > o.t) return false;
+    }
+    boxes.push(box);
+    return true;
+  }
+
+  function spOutline(bg) {
+    var ring = [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]];
+    return ring
+      .map(function (d) {
+        return (d[0] * 1.5).toFixed(2) + "px " + (d[1] * 1.5).toFixed(2) + "px 0.5px " + bg;
+      })
+      .join(", ");
+  }
+
+  function spPointVector(set, index) {
+    var D = set.dimension;
+    return set.vectors.subarray(index * D, index * D + D);
+  }
+
+  function spFinite(pt) {
+    return !!pt && Number.isFinite(pt.x) && Number.isFinite(pt.y);
+  }
+
+  // Draw one search: links from its query to its results, then its ring and letter. Labels are
+  // queued in `queue` so they can be placed letters first, then nearest results first.
+  function spDrawSearch(p, ctx, j, qp, q, view) {
+    var dpr = view.dpr;
+    var colour = p.colours[j];
+    var n = q.results.length;
+    ctx.lineWidth = dpr;
+    ctx.strokeStyle = colour;
+    q.results.forEach(function (r, i) {
+      if (view.hidden(r.index)) return;
+      var rp = view.project(spPointVector(view.set, r.index));
+      if (!spFinite(rp)) return;
+      var rel = n > 1 ? 1 - i / (n - 1) : 1;
+      ctx.globalAlpha = view.filter * (0.25 + 0.4 * rel);
+      ctx.beginPath();
+      ctx.moveTo(qp.x, qp.y);
+      ctx.lineTo(rp.x, rp.y);
+      ctx.stroke();
+      view.queue.push({ q: q, j: j, r: r, rp: rp, qp: qp });
+    });
+    ctx.globalAlpha = view.filter;
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath();
+    ctx.arc(qp.x, qp.y, 10 * dpr, 0, Math.PI * 2);
+    ctx.stroke();
+    if (view.focus) {
+      ctx.beginPath();
+      ctx.moveTo(qp.x - 4 * dpr, qp.y);
+      ctx.lineTo(qp.x + 4 * dpr, qp.y);
+      ctx.moveTo(qp.x, qp.y - 4 * dpr);
+      ctx.lineTo(qp.x, qp.y + 4 * dpr);
+      ctx.stroke();
+    }
+  }
+
+  // Place the labels: each query's letter, then every result's rank (Focus) or text (the
+  // other views, when labels are on), then each link's distance with Distance difference on.
+  function spPlaceLabels(p, view, letters) {
+    var boxes = [];
+    var used = 0;
+    var dpr = view.dpr;
+    letters.forEach(function (l) {
+      var x = l.qp.x / dpr + 15;
+      var y = l.qp.y / dpr + 4; // the reference's place, clear of a result label above it
+      spFits(boxes, l.qp.x / dpr - 11, y, "   ", false);
+      if (spFits(boxes, x, y, l.text, false)) used = spLabelAt(p, used, l.text, x, y, { colour: p.colours[l.j], alpha: view.filter });
+    });
+    var many = letters.length > 1;
+    var order = view.queue.slice().sort(function (a, b) {
+      return a.r.rank - b.r.rank || a.j - b.j;
+    });
+    // Stop once every label element is used: with 400 results the rest would only be tested.
+    for (var it of order) {
+      if (used >= SP_LABEL_POOL) break;
+      used = spPlaceResult(p, view, boxes, used, it, many);
+    }
+    if (view.distances) {
+      for (var link of order) {
+        if (used >= SP_LABEL_POOL) break;
+        used = spPlaceDistance(p, view, boxes, used, link);
+      }
+    }
+    spHideLabels(p, used);
+  }
+
+  function spPlaceResult(p, view, boxes, used, it, many) {
+    var text = null;
+    if (view.focus) text = (many ? it.q.letter : "") + it.r.rank;
+    else if (view.labels) text = spShorten(it.r.text, SP_STAGE_TEXT);
+    if (!text) return used;
+    var x = it.rp.x / view.dpr + 8;
+    var y = it.rp.y / view.dpr - 8;
+    if (!spFits(boxes, x, y, text, false)) return used;
+    var colour = view.focus ? p.colours[it.j] : p.pal.fg;
+    return spLabelAt(p, used, text, x, y, { colour: colour, alpha: view.filter });
+  }
+
+  function spPlaceDistance(p, view, boxes, used, it) {
+    var share = view.focus ? 0.72 : 0.62;
+    var x = (it.qp.x + (it.rp.x - it.qp.x) * share) / view.dpr;
+    var y = (it.qp.y + (it.rp.y - it.qp.y) * share) / view.dpr + 11;
+    var text = it.r.distance.toFixed(3);
+    if (!spFits(boxes, x, y, text, true)) return used;
+    return spLabelAt(p, used, text, x, y, { colour: p.pal.muted, alpha: view.filter * 0.9, centre: true });
+  }
+
+  // The viewer tells the panel about searches, not about data: a new or appended set (which
+  // changes what is offered, such as the Reranker, and the suggestions) is noticed here.
+  function spDataChanged(p, set) {
+    var count = set ? set.count : -1;
+    if (set === p.dataRef && count === p.dataCount) return;
+    p.dataRef = set;
+    p.dataCount = count;
+    try {
+      if (typeof p.handle.info === "function") spUpdate(p, p.handle.info().search);
+    } catch {
+      // A handle whose info throws: keep what is shown.
+    }
+  }
+
+  // The text outline follows the stage's background (labels restyle on their next use).
+  function spRefreshOutline(p) {
+    if (p.outlineBg === p.pal.bg) return;
+    p.outline = spOutline(p.pal.bg);
+    p.outlineBg = p.pal.bg;
+    p.labels.forEach(function (rec) {
+      rec.colour = null;
+    });
+  }
+
+  function spNever() {
+    return false;
+  }
+
+  // What one frame's drawing needs, from the viewer's frame argument.
+  function spView(p, f, set, project, filter) {
+    return {
+      set: set,
+      project: project,
+      dpr: Number(f.dpr) > 0 ? Number(f.dpr) : 1,
+      filter: Math.min(1, filter),
+      labels: f.labels !== false,
+      focus: p.focus,
+      distances: !!p.search.settings?.distances,
+      hidden: typeof f.hidden === "function" ? f.hidden : spNever,
+      queue: [],
+    };
+  }
+
+  function spDrawOverlay(p, ctx, project, frame) {
+    var f = frame || {};
+    var set = spData(p);
+    spDataChanged(p, set);
+    if (f.mode) spSetFocus(p, f.mode === "focus");
+    spRenderProvenance(p, p.search);
+    var search = p.search;
+    var filter = Number(f.filter);
+    var shown = filter > 0.05; // false for NaN too
+    if (!spActive(search) || !set || !Array.isArray(f.queries) || !shown) {
+      spHideLabels(p, 0);
+      return false;
+    }
+    if (!p.colours) p.colours = spCanvasColours(p, ctx);
+    spRefreshOutline(p);
+    var view = spView(p, f, set, project, filter);
+    var letters = [];
+    ctx.save?.();
+    search.searches.forEach(function (q, j) {
+      var vec = f.queries[j];
+      if (!vec || vec.length !== set.dimension) return;
+      var qp = project(vec);
+      if (!spFinite(qp)) return;
+      spDrawSearch(p, ctx, j, qp, q, view);
+      letters.push({ qp: qp, j: j, text: view.focus ? q.letter + " query" : q.letter });
+    });
+    ctx.globalAlpha = 1;
+    ctx.restore?.();
+    spPlaceLabels(p, view, letters);
+    return true;
+  }
+
+  // ----- update and mount -----
+
+  function spUpdate(p, search) {
+    if (p.destroyed) return;
+    p.search = search || null;
+    var theme = spTheme(p);
+    if (theme !== p.themeRef) {
+      p.themeRef = theme;
+      spApplyTheme(p);
+    }
+    var mode = spMode(p);
+    if (mode) spSetFocus(p, mode === "focus");
+    spSyncInput(p, p.search);
+    spRender(p);
+  }
+
+  function spMode(p) {
+    try {
+      return typeof p.handle.mode === "function" ? p.handle.mode() : null;
+    } catch {
+      // A handle whose mode() throws: keep the layout as it is.
+      return null;
+    }
+  }
+
+  function spDestroy(p) {
+    if (p.destroyed) return;
+    p.destroyed = true;
+    if (p.timer && p.win?.clearTimeout) p.win.clearTimeout(p.timer);
+    p.timer = 0;
+    p.listeners.forEach(function (l) {
+      l[0].removeEventListener(l[1], l[2]);
+    });
+    p.listeners = [];
+    spSetFocus(p, false);
+    p.section.remove();
+    p.labelLayer?.remove();
+    p.provDt?.remove();
+    p.provDd?.remove();
+    p.provClause?.remove();
+    p.labels = [];
+  }
+
+  function mount(parts, handle, options) {
+    var opts = options || {};
+    var doc = opts.document || parts.panel.ownerDocument;
+    spCounter += 1;
+    var p = {
+      n: spCounter,
+      doc: doc,
+      win: doc.defaultView || null,
+      parts: parts,
+      handle: handle,
+      opts: opts,
+      bodyId: "tumbler-search-body-" + spCounter,
+      search: null,
+      open: false,
+      focus: false,
+      openLists: Object.create(null),
+      timer: 0,
+      lastSent: "",
+      refusal: null,
+      extraLines: 0,
+      suggested: [],
+      suggestCache: { set: null, count: -1, entries: [] },
+      listeners: [],
+      labels: [],
+      labelLayer: null,
+      colours: null,
+      outline: "",
+      outlineBg: null,
+      listKey: null,
+      sideKey: null,
+      povKey: null,
+      themeRef: undefined,
+      dataRef: undefined,
+      dataCount: -2,
+      destroyed: false,
+    };
+    spBuild(p);
+    p.themeRef = spTheme(p);
+    spApplyTheme(p);
+    var first = null;
+    try {
+      first = typeof handle.info === "function" ? handle.info().search : null;
+    } catch {
+      // No info yet: the panel starts with nothing searched.
+      first = null;
+    }
+    spUpdate(p, first);
+    return {
+      update: function (search) {
+        spUpdate(p, search);
+      },
+      drawOverlay: function (ctx, project, frame) {
+        if (p.destroyed) return false;
+        return spDrawOverlay(p, ctx, project, frame);
+      },
+      destroy: function () {
+        spDestroy(p);
+      },
+      setOpen: function (open) {
+        spSetOpen(p, !!open);
+      },
+      isOpen: function () {
+        return p.open;
+      },
+    };
+  }
+
+  ET.searchPanel = {
+    mount: mount,
+    summaryText: summaryText,
+    usedText: usedText,
+    suggest: spSuggest,
+    noteText: function (search, ctx) {
+      return spNoteParts(search, ctx || {}).join(" ");
+    },
+    pairText: spPairText,
+    resultMeta: spResultMeta,
+    thousands: spThousands,
+    COLOURS: { dark: SP_DARK.slice(), light: SP_LIGHT.slice(), sharedDark: SP_SHARED_DARK, sharedLight: SP_SHARED_LIGHT },
+  };
 // ---------------------------------------------------------------------------
 // 50-viewer.js: the public viewer API (task t8).
 //
@@ -5554,6 +9774,11 @@ ET.viewer = (function () {
     accent: "#a35f00",
     ungrouped: "#8cadff",
   };
+  // The readout strip's three axis colours (horizontal, vertical, depth), 0-255. Fixed, not
+  // themable. The light pair is darker so cells and legend words read on a light panel.
+  var AXIS_RGB_DARK = [[255, 150, 60], [80, 220, 160], [130, 140, 255]];
+  var AXIS_RGB_LIGHT = [[176, 84, 0], [0, 128, 82], [72, 82, 214]];
+  var AXIS_NAMES = ["horizontal", "vertical", "depth"];
   var FONTS = {
     body: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
     data: 'ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
@@ -5577,11 +9802,27 @@ ET.viewer = (function () {
     maxPixelRatio: 2,
     preserveDrawingBuffer: false,
     prepareBudgetMs: 8,
+    // Keep the slow spin running while a mode prepares, so the view never looks frozen
+    // (owner's phone report, 2026-11-14). false: hold the picture still until ready, as 0.11.6.
+    spinWhilePreparing: true,
+    // Lower the drawing-buffer ratio in steps (never below 1) when the frame rate stays
+    // under ADAPT_FPS while nothing prepares. false: always draw at the capped device ratio.
+    adaptivePixelRatio: false, // off until the owner decides: it trades sharpness for frame rate
     refitQuietSeconds: 2,
     refitShare: 0.01,
     onError: null,
     onModeChange: null,
     onPauseChange: null,
+    // Search (docs/search-interface.md, "Viewer (t8)").
+    embed: null, // the host's embed(text) callback
+    rerank: null, // the host's rerank(query, candidates) callback
+    searchTimeoutMs: 15000,
+    searchPanel: true,
+    searchK: 8,
+    searchCandidates: 50, // candidates handed to the reranker (3 to 100)
+    searchTop: 20, // reranked candidates kept (3 to searchCandidates)
+    searchLit: "even",
+    onSearchChange: null,
   };
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
@@ -5593,6 +9834,25 @@ ET.viewer = (function () {
   var ZOOM_MIN = 0.2;
   var ZOOM_MAX = 12;
   var SPIN = 0.06; // rad/s of yaw while running (the reference's)
+  // Heavy work's budget per frame (see "Heavy work" in js/api/50-viewer.md): a share of the
+  // measured frame interval, between prepareBudgetMs and BUDGET_CEILING times it; cut to half
+  // of prepareBudgetMs for one frame only when the work itself overran (a unit far longer
+  // than asked: cold code, a collection): more than OVERRUN_FLOOR_MS, and more than
+  // OVERRUN_MS past the budget it had.
+  var WORK_SHARE = 1 / 3;
+  var BUDGET_CEILING = 3;
+  var OVERRUN_FLOOR_MS = 16;
+  var OVERRUN_MS = 8;
+  var PAUSED_BUDGET_MS = 40; // a paused view has no motion to keep smooth
+  var INTERVAL_GAP_MS = 250; // a longer gap between frames is a pause, not a frame interval
+  // Drawing-buffer ratio steps (adaptivePixelRatio): ADAPT_SECONDS measured seconds in a row
+  // under ADAPT_FPS, while running and not preparing, lower it by ADAPT_STEP (never below 1).
+  var ADAPT_FPS = 25; // under a 30 fps cap (iOS Low Power Mode), never below a measured 29.x
+  var ADAPT_SECONDS = 2;
+  var ADAPT_STEP = 0.5;
+  // The most wire light per pixel, where the wires' light lands, before the wires are
+  // scaled down (the renderer's draw key wireLoad; see "Crowded wires" in js/api/50-viewer.md).
+  var WIRE_LOAD = 8;
   var BUTTON_HEIGHT = "28px"; // the reference's Pause button
   var TOUCH_HEIGHT = "32px"; // the same buttons under 600 px wide
   // Spacing and sizes a host may adjust: each is set inline as var(--tumbler-<name>,
@@ -6086,7 +10346,16 @@ ET.viewer = (function () {
       fontSize: spaced("readout-caption-size", "11.5px"),
     });
     v.stripFirst = text(v, "span", "", "dimension 1");
-    v.stripMiddle = text(v, "span", "", "how much each dimension contributes to the view right now");
+    v.stripMiddle = make(v, "span", "");
+    v.stripText = text(v, "span", "", "how much each dimension contributes to the view right now");
+    v.stripMiddle.appendChild(v.stripText);
+    v.stripMiddle.appendChild(v.doc.createTextNode(" \u00b7 colour: "));
+    v.stripLegend = AXIS_NAMES.map(function (name, i) {
+      var word = text(v, "b", "tumbler-axis-" + name, name, { fontWeight: "400" });
+      if (i > 0) v.stripMiddle.appendChild(v.doc.createTextNode(" "));
+      v.stripMiddle.appendChild(word);
+      return word;
+    });
     v.stripLast = text(v, "span", "", "");
     caption.appendChild(v.stripFirst);
     caption.appendChild(v.stripMiddle);
@@ -6329,7 +10598,10 @@ ET.viewer = (function () {
     // stop takes the foreground, so it stays dark ink.
     v.stopColour = t.light ? fg : "rgb(255, 255, 255)";
     v.neighbourColour = cssRgb(mix(t.foreground, t.muted, 0.375));
-    v.accent255 = [Math.round(t.accent[0] * 255), Math.round(t.accent[1] * 255), Math.round(t.accent[2] * 255)];
+    v.axisRgb = t.light ? AXIS_RGB_LIGHT : AXIS_RGB_DARK;
+    v.stripLegend.forEach(function (word, i) {
+      word.style.color = "rgb(" + v.axisRgb[i].join(", ") + ")";
+    });
   }
 
   // Read the host's theme and, only when it differs from the one applied, apply it
@@ -6691,7 +10963,7 @@ ET.viewer = (function () {
     v.mastLine.textContent =
       thousands(set.count) + " embeddings · " + thousands(D) + " dimensions · one restless 3-D window";
     v.stripLast.textContent = "dimension " + thousands(D);
-    v.stripMiddle.textContent = "how much each of the " + thousands(D) + " dimensions contributes to the view right now";
+    v.stripText.textContent = "how much each of the " + thousands(D) + " dimensions contributes to the view right now";
   }
 
   // ---------- modes ----------
@@ -6762,6 +11034,7 @@ ET.viewer = (function () {
       inst: inst,
       jobs: [prep],
       clock: 0,
+      seeked: false, // seek() was called: hold the spin until ready (spinWhilePreparing)
       wiresVersion: -1,
       refit: null,
       readyAt: null,
@@ -6817,6 +11090,7 @@ ET.viewer = (function () {
     }
     var ok = startMode(v, id, copyState(v.last));
     if (ok) {
+      if (v.search.shown.length) notifyModeSearch(v);
       recover(v);
       call(v, v.options.onModeChange, id);
       invalidate(v);
@@ -6961,6 +11235,7 @@ ET.viewer = (function () {
         if (!rb?.ok) fatal(v, rb?.message || "The graphics card could not take the data back.");
       }
       if (v.mode) v.mode.wiresVersion = -1;
+      if (v.search.litUploaded) uploadLit(v); // setData cleared the lit values
       v.paintKey = paintKey(v);
       v.needClear = true;
     } catch (err) {
@@ -7025,6 +11300,7 @@ ET.viewer = (function () {
       return { ok: false, code: "mode-failed", message: "No view can show this data: " + (firstError || "every view refused it.") };
     }
     if (firstError) notify(v, firstError); // shown on top of the fallback view
+    dropSearchesForReplace(v);
     v.paintKey = paintKey(v);
     sizeStrip(v);
     describeSet(v);
@@ -7118,10 +11394,11 @@ ET.viewer = (function () {
     if (v.mode) {
       var modeFailed = appendToMode(v, v.mode, set, k, snap);
       if (modeFailed) return modeFailed;
-    } else startMode(v, v.modeId, null);
+    } else if (startMode(v, v.modeId, null)) notifyModeSearch(v);
     v.sinceAppend = 0;
     describeSet(v);
     renderProvenance(v);
+    searchesAfterAppend(v);
     v.timing.lastAppendMs = now(v) - t0;
     return { ok: true, op: "append", count: set.count, added: k };
   }
@@ -7157,6 +11434,7 @@ ET.viewer = (function () {
     w = w > 0 ? w : v.stage.clientWidth || 300;
     h = h > 0 ? h : v.stage.clientHeight || 150;
     var dpr = Math.min(Number(v.options.maxPixelRatio) || 2, v.win?.devicePixelRatio || 1);
+    if (v.dprCap !== null) dpr = Math.max(1, Math.min(dpr, v.dprCap));
     v.dpr = dpr;
     v.cssW = w;
     v.cssH = h;
@@ -7236,6 +11514,7 @@ ET.viewer = (function () {
     var m = v.mode;
     if (!m || !v.set || v.set.count === 0) return false;
     if (m.jobs.length || m.refit) return true;
+    if (searchBusy(v)) return true;
     // A mode that is still preparing needs frames until it is ready, even when the
     // view is paused or motion is reduced: otherwise it would wait for input forever.
     if (!readyOf(m)) return true;
@@ -7253,6 +11532,7 @@ ET.viewer = (function () {
       return; // no frame work while hidden or off screen; resume() reschedules
     }
     var start = now(v);
+    noteInterval(v, t);
     var dt = v.prev === null ? 1 / 60 : clamp((t - v.prev) / 1000, 0.001, 0.05);
     // After a long frame of the viewer's own work (a fit), count the gap as lost time,
     // not motion, so the picture does not leap ahead by a whole clamped step.
@@ -7275,6 +11555,7 @@ ET.viewer = (function () {
     }
     var spent = now(v) - start;
     v.lastSpent = spent;
+    v.lastScript = Math.max(0, spent - v.drawSpent);
     if (spent > v.timing.longestFrameMs) v.timing.longestFrameMs = spent;
     v.frames++;
     if (v.timing.firstFrameMs === null) v.timing.firstFrameMs = now(v) - v.timing.mountAt;
@@ -7284,19 +11565,57 @@ ET.viewer = (function () {
       v.fps = (v.fpsFrames * 1000) / (t - v.fpsAt);
       v.fpsAt = t;
       v.fpsFrames = 0;
+      adaptPixelRatio(v);
     }
     if (!v.broken && needsMore(v)) schedule(v);
   }
 
-  // Preparation and refit work run in small units (a few milliseconds each) inside a
-  // per-frame budget: prepareBudgetMs (8), halved after a frame that ran long, so the
-  // page keeps its frame rate while a mode prepares or refits.
-  function pump(v, m, start) {
-    var budget = Math.max(1, Number(v.options.prepareBudgetMs) || 8);
-    if (v.lastSpent > 16) budget = Math.max(1, budget / 2);
+  // The interval between animation frames (rAF timestamps), smoothed. It is measured only
+  // between frames that ran back to back: the first frame after a pause, a resume or a
+  // return from hidden starts afresh, and so does the frames-per-second window.
+  function noteInterval(v, t) {
+    var gap = v.rafAt === null ? Infinity : t - v.rafAt;
+    v.rafAt = t;
+    if (v.prev === null || gap > INTERVAL_GAP_MS) {
+      v.fpsAt = null;
+      v.fpsFrames = 0;
+      return;
+    }
+    if (gap > 0) v.interval = v.interval > 0 ? v.interval * 0.75 + gap * 0.25 : gap;
+  }
+
+  // The budget for this frame's heavy work. Where the time between frames went decides it:
+  // on a device whose frames are long because drawing is slow (the GPU, the compositor),
+  // the work may take up to WORK_SHARE of the frame interval, so it keeps making progress
+  // at any frame rate. It is cut only when the work's own script time ran well past what it
+  // was given. The rest of the frame's script (the mode's state, labels, uploads) is not
+  // made shorter by a smaller budget, so cutting the budget for it only starves the work:
+  // measured with the CPU throttled 6x, a rule on the whole script swung the budget between
+  // 24 and 4 ms every other frame. info().timing reports both (workMs, scriptMs).
+  function frameBudget(v) {
+    var base = Math.max(1, Number(v.options.prepareBudgetMs) || 8);
+    var budget = clamp(v.interval * WORK_SHARE, base, base * BUDGET_CEILING);
+    if (v.timing.workMs > Math.max(OVERRUN_FLOOR_MS, v.lastBudget + OVERRUN_MS)) budget = Math.max(1, base / 2);
     // A paused view has no motion to keep smooth, so it may spend longer per frame on
     // getting ready (it still answers input every frame).
-    if (!v.running) budget = Math.max(budget, 40);
+    if (!v.running) budget = Math.max(budget, PAUSED_BUDGET_MS);
+    v.lastBudget = budget;
+    return budget;
+  }
+
+  // Preparation and refit work run in small units (a few milliseconds each) inside the
+  // frame's budget (frameBudget), so the page keeps its frame rate while a mode prepares
+  // or refits, and the work keeps going on a device that draws slowly.
+  function pump(v, m, start) {
+    var budget = frameBudget(v);
+    v.timing.budgetMs = budget;
+    pumpJobs(v, m, start, budget);
+    if (m.refit && v.running && now(v) - start < budget) pumpRefit(v, m, start, budget);
+    pumpSearch(v, start, budget);
+    v.timing.workMs = now(v) - start;
+  }
+
+  function pumpJobs(v, m, start, budget) {
     while (m.jobs.length) {
       var job = m.jobs[0];
       var left = budget - (now(v) - start);
@@ -7305,7 +11624,6 @@ ET.viewer = (function () {
       if (job.done) m.jobs.shift();
       else break;
     }
-    if (m.refit && v.running && now(v) - start < budget) pumpRefit(v, m, start, budget);
   }
 
   // One step of a running refit inside what is left of the frame's budget.
@@ -7359,18 +11677,27 @@ ET.viewer = (function () {
     pump(v, m, start);
     var ready = m.inst.isReady();
     if (ready) advanceReady(v, m, dt);
+    else spinWhilePreparing(v, m, dt);
     var s = m.inst.stateAt(ready ? m.clock : 0);
     if (r && s.wires && s.wires.version !== m.wiresVersion) {
       r.setWires(s.wires.pairs, s.wires.lengths);
       m.wiresVersion = s.wires.version;
     }
     if (!v.reducedMotion || v.running) v.drawTime += dt;
+    easeFilter(v, dt);
+    v.search.hideUnlit = hidesUnlit(v);
     var ds = drawState(v, s, dt);
-    if (r && v.rendering) r.draw(ds);
+    v.drawSpent = 0;
+    if (r && v.rendering) {
+      var d0 = now(v);
+      r.draw(ds);
+      v.drawSpent = now(v) - d0;
+    }
     v.needClear = false;
     v.last = s;
     v.lastDraw = ds;
     drawLabels(v, s, ds);
+    drawSearchOverlay(v, s, ds);
     drawStrip(v, s.frame);
     v.statusClock += dt;
     if (v.statusClock >= STATUS_EVERY) updateStatus(v, m, s, ready);
@@ -7402,10 +11729,48 @@ ET.viewer = (function () {
     }
     if (v.running) {
       m.clock += dt * v.speed;
-      if (!v.drag.active) v.spin += dt * v.speed;
+      if (!v.drag.active) v.spin += dt * v.speed * spinFactor(m);
     }
     if (typeof m.inst.mark === "function") m.inst.mark(m.clock);
     considerRefit(v, m);
+  }
+
+  // While a mode prepares, the mode clock waits for ready (frames for a given mode time do
+  // not depend on how fast the preparation ran) but the slow spin keeps turning the frame
+  // the mode holds, so the view never stands still. It runs on the same rule as the spin
+  // after ready (running, not dragging) and stops after a seek(), which asks for an exact
+  // frame: a seek before ready shows the frame at that time once the mode is ready.
+  function spinWhilePreparing(v, m, dt) {
+    if (!v.options.spinWhilePreparing || m.seeked || !v.running || v.drag.active) return;
+    v.spin += dt * v.speed * spinFactor(m);
+  }
+
+  // A mode is preparing while it is not ready, has queued work, or refits.
+  function preparingOf(m) {
+    return !!(m && (!readyOf(m) || m.jobs.length || m.refit));
+  }
+
+  // Once a second (with the frames-per-second figure): after ADAPT_SECONDS measured seconds
+  // in a row under ADAPT_FPS, while the view moves, draws and prepares nothing, draw at a
+  // lower ratio (ADAPT_STEP less, never below 1). It is never raised again in this mount.
+  function adaptPixelRatio(v) {
+    if (!v.options.adaptivePixelRatio || !v.running || !v.rendering || preparingOf(v.mode) || v.fps >= ADAPT_FPS) {
+      v.slowSeconds = 0;
+      return;
+    }
+    v.slowSeconds++;
+    if (v.slowSeconds < ADAPT_SECONDS || v.dpr <= 1) return;
+    v.slowSeconds = 0;
+    v.dprCap = Math.max(1, v.dpr - ADAPT_STEP);
+    measure(v);
+  }
+
+  // A mode may ask for its own spin with a `spin` member (rad/s, finite, 0 or more; Focus
+  // asks for 0.13). v.spin counts seconds at SPIN, so it advances by this factor: exactly 1
+  // for a mode that does not ask, and the yaw stays continuous across a change of mode.
+  function spinFactor(m) {
+    var r = m?.inst?.spin;
+    return typeof r === "number" && Number.isFinite(r) && r >= 0 ? r / SPIN : 1;
   }
 
   // The status line, the view row and aria-busy, every STATUS_EVERY seconds.
@@ -7445,7 +11810,13 @@ ET.viewer = (function () {
     // overall brightness comes down as their number goes up.
     var crowd = crowding(v);
     if (crowd < 1) out.gain = (out.gain === undefined ? 1 : out.gain) * crowd;
+    // Many wires through the same part of the stage pile up into white: the renderer scales
+    // them down past WIRE_LOAD (the key is left out when no wires are shown).
+    if (out.wires > 0) out.wireLoad = WIRE_LOAD;
     if (v.reducedMotion) out.twinkle = 0;
+    // Search: how much the lit values apply (the key is left out with no search, so the
+    // draw state is exactly as before search).
+    if (v.search.filter > 0) out.filter = v.search.filter;
     out.clear = !!v.needClear;
     return out;
   }
@@ -7606,8 +11977,10 @@ ET.viewer = (function () {
     }
     var needSample = (v.showLabels && fogMix < 0.97) || v.hover;
     if (needSample) projectSample(v, s, ds, n);
-    // Group names at the middle of their labelled points, fading out as Wander's fog comes in.
-    if (v.showLabels && fogMix < 0.97 && v.groupNames.length) used = drawGroupNames(v, used, fogMix, n);
+    // Group names at the middle of their labelled points, fading out as Wander's fog comes in;
+    // none in Focus while a search is shown (the results are what matters there).
+    var focusSearch = v.modeId === "focus" && v.search.filter > 0;
+    if (v.showLabels && fogMix < 0.97 && v.groupNames.length && !focusSearch) used = drawGroupNames(v, used, fogMix, n);
     // Wander: the stop, its labelled neighbours and spokes to them.
     if (s.focus && v.mode) used = drawFocus(v, s, ds, used);
     // Hover: the nearest sampled point within 20 px.
@@ -7636,7 +12009,7 @@ ET.viewer = (function () {
     var cn = new Float64Array(G);
     for (var k = 0; k < n; k++) {
       var g = v.groupIndex[v.set.points[sample[k]].group];
-      if (g === undefined) continue;
+      if (g === undefined || hiddenPoint(v, sample[k])) continue;
       cx[g] += v.sx[k];
       cy[g] += v.sy[k];
       cn[g]++;
@@ -7676,6 +12049,7 @@ ET.viewer = (function () {
     var best = -1;
     var bd = 20 * dpr * (20 * dpr);
     for (var h = 0; h < n; h++) {
+      if (hiddenPoint(v, v.labelSample[h])) continue;
       var dx = v.sx[h] - v.hover.x * dpr;
       var dy = v.sy[h] - v.hover.y * dpr;
       var d2 = dx * dx + dy * dy;
@@ -7773,20 +12147,26 @@ ET.viewer = (function () {
 
   // ---------- readout strip ----------
 
-  // One cell per dimension: how much that dimension contributes to the three axes on
-  // screen, relative to an even share (the reference's (f0^2 + f1^2 + f2^2) * D / 3).
+  // One cell per dimension. Its opacity is how much that dimension contributes to the three
+  // axes on screen, relative to an even share (the reference's (f0^2 + f1^2 + f2^2) * D / 3).
+  // Its colour mixes the three axis colours by the dimension's squared component on each
+  // axis, divided by their sum: a dimension that feeds one axis shows that axis's colour.
   function drawStrip(v, F) {
     if (!v.stripCtx || !v.stripImage || !v.set) return;
     var D = v.set.dimension;
     var px = v.stripImage.data;
-    var a = v.accent255;
+    var c = v.axisRgb;
     for (var d = 0; d < D; d++) {
-      var e = ((F[d] * F[d] + F[D + d] * F[D + d] + F[2 * D + d] * F[2 * D + d]) * D) / 3;
+      var ax = F[d] * F[d];
+      var ay = F[D + d] * F[D + d];
+      var az = F[2 * D + d] * F[2 * D + d];
+      var sum = ax + ay + az;
+      var norm = sum > 0 ? sum : 1;
       var o = d * 4;
-      px[o] = a[0];
-      px[o + 1] = Math.max(0, a[1] - Math.min(60, e * 12));
-      px[o + 2] = a[2];
-      px[o + 3] = Math.min(255, e * 80);
+      px[o] = (c[0][0] * ax + c[1][0] * ay + c[2][0] * az) / norm;
+      px[o + 1] = (c[0][1] * ax + c[1][1] * ay + c[2][1] * az) / norm;
+      px[o + 2] = (c[0][2] * ax + c[1][2] * ay + c[2][2] * az) / norm;
+      px[o + 3] = Math.min(255, ((sum * D) / 3) * 80);
     }
     v.stripCtx.putImageData(v.stripImage, 0, 0);
   }
@@ -7951,6 +12331,7 @@ ET.viewer = (function () {
         v.drag.active = false;
         stage.style.cursor = "grab";
       }
+      if (e.type === "pointerup" && pt) focusClick(v, e, pt, pos(e));
       // Double tap (touch or pen) resets the zoom; a mouse uses dblclick.
       if (e.type === "pointerup" && pt && e.pointerType && e.pointerType !== "mouse") {
         var moved = Math.abs(e.clientX - pt.sx) + Math.abs(e.clientY - pt.sy);
@@ -8109,6 +12490,1217 @@ ET.viewer = (function () {
     }, 1000);
   }
 
+  // ---------- search ----------
+  //
+  // docs/search-interface.md, "Viewer (t8)". The viewer holds the searches shown, runs the
+  // host's embed and rerank callbacks (it never fetches anything itself), pumps the ranking,
+  // word-matching and facing-frame steppers inside the frame budget, hands the lit values to
+  // the renderer and the facing frame to the mode. One run (a setSearches call, a settings
+  // change or a re-run after an append) is in progress at a time; a newer run supersedes it,
+  // and every late callback answer or stepper result of a superseded run is dropped.
+
+  var SEARCH_MESSAGES = {
+    "no-embedder":
+      "Cannot embed the query: the host supplied no embed callback. Search among the loaded points still works.",
+    "embed-failed": "The embedder failed to answer. The earlier results are kept.",
+    "embed-timeout": "The embedder did not answer within {seconds} seconds. The earlier results are kept.",
+    "embed-malformed": "The embedder's answer was not a vector with a model id. The earlier results are kept.",
+    "rerank-failed": "The reranker failed to answer; the results stay in embedding order.",
+    "rerank-timeout": "The reranker did not answer within {seconds} seconds; the results stay in embedding order.",
+    "rerank-no-text": "A vector search with no label has no text to send to the reranker; it stays in embedding order.",
+    "too-many-searches": "At most 4 searches at once; {found} were given.",
+    "bad-search": "A search must be text, { text }, { vector, model } or { point }, given in an array.",
+    superseded: "A newer search replaced this one.",
+    destroyed: "This viewer has been destroyed.",
+  };
+  var FILTER_TIME = 0.35; // seconds: the reference's filterMix time constant
+  var CLICK_SLOP = 5; // px a Focus click may move between press and release
+  var CLICK_REACH = 16; // px from a point a Focus click may land
+
+  function searchRefusal(code, values) {
+    var tpl = Object.hasOwn(SEARCH_MESSAGES, code) ? SEARCH_MESSAGES[code] : null;
+    var message = tpl
+      ? tpl.replaceAll(/\{(\w+)\}/g, function (all, name) {
+          return values && Object.hasOwn(values, name) ? String(values[name]) : all;
+        })
+      : ET.search.format(code, values);
+    return { ok: false, code: code, message: message };
+  }
+
+  function plainRefusal(r) {
+    return { ok: false, code: r.code, message: r.message };
+  }
+
+  function isObj(x) {
+    return !!x && typeof x === "object";
+  }
+
+  function newSearchState(opts) {
+    var ms = Number(opts.searchTimeoutMs);
+    return {
+      embed: typeof opts.embed === "function" ? opts.embed : null,
+      rerank: typeof opts.rerank === "function" ? opts.rerank : null,
+      timeoutMs: ms > 0 ? ms : 15000,
+      settings: {
+        k: ET.search.clampK(opts.searchK),
+        candidates: ET.search.clampCandidates(opts.searchCandidates),
+        top: ET.search.clampTop(opts.searchTop, opts.searchCandidates),
+        lit: ET.searchSets.litSetting(opts.searchLit),
+        distances: false,
+        rerank: false,
+        pointOfView: null,
+        onlyResults: false,
+      },
+      run: null, // the run in progress
+      work: [], // steppers of the run in progress: { run, job, after }
+      shown: [], // the searches shown, in letter order
+      shownSet: null, // the set they were worked out on
+      shownUsed: null, // the settings they were worked out with: { k, candidates, top, pointOfView, rerank }
+      lit: null, // ET.searchSets.litValues of the searches shown
+      pairs: [],
+      unmatched: [],
+      code: null,
+      message: null,
+      facingJob: null, // { job, swing }
+      facingTarget: null, // the facing frame of the searches shown, once worked out
+      filter: 0, // eased toward 1 while a search is shown, toward 0 when none is
+      litUploaded: false,
+      hideUnlit: false, // Focus's Only results hides unlit points this frame
+      panel: null,
+    };
+  }
+
+  function isCurrent(v, run) {
+    return !v.destroyed && v.search.run === run;
+  }
+
+  // ----- timers and guarded callbacks -----
+
+  function clearRunTimers(v, run) {
+    var w = v.win;
+    for (var id of run.timers) if (typeof w?.clearTimeout === "function") w.clearTimeout(id);
+    run.timers = [];
+  }
+
+  // Call a host callback with exactly `args`. `done` gets { ok: true, value } or a refusal
+  // (<prefix>-failed, <prefix>-timeout), once, and only while the run is current: a late
+  // answer of a superseded run, or any answer after destroy, touches nothing.
+  function callHost(v, run, fn, args, prefix, done) {
+    var settled = false;
+    var timer = 0;
+    function finish(outcome) {
+      if (settled) return;
+      settled = true;
+      if (!isCurrent(v, run)) return;
+      if (timer) {
+        run.timers = run.timers.filter(function (t) {
+          return t !== timer;
+        });
+        v.win.clearTimeout(timer);
+      }
+      done(outcome);
+    }
+    var w = v.win;
+    if (typeof w?.setTimeout === "function" && typeof w.clearTimeout === "function") {
+      timer = w.setTimeout(function () {
+        finish(searchRefusal(prefix + "-timeout", { seconds: v.search.timeoutMs / 1000 }));
+      }, v.search.timeoutMs);
+      run.timers.push(timer);
+    }
+    var answer;
+    try {
+      answer = Promise.resolve(fn(...args));
+    } catch (err) {
+      // The host's error is the host's own: it may carry an address or a key, so it is
+      // not shown; the refusal says only that the callback failed.
+      finish(searchRefusal(prefix + "-failed"));
+      return;
+    }
+    answer.then(
+      function (value) {
+        finish({ ok: true, value: value });
+      },
+      function () {
+        finish(searchRefusal(prefix + "-failed"));
+      }
+    );
+  }
+
+  // ----- entries -----
+
+  // One entry of setSearches as a source: { ok: true, src } or a refusal. A text source
+  // says whether it is embedded or matched among the loaded points; a vector or point
+  // source is checked here (they need no callback).
+  function parseEntry(v, entry) {
+    if (typeof entry === "string") return textSource(v, entry, "auto");
+    if (!isObj(entry)) return searchRefusal("bad-search");
+    try {
+      if (typeof entry.text === "string") return textSource(v, entry.text, entry.via);
+      if (entry.vector !== undefined) return vectorSource(v, entry);
+      if (entry.point !== undefined) return pointSource(v, entry.point);
+    } catch {
+      // A getter on the host's entry threw: the entry is not one of the forms.
+      return searchRefusal("bad-search");
+    }
+    return searchRefusal("bad-search");
+  }
+
+  function textSource(v, text, via) {
+    if (ET.search.tokens(text).length === 0) return searchRefusal("empty-query");
+    var s = v.search;
+    var same = ET.search.checkSameSpace(v.set);
+    if (via === "words") return { ok: true, src: { kind: "words", text: text, note: null } };
+    if (via === "embed") {
+      if (!s.embed) return searchRefusal("no-embedder");
+      if (!same.ok) return plainRefusal(same);
+      return { ok: true, src: { kind: "embedded", text: text, note: null } };
+    }
+    if (s.embed && same.ok) return { ok: true, src: { kind: "embedded", text: text, note: null } };
+    var note = s.embed && same.code === "reduction-not-searchable" ? same.message : null;
+    return { ok: true, src: { kind: "words", text: text, note: note } };
+  }
+
+  function vectorSource(v, entry) {
+    var c = ET.search.checkQuery(v.set, { vector: entry.vector, model: entry.model });
+    if (!c.ok) return plainRefusal(c);
+    var label = typeof entry.label === "string" && entry.label !== "" ? entry.label : null;
+    return {
+      ok: true,
+      src: prepared("vector", label || "vector", entry.model, c.vector, { rerankText: label }),
+    };
+  }
+
+  function pointSource(v, id) {
+    var c = ET.search.pointQuery(v.set, id);
+    if (!c.ok) return plainRefusal(c);
+    return {
+      ok: true,
+      src: prepared("point", String(c.id), v.set.model, c.vector, {
+        point: c.id,
+        rerankText: ET.search.pointText(v.set, c.index),
+      }),
+    };
+  }
+
+  // A search whose query vector is known.
+  function prepared(kind, text, model, query, extra) {
+    var q = {
+      kind: kind,
+      text: text,
+      model: model,
+      queryForm: null,
+      sentTo: "nowhere",
+      words: null,
+      point: null,
+      baseNote: null,
+      query: query,
+      rerankText: null,
+      ready: true,
+    };
+    if (extra) for (var k in extra) if (Object.hasOwn(extra, k)) q[k] = extra[k];
+    return q;
+  }
+
+  // ----- runs -----
+
+  function newRun(v, kind, resolve, swing) {
+    return {
+      kind: kind, // "set" | "settings" | "rerun"
+      resolve: resolve,
+      swing: swing,
+      timers: [],
+      searches: [], // one slot per entry; null when left out
+      left: 0,
+      unmatched: [],
+      set: v.set,
+      used: null,
+      pendingEmbed: 0,
+      pendingRerank: 0,
+      pairs: null,
+    };
+  }
+
+  // End the run in progress (if any) with `result` for its caller.
+  function endRun(v, result) {
+    var s = v.search;
+    var run = s.run;
+    if (!run) return;
+    s.run = null;
+    s.work = [];
+    clearRunTimers(v, run);
+    if (run.resolve) run.resolve(result);
+  }
+
+  function beginRun(v, run) {
+    endRun(v, searchRefusal("superseded"));
+    v.search.run = run;
+  }
+
+  function refuseRun(v, run, refusal) {
+    if (!isCurrent(v, run)) return;
+    var s = v.search;
+    endRun(v, refusal);
+    s.code = refusal.code;
+    s.message = refusal.message;
+    call(v, v.options.onError, plainRefusal(refusal));
+    searchChanged(v);
+    // A refused new search leaves the earlier ones; if they were waiting to be worked out
+    // again (an append, a settings change), that starts now. A refused re-run is not retried.
+    if (run.kind === "set" && needsRerun(v)) rerun(v, "rerun", null);
+  }
+
+  function setSearches(v, list) {
+    if (v.destroyed) return Promise.resolve(searchRefusal("destroyed"));
+    if (!Array.isArray(list)) return Promise.resolve(searchRefusal("bad-search"));
+    if (list.length > ET.searchSets.MAX_SEARCHES) {
+      return Promise.resolve(searchRefusal("too-many-searches", { found: list.length }));
+    }
+    if (list.length === 0) {
+      clearSearches(v);
+      return Promise.resolve({ ok: true, search: searchInfo(v) });
+    }
+    return new Promise(function (resolve) {
+      var run = newRun(v, "set", resolve, true);
+      beginRun(v, run);
+      startSources(v, run, list);
+    });
+  }
+
+  function startSources(v, run, list) {
+    if (!v.set || v.set.count === 0) {
+      refuseRun(v, run, searchRefusal("no-data"));
+      return;
+    }
+    var sources = [];
+    for (var entry of list) {
+      var p = parseEntry(v, entry);
+      if (!p.ok) {
+        refuseRun(v, run, p);
+        return;
+      }
+      sources.push(p.src);
+    }
+    resolveSources(v, run, sources);
+    searchChanged(v); // waiting
+    invalidate(v);
+  }
+
+  // Turn every source into a prepared search: embed through the host, or match words in
+  // the frame budget; the others are ready already.
+  function resolveSources(v, run, sources) {
+    run.searches = new Array(sources.length).fill(null);
+    run.left = sources.length;
+    sources.forEach(function (src, i) {
+      if (src.ready) settleSource(v, run, i, { ok: true, search: src });
+      else if (src.kind === "embedded") embedSource(v, run, i, src);
+      else matchWords(v, run, i, src);
+    });
+  }
+
+  function settleSource(v, run, i, outcome) {
+    if (!isCurrent(v, run)) return;
+    if (!outcome.ok) {
+      refuseRun(v, run, outcome);
+      return;
+    }
+    run.searches[i] = outcome.search; // null: a words entry that matched nothing
+    run.left--;
+    if (run.left === 0) startRanking(v, run);
+  }
+
+  function embedSource(v, run, i, src) {
+    run.pendingEmbed++;
+    callHost(v, run, v.search.embed, [src.text], "embed", function (outcome) {
+      run.pendingEmbed--;
+      settleSource(v, run, i, outcome.ok ? checkEmbedded(v, src, outcome.value) : outcome);
+    });
+  }
+
+  // The embed callback's answer, checked before anything reaches the renderer.
+  function checkEmbedded(v, src, answer) {
+    var vector;
+    var model;
+    var form;
+    try {
+      if (!isObj(answer) || answer.vector === undefined) return searchRefusal("embed-malformed");
+      vector = answer.vector;
+      model = answer.model;
+      form = answer.queryForm;
+    } catch {
+      // A getter on the answer threw: not a vector with a model id.
+      return searchRefusal("embed-malformed");
+    }
+    var c = ET.search.checkQuery(v.set, { vector: vector, model: model });
+    if (!c.ok) return plainRefusal(c);
+    return {
+      ok: true,
+      search: prepared("embedded", src.text, model, c.vector, {
+        queryForm: typeof form === "string" ? form : null,
+        sentTo: "embedder",
+        rerankText: src.text,
+      }),
+    };
+  }
+
+  function matchWords(v, run, i, src) {
+    queueWork(v, run, ET.search.makeWordQuery(v.set, src.text), function (r) {
+      settleSource(v, run, i, wordOutcome(v, run, src, r));
+    });
+  }
+
+  function wordOutcome(v, run, src, r) {
+    for (var w of r.unmatched || []) if (!run.unmatched.includes(w)) run.unmatched.push(w);
+    if (!r.ok) return r.code === "words-none" ? { ok: true, search: null } : plainRefusal(r);
+    return {
+      ok: true,
+      search: prepared("words", src.text, v.set.model, r.vector, {
+        words: { used: r.used.map(copyUsed), unmatched: r.unmatched.slice() },
+        baseNote: src.note,
+        rerankText: src.text,
+      }),
+    };
+  }
+
+  function copyUsed(u) {
+    return { word: u.word, how: u.how, count: u.count };
+  }
+
+  function queueWork(v, run, job, after) {
+    v.search.work.push({ run: run, job: job, after: after });
+    invalidate(v);
+  }
+
+  // ----- ranking and reranking -----
+
+  function startRanking(v, run) {
+    var kept = run.searches.filter(Boolean);
+    if (kept.length === 0) {
+      refuseRun(v, run, searchRefusal("words-none", { words: run.unmatched.join(", ") }));
+      return;
+    }
+    var st = v.search.settings;
+    var pov = ET.searchSets.LETTERS.indexOf(st.pointOfView);
+    run.searches = kept;
+    run.set = v.set;
+    run.used = {
+      k: st.k,
+      candidates: st.candidates,
+      top: st.top,
+      pointOfView: pov >= 0 && pov < kept.length ? st.pointOfView : null,
+      rerank: st.rerank,
+    };
+    var counts = { k: st.k, candidates: st.candidates, top: st.top };
+    run.left = kept.length;
+    kept.forEach(function (q, j) {
+      q.letter = ET.searchSets.letter(j);
+      q.scale = run.used.pointOfView === q.letter ? ET.searchSets.scaleFor(q.query) : null;
+      q.reranker = null;
+      q.sent = 0;
+      q.note = q.baseNote;
+      queueWork(v, run, ET.search.makeRank(run.set, q.query, { ...counts, scale: q.scale }), function (ranking) {
+        q.ranking = ranking;
+        q.view = ranking;
+        run.left--;
+        if (run.left === 0) startRerank(v, run);
+      });
+    });
+  }
+
+  function rerankOn(v, run) {
+    return !!(run.used.rerank && v.search.rerank && run.set.text_included);
+  }
+
+  function startRerank(v, run) {
+    if (!rerankOn(v, run)) {
+      startPairs(v, run);
+      return;
+    }
+    run.left = run.searches.length;
+    run.searches.forEach(function (q) {
+      if (q.rerankText === null) {
+        q.note = searchRefusal("rerank-no-text").message;
+        rerankDone(v, run);
+        return;
+      }
+      var candidates = q.ranking.pool.map(function (hit) {
+        return ET.search.pointText(run.set, hit.index);
+      });
+      q.sent = candidates.length; // never more than the candidates stated
+      run.pendingRerank++;
+      callHost(v, run, v.search.rerank, [q.rerankText, candidates], "rerank", function (outcome) {
+        run.pendingRerank--;
+        applyRerank(q, outcome);
+        rerankDone(v, run);
+      });
+    });
+  }
+
+  function rerankDone(v, run) {
+    run.left--;
+    if (run.left === 0) startPairs(v, run);
+  }
+
+  // The pair reports, in the frame budget (with 100 results a search they cost far more than a
+  // frame), then the run is shown.
+  function startPairs(v, run) {
+    if (!isCurrent(v, run)) return;
+    var job;
+    try {
+      job = ET.searchSets.makePairReports(
+        run.set,
+        run.searches.map(function (q) {
+          return q.view;
+        })
+      );
+    } catch (err) {
+      // Rankings always index the set they were made on; nothing to pair otherwise.
+      job = null;
+    }
+    if (!job) {
+      run.pairs = [];
+      commitRun(v, run);
+      return;
+    }
+    queueWork(v, run, job, function (pairs) {
+      run.pairs = pairs;
+      commitRun(v, run);
+    });
+  }
+
+  // A reranker's answer: the new order, or a note and the embedding order kept.
+  function applyRerank(q, outcome) {
+    if (!outcome.ok) {
+      q.note = outcome.message;
+      return;
+    }
+    var scores;
+    var model;
+    try {
+      scores = isObj(outcome.value) ? outcome.value.scores : undefined;
+      model = isObj(outcome.value) ? outcome.value.model : undefined;
+    } catch {
+      // A getter on the answer threw: treated as a malformed answer below.
+      scores = undefined;
+    }
+    var r = typeof model === "string" && model !== "" ? ET.search.rerankOrder(q.ranking, scores) : null;
+    if (!r?.ok) {
+      q.note = r ? r.message : ET.search.format("rerank-malformed");
+      return;
+    }
+    q.view = { ...q.ranking, hits: r.hits, near: r.near, radius: r.radius };
+    q.reranker = model;
+  }
+
+  // ----- what is shown -----
+
+  function views(s) {
+    return s.shown.map(function (q) {
+      return q.view;
+    });
+  }
+
+  function commitRun(v, run) {
+    if (!isCurrent(v, run)) return;
+    var s = v.search;
+    s.run = null;
+    s.work = [];
+    clearRunTimers(v, run);
+    s.shown = run.searches;
+    s.shownSet = run.set;
+    s.shownUsed = run.used;
+    if (run.kind === "set") s.unmatched = run.unmatched.slice();
+    s.code = null;
+    s.message = null;
+    if (run.kind === "set" && run.used.pointOfView === null) s.settings.pointOfView = null;
+    relight(v);
+    s.pairs = run.pairs || [];
+    startFacing(v, run.swing);
+    notifyModeSearch(v);
+    if (run.resolve) run.resolve({ ok: true, search: searchInfo(v) });
+    searchChanged(v);
+    if (needsRerun(v)) rerun(v, "rerun", null);
+    invalidate(v);
+  }
+
+  // The searches shown are from before an append, or were worked out with settings that
+  // have changed since: they need working out again (with no swing).
+  function needsRerun(v) {
+    var s = v.search;
+    if (!s.shown.length || !v.set) return false;
+    var u = s.shownUsed;
+    var st = s.settings;
+    return s.shownSet !== v.set || countsChanged(u, st) || u.pointOfView !== st.pointOfView || u.rerank !== st.rerank;
+  }
+
+  function countsChanged(a, b) {
+    return a.k !== b.k || a.candidates !== b.candidates || a.top !== b.top;
+  }
+
+  // Work the searches shown out again from the query vectors held (word searches match
+  // their words again over the set now shown). No embed call, no swing.
+  function rerun(v, kind, resolve) {
+    var s = v.search;
+    var run = newRun(v, kind, resolve, false);
+    var sources = s.shown.map(function (q) {
+      if (q.kind === "words") return { kind: "words", text: q.text, note: q.baseNote };
+      return prepared(q.kind, q.text, q.model, q.query, {
+        queryForm: q.queryForm,
+        sentTo: q.sentTo,
+        point: q.point,
+        baseNote: q.baseNote,
+        rerankText: q.rerankText,
+      });
+    });
+    beginRun(v, run);
+    resolveSources(v, run, sources);
+    searchChanged(v);
+    invalidate(v);
+  }
+
+  // Lit values for the searches shown, and their upload to the renderer.
+  function relight(v) {
+    var s = v.search;
+    s.lit = s.shown.length ? ET.searchSets.litValues(views(s), v.set.count, s.settings.lit) : null;
+    uploadLit(v);
+  }
+
+  function uploadLit(v) {
+    var s = v.search;
+    var r = v.renderer;
+    if (!r || !s.lit) return;
+    var n = r.status().count;
+    var lit = new Float32Array(n);
+    var shared = new Uint8Array(n);
+    lit.set(s.lit.lit.subarray(0, Math.min(n, s.lit.lit.length)));
+    shared.set(s.lit.shared.subarray(0, Math.min(n, s.lit.shared.length)));
+    try {
+      r.setLit(lit, shared);
+      s.litUploaded = true;
+    } catch {
+      // The renderer holds no data yet: the lit values go up with the next commit.
+      s.litUploaded = false;
+    }
+  }
+
+  function dropLit(v) {
+    var s = v.search;
+    if (!s.litUploaded) return;
+    s.litUploaded = false;
+    try {
+      v.renderer?.setLit(null);
+    } catch (err) {
+      // A disposed renderer has nothing left to clear.
+    }
+  }
+
+  // Ease the filter toward 1 while a search is shown and toward 0 when none is; the lit
+  // values are cleared from the renderer once it reaches 0.
+  function easeFilter(v, dt) {
+    var s = v.search;
+    var target = s.shown.length ? 1 : 0;
+    if (s.filter === target) return;
+    s.filter += (target - s.filter) * (1 - Math.exp(-dt / FILTER_TIME));
+    if (Math.abs(target - s.filter) < 1e-3) s.filter = target;
+    if (s.filter === 0) dropLit(v);
+  }
+
+  function searchBusy(v) {
+    var s = v.search;
+    return s.work.length > 0 || !!s.facingJob || s.filter !== (s.shown.length ? 1 : 0);
+  }
+
+  // The search steppers, after the mode's own preparation, in what is left of the budget.
+  function pumpSearch(v, start, budget) {
+    var s = v.search;
+    while (s.work.length) {
+      var left = budget - (now(v) - start);
+      if (left <= 0) return;
+      var item = s.work[0];
+      if (!stepWork(v, item, left)) return;
+    }
+    if (s.facingJob && budget - (now(v) - start) > 0) pumpFacing(v, budget - (now(v) - start));
+  }
+
+  // One step of the first queued stepper; true when it finished (and was handed on).
+  function stepWork(v, item, left) {
+    try {
+      item.job.step(left);
+    } catch (err) {
+      refuseRun(v, item.run, { ok: false, code: "internal", message: "Internal error while searching: " + errorText(err, String(err)) });
+      return false;
+    }
+    if (!item.job.done) return false;
+    v.search.work.shift();
+    item.after(item.job.result);
+    return true;
+  }
+
+  // ----- the facing frame and the modes -----
+
+  function startFacing(v, swing) {
+    var s = v.search;
+    s.facingJob = null;
+    s.facingTarget = null;
+    var pov = s.shown.find(function (q) {
+      return q.scale;
+    });
+    var cur = v.last?.frame;
+    try {
+      var job = ET.searchSets.makeFacingFrame(
+        v.set,
+        s.shown.map(function (q) {
+          return { query: q.query, hits: q.view.hits };
+        }),
+        {
+          seed: v.seed,
+          current: cur?.length === 3 * v.set.dimension ? new Float32Array(cur) : null,
+          scale: pov ? pov.scale : null,
+        }
+      );
+      s.facingJob = { job: job, swing: swing };
+    } catch {
+      // Fewer than three dimensions: there is no facing frame to swing to.
+      s.facingJob = null;
+    }
+  }
+
+  function pumpFacing(v, left) {
+    var s = v.search;
+    var f = s.facingJob;
+    try {
+      f.job.step(left);
+    } catch (err) {
+      // A facing frame that cannot be worked out leaves the view as it is.
+      s.facingJob = null;
+      return;
+    }
+    if (!f.job.done) return;
+    s.facingJob = null;
+    s.facingTarget = f.job.result;
+    if (f.swing) faceNow(v);
+  }
+
+  // Ask the current mode to swing toward the facing frame. False when it has no face
+  // member, refuses, or throws.
+  function faceNow(v) {
+    var s = v.search;
+    var m = v.mode;
+    if (!m || !s.facingTarget || typeof m.inst.face !== "function") return false;
+    var took = false;
+    try {
+      took = m.inst.face(s.facingTarget, m.clock, { searches: s.shown.length }) === true;
+    } catch (err) {
+      // A host mode whose face throws keeps its own motion.
+      took = false;
+    }
+    if (took) {
+      searchChanged(v);
+      invalidate(v);
+    }
+    return took;
+  }
+
+  function endSwing(v) {
+    var m = v.mode;
+    if (!m || typeof m.inst.face !== "function") return;
+    try {
+      m.inst.face(null, m.clock);
+    } catch (err) {
+      // nothing to end
+    }
+  }
+
+  // What Focus is told about the searches (inst.searchChanged), or null.
+  function modeSearch(v) {
+    var s = v.search;
+    if (!s.shown.length) return null;
+    var pov = s.shown.find(function (q) {
+      return q.scale;
+    });
+    return {
+      searches: s.shown.map(function (q) {
+        return {
+          letter: q.letter,
+          query: q.query,
+          indices: Int32Array.from(q.view.hits, function (hit) {
+            return hit.index;
+          }),
+        };
+      }),
+      scale: pov ? pov.scale : null,
+      onlyResults: !!s.settings.onlyResults,
+    };
+  }
+
+  // Tell a mode with a searchChanged member (Focus) about the searches. If it hands back a
+  // stepper (or { work: stepper }), it is pumped with the mode's own preparation.
+  function notifyModeSearch(v) {
+    var m = v.mode;
+    if (!m || typeof m.inst.searchChanged !== "function") return;
+    var r;
+    try {
+      r = m.inst.searchChanged(modeSearch(v), m.clock);
+    } catch (err) {
+      // A host mode whose searchChanged throws keeps its current view.
+      return;
+    }
+    var work = typeof r?.step === "function" ? r : r?.work;
+    if (typeof work?.step === "function") m.jobs.push(work);
+    invalidate(v);
+  }
+
+  function swinging(v) {
+    var m = v.mode;
+    if (!m || !v.search.shown.length || typeof m.inst.face !== "function") return false;
+    try {
+      var f = m.inst.describe()?.facing;
+      return !!f && m.clock < f.until;
+    } catch {
+      // A mode whose describe throws reports no swing.
+      return false;
+    }
+  }
+
+  // ----- clearing, settings, callbacks -----
+
+  function clearSearches(v) {
+    if (v.destroyed) return false;
+    var s = v.search;
+    var had = s.shown.length > 0 || !!s.run;
+    endRun(v, searchRefusal("superseded"));
+    var wasShown = s.shown.length > 0;
+    s.shown = [];
+    s.shownSet = null;
+    s.lit = null;
+    s.pairs = [];
+    s.unmatched = [];
+    s.code = null;
+    s.message = null;
+    s.facingJob = null;
+    s.facingTarget = null;
+    if (wasShown) {
+      endSwing(v);
+      notifyModeSearch(v);
+    }
+    if (had) searchChanged(v);
+    invalidate(v);
+    return had;
+  }
+
+  // A replace starts with no search (the renderer's setData already cleared its lit values).
+  function dropSearchesForReplace(v) {
+    var s = v.search;
+    var had = s.shown.length > 0 || !!s.run;
+    endRun(v, searchRefusal("superseded"));
+    s.shown = [];
+    s.shownSet = null;
+    s.lit = null;
+    s.pairs = [];
+    s.unmatched = [];
+    s.facingJob = null;
+    s.facingTarget = null;
+    s.filter = 0;
+    s.litUploaded = false;
+    if (had) searchChanged(v);
+  }
+
+  // After an append: the results are stale until worked out again, which starts now
+  // (unless a run is already working; its commit sees the new set and re-runs).
+  function searchesAfterAppend(v) {
+    var s = v.search;
+    if (!s.shown.length) return;
+    if (!s.run) rerun(v, "rerun", null);
+    else searchChanged(v);
+  }
+
+  // Apply a settings patch; returns which kinds of work it needs.
+  function applySettings(v, patch) {
+    var s = v.search;
+    var st = s.settings;
+    var before = { ...st };
+    applyCounts(st, patch);
+    if (ET.searchSets.LIT_SETTINGS.includes(patch.lit)) st.lit = patch.lit;
+    if (typeof patch.distances === "boolean") st.distances = patch.distances;
+    if (typeof patch.onlyResults === "boolean") st.onlyResults = patch.onlyResults;
+    if (typeof patch.rerank === "boolean") st.rerank = patch.rerank && rerankOffered(v);
+    if (Object.hasOwn(patch, "pointOfView") && validPointOfView(v, patch.pointOfView)) st.pointOfView = patch.pointOfView;
+    return {
+      rank: countsChanged(st, before) || st.pointOfView !== before.pointOfView || st.rerank !== before.rerank,
+      lit: st.lit !== before.lit,
+      only: st.onlyResults !== before.onlyResults,
+    };
+  }
+
+  // A count in a patch (a number, or a string holding one, as a range input gives), or null
+  // when absent or not a number: null, booleans and empty strings are ignored, not read as 0.
+  function patchCount(patch, key) {
+    var raw = Object.hasOwn(patch, key) ? patch[key] : null;
+    var text = typeof raw === "string" && raw.trim() !== "";
+    if (typeof raw !== "number" && !text) return null;
+    var n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // k, candidates and top from a patch; candidates first, so top is cut to the new candidates.
+  function applyCounts(st, patch) {
+    var k = patchCount(patch, "k");
+    var candidates = patchCount(patch, "candidates");
+    var top = patchCount(patch, "top");
+    if (k !== null) st.k = ET.search.clampK(k);
+    if (candidates !== null) st.candidates = ET.search.clampCandidates(candidates);
+    st.top = ET.search.clampTop(top === null ? st.top : top, st.candidates);
+  }
+
+  function validPointOfView(v, value) {
+    if (value === null) return true;
+    var j = ET.searchSets.LETTERS.indexOf(value);
+    return j >= 0 && j < v.search.shown.length;
+  }
+
+  function rerankOffered(v) {
+    return !!v.search.rerank && (!v.set || v.set.text_included === true);
+  }
+
+  function setSearchSettings(v, patch) {
+    if (v.destroyed) return Promise.resolve(searchRefusal("destroyed"));
+    var s = v.search;
+    var need = applySettings(v, isObj(patch) ? patch : {});
+    var running = s.run?.kind === "set";
+    if (need.rank && s.shown.length && !running) {
+      return new Promise(function (resolve) {
+        rerun(v, "settings", resolve);
+      });
+    }
+    if (need.lit && s.shown.length) relight(v);
+    if (need.only && s.shown.length) notifyModeSearch(v);
+    searchChanged(v);
+    invalidate(v);
+    return Promise.resolve({ ok: true, search: searchInfo(v) });
+  }
+
+  function setSearchCallbacks(v, cbs) {
+    var s = v.search;
+    if (!v.destroyed && isObj(cbs)) {
+      var removedEmbed = takeCallback(s, cbs, "embed");
+      var removedRerank = takeCallback(s, cbs, "rerank");
+      if (!s.rerank) s.settings.rerank = false;
+      var run = s.run;
+      if (run && ((removedEmbed && run.pendingEmbed > 0) || (removedRerank && run.pendingRerank > 0))) {
+        endRun(v, searchRefusal("superseded"));
+      }
+      searchChanged(v);
+      if (!s.run && needsRerun(v)) rerun(v, "rerun", null);
+    }
+    return { embedder: !!s.embed && !v.destroyed, reranker: !!s.rerank && !v.destroyed };
+  }
+
+  // Set s[key] from cbs[key] (a function, or null to remove; anything else is ignored).
+  // Returns true when a callback was removed or replaced.
+  function takeCallback(s, cbs, key) {
+    if (!Object.hasOwn(cbs, key)) return false;
+    var value = cbs[key];
+    if (value !== null && typeof value !== "function") return false;
+    var replaced = !!s[key] && s[key] !== value;
+    s[key] = value;
+    return replaced;
+  }
+
+  function faceSearches(v) {
+    if (v.destroyed || !v.search.shown.length) return false;
+    return faceNow(v);
+  }
+
+  // ----- info().search -----
+
+  function searchInfo(v) {
+    var s = v.search;
+    var set = v.set;
+    var same = ET.search.checkSameSpace(set);
+    var stale = !!(s.shownSet && set && s.shownSet !== set);
+    return {
+      active: s.shown.length > 0,
+      waiting: !!s.run,
+      stale: stale,
+      staleBy: stale ? set.count - s.shownSet.count : 0,
+      code: s.code,
+      message: s.message,
+      measure: ET.search.MEASURE_TEXT,
+      settings: { ...s.settings },
+      embedder: { available: !!s.embed },
+      reranker: { available: !!s.rerank, offered: !!s.rerank && !!set && set.text_included === true },
+      sameSpace: { ok: same.ok, kind: sameSpaceKind(set, same) },
+      litCount: s.lit ? s.lit.litCount : 0,
+      sharedCount: s.lit ? s.lit.sharedCount : 0,
+      unmatched: s.unmatched.slice(),
+      facing: swinging(v),
+      faceable: typeof v.mode?.inst.face === "function",
+      searches: s.shown.map(function (q, j) {
+        return searchEntryInfo(v, q, j);
+      }),
+      pairs: s.pairs.map(function (p) {
+        return pairInfo(v, p);
+      }),
+    };
+  }
+
+  function sameSpaceKind(set, same) {
+    if (!same.ok) return same.kind || null;
+    return set.reduction ? set.reduction.kind : "none";
+  }
+
+  function searchEntryInfo(v, q, j) {
+    var s = v.search;
+    var view = q.view;
+    return {
+      letter: q.letter,
+      kind: q.kind,
+      text: q.text,
+      model: q.model,
+      queryForm: q.queryForm,
+      sentTo: q.sentTo,
+      reranker: q.reranker,
+      words: q.words ? { used: q.words.used.map(copyUsed), unmatched: q.words.unmatched.slice() } : null,
+      point: q.kind === "point" ? q.point : null,
+      pointOfView: !!q.scale,
+      k: view.k,
+      candidates: view.candidates,
+      top: view.top,
+      available: availableOf(view),
+      sent: q.sent || 0,
+      counts: countsNote(q, view),
+      note: q.note,
+      radius: view.radius,
+      insideCount: s.lit ? s.lit.insideCounts[j] : 0,
+      results: view.hits.map(function (hit) {
+        return resultInfo(v, hit);
+      }),
+    };
+  }
+
+  // How many points could be results of a ranking: the named ones, or all when none is named.
+  function availableOf(ranking) {
+    return ranking.named > 0 ? ranking.named : ranking.count;
+  }
+
+  // Says so when a number asked for is more than there is to give, or null.
+  function countsNote(q, view) {
+    var available = availableOf(view);
+    var what = available + (view.named > 0 ? " named points" : " points");
+    if (q.reranker) {
+      if (view.candidates <= available) return null;
+      return "Only " + what + " can be results, so the reranker was given " + available + " candidates, not " + view.candidates + ".";
+    }
+    if (view.k <= available) return null;
+    return "Only " + what + " can be results, so " + available + " are shown, not " + view.k + ".";
+  }
+
+  function resultInfo(v, hit) {
+    var set = v.set || v.search.shownSet;
+    return {
+      id: hit.id,
+      index: hit.index,
+      rank: hit.rank,
+      embeddingRank: hit.embeddingRank,
+      plainRank: hit.plainRank,
+      distance: hit.distance,
+      plainDistance: hit.plainDistance,
+      gap: hit.gap,
+      moved: hit.moved,
+      score: hit.score,
+      text: ET.search.pointText(set, hit.index),
+    };
+  }
+
+  function pairInfo(v, p) {
+    var ids = (v.set || v.search.shownSet).ids;
+    var L = ET.searchSets.letter;
+    return {
+      a: L(p.a),
+      b: L(p.b),
+      shared: p.shared,
+      common: p.common,
+      commonIds: Array.from(p.commonIndices, function (i) {
+        return ids[i];
+      }),
+      closest: p.closest ? { a: ids[p.closest.a], b: ids[p.closest.b], distance: p.closest.distance } : null,
+    };
+  }
+
+  // The searches changed: tell the panel and the host.
+  function searchChanged(v) {
+    if (v.destroyed) return;
+    var s = v.search;
+    var snapshot = null;
+    if (s.panel && typeof s.panel.update === "function") {
+      snapshot = searchInfo(v);
+      try {
+        s.panel.update(snapshot);
+      } catch (err) {
+        reportHostError(v, err);
+      }
+    }
+    if (typeof v.options.onSearchChange === "function") call(v, v.options.onSearchChange, snapshot || searchInfo(v));
+  }
+
+  function destroySearch(v) {
+    var s = v.search;
+    var panel = s.panel;
+    s.panel = null;
+    if (typeof panel?.destroy === "function") {
+      try {
+        panel.destroy();
+      } catch (err) {
+        reportHostError(v, err);
+      }
+    }
+    s.work = [];
+    s.facingJob = null;
+    s.facingTarget = null;
+    s.shown = [];
+    s.shownSet = null;
+    s.lit = null;
+    s.pairs = [];
+    s.litUploaded = false;
+    s.filter = 0;
+  }
+
+  // ----- hidden points (Focus's Only results) -----
+
+  // Whether unlit points are hidden this frame: Focus with Only results on (its
+  // describe().onlyResults), lit values set and the filter on. Worked out once per frame.
+  function hidesUnlit(v) {
+    var m = v.mode;
+    if (v.modeId !== "focus" || !m || !v.search.lit || v.search.filter <= 0) return false;
+    try {
+      return m.inst.describe()?.onlyResults === true;
+    } catch (err) {
+      // A mode whose describe throws hides nothing.
+      return false;
+    }
+  }
+
+  // True when point i is hidden this frame (its lit value is 0 while unlit points are
+  // hidden). Hidden points are skipped when hit-testing and labelling.
+  function hiddenPoint(v, i) {
+    var lit = v.search.lit;
+    if (!v.search.hideUnlit || !lit) return false;
+    return lit.lit[i] <= 0; // lit values are finite, in [0, 1]
+  }
+
+  // ----- the panel hook (the panel itself is js/src/45-search-panel.js, task t9) -----
+
+  // Mount the search panel when the module is in the core file and the host did not turn it
+  // off. With no ET.searchPanel this does nothing.
+  function mountSearchPanel(v) {
+    if (!v.options.searchPanel || typeof ET.searchPanel?.mount !== "function") return;
+    var parts = {
+      panel: v.panel,
+      stage: v.stage,
+      overlay: v.overlay,
+      provenanceList: v.provList,
+      provenanceSummary: v.provSummary,
+    };
+    try {
+      v.search.panel =
+        ET.searchPanel.mount(parts, v.handle, {
+          document: v.doc,
+          light: !!v.theme?.light,
+          // The panel reads the theme it styles itself with, and the set for its suggestions
+          // and for where results sit on the stage (docs/search-interface.md, "Panel (t9)").
+          theme: function () {
+            return v.theme || null;
+          },
+          data: function () {
+            return v.set;
+          },
+        }) || null;
+    } catch (err) {
+      v.search.panel = null;
+      reportHostError(v, err);
+    }
+  }
+
+  // The panel's markers, links and result labels on the overlay, once per frame.
+  function drawSearchOverlay(v, s, ds) {
+    var panel = v.search.panel;
+    if (typeof panel?.drawOverlay !== "function") return;
+    var ctx = overlayContext(v);
+    if (!ctx) return;
+    try {
+      var drew = panel.drawOverlay(
+        ctx,
+        function (vector) {
+          return projectVector(v, vector, s, ds);
+        },
+        searchFrame(v)
+      );
+      if (drew !== false) v.overlayDirty = true;
+    } catch (err) {
+      reportHostError(v, err);
+    }
+  }
+
+  // What the panel needs to draw this frame beyond the projection: each shown search's raw
+  // query vector (in letter order), the filter, the pixel ratio, whether labels are on, the
+  // mode, and which points are hidden (Focus's Only results).
+  function searchFrame(v) {
+    return {
+      queries: v.search.shown.map(function (q) {
+        return q.query;
+      }),
+      filter: v.search.filter,
+      dpr: v.dpr,
+      light: !!v.theme?.light,
+      labels: v.showLabels,
+      mode: v.modeId,
+      hidden: function (i) {
+        return hiddenPoint(v, i);
+      },
+    };
+  }
+
+  // A vector of the data's dimension through the frame shown, in overlay pixels.
+  function projectVector(v, vector, s, ds) {
+    var D = v.set.dimension;
+    var F = s.frame;
+    var C = s.centre;
+    var a = 0;
+    var b = 0;
+    var c = 0;
+    for (var d = 0; d < D; d++) {
+      var x = vector[d] - C[d];
+      a += x * F[d];
+      b += x * F[D + d];
+      c += x * F[2 * D + d];
+    }
+    return ET.renderer.place([a, b, c], ds, v.W, v.H);
+  }
+
+  // ----- Focus: a click on a point searches from it -----
+
+  function focusClick(v, e, pt, at) {
+    if (v.modeId !== "focus" || !v.last || !v.lastDraw || !v.set) return;
+    if (Math.hypot(e.clientX - pt.sx, e.clientY - pt.sy) > CLICK_SLOP) return;
+    var i = nearestPoint(v, at.x * v.dpr, at.y * v.dpr, CLICK_REACH * v.dpr);
+    if (i >= 0) void setSearches(v, [{ point: v.set.ids[i] }]); // its answer is the view itself
+  }
+
+  // The index of the shown point nearest (x, y) in device pixels within reach, or -1.
+  function nearestPoint(v, x, y, reach) {
+    var best = -1;
+    var bd = reach * reach;
+    for (var i = 0; i < v.set.count; i++) {
+      if (hiddenPoint(v, i)) continue;
+      var p = project(v, i, v.last, v.lastDraw, v.tmp3);
+      var d2 = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+      if (d2 < bd) {
+        bd = d2;
+        best = i;
+      }
+    }
+    return best;
+  }
+
   // ---------- lifecycle ----------
 
   // Every option: the host's value where it gave one, the default otherwise.
@@ -8213,11 +13805,21 @@ ET.viewer = (function () {
         lastAppendMs: null,
         refits: 0,
         lastRefit: null,
+        budgetMs: null,
+        workMs: 0,
       },
       lastSpent: 0,
+      lastScript: 0, // the last frame's script time, drawing excluded (ms)
+      lastBudget: 0,
+      drawSpent: 0,
+      interval: 0, // smoothed time between animation frames (ms)
+      rafAt: null,
+      dprCap: null, // the lowered drawing-buffer ratio (adaptivePixelRatio), or null
+      slowSeconds: 0,
       lostTime: false,
       paintKey: null,
       themeKey: null,
+      search: newSearchState(opts),
     };
     v.timing.mountAt = now(v);
     v.tick = function (t) {
@@ -8238,6 +13840,7 @@ ET.viewer = (function () {
     wire(v);
     measure(v);
     v.handle = makeHandle(v);
+    mountSearchPanel(v);
     remember(el, v);
     invalidate(v);
     return v.handle;
@@ -8245,7 +13848,9 @@ ET.viewer = (function () {
 
   function destroy(v) {
     if (v.destroyed) return false;
+    endRun(v, searchRefusal("destroyed")); // waiting promises resolve with destroyed
     v.destroyed = true;
+    destroySearch(v);
     unschedule(v);
     if (v.retryTimer && typeof v.win?.clearTimeout === "function") v.win.clearTimeout(v.retryTimer);
     v.retryTimer = 0;
@@ -8292,7 +13897,7 @@ ET.viewer = (function () {
       speed: v.speed,
       zoom: v.userZoom,
       ready: readyOf(m),
-      preparing: !!(m && (!readyOf(m) || m.jobs.length || m.refit)),
+      preparing: preparingOf(m),
       broken: v.broken,
       count: v.set ? v.set.count : 0,
       dimension: v.set ? v.set.dimension : 0,
@@ -8301,6 +13906,8 @@ ET.viewer = (function () {
       animating: !!v.raf,
       frames: v.frames,
       fps: v.fps,
+      pixelRatio: v.dpr,
+      pixelRatioLowered: v.dprCap !== null,
       status: v.statusText,
       message: v.fatalMessage || v.noticeMessage || null,
       timing: {
@@ -8310,7 +13917,13 @@ ET.viewer = (function () {
         lastAppendMs: v.timing.lastAppendMs,
         refits: v.timing.refits,
         lastRefit: v.timing.lastRefit ? { ...v.timing.lastRefit } : null,
+        budgetMs: v.timing.budgetMs,
+        workMs: v.timing.workMs,
+        scriptMs: v.lastScript,
+        drawMs: v.drawSpent,
+        intervalMs: v.interval,
       },
+      search: searchInfo(v),
     };
   }
 
@@ -8347,8 +13960,11 @@ ET.viewer = (function () {
       seek: function (t) {
         var x = Number(t);
         if (!Number.isFinite(x) || x < 0) x = 0;
-        if (v.mode) v.mode.clock = x;
-        v.spin = x;
+        if (v.mode) {
+          v.mode.clock = x;
+          v.mode.seeked = true; // an exact frame is asked for: no spin while it prepares
+        }
+        v.spin = x * spinFactor(v.mode);
         v.needClear = true;
         invalidate(v);
         return v.mode ? v.mode.clock : 0;
@@ -8376,6 +13992,25 @@ ET.viewer = (function () {
       },
       info: function () {
         return info(v);
+      },
+      // Search (docs/search-interface.md, "Viewer (t8)").
+      setSearches: function (list) {
+        return setSearches(v, list);
+      },
+      clearSearches: function () {
+        return clearSearches(v);
+      },
+      setSearchSettings: function (patch) {
+        return setSearchSettings(v, patch);
+      },
+      searchSettings: function () {
+        return { ...v.search.settings };
+      },
+      faceSearches: function () {
+        return faceSearches(v);
+      },
+      setSearchCallbacks: function (cbs) {
+        return setSearchCallbacks(v, cbs);
       },
     };
     Object.defineProperty(h, "_viewer", { value: v, enumerable: false });
