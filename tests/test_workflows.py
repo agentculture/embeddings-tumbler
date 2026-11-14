@@ -126,11 +126,46 @@ def test_byte_identity_check_gates_every_publish_job():
     for name in ("test-publish", "publish-npm", "publish"):
         assert "verify-packages" in jobs[name]["needs"], name
         assert "test" in jobs[name]["needs"], name
-    # Each production publish job re-checks the very file it uploads, first.
+    # Each production publish job re-checks the very files it uploads, first,
+    # and uploads exactly the paths the check printed (no globbing).
     npm = jobs["publish-npm"]
-    assert _step_index(npm, r"check_packages\.py") < _step_index(npm, r"npm publish")
+    build = _step_index(npm, r"check_packages\.py --out-dir \S+ --github-output")
+    assert npm["steps"][build]["id"] == "build"
+    assert build < _step_index(npm, r"npm publish")
+    publish_step = npm["steps"][_step_index(npm, r"npm publish")]
+    assert publish_step["env"] == {"TARBALL": "${{ steps.build.outputs.tarball }}"}
     pypi = jobs["publish"]
-    assert _step_index(pypi, r"check_packages\.py --wheel dist/") < _step_index(pypi, r"uv publish")
+    build = _step_index(pypi, r"check_packages\.py --out-dir \S+ --github-output")
+    assert pypi["steps"][build]["id"] == "build"
+    upload = _step_index(pypi, r"uv publish")
+    assert build < upload
+    assert pypi["steps"][upload]["run"].rstrip().endswith('"$WHEEL" "$SDIST"')
+    assert pypi["steps"][upload]["env"] == {
+        "WHEEL": "${{ steps.build.outputs.wheel }}",
+        "SDIST": "${{ steps.build.outputs.sdist }}",
+    }
+
+
+def test_no_step_globs_or_ls_for_package_paths():
+    for path in FILES:
+        text = path.read_text(encoding="utf-8")
+        assert "$(ls" not in text, path.name
+        assert not re.search(r"dist[\w-]*/\*\.(?:whl|tgz|tar\.gz)", text), path.name
+
+
+def test_npm_already_published_is_decided_by_the_fail_closed_script():
+    job = _load("publish.yml")["jobs"]["publish-npm"]
+    steps = job["steps"]
+    state = _step_index(job, r"scripts/npm_release_state\.py")
+    assert steps[state]["id"] == "npm"
+    assert "|| true" not in steps[state]["run"] and "2>/dev/null" not in steps[state]["run"]
+    compare = steps[_step_index(job, r"--registry-tarball")]
+    publish = steps[_step_index(job, r"npm publish")]
+    assert compare["if"] == "steps.npm.outputs.state == 'present'"
+    assert publish["if"] == "steps.npm.outputs.state == 'absent'"
+    assert state < _step_index(job, r"--registry-tarball")
+    assert state < _step_index(job, r"npm publish")
+    assert "npm view" not in _run_text(job), "npm view lives in the tested script only"
 
 
 def test_npm_publishes_first_and_pypi_waits_for_it():
@@ -149,10 +184,12 @@ def test_npm_job_uses_trusted_publishing_only():
     assert re.search(r"npm install -g npm@11\.(\d+)\.\d+", run)
     minor = int(re.search(r"npm@11\.(\d+)\.(\d+)", run).group(1))
     assert minor >= 6 or (minor == 5 and "npm@11.5.1" in run), "trusted publishing needs >= 11.5.1"
-    # No credential is handed to npm: no env blocks, no registry-url .npmrc.
+    # No credential is handed to npm: env only carries earlier steps' outputs,
+    # and no registry-url .npmrc.
     assert "env" not in job
     for step in job["steps"]:
-        assert "env" not in step
+        for value in (step.get("env") or {}).values():
+            assert re.fullmatch(r"\$\{\{ steps\.\w+\.outputs\.\w+ \}\}", value), value
         assert "registry-url" not in (step.get("with") or {})
         assert "token" not in step.get("run", "").lower().replace("id-token", "")
 
@@ -171,6 +208,8 @@ def test_existing_pypi_guards_are_kept():
     assert prod["if"] == "github.event_name == 'push'"
     assert prod["environment"] == "pypi"
     assert "uv publish --trusted-publishing always" in _run_text(prod)
+    # Both the wheel and the sdist go to PyPI, as before t13; both are checked.
+    assert '"$WHEEL" "$SDIST"' in _run_text(prod)
 
 
 # ---------------------------------------------------------------------------
@@ -192,3 +231,83 @@ def test_test_job_runs_node_and_every_generated_file_check():
     names = [step.get("name") for step in doc["jobs"]["test"]["steps"]]
     assert "SonarCloud Scan" in names
     assert {"lint", "harness-smoke", "version-check"} <= set(doc["jobs"])
+
+
+# ---------------------------------------------------------------------------
+# Shell robustness in every run: step
+# ---------------------------------------------------------------------------
+
+
+def _steps(path: Path):
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for job_name, job in doc["jobs"].items():
+        for step in job.get("steps", []):
+            if "run" in step:
+                yield f"{path.name}:{job_name}:{step.get('name', step['run'][:40])}", step
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.name)
+def test_every_workflow_runs_steps_under_explicit_bash(path: Path):
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert doc.get("defaults", {}).get("run", {}).get("shell") == "bash", path.name
+    for label, step in _steps(path):
+        assert step.get("shell", "bash") == "bash", label
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.name)
+def test_multi_line_steps_start_with_strict_mode(path: Path):
+    for label, step in _steps(path):
+        lines = [ln for ln in step["run"].strip().splitlines() if ln.strip()]
+        if len(lines) > 1:
+            assert lines[0].strip() == "set -euo pipefail", label
+
+
+def _unquoted_expansions(script: str) -> list[str]:
+    """$VAR / ${VAR} references outside double quotes.
+
+    Single quotes and ${{ }} expressions are skipped. A $( ) substitution opens
+    a fresh quoting context (as in bash), so "$(cmd "$X")" counts $X as quoted.
+    """
+    script = re.sub(r"\$\{\{.*?\}\}", "X", script)
+    script = "\n".join(ln for ln in script.splitlines() if not ln.strip().startswith("#"))
+    found, stack, i = [], ["top"], 0
+    while i < len(script):
+        ch = script[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'" and stack[-1] != "dq":
+            end = script.find("'", i + 1)
+            i = len(script) if end == -1 else end + 1
+            continue
+        if script.startswith("$(", i):
+            stack.append("cmd")
+            i += 2
+            continue
+        if ch == ")" and stack[-1] == "cmd":
+            stack.pop()
+        elif ch == '"':
+            if stack[-1] == "dq":
+                stack.pop()
+            else:
+                stack.append("dq")
+        elif ch == "$" and stack[-1] != "dq":
+            match = re.match(r"\$\{?[A-Za-z_]\w*", script[i:])
+            if match:
+                found.append(match.group(0))
+        i += 1
+    return found
+
+
+def test_the_quoting_check_bites():
+    assert _unquoted_expansions("tar -tzf $TARBALL") == ["$TARBALL"]
+    assert _unquoted_expansions('tar -tzf "$TARBALL"') == []
+    assert _unquoted_expansions("echo '$NOT_EXPANDED' ${{ github.sha }}") == []
+    assert _unquoted_expansions('V="$(cmd "$X")"') == []
+    assert _unquoted_expansions('V="$(cmd $X)"') == ["$X"]
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.name)
+def test_shell_variables_are_quoted(path: Path):
+    for label, step in _steps(path):
+        assert _unquoted_expansions(step["run"]) == [], label

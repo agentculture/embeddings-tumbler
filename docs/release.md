@@ -11,9 +11,25 @@ viewer:
 The six viewer files are `embeddings-tumbler.js` (the core file),
 `web-component.js`, `sample-data.js`, `index.html`, `page.css` and `page.js`.
 There is exactly one copy of each in the repository, under
-`embeddings_tumbler/static/`. The wheel takes them from there, and so does the
-npm tarball (`package.json`'s `files` field points into that folder). Nothing is
-copied at pack time.
+`embeddings_tumbler/static/`. The wheel and the sdist take them from there, and
+so does the npm tarball (`package.json`'s `files` field points into that
+folder). Nothing is copied at pack time.
+
+## What each artefact may carry
+
+`scripts/check_packages.py` builds all three artefacts (or takes given ones)
+and enforces this. The expected static set is the `embeddings_tumbler/static/`
+entries of `package.json`'s `files`.
+
+| Artefact | Uploaded to | Allowed contents |
+|----------|-------------|------------------|
+| npm tarball | npm | Exactly `package.json`, `README.md`, `LICENSE` and the expected static set. Anything else fails. |
+| wheel | PyPI | Its own `embeddings_tumbler-<version>.dist-info/`, `.py` modules of the `embeddings_tumbler` package, and exactly the expected static set (flat). Anything else fails, including `js/`, `tests/`, `docs/`, `.devague/` and dev pages. |
+| sdist | PyPI | A source distribution: the repository's tracked sources may travel in it (`js/src/`, `tests/`, `docs/` and so on; this is what hatchling's default sdist did before this work, and it is kept). Its `embeddings_tumbler/static/` must be exactly the expected set, and it must carry no `.npmrc`, `.pypirc` or `.env`. |
+
+In all three the static files, the core file first, must be byte-identical to
+the wheel's, and the core file's header version must equal `pyproject.toml`'s
+and `package.json`'s.
 
 Both registries are published from CI by **trusted publishing**: the workflow's
 own GitHub identity (OIDC) is exchanged for a short-lived upload credential. No
@@ -36,7 +52,7 @@ fails when any of them is out of step.
 | `CHANGELOG.md` top `## [x.y.z]` entry | the `version-bump` skill | `tests/test_packages.py` |
 | `package.json` `version` | `python3 scripts/sync_version.py` | `scripts/sync_version.py --check` (CI), `tests/test_packages.py`, `tests/test_assemble.py` |
 | core file header and `ET.version` | `python3 scripts/assemble.py` | `scripts/assemble.py --check` (CI), `tests/test_assemble.py` |
-| inside the two built packages | the build | `scripts/check_packages.py` |
+| inside the three built artefacts | the build | `scripts/check_packages.py` |
 
 The vendored `version-bump` skill predates `package.json` and is cited verbatim,
 so it is not edited. After a bump, run the two scripts yourself.
@@ -44,47 +60,64 @@ so it is not edited. After a bump, run the two scripts yourself.
 ## A normal release
 
 1. Make the change on a branch.
-2. Bump the version and carry it everywhere:
+2. Bump the version with the `version-bump` skill (it updates
+   `pyproject.toml` and `CHANGELOG.md`), then carry the new version into
+   `package.json` and the core file's header, and commit all four files:
 
    ```bash
-   # version-bump skill: pyproject.toml + CHANGELOG.md
    python3 .claude/skills/version-bump/scripts/bump.py patch < entries.json
-   python3 scripts/sync_version.py    # package.json
-   python3 scripts/assemble.py        # the core file's header
+   python3 scripts/sync_version.py && python3 scripts/assemble.py
+   git add pyproject.toml CHANGELOG.md package.json embeddings_tumbler/static/embeddings-tumbler.js
+   git commit -m "Bump version to x.y.z"
    ```
 
-3. Dry-run both packages locally. This builds the wheel (`uv build --wheel`)
-   and the npm tarball (`npm pack`) into a temporary folder, publishes nothing,
-   and prints `packages agree` or one `FAIL` line per problem:
+   Skipping the second line fails CI (`sync_version.py --check`,
+   `assemble.py --check` and the version tests).
+
+3. Dry-run all three artefacts locally. This builds the wheel and the sdist
+   (`uv build`) and the npm tarball (`npm pack`) into a temporary folder,
+   publishes nothing, and prints `packages agree` or one `FAIL` line per
+   problem:
 
    ```bash
    python3 scripts/check_packages.py
    ```
 
-4. Open the pull request. CI then runs:
+4. Open the pull request. **Opening a pull request from a branch of this
+   repository publishes a dev build (`x.y.z.devN`) to TestPyPI.** That is this
+   repository's existing behaviour, from before npm was added; pull requests
+   from forks skip it. Nothing reaches PyPI or npm proper until the merge. CI
+   runs:
    - `tests.yml`: pytest, `node --test`, the generated-file checks
      (`assemble.py`, `sync_sample.py`, `sync_static.py`, `sync_version.py`, each
      with `--check`), lint, the harness smoke check and the version-bump check;
-   - `packages.yml`: the dry-run build of **both** packages and
-     `scripts/check_packages.py`. It never publishes and asks for no OIDC token;
+   - `packages.yml`: the dry-run build of **both** packages (wheel, sdist and
+     npm tarball) and `scripts/check_packages.py`. It never publishes and asks
+     for no OIDC token;
    - `publish.yml` (pull request path, same-repository branches only): tests,
      `verify-packages` (the same build-and-compare), then a `.devN` build to
      **TestPyPI**. Nothing goes to npm from a pull request: npm has no test
      registry and a version can never be reused.
-5. Merge. `publish.yml` runs on the merge commit, in this order, every job on
-   the same commit:
+5. Merge. **Merging publishes for real, to npm first and then to PyPI; PyPI
+   waits for npm.** `publish.yml` runs on the merge commit, in this order,
+   every job on the same commit:
    1. `test`;
-   2. `verify-packages`: builds both packages and fails unless the core file and
-      the static files are byte-identical and every version agrees. Neither
-      registry is touched before this passes;
-   3. `publish-npm` (environment `npm`): rebuilds both, checks again, then runs
-      `npm publish <tarball> --provenance --access public` with npm 11.21.1 and
-      no token. If that version is already on npm (a re-run, or the one-time
-      bootstrap below), it downloads the registry copy, checks it against this
-      commit's wheel, and skips publishing;
-   4. `publish` (environment `pypi`): builds, checks the exact wheel it is about
-      to upload against a fresh npm tarball, then `uv publish
-      --trusted-publishing always`.
+   2. `verify-packages`: builds the wheel, the sdist and the npm tarball and
+      fails unless the core file and the static files are byte-identical and
+      every version agrees. Neither registry is touched before this passes;
+   3. `publish-npm` (environment `npm`): rebuilds all three and checks again
+      (`check_packages.py --github-output` hands the exact verified paths to
+      later steps; nothing is globbed). `scripts/npm_release_state.py` then asks
+      npm whether the version exists and answers `absent` or `present`; any
+      other answer (a network or registry error) fails the job and publishes
+      nothing. `absent`: `npm publish <tarball> --provenance --access public`
+      with npm 11.21.1 and no token. `present` (a re-run, or the one-time
+      bootstrap below): it downloads the registry copy and checks it against
+      this commit's wheel and sdist, failing if they differ, and publishes
+      nothing;
+   4. `publish` (environment `pypi`): builds the wheel and the sdist, checks
+      both against a fresh npm tarball, then uploads exactly those two files
+      with `uv publish --trusted-publishing always`.
 
    npm goes first because it is the newer channel and the likelier to fail; if
    it fails, nothing has been published. Both publish jobs can be re-run safely.
@@ -138,10 +171,11 @@ cd "$WORK/repo"
 git checkout "$SHA"
 git status --porcelain                 # must print nothing
 
-# 2. Build both packages and prove they agree. Must end "packages agree".
-python3 scripts/check_packages.py --out-dir "$WORK/dist"
-VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])")
-TARBALL="$WORK/dist/culture.dev-embeddings-tumbler-$VERSION.tgz"
+# 2. Build all three artefacts and prove they agree. Must end "packages agree".
+#    --github-output records the exact paths it built and checked.
+python3 scripts/check_packages.py --out-dir "$WORK/dist" --github-output "$WORK/paths"
+TARBALL="$(sed -n 's/^tarball=//p' "$WORK/paths")"
+echo "$TARBALL"
 
 # 3. Look at what will be published: exactly nine files, all under package/:
 #    package.json, README.md, LICENSE and embeddings_tumbler/static/<the six files>.
@@ -229,22 +263,38 @@ From a checkout of the release commit (so the script reads the right versions):
 
 ```bash
 VERSION=<x.y.z>
-D=$(mktemp -d)
-(cd "$D" && npm pack "@culture.dev/embeddings-tumbler@$VERSION")
-python3 -m pip download "embeddings-tumbler==$VERSION" --no-deps --only-binary=:all: -d "$D"
+D="$(mktemp -d)"
+# The wheel and the sdist exactly as PyPI serves them.
+python3 - "$VERSION" "$D" <<'PY'
+import json, sys, urllib.request
+version, dest = sys.argv[1], sys.argv[2]
+url = f"https://pypi.org/pypi/embeddings-tumbler/{version}/json"
+with urllib.request.urlopen(url) as response:
+    for item in json.load(response)["urls"]:
+        urllib.request.urlretrieve(item["url"], f"{dest}/{item['filename']}")
+        print(item["filename"])
+PY
+# Compare them with the npm registry copy (packed into a fresh folder).
 python3 scripts/check_packages.py \
   --wheel "$D/embeddings_tumbler-$VERSION-py3-none-any.whl" \
-  --tarball "$D/culture.dev-embeddings-tumbler-$VERSION.tgz"
+  --sdist "$D/embeddings_tumbler-$VERSION.tar.gz" \
+  --registry-tarball "@culture.dev/embeddings-tumbler@$VERSION" \
+  --out-dir "$D/npm"
 ```
 
-It must print `packages agree`. By hand, the two core files must have the same
+It must print `packages agree`. By hand, the core files must have the same
 hash and the same first line:
 
 ```bash
-unzip -p "$D"/embeddings_tumbler-*.whl embeddings_tumbler/static/embeddings-tumbler.js | sha256sum
-tar -xOzf "$D"/culture.dev-embeddings-tumbler-*.tgz package/embeddings_tumbler/static/embeddings-tumbler.js | sha256sum
-unzip -p "$D"/embeddings_tumbler-*.whl embeddings_tumbler/static/embeddings-tumbler.js | head -1
-tar -xOzf "$D"/culture.dev-embeddings-tumbler-*.tgz package/embeddings_tumbler/static/embeddings-tumbler.js | head -1
+WHEEL="$D/embeddings_tumbler-$VERSION-py3-none-any.whl"
+SDIST="$D/embeddings_tumbler-$VERSION.tar.gz"
+TGZ="$D/npm/culture.dev-embeddings-tumbler-$VERSION.tgz"
+CORE=embeddings_tumbler/static/embeddings-tumbler.js
+unzip -p "$WHEEL" "$CORE" | sha256sum
+tar -xOzf "$SDIST" "embeddings_tumbler-$VERSION/$CORE" | sha256sum
+tar -xOzf "$TGZ" "package/$CORE" | sha256sum
+unzip -p "$WHEEL" "$CORE" | head -1
+tar -xOzf "$TGZ" "package/$CORE" | head -1
 ```
 
 For a CI-published npm version, `npm view
@@ -260,6 +310,7 @@ and re-uploading.
 
 | What happened | What to do |
 |---------------|------------|
+| `publish-npm` failed at "is this version already on npm?" (npm or the network did not answer clearly) | Nothing is published. **Re-run failed jobs** once npm answers again. |
 | `publish-npm` failed before uploading | Nothing is published (PyPI waits for npm). Fix the cause, then **Re-run failed jobs**. |
 | `publish-npm` uploaded but the job still failed (for example a network error afterwards) | **Re-run failed jobs**. The npm job finds the version, checks the registry copy matches the commit, skips, and PyPI proceeds. |
 | npm succeeded, `publish` (PyPI) failed | **Re-run failed jobs**. `uv publish --check-url` skips files PyPI already has. |
@@ -275,9 +326,11 @@ GitHub Actions or to the repository's settings. In particular:
   its structure: pinned actions, permissions, job order, guards, no tokens.
   `actionlint` was not installed. Every shell step that does not need a
   registry was run locally: the generated-file checks, `node --test`, the
-  dry-run build and `check_packages.py`, the npm-version gate, and the
-  re-run branch's comparison (with a local tarball standing in for the
-  registry copy).
+  dry-run build and `check_packages.py` (wheel, sdist and tarball), the
+  npm-version gate, `npm_release_state.py` against the live registry (the
+  package is absent today), and the re-run branch's comparison (with a local
+  tarball standing in for the registry copy). The `--github-output` hand-off
+  between steps and `uv publish` with explicit file paths were not run.
 - **npm trusted publishing end to end**: the OIDC exchange, `npm publish
   <tarball> --provenance` from a tarball path, npm's match of `package.json`'s
   `repository` against the GitHub repository, and that `actions/setup-node`

@@ -9,8 +9,9 @@ name: Publish to PyPI and npm
 #   packages is in packages.yml and in verify-packages below.
 # Push to main: test -> verify-packages -> publish-npm -> publish (PyPI).
 #   Every job checks out the same commit (github.sha). The byte-identity check
-#   runs in verify-packages before either registry is touched, and again in
-#   each publish job on the exact file that job uploads.
+#   (wheel, sdist and npm tarball) runs in verify-packages before either
+#   registry is touched, and again in each publish job on the exact files that
+#   job uploads.
 #   npm goes first: it is the newer channel and the likelier to fail, and a
 #   failure there leaves nothing published. Both publish jobs are safe to
 #   re-run: PyPI skips files already uploaded (--check-url) and the npm job
@@ -29,6 +30,12 @@ on:
       - "pyproject.toml"
       - "package.json"
       - "embeddings_tumbler/**"
+
+# Every `run:` step uses bash with -e and -o pipefail (GitHub's explicit-bash
+# invocation); multi-line steps add `set -euo pipefail` themselves.
+defaults:
+  run:
+    shell: bash
 
 # Never run two publishes of the same ref at once; never cancel one midway.
 concurrency:
@@ -67,6 +74,7 @@ jobs:
 
       - name: install npm 11.21.1
         run: |
+          set -euo pipefail
           npm install -g npm@11.21.1
           npm --version
 
@@ -74,7 +82,7 @@ jobs:
 
       - run: uv python install 3.12
 
-      - name: build both packages and check they agree
+      - name: build the wheel, the sdist and the npm tarball and check they agree
         run: python3 scripts/check_packages.py --out-dir dist-packages
 
   test-publish:
@@ -98,21 +106,25 @@ jobs:
 
       - name: Set dev version
         run: |
-          BASE=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          set -euo pipefail
+          BASE="$(python3 scripts/project_version.py get)"
           DEV_VERSION="${BASE}.dev${{ github.run_number }}"
-          sed -i "s/^version = .*/version = \"${DEV_VERSION}\"/" pyproject.toml
+          # Rewrites only [project].version (a line-oriented `^version =` rewrite would also
+          # hit a [tool.*] table's version line).
+          python3 scripts/project_version.py set "${DEV_VERSION}"
           echo "DEV_VERSION=${DEV_VERSION}" >> "$GITHUB_ENV"
           echo "Publishing ${DEV_VERSION} to TestPyPI"
 
       - name: Build and publish to TestPyPI
         run: |
+          set -euo pipefail
           uv build
           uv publish --publish-url https://test.pypi.org/legacy/ --trusted-publishing always --check-url https://test.pypi.org/simple/
 
       - name: Print install commands
         if: always()
         run: |
-          echo "::notice::Test with: uv tool install --index-url https://test.pypi.org/simple/ --index-strategy unsafe-best-match embeddings-tumbler==${DEV_VERSION}"
+          echo "::notice::Test with: uv tool install --index-url https://test.pypi.org/simple/ --index-strategy unsafe-best-match embeddings-tumbler==${DEV_VERSION:-unknown}"
 
   publish-npm:
     if: github.event_name == 'push'
@@ -133,6 +145,7 @@ jobs:
 
       - name: install npm 11.21.1 (trusted publishing needs 11.5.1 or later)
         run: |
+          set -euo pipefail
           npm install -g npm@11.21.1
           node -e '
             const v = process.argv[1].split(".").map(Number);
@@ -145,26 +158,38 @@ jobs:
 
       - run: uv python install 3.12
 
-      - name: build both packages from this commit and check they agree
-        run: python3 scripts/check_packages.py --out-dir dist-packages
+      - name: build the wheel, the sdist and the npm tarball from this commit and check them
+        id: build
+        run: python3 scripts/check_packages.py --out-dir dist-packages --github-output "$GITHUB_OUTPUT"
+
+      # Prints `absent` or `present`; any other answer from npm (network or
+      # registry error, unreadable output) fails this step, so nothing publishes.
+      - name: is this version already on npm?
+        id: npm
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          STATE="$(python3 scripts/npm_release_state.py @culture.dev/embeddings-tumbler "$VERSION")"
+          echo "state=${STATE}" >> "$GITHUB_OUTPUT"
+          echo "spec=@culture.dev/embeddings-tumbler@${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "@culture.dev/embeddings-tumbler@${VERSION} is ${STATE} on npm"
+
+      # A re-run, or the one-time bootstrap publish, already made this version.
+      # Never publish over it (npm refuses; versions cannot be reused): prove
+      # the registry copy matches this commit, or fail.
+      - name: already on npm; check the registry copy matches this commit
+        if: steps.npm.outputs.state == 'present'
+        env:
+          WHEEL: ${{ steps.build.outputs.wheel }}
+          SDIST: ${{ steps.build.outputs.sdist }}
+          SPEC: ${{ steps.npm.outputs.spec }}
+        run: python3 scripts/check_packages.py --wheel "$WHEEL" --sdist "$SDIST" --registry-tarball "$SPEC" --out-dir published
 
       - name: publish to npm by trusted publishing
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          SPEC="@culture.dev/embeddings-tumbler@${VERSION}"
-          TARBALL=$(ls dist-packages/*.tgz)
-          PUBLISHED=$(npm view "$SPEC" version 2>/dev/null || true)
-          if [ "$PUBLISHED" = "$VERSION" ]; then
-            # A re-run, or the one-time bootstrap publish already made this
-            # version. Prove the registry copy matches this commit; never
-            # publish over it (npm refuses, and versions cannot be reused).
-            echo "::notice::$SPEC is already on npm; checking it matches this commit"
-            mkdir -p published
-            (cd published && npm pack "$SPEC" --ignore-scripts)
-            python3 scripts/check_packages.py --wheel dist-packages/*.whl --tarball published/*.tgz
-          else
-            npm publish "$TARBALL" --provenance --access public
-          fi
+        if: steps.npm.outputs.state == 'absent'
+        env:
+          TARBALL: ${{ steps.build.outputs.tarball }}
+        run: npm publish "$TARBALL" --provenance --access public
 
   publish:
     if: github.event_name == 'push'
@@ -189,11 +214,14 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Build
-        run: uv build
+      # Builds the wheel and the sdist (both go to PyPI, as before t13) plus an
+      # npm tarball, checks all three agree, and hands on the exact paths.
+      - name: Build the wheel and sdist and check them against the npm tarball
+        id: build
+        run: python3 scripts/check_packages.py --out-dir dist-pypi --github-output "$GITHUB_OUTPUT"
 
-      - name: Check the wheel about to be uploaded against the npm tarball
-        run: python3 scripts/check_packages.py --wheel dist/embeddings_tumbler-*-py3-none-any.whl
-
-      - name: Publish to PyPI
-        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/
+      - name: Publish the checked wheel and sdist to PyPI
+        env:
+          WHEEL: ${{ steps.build.outputs.wheel }}
+          SDIST: ${{ steps.build.outputs.sdist }}
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ "$WHEEL" "$SDIST"

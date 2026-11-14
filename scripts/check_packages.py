@@ -1,21 +1,30 @@
 #!/usr/bin/env python3
-"""Build the wheel and the npm tarball and prove they carry the same viewer files.
+"""Build the wheel, the sdist and the npm tarball and prove they carry the same viewer files.
 
-    python3 scripts/check_packages.py                   # build both into a temp dir, check
-    python3 scripts/check_packages.py --out-dir dist    # build both into dist/ and keep them
-    python3 scripts/check_packages.py --wheel W.whl     # check a given wheel (build the tarball)
-    python3 scripts/check_packages.py --wheel W.whl --tarball T.tgz   # check two given files
+    python3 scripts/check_packages.py                  # build all three into a temp dir, check
+    python3 scripts/check_packages.py --out-dir DIR    # build into DIR (new or empty) and keep them
+    python3 scripts/check_packages.py --wheel W --sdist S --tarball T   # check given files
+    python3 scripts/check_packages.py --wheel W --sdist S --registry-tarball PKG@X.Y.Z
+                                                       # compare with what npm already has
+    ... --github-output "$GITHUB_OUTPUT"               # on success, write wheel=, sdist=,
+                                                       # tarball= (absolute paths) for later steps
 
-Builds with ``uv build --wheel`` and ``npm pack``; publishes nothing. Fails (exit 1)
-unless all of these hold:
+Any artefact not given is built: ``uv build --wheel``, ``uv build --sdist``, ``npm pack``.
+Publishes nothing. The expected static set is the ``embeddings_tumbler/static/`` entries of
+package.json's ``files``. Fails (exit 1) unless all of these hold:
 
-- pyproject.toml's version equals package.json's;
-- the wheel's metadata version equals pyproject.toml's, and the tarball's
-  package.json version equals the repository's package.json;
-- the core file ``embeddings-tumbler.js`` is in both and byte-identical;
-- the version in each core file's header equals pyproject.toml's and package.json's;
-- both carry the same set of files under ``embeddings_tumbler/static/``, byte for byte;
-- the tarball carries nothing beyond package.json, README.md, LICENSE and those files.
+- pyproject.toml's version equals package.json's; the wheel's and the sdist's metadata
+  versions equal pyproject.toml's; the tarball's package.json version equals the repo's;
+- the core file ``embeddings-tumbler.js`` is in all three, byte-identical, and the version
+  in its header equals pyproject.toml's and package.json's;
+- each artefact's files under ``embeddings_tumbler/static/`` are exactly the expected set
+  (flat, nothing missing, nothing extra), byte-identical to the wheel's;
+- the npm tarball carries nothing beyond package.json, README.md, LICENSE and that set;
+- the wheel carries nothing beyond its own ``.dist-info/``, the static set and ``.py``
+  modules of the ``embeddings_tumbler`` package (no ``js/``, ``tests/``, ``docs/``,
+  ``.devague/`` or dev pages);
+- the sdist is a source distribution and may carry the repository's tracked sources
+  (``js/src/``, ``tests/``, ``docs/`` ...), but no ``.npmrc``, ``.pypirc`` or ``.env``.
 
 Results go to stdout; every failure is a ``FAIL`` line on stderr. Stdlib only.
 """
@@ -33,12 +42,14 @@ import tarfile
 import tempfile
 import tomllib
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
+PACKAGE = "embeddings_tumbler/"
 STATIC_PREFIX = "embeddings_tumbler/static/"
 CORE = "embeddings-tumbler.js"
 TARBALL_FIXED = ("package.json", "README.md", "LICENSE")
+CREDENTIAL_FILES = frozenset({".npmrc", ".pypirc", ".env"})
 _HEADER_RE = re.compile(rb"^/\*! embeddings-tumbler (\S+) ")
 
 
@@ -60,28 +71,50 @@ def read_versions() -> tuple[str, str]:
     return py["project"]["version"], str(pkg.get("version"))
 
 
+def expected_static() -> frozenset[str]:
+    """The flat static file names package.json ships (the wheel must ship the same)."""
+    pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    return frozenset(
+        f[len(STATIC_PREFIX) :] for f in pkg.get("files", []) if f.startswith(STATIC_PREFIX)
+    )
+
+
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:16]
 
 
-def read_wheel(path: Path) -> tuple[str | None, dict[str, bytes]]:
-    """(metadata version, {static file name: bytes}) from a wheel."""
+def _metadata_version(text: str) -> str | None:
+    for line in text.splitlines():
+        if line.startswith("Version:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def read_wheel(path: Path) -> tuple[str | None, dict[str, bytes], list[str]]:
+    """(metadata version, {static path below static/: bytes}, problems with its file list)."""
     version = None
     statics: dict[str, bytes] = {}
+    problems: list[str] = []
     with zipfile.ZipFile(path) as zf:
         for name in zf.namelist():
-            if name.endswith(".dist-info/METADATA"):
-                for line in zf.read(name).decode("utf-8", "replace").splitlines():
-                    if line.startswith("Version:"):
-                        version = line.split(":", 1)[1].strip()
-                        break
-            elif name.startswith(STATIC_PREFIX) and not name.endswith("/"):
+            if name.endswith("/"):
+                continue
+            top = name.split("/", 1)[0]
+            if top.startswith("embeddings_tumbler-") and top.endswith(".dist-info"):
+                if name.endswith(".dist-info/METADATA"):
+                    version = _metadata_version(zf.read(name).decode("utf-8", "replace"))
+            elif name.startswith(STATIC_PREFIX):
                 statics[name[len(STATIC_PREFIX) :]] = zf.read(name)
-    return version, statics
+            elif name.startswith(PACKAGE):
+                if not name.endswith(".py"):
+                    problems.append(f"wheel carries an unexpected file: {name}")
+            else:
+                problems.append(f"wheel carries a file outside the package: {name}")
+    return version, statics, problems
 
 
 def read_tarball(path: Path) -> tuple[str | None, dict[str, bytes], list[str]]:
-    """(package.json version, {static file name: bytes}, every file path) from a tarball."""
+    """(package.json version, {static path below static/: bytes}, every file path)."""
     version = None
     statics: dict[str, bytes] = {}
     files: list[str] = []
@@ -99,6 +132,28 @@ def read_tarball(path: Path) -> tuple[str | None, dict[str, bytes], list[str]]:
     return version, statics, sorted(files)
 
 
+def read_sdist(path: Path) -> tuple[str | None, dict[str, bytes], list[str]]:
+    """(PKG-INFO version, {static path below static/: bytes}, problems with its file list)."""
+    version = None
+    statics: dict[str, bytes] = {}
+    problems: list[str] = []
+    with tarfile.open(path, "r:gz") as tf:
+        for member in tf.getmembers():
+            if not member.isfile():
+                continue
+            parts = member.name.split("/", 1)
+            name = parts[1] if len(parts) == 2 else parts[0]
+            if PurePosixPath(name).name in CREDENTIAL_FILES:
+                problems.append(f"sdist carries a credential-shaped file: {name}")
+            if name == "PKG-INFO":
+                version = _metadata_version(
+                    tf.extractfile(member).read().decode("utf-8", "replace")
+                )
+            elif name.startswith(STATIC_PREFIX):
+                statics[name[len(STATIC_PREFIX) :]] = tf.extractfile(member).read()
+    return version, statics, problems
+
+
 def _check_header(label: str, core: bytes, py_version: str, npm_version: str) -> list[str]:
     found = header_version(core)
     if found is None:
@@ -111,55 +166,100 @@ def _check_header(label: str, core: bytes, py_version: str, npm_version: str) ->
     return problems
 
 
-def check(wheel: Path, tarball: Path, py_version: str, npm_version: str) -> list[str]:
-    """Every way the two packages disagree with each other or with the versions."""
+def _static_set(label: str, statics: dict[str, bytes], expected: frozenset[str]) -> list[str]:
+    problems = []
+    for name in sorted(expected - set(statics)):
+        if name == CORE:
+            problems.append(f"{label} has no {STATIC_PREFIX}{CORE}")
+        else:
+            problems.append(f"{label} is missing {STATIC_PREFIX}{name}")
+    for name in sorted(set(statics) - expected):
+        if "/" in name:
+            problems.append(
+                f"{label} carries a file below the flat static set: {STATIC_PREFIX}{name}"
+            )
+        else:
+            problems.append(f"{label} carries an unexpected static file: {STATIC_PREFIX}{name}")
+    return problems
+
+
+def _compare(label: str, wheel: dict[str, bytes], other: dict[str, bytes]) -> list[str]:
+    problems = []
+    for name in sorted(set(wheel) & set(other)):
+        if wheel[name] == other[name]:
+            continue
+        if name == CORE:
+            if label == "npm tarball":
+                problems.append(
+                    f"core file differs: wheel {CORE} is {len(wheel[name])} bytes sha256 "
+                    f"{_sha(wheel[name])}, npm tarball's is {len(other[name])} bytes sha256 "
+                    f"{_sha(other[name])}"
+                )
+            else:
+                problems.append(
+                    f"{label} core file differs from the wheel's: {len(other[name])} bytes sha256 "
+                    f"{_sha(other[name])} against {len(wheel[name])} bytes sha256 "
+                    f"{_sha(wheel[name])}"
+                )
+        else:
+            problems.append(f"{STATIC_PREFIX}{name} differs between the wheel and the {label}")
+    return problems
+
+
+def check(
+    wheel: Path,
+    tarball: Path,
+    py_version: str,
+    npm_version: str,
+    sdist: Path | None = None,
+    expected: frozenset[str] | None = None,
+) -> list[str]:
+    """Every way the packages disagree with each other, the expected set or the versions."""
+    expected = expected_static() if expected is None else expected
     problems: list[str] = []
     if py_version != npm_version:
         problems.append(
             f"pyproject.toml says {py_version} but package.json says {npm_version} "
             "(run python3 scripts/sync_version.py)"
         )
-    wheel_version, wheel_static = read_wheel(wheel)
-    tar_version, tar_static, tar_files = read_tarball(tarball)
+
+    wheel_version, wheel_static, wheel_problems = read_wheel(wheel)
     if wheel_version != py_version:
         problems.append(
             f"wheel metadata version is {wheel_version}, pyproject.toml says {py_version}"
         )
+    problems += wheel_problems
+    problems += _static_set("wheel", wheel_static, expected)
+    if CORE in wheel_static:
+        problems += _check_header("wheel", wheel_static[CORE], py_version, npm_version)
+
+    tar_version, tar_static, tar_files = read_tarball(tarball)
     if tar_version != npm_version:
         problems.append(
             f"npm tarball package.json is {tar_version}, package.json says {npm_version}"
         )
-
-    wheel_core = wheel_static.get(CORE)
-    tar_core = tar_static.get(CORE)
-    if wheel_core is None:
-        problems.append(f"wheel has no {STATIC_PREFIX}{CORE}")
-    else:
-        problems += _check_header("wheel", wheel_core, py_version, npm_version)
-    if tar_core is None:
-        problems.append(f"npm tarball has no {STATIC_PREFIX}{CORE}")
-    else:
-        problems += _check_header("npm tarball", tar_core, py_version, npm_version)
-    if wheel_core is not None and tar_core is not None and wheel_core != tar_core:
-        problems.append(
-            f"core file differs: wheel {CORE} is {len(wheel_core)} bytes sha256 "
-            f"{_sha(wheel_core)}, npm tarball's is {len(tar_core)} bytes sha256 {_sha(tar_core)}"
-        )
-
-    for name in sorted(set(wheel_static) - set(tar_static)):
-        problems.append(f"{STATIC_PREFIX}{name} is only in the wheel")
-    for name in sorted(set(tar_static) - set(wheel_static)):
-        problems.append(f"{STATIC_PREFIX}{name} is only in the npm tarball")
-    for name in sorted(set(wheel_static) & set(tar_static)):
-        if name != CORE and wheel_static[name] != tar_static[name]:
-            problems.append(f"{STATIC_PREFIX}{name} differs between the wheel and the npm tarball")
-
+    problems += _static_set("npm tarball", tar_static, expected)
+    if CORE in tar_static:
+        problems += _check_header("npm tarball", tar_static[CORE], py_version, npm_version)
+    problems += _compare("npm tarball", wheel_static, tar_static)
     for name in TARBALL_FIXED:
         if name not in tar_files:
             problems.append(f"npm tarball has no {name}")
     for name in tar_files:
         if name not in TARBALL_FIXED and not name.startswith(STATIC_PREFIX):
             problems.append(f"npm tarball carries an unexpected file: {name}")
+
+    if sdist is not None:
+        sdist_version, sdist_static, sdist_problems = read_sdist(sdist)
+        if sdist_version != py_version:
+            problems.append(
+                f"sdist metadata version is {sdist_version}, pyproject.toml says {py_version}"
+            )
+        problems += sdist_problems
+        problems += _static_set("sdist", sdist_static, expected)
+        if CORE in sdist_static:
+            problems += _check_header("sdist", sdist_static[CORE], py_version, npm_version)
+        problems += _compare("sdist", wheel_static, sdist_static)
     return problems
 
 
@@ -167,43 +267,66 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, check=False)
 
 
-def build_wheel(out_dir: Path) -> Path:
+def only_one(folder: Path, pattern: str) -> Path:
+    """The single file matching pattern in folder; RuntimeError for zero or several."""
+    found = sorted(folder.glob(pattern))
+    if len(found) != 1:
+        names = ", ".join(p.name for p in found) or "none"
+        raise RuntimeError(
+            f"expected exactly one {pattern} in {folder}, found {len(found)}: {names}"
+        )
+    return found[0].resolve()
+
+
+def _uv_build(out_dir: Path, kind: str, pattern: str) -> Path:
     if shutil.which("uv") is None:
-        raise RuntimeError("uv is not installed; cannot build the wheel")
-    before = set(out_dir.glob("*.whl"))
-    result = _run(["uv", "build", "--wheel", "--out-dir", str(out_dir)])
+        raise RuntimeError(f"uv is not installed; cannot build the {kind}")
+    result = _run(["uv", "build", f"--{kind}", "--out-dir", str(out_dir)])
     if result.returncode != 0:
-        raise RuntimeError(f"uv build --wheel failed:\n{result.stdout}{result.stderr}")
-    built = sorted(set(out_dir.glob("*.whl")) - before) or sorted(out_dir.glob("*.whl"))
-    if len(built) != 1:
-        raise RuntimeError(f"expected one wheel in {out_dir}, found {len(built)}")
-    return built[0]
+        raise RuntimeError(f"uv build --{kind} failed:\n{result.stdout}{result.stderr}")
+    return only_one(out_dir, pattern)
 
 
-def build_tarball(out_dir: Path) -> Path:
+def build_wheel(out_dir: Path) -> Path:
+    return _uv_build(out_dir, "wheel", "*.whl")
+
+
+def build_sdist(out_dir: Path) -> Path:
+    return _uv_build(out_dir, "sdist", "*.tar.gz")
+
+
+def pack_tarball(out_dir: Path, spec: str | None = None) -> Path:
+    """npm pack this repository (spec None) or a registry spec into out_dir."""
     if shutil.which("npm") is None:
         raise RuntimeError("npm is not installed; cannot pack the npm tarball")
-    result = _run(["npm", "pack", "--json", "--ignore-scripts", "--pack-destination", str(out_dir)])
+    cmd = ["npm", "pack"] + ([spec] if spec else [])
+    cmd += ["--json", "--ignore-scripts", "--pack-destination", str(out_dir)]
+    result = _run(cmd)
     if result.returncode != 0:
-        raise RuntimeError(f"npm pack failed:\n{result.stdout}{result.stderr}")
-    filename = json.loads(result.stdout)[0]["filename"]
-    return out_dir / Path(filename).name
+        raise RuntimeError(f"{' '.join(cmd[:3])} failed:\n{result.stdout}{result.stderr}")
+    listing = json.loads(result.stdout)
+    if len(listing) != 1:
+        raise RuntimeError(f"npm pack made {len(listing)} tarballs, expected exactly one")
+    path = (out_dir / Path(listing[0]["filename"]).name).resolve()
+    if only_one(out_dir, "*.tgz") != path:
+        raise RuntimeError(f"npm pack reported {path.name} but {out_dir} holds another tarball")
+    return path
 
 
-def _report(wheel: Path, tarball: Path, py_version: str, npm_version: str) -> int:
-    print(f"wheel:       {wheel.name}")
-    print(f"npm tarball: {tarball.name}")
-    print(f"versions:    pyproject.toml {py_version}, package.json {npm_version}")
-    problems = check(wheel, tarball, py_version, npm_version)
+def _report(paths: dict[str, Path], py_version: str, npm_version: str) -> int:
+    for label, path in paths.items():
+        print(f"{label + ':':9}{path}")
+    print(f"versions: pyproject.toml {py_version}, package.json {npm_version}")
+    problems = check(paths["wheel"], paths["tarball"], py_version, npm_version, paths["sdist"])
     if problems:
         for problem in problems:
             print(f"FAIL {problem}", file=sys.stderr)
         print(f"check_packages: {len(problems)} problem(s)", file=sys.stderr)
         return 1
-    _, statics = read_wheel(wheel)
+    _, statics, _ = read_wheel(paths["wheel"])
     core = statics[CORE]
-    print(f"core file:   {CORE} {len(core)} bytes sha256 {_sha(core)} in both")
-    print(f"static set:  {', '.join(sorted(statics))} (identical bytes in both)")
+    print(f"core file: {CORE} {len(core)} bytes sha256 {_sha(core)} in all three")
+    print(f"static set: {', '.join(sorted(statics))} (identical bytes in all three)")
     print(f"check_packages: packages agree ({py_version})")
     return 0
 
@@ -211,20 +334,47 @@ def _report(wheel: Path, tarball: Path, py_version: str, npm_version: str) -> in
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--wheel", type=Path, help="check this wheel instead of building one")
-    parser.add_argument("--tarball", type=Path, help="check this npm tarball instead of packing")
-    parser.add_argument("--out-dir", type=Path, help="build into this folder and keep the files")
+    parser.add_argument("--sdist", type=Path, help="check this sdist instead of building one")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--tarball", type=Path, help="check this npm tarball instead of packing")
+    source.add_argument("--registry-tarball", metavar="SPEC", help="npm pack this registry spec")
+    parser.add_argument("--out-dir", type=Path, help="build into this new or empty folder, keep")
+    parser.add_argument(
+        "--github-output", type=Path, help="on success append wheel=/sdist=/tarball="
+    )
     args = parser.parse_args(argv)
     py_version, npm_version = read_versions()
     with tempfile.TemporaryDirectory(prefix="check-packages-") as tmp:
-        out_dir = args.out_dir or Path(tmp)
+        out_dir = (args.out_dir or Path(tmp)).resolve()
+        if out_dir.exists() and any(out_dir.iterdir()):
+            print(
+                f"FAIL --out-dir {out_dir} is not empty; give a new or empty folder",
+                file=sys.stderr,
+            )
+            return 1
         out_dir.mkdir(parents=True, exist_ok=True)
         try:
-            wheel = args.wheel or build_wheel(out_dir.resolve())
-            tarball = args.tarball or build_tarball(out_dir.resolve())
+            paths = {
+                "wheel": args.wheel.resolve() if args.wheel else build_wheel(out_dir),
+                "sdist": args.sdist.resolve() if args.sdist else build_sdist(out_dir),
+                "tarball": (
+                    args.tarball.resolve()
+                    if args.tarball
+                    else pack_tarball(out_dir, args.registry_tarball)
+                ),
+            }
+            for label, path in paths.items():
+                if not path.is_file():
+                    raise RuntimeError(f"{label} {path} does not exist")
         except RuntimeError as exc:
             print(f"FAIL {exc}", file=sys.stderr)
             return 1
-        return _report(wheel, tarball, py_version, npm_version)
+        status = _report(paths, py_version, npm_version)
+        if status == 0 and args.github_output:
+            with args.github_output.open("a", encoding="utf-8") as fh:
+                for label, path in paths.items():
+                    fh.write(f"{label}={path}\n")
+        return status
 
 
 if __name__ == "__main__":

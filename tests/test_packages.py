@@ -204,13 +204,26 @@ def _statics(version: str) -> dict[str, bytes]:
     return files
 
 
-def _make_wheel(path: Path, version: str, statics: dict[str, bytes]) -> Path:
+def _make_wheel(path: Path, version: str, statics: dict[str, bytes], extra=None) -> Path:
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("embeddings_tumbler/__init__.py", "")
+        zf.writestr("embeddings_tumbler/cli/__init__.py", "")
         for name, data in statics.items():
             zf.writestr(f"embeddings_tumbler/static/{name}", data)
         meta = f"Metadata-Version: 2.4\nName: embeddings-tumbler\nVersion: {version}\n"
         zf.writestr(f"embeddings_tumbler-{version}.dist-info/METADATA", meta)
+        zf.writestr(f"embeddings_tumbler-{version}.dist-info/licenses/LICENSE", "license\n")
+        for name, data in (extra or {}).items():
+            zf.writestr(name, data)
+    return path
+
+
+def _write_tar(path: Path, members: dict[str, bytes]) -> Path:
+    with tarfile.open(path, "w:gz") as tf:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
     return path
 
 
@@ -225,22 +238,43 @@ def _make_tarball(path: Path, version: str, statics: dict[str, bytes], extra=Non
     for name, data in statics.items():
         members[f"package/embeddings_tumbler/static/{name}"] = data
     members.update(extra or {})
-    with tarfile.open(path, "w:gz") as tf:
-        for name, data in members.items():
-            info = tarfile.TarInfo(name)
-            info.size = len(data)
-            tf.addfile(info, io.BytesIO(data))
-    return path
+    return _write_tar(path, members)
 
 
-def _run(wheel: Path, tarball: Path, version: str = "1.0.0", npm_version: str | None = None):
-    return check_packages.check(wheel, tarball, version, npm_version or version)
+def _make_sdist(path: Path, version: str, statics: dict[str, bytes], extra=None) -> Path:
+    root = f"embeddings_tumbler-{version}/"
+    pkg_info = f"Metadata-Version: 2.4\nName: embeddings-tumbler\nVersion: {version}\n"
+    members = {
+        root + "PKG-INFO": pkg_info.encode(),
+        root + "pyproject.toml": b"[project]\n",
+        root + "embeddings_tumbler/__init__.py": b"",
+        # Sources legitimately travel in an sdist.
+        root + "js/src/00-header.js": b"// header\n",
+        root + "tests/test_x.py": b"",
+        root + "docs/release.md": b"# r\n",
+    }
+    for name, data in statics.items():
+        members[root + f"embeddings_tumbler/static/{name}"] = data
+    members.update({root + k: v for k, v in (extra or {}).items()})
+    return _write_tar(path, members)
+
+
+def _set(tmp_path, version="1.0.0", statics=None):
+    statics = statics or _statics(version)
+    return (
+        _make_wheel(tmp_path / "w.whl", version, statics),
+        _make_tarball(tmp_path / "t.tgz", version, statics),
+        _make_sdist(tmp_path / "s.tar.gz", version, statics),
+    )
+
+
+def _run(wheel, tarball, version="1.0.0", npm_version=None, sdist=None):
+    return check_packages.check(wheel, tarball, version, npm_version or version, sdist=sdist)
 
 
 def test_check_passes_on_matching_fixtures(tmp_path):
-    statics = _statics("1.0.0")
-    wheel = _make_wheel(tmp_path / "w.whl", "1.0.0", statics)
-    tarball = _make_tarball(tmp_path / "t.tgz", "1.0.0", statics)
+    wheel, tarball, sdist = _set(tmp_path)
+    assert _run(wheel, tarball, sdist=sdist) == []
     assert _run(wheel, tarball) == []
 
 
@@ -277,8 +311,8 @@ def test_check_fails_when_a_static_file_is_missing_or_different(tmp_path):
     fewer["page.js"] = b"/* changed */\n"
     tarball = _make_tarball(tmp_path / "t.tgz", "1.0.0", fewer)
     problems = _run(wheel, tarball)
-    assert any("page.css" in p and "only in the wheel" in p for p in problems), problems
-    assert any("page.js differs" in p for p in problems), problems
+    assert "npm tarball is missing embeddings_tumbler/static/page.css" in problems, problems
+    assert any("page.js differs between the wheel and the npm tarball" in p for p in problems)
 
 
 def test_check_fails_on_an_unexpected_tarball_file(tmp_path):
@@ -302,19 +336,163 @@ def test_check_fails_when_the_core_file_is_absent(tmp_path):
     )
 
 
+# --- the wheel is as strict as the tarball -----------------------------------
+
+
+def test_wheel_with_an_extra_static_file_fails(tmp_path):
+    statics = _statics("1.0.0")
+    wheel = _make_wheel(tmp_path / "w.whl", "1.0.0", dict(statics, **{"debug.js": b"x\n"}))
+    tarball = _make_tarball(tmp_path / "t.tgz", "1.0.0", statics)
+    problems = _run(wheel, tarball)
+    assert "wheel carries an unexpected static file: embeddings_tumbler/static/debug.js" in problems
+
+
+def test_wheel_with_a_missing_static_file_fails(tmp_path):
+    statics = _statics("1.0.0")
+    fewer = {k: v for k, v in statics.items() if k != "index.html"}
+    wheel = _make_wheel(tmp_path / "w.whl", "1.0.0", fewer)
+    tarball = _make_tarball(tmp_path / "t.tgz", "1.0.0", statics)
+    problems = _run(wheel, tarball)
+    assert "wheel is missing embeddings_tumbler/static/index.html" in problems, problems
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "js/dev/viewer-demo/index.html",
+        "js/src/10-math.js",
+        "tests/test_cli.py",
+        "docs/release.md",
+        ".devague/current",
+        "embeddings_tumbler/dev/index.html",
+        "embeddings_tumbler/static/sub/page.js",
+    ],
+)
+def test_wheel_carrying_dev_or_source_files_fails(tmp_path, member):
+    statics = _statics("1.0.0")
+    wheel = _make_wheel(tmp_path / "w.whl", "1.0.0", statics, extra={member: b"x\n"})
+    tarball = _make_tarball(tmp_path / "t.tgz", "1.0.0", statics)
+    problems = _run(wheel, tarball)
+    assert any(member in p and p.startswith("wheel carries") for p in problems), problems
+
+
+# --- the sdist (uploaded to PyPI beside the wheel) ---------------------------
+
+
+def test_sdist_with_a_different_core_file_fails(tmp_path):
+    statics = _statics("1.0.0")
+    wheel, tarball, _ = _set(tmp_path, statics=statics)
+    sdist = _make_sdist(
+        tmp_path / "bad.tar.gz", "1.0.0", dict(statics, **{CORE: _core("1.0.0", "var z;\n")})
+    )
+    problems = _run(wheel, tarball, sdist=sdist)
+    assert any(p.startswith("sdist core file differs from the wheel's") for p in problems), problems
+
+
+def test_sdist_with_a_missing_or_extra_static_file_fails(tmp_path):
+    statics = _statics("1.0.0")
+    wheel, tarball, _ = _set(tmp_path, statics=statics)
+    changed = {k: v for k, v in statics.items() if k != "page.css"}
+    changed["extra.js"] = b"x\n"
+    changed["page.js"] = b"/* other */\n"
+    sdist = _make_sdist(tmp_path / "bad.tar.gz", "1.0.0", changed)
+    problems = _run(wheel, tarball, sdist=sdist)
+    assert "sdist is missing embeddings_tumbler/static/page.css" in problems, problems
+    assert "sdist carries an unexpected static file: embeddings_tumbler/static/extra.js" in problems
+    assert any("page.js differs between the wheel and the sdist" in p for p in problems)
+
+
+def test_sdist_version_and_header_are_checked(tmp_path):
+    statics = _statics("1.0.0")
+    wheel, tarball, _ = _set(tmp_path, statics=statics)
+    sdist = _make_sdist(tmp_path / "bad.tar.gz", "0.9.0", dict(statics, **{CORE: _core("0.9.0")}))
+    problems = _run(wheel, tarball, sdist=sdist)
+    assert any("sdist metadata version is 0.9.0" in p for p in problems), problems
+    assert any("sdist core file header says 0.9.0" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("name", [".npmrc", ".pypirc", ".env", "sub/.npmrc"])
+def test_sdist_with_a_credential_file_fails(tmp_path, name):
+    statics = _statics("1.0.0")
+    wheel, tarball, _ = _set(tmp_path, statics=statics)
+    sdist = _make_sdist(tmp_path / "bad.tar.gz", "1.0.0", statics, extra={name: b"x=1\n"})
+    problems = _run(wheel, tarball, sdist=sdist)
+    assert any("sdist carries a credential-shaped file" in p and name in p for p in problems)
+
+
+def test_sdist_may_carry_sources(tmp_path):
+    # js/src, tests and docs in an sdist are sources, not a leak.
+    wheel, tarball, sdist = _set(tmp_path)
+    assert _run(wheel, tarball, sdist=sdist) == []
+
+
+# --- the command line ---------------------------------------------------------
+
+
 def test_cli_exit_codes_and_messages_on_fixtures(tmp_path, monkeypatch, capsys):
     statics = _statics("1.0.0")
-    wheel = _make_wheel(tmp_path / "w.whl", "1.0.0", statics)
-    good = _make_tarball(tmp_path / "good.tgz", "1.0.0", statics)
+    wheel, good, sdist = _set(tmp_path, statics=statics)
     bad = _make_tarball(
         tmp_path / "bad.tgz", "1.0.0", dict(statics, **{CORE: _core("1.0.0", "var y;\n")})
     )
     monkeypatch.setattr(check_packages, "read_versions", lambda: ("1.0.0", "1.0.0"))
-    assert check_packages.main(["--wheel", str(wheel), "--tarball", str(good)]) == 0
+    given = ["--wheel", str(wheel), "--sdist", str(sdist)]
+    out_file = tmp_path / "github_output"
+    assert (
+        check_packages.main(given + ["--tarball", str(good), "--github-output", str(out_file)]) == 0
+    )
     assert "packages agree" in capsys.readouterr().out
-    assert check_packages.main(["--wheel", str(wheel), "--tarball", str(bad)]) == 1
+    lines = out_file.read_text(encoding="utf-8").splitlines()
+    assert lines == [
+        f"wheel={wheel.resolve()}",
+        f"sdist={sdist.resolve()}",
+        f"tarball={good.resolve()}",
+    ]
+    out_file.unlink()
+    assert (
+        check_packages.main(given + ["--tarball", str(bad), "--github-output", str(out_file)]) == 1
+    )
     err = capsys.readouterr().err
     assert "core file differs" in err and "FAIL" in err
+    assert not out_file.exists(), "paths must not be published for a failed check"
+
+
+def test_out_dir_must_be_empty(tmp_path, capsys):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "old.tgz").write_bytes(b"stale")
+    assert check_packages.main(["--out-dir", str(out)]) == 1
+    assert "is not empty" in capsys.readouterr().err
+
+
+def test_tarball_and_registry_tarball_are_exclusive(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        check_packages.main(["--tarball", "a.tgz", "--registry-tarball", "x@1.0.0"])
+
+
+def test_exactly_one_built_file_is_required(tmp_path):
+    (tmp_path / "a.whl").write_bytes(b"")
+    (tmp_path / "b.whl").write_bytes(b"")
+    with pytest.raises(RuntimeError, match="expected exactly one \\*.whl"):
+        check_packages.only_one(tmp_path, "*.whl")
+    with pytest.raises(RuntimeError, match="expected exactly one \\*.tgz"):
+        check_packages.only_one(tmp_path, "*.tgz")
+
+
+def test_registry_tarball_is_packed_by_spec(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        (tmp_path / "culture.dev-embeddings-tumbler-1.0.0.tgz").write_bytes(b"x")
+        out = json.dumps([{"filename": "culture.dev-embeddings-tumbler-1.0.0.tgz"}])
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+
+    monkeypatch.setattr(check_packages, "_run", fake_run)
+    monkeypatch.setattr(check_packages.shutil, "which", lambda _: "/usr/bin/npm")
+    path = check_packages.pack_tarball(tmp_path, "@culture.dev/embeddings-tumbler@1.0.0")
+    assert path == tmp_path / "culture.dev-embeddings-tumbler-1.0.0.tgz"
+    assert calls[0][:3] == ["npm", "pack", "@culture.dev/embeddings-tumbler@1.0.0"]
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +504,7 @@ def test_cli_exit_codes_and_messages_on_fixtures(tmp_path, monkeypatch, capsys):
 def real_build(tmp_path_factory):
     if not (HAVE_NPM and HAVE_UV):
         pytest.skip("npm and uv are both needed to build the two packages")
-    out = tmp_path_factory.mktemp("packages")
+    out = tmp_path_factory.mktemp("packages") / "dist"
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "check_packages.py"), "--out-dir", str(out)],
         cwd=ROOT,
@@ -345,7 +523,8 @@ def test_check_packages_passes_on_the_real_build(real_build):
     assert "packages agree" in result.stdout
     wheels = list(out.glob("*.whl"))
     tarballs = list(out.glob("*.tgz"))
-    assert len(wheels) == 1 and len(tarballs) == 1
+    sdists = list(out.glob("*.tar.gz"))
+    assert len(wheels) == 1 and len(tarballs) == 1 and len(sdists) == 1
     with tarfile.open(tarballs[0]) as tf:
         names = sorted(m.name.removeprefix("package/") for m in tf.getmembers() if m.isfile())
     assert names == TARBALL_FILES
@@ -363,6 +542,7 @@ def test_check_packages_fails_on_a_doctored_real_tarball(real_build, tmp_path):
     out, result = real_build
     assert result.returncode == 0, result.stdout + result.stderr
     wheel = next(out.glob("*.whl"))
+    sdist = next(out.glob("*.tar.gz"))
     tarball = next(out.glob("*.tgz"))
     doctored = tmp_path / "doctored.tgz"
     with tarfile.open(tarball) as src, tarfile.open(doctored, "w:gz") as dst:
@@ -378,6 +558,8 @@ def test_check_packages_fails_on_a_doctored_real_tarball(real_build, tmp_path):
             str(ROOT / "scripts" / "check_packages.py"),
             "--wheel",
             str(wheel),
+            "--sdist",
+            str(sdist),
             "--tarball",
             str(doctored),
         ],
@@ -389,3 +571,39 @@ def test_check_packages_fails_on_a_doctored_real_tarball(real_build, tmp_path):
     )
     assert bad.returncode == 1
     assert "core file differs" in bad.stderr
+
+
+def test_sync_version_targets_the_top_level_key_not_the_first_in_file_order(tmp_path, monkeypatch):
+    pyproject = tmp_path / "pyproject.toml"
+    package = tmp_path / "package.json"
+    pyproject.write_text('[project]\nname = "x"\nversion = "2.0.0"\n', encoding="utf-8")
+    original = (
+        "{\n"
+        '  "name": "x",\n'
+        '  "engines": {"node": ">=18", "version": "1.0.0"},\n'
+        '  "nested": [{"version": "1.0.0"}],\n'
+        '  "version": "1.0.0",\n'
+        '  "files": ["a"]\n'
+        "}\n"
+    )
+    package.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(sync_version, "PYPROJECT", pyproject)
+    monkeypatch.setattr(sync_version, "PACKAGE_JSON", package)
+    assert sync_version.main([]) == 0
+    expected = original.replace('"version": "1.0.0",\n  "files"', '"version": "2.0.0",\n  "files"')
+    assert package.read_text(encoding="utf-8") == expected
+    data = json.loads(expected)
+    assert data["engines"]["version"] == "1.0.0" and data["nested"][0]["version"] == "1.0.0"
+
+
+def test_sync_version_refuses_a_package_json_without_a_top_level_version(
+    tmp_path, monkeypatch, capsys
+):
+    pyproject = tmp_path / "pyproject.toml"
+    package = tmp_path / "package.json"
+    pyproject.write_text('[project]\nname = "x"\nversion = "2.0.0"\n', encoding="utf-8")
+    package.write_text('{"name": "x", "engines": {"version": "1.0.0"}}\n', encoding="utf-8")
+    monkeypatch.setattr(sync_version, "PYPROJECT", pyproject)
+    monkeypatch.setattr(sync_version, "PACKAGE_JSON", package)
+    assert sync_version.main([]) == 1
+    assert "top-level" in capsys.readouterr().err
