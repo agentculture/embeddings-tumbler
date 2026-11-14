@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>harness fixture: web component form with search</title>
+<link rel="stylesheet" href="host.css">
+</head>
+<body>
+<p>Search host fixture 2: a page that uses only the element, and assigns its embed property once. The harness serves it with a Content-Security-Policy header.</p>
+<embeddings-tumbler id="space" src="search-set.json" seed="5"></embeddings-tumbler>
+<script src="embeddings-tumbler.js"></script>
+<script src="web-component.js"></script>
+<script src="search-embed.js"></script>
+<script src="search-component-host.js"></script>
+</body>
+</html>
