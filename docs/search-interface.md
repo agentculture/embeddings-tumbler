@@ -50,7 +50,7 @@ the renderer, the modes, the viewer and a new panel, all specified below.
 | Search | One query (embedded text, a host's vector, words matched among loaded points, or a loaded point) and its ranking. Up to 4 at once, lettered A to D in the order given. |
 | Kind | How a search's query was made: `"embedded"` (typed text through the host's `embed` callback), `"vector"` (a vector the host passed), `"words"` (words matched among loaded points, no embedding), `"point"` (a loaded point's own vector). |
 | Named point | A point that carries something a person can read that is not just its id: its `metadata.text` or its `label` is a string with a character that is not white space and differs from its id (`ET.search.isNamed`). On a real file every point is named; in the built-in sample set 290 of 12,288 are; in a labels-only set none is. |
-| Results, named results | The `k` nearest named points of a search (3 to 20, 8 by default), after reranking when a reranker ran. With no named point in the set every point is a candidate and results show ids; with fewer named points than `k`, the results are all of them. The query itself can come from any point. |
+| Results, named results | The `k` nearest named points of a search (3 to 100, 8 by default) with no reranker; with the reranker on, the `top` best (3 to `candidates`, 20 by default) of the `candidates` nearest (3 to 100, 50 by default) by the reranker's scores. See "Candidates and top". With no named point in the set every point is a candidate and results show ids; with fewer named points than `k`, the results are all of them. The query itself can come from any point. |
 | Result radius | The distance of a search's farthest named result. A point is inside a search when it is at most that far, named or not. |
 | Lit value | Per point, a number in `[0, 1]`: how strongly the searches light it. Set by the lit setting (`"even"`, `"close"`, `"named"`). |
 | Shared mark | On a point that is lit and inside two or more searches. |
@@ -415,7 +415,9 @@ Additions to `js/api/50-viewer.md`.
 | `rerank` | none | The host's rerank callback (contract below). Without it there is no Reranker control and no reranking. |
 | `searchTimeoutMs` | `15000` | How long a callback may take before its answer is dropped with `embed-timeout` or `rerank-timeout`. |
 | `searchPanel` | `true` | `false`: no panel (the handle still does everything the panel does). |
-| `searchK` | `8` | Results per search, through `ET.search.clampK`. |
+| `searchK` | `8` | Results per search with no reranker, through `ET.search.clampK` (3 to 100). |
+| `searchCandidates` | `50` | Candidates handed to the reranker, through `ET.search.clampCandidates` (3 to 100). |
+| `searchTop` | `20` | Reranked candidates kept, through `ET.search.clampTop` (3 to `searchCandidates`). |
 | `searchLit` | `"even"` | The starting lit setting, through `ET.searchSets.litSetting`. |
 | `onSearchChange(search)` | none | Called with `info().search` whenever it changes (a search set, answered, refused, cleared, stale, re-run). Guarded like the other callbacks. |
 
@@ -490,7 +492,9 @@ already held (no new `embed` call). `patch` may hold:
 
 | Setting | Values | Default | Effect |
 |---------|--------|---------|--------|
-| `k` | 3 to 20 (`clampK`) | `searchK` | re-rank every search |
+| `k` | 3 to 100 (`clampK`) | `searchK` | re-rank every search |
+| `candidates` | 3 to 100 (`clampCandidates`) | `searchCandidates` | re-rank (and rerank) every search; `top` is cut to it |
+| `top` | 3 to `candidates` (`clampTop`) | `searchTop` | rerank every search |
 | `lit` | `"even"`, `"close"`, `"named"` | `searchLit` | new lit values only |
 | `distances` | boolean | `false` | the Distance difference control: distances on links and in lists (panel only) |
 | `rerank` | boolean | `false` | rerank every search; ignored (stays `false`) with no `rerank` callback or on a labels-only set |
@@ -522,8 +526,8 @@ removed callback is superseded.
 ### Reranking
 
 With `rerank` on and a `rerank` callback set, each search's `pool` (the
-`3 x k` nearest named points, `ET.search.POOL_FACTOR`; every point is a
-candidate when none is named) is sent as candidate texts
+`candidates` nearest named points, 50 by default; every point is a candidate
+when none is named) is sent as candidate texts
 (`ET.search.pointText`) with the query text, and the answer goes through
 `ET.search.rerankOrder`. The query text is the typed text (embedded and word
 searches), the point's text (point searches) or the `label` given (vector
@@ -568,7 +572,10 @@ search: {
     words,             // for "words": { used: [{ word, how, count }], unmatched: [...] }, else null
     point,             // for "point": the id, else null
     pointOfView,       // boolean: the option is on for this search
-    k,
+    k, candidates, top, // the counts this search was worked out with (clamped as asked)
+    available,         // how many points could be results: the named points, or all when none is named
+    sent,              // candidates sent to the reranker for this search (0 when none were)
+    counts,            // null, or a sentence saying a count was cut to what there is
     note,              // a message about this search (fallback to words, rerank failure), or null
     radius,            // the result radius
     insideCount,       // points inside the result radius, named or not
@@ -767,8 +774,10 @@ section.tumbler-search
     label + textarea.tumbler-search-input      one search per line, up to four
     div.tumbler-search-controls    button.tumbler-search-face, label.tumbler-search-lit (select),
                                    label.tumbler-search-rerank (checkbox; absent with no rerank
-                                   callback or on a labels-only set), label.tumbler-search-distances,
-                                   label.tumbler-search-k (range 3..20), label.tumbler-search-pov
+                                   callback or on a labels-only set), label.tumbler-search-candidates
+                                   and label.tumbler-search-top (ranges; present only with the
+                                   Reranker), label.tumbler-search-distances,
+                                   label.tumbler-search-k (range 3..100), label.tumbler-search-pov
                                    (select: off, A..D), label.tumbler-search-only (Focus only),
                                    button.tumbler-search-clear
     p.tumbler-search-note          lit count, where the text goes, unmatched words, refusals, stale
@@ -897,7 +906,9 @@ the page mounts the viewer with an `embed` callback (and a `rerank` callback whe
 from a plain static server, a network error, a non-JSON answer) means no route:
 the page mounts with no callbacks and the panel says it is matching loaded
 points. The page cuts each rerank candidate to the route's `maxCandidateChars`
-before sending. The page makes requests only to its own origin, and still has no
+before sending, and refuses (sending nothing; the viewer keeps embedding order
+with its note) a call with more candidates than the route's `maxCandidates`,
+both read from `describe`. The page makes requests only to its own origin, and still has no
 inline script or style.
 
 ## Helper route (t5): `viewer serve --embed`
@@ -945,7 +956,7 @@ One path, `POST /_tumbler/search`, JSON body, one operation per request:
 
 | `op` | Body | Answer (`200`) |
 |------|------|----------------|
-| `describe` | `{ "op": "describe" }` | `{ "ok": true, "embed": { "model": "...", "query_form": "plain" or "prefixed" }, "rerank": { "model": "..." } or null, "limits": { "maxTextChars": 8000, "maxCandidates": 60, "maxCandidateChars": 4000, "requestsPerMinute": 120 } }` |
+| `describe` | `{ "op": "describe" }` | `{ "ok": true, "embed": { "model": "...", "query_form": "plain" or "prefixed" }, "rerank": { "model": "..." } or null, "limits": { "maxTextChars": 8000, "maxCandidates": 100, "maxCandidateChars": 2000, "requestsPerMinute": 120 } }` |
 | `embed` | `{ "op": "embed", "text": "..." }` | `{ "ok": true, "vector": [numbers], "model": "...", "query_form": "plain" or "prefixed" }` |
 | `rerank` | `{ "op": "rerank", "query": "...", "candidates": ["...", ...] }` | `{ "ok": true, "scores": [numbers], "model": "..." }` |
 
@@ -977,8 +988,8 @@ by its own test.
 | 413 | `too-large` | Body over 1 MiB (1,048,576 bytes), or no `Content-Length`. |
 | 400 | `bad-json` | The body is not a JSON object. |
 | 400 | `bad-request` | Unknown `op`, or a field missing or of the wrong type. |
-| 413 | `text-too-long` | `text` or `query` over 8,000 characters, or a candidate over 4,000. |
-| 413 | `too-many-candidates` | More than 60 candidates. |
+| 413 | `text-too-long` | `text` or `query` over 8,000 characters, or a candidate over 2,000 (4,000 before "Candidates and top"). |
+| 413 | `too-many-candidates` | More than 100 candidates (60 before "Candidates and top"). |
 | 429 | `rate-limited` | More than 120 requests in the last 60 seconds (one window for the whole server). |
 | 404 | `rerank-unavailable` | `op: "rerank"` with no `--rerank-model`. |
 | 502 | `gateway-failed` | The gateway refused, failed or answered in the wrong shape. Message: `The embedding service did not answer.` (or `The reranking service did not answer.`), never the gateway's own text. |
@@ -1026,6 +1037,90 @@ straight-line distance). A set with no named point keeps the earlier
 behaviour (every point a candidate, results showing ids); a set with fewer
 named points than `k` gives all of them; a reranker's pool is drawn from the
 named points. A real data file, where every point carries text, is unchanged.
+
+## Candidates and top (the owner's request, 2026-11-14)
+
+After trying the build the owner asked: "we need more results, 50 or 100, and
+add reranker and top x out of that (top 20?)", and chose "50 candidates, top
+20". The spec records: the nearest N by embedding are the candidates (3 to 100,
+50 by default), and with the reranker on the top X of them are kept (20 by
+default); with no reranker the results stay at 8 by default and can be raised
+to 100. This replaces the range of 3 to 20 results and the hidden pool of
+`3 x k`.
+
+Names settled here (everywhere: `ET.search` options and ranking fields, the
+viewer's settings and mount options, `info().search`):
+
+| Name | Range | Default | Meaning |
+|------|-------|---------|---------|
+| `k` | 3 to 100 | 8 | results shown and lit when no reranker runs (the `k` nearest named points) |
+| `candidates` | 3 to 100 | 50 | the nearest named points handed to the reranker |
+| `top` | 3 to `candidates` | 20 | how many reranked candidates are kept as the results |
+
+- With the reranker on and answering: the results are the `top` best of the
+  `candidates` by its scores; the result radius (what is lit) is the distance
+  of the farthest **kept** result; each result keeps `embeddingRank` (its place
+  among the candidates by distance) and `moved`. With the reranker off,
+  unavailable, failing or late: the results are the `k` nearest, as before, and
+  a failure is the search's note.
+- The reranker is sent exactly the `candidates` nearest (fewer only when fewer
+  points can be results), never more; `info().search.searches[].sent` states
+  how many were sent.
+- A number above what there is (fewer named points than asked) is cut, and the
+  search says so in `counts` (for example `Only 40 named points can be results,
+  so the reranker was given 40 candidates, not 50.`), shown in the panel's note.
+- `ET.search.POOL_FACTOR` is removed: nothing needs it.
+- Every place that states what a search used states both numbers: the
+  provenance row (`usedText`: "the 50 nearest as candidates, the reranker's top
+  20 kept", and per search "reranked by ... (top 20 of 50 candidates)"; with no
+  reranker "the 8 nearest kept (8 results per search)"), `info().search` (per
+  search and in `settings`), the panel's note (cut counts), the result list's
+  heading and the Focus list's sub line.
+- The panel: the Results range goes to 100 (disabled, with the reason as its
+  title, while the reranker is on, since Keep top then sets the results);
+  Candidates (3 to 100) and Keep top (3 to the candidates) ranges sit beside
+  the Reranker checkbox and, like it, are absent while no reranker is offered.
+  The collapsed bar is unchanged (one line). Each result list scrolls inside
+  its own box (`max-height: var(--tumbler-search-list-height, 320px)`); stage
+  labels keep the overlap rule (letters first, then nearest results; a label
+  that would overlap is left out), at most 160 label elements.
+- The helper route admits 100 candidates (`maxCandidates`), and the
+  per-candidate limit goes from 4,000 to 2,000 characters
+  (`maxCandidateChars`). Decided here: at 4 UTF-8 bytes per character (a
+  browser's `JSON.stringify` does not escape non-ASCII), 100 candidates of 4,000
+  characters are 1.6 MB, over the route's 1 MiB body limit, while 100 of 2,000
+  plus an 8,000-character query come to about 832,000 bytes, inside it. Keeping
+  the body limit keeps the route's memory bound; 2,000 characters is still far
+  more than a result's text shown in the panel. Text that JSON must escape
+  (control characters, 6 bytes each) can still exceed the body; the route then
+  answers `too-large` and the search keeps its embedding order with the
+  reranker's note.
+- **Pair reports become a stepper.** Their cost grows with the square of the
+  result count: four searches of 100 results took 51 ms in one call (below), so
+  the viewer runs `ET.searchSets.makePairReports` in the frame budget as part
+  of the run, before the run is shown.
+
+### Measured with 100 candidates
+
+Node 24, development machine, load average 1 to 6 on 12 cores, 10,000 points
+of 1,024 dimensions, a third named, a fresh set object each scan (so the named
+points are found every time), median of 20 unless said.
+
+| What | Before | After |
+|------|--------|-------|
+| Scan, `k` 8 (pool 24 before, 50 after): whole / longest unit | 7.7 to 8.0 ms / 0.6 ms | 7.9 ms / 0.6 ms |
+| Scan, `k` 100 and 100 candidates: whole / longest unit | (not possible) | 7.9 ms / 0.7 ms |
+| Scan with a scale, `k` 8: whole / longest unit | 16.2 ms / 0.6 ms | 16.2 ms / 1.0 ms |
+| Scan with a scale, `k` 100, 100 candidates: whole / longest unit | (not possible) | 18.4 ms / 1.0 ms |
+| Pair reports, four searches of 20, one call | 2.1 ms | 2.1 ms (stepped: longest unit 0.1 ms) |
+| Pair reports, four searches of 100, one call | 51.2 ms | 51.2 ms; stepped: total 51.8 ms, longest unit 1.0 ms (at most 1.4) |
+| Facing frame, four searches of 100: total / longest unit | 5.3 ms / 4.0 ms (at most 5.1) | 5.2 ms / 1.0 ms (at most 2.6) |
+| Facing frame, one search of 100: total / longest unit | 12.0 ms / 0.9 ms | 12.3 ms / 0.6 ms |
+| Lit values (by closeness), four searches of 100 | 1.0 ms | 0.9 ms |
+
+The slowest single scan unit seen in these runs was 5.6 ms before and 4.2 ms
+after, both single outliers. The pair reports and the facing frame's units are
+counted, not timed, so their pauses fall at the same places on every run.
 
 ## Decisions made here
 

@@ -448,6 +448,8 @@ test("result lists are real lists, closed until opened, and stay open across upd
 test("Reranker: absent with no rerank callback and for a labels-only set; present, named and moving with one", async () => {
   const none = setup();
   assert.strictEqual(none.q(".tumbler-search-rerank"), null);
+  assert.strictEqual(none.q(".tumbler-search-candidates"), null, "no reranker: no Candidates");
+  assert.strictEqual(none.q(".tumbler-search-top"), null, "no reranker: no Keep top");
   none.h.destroy();
   const rerank = (query, candidates) => ({ scores: candidates.map((c, i) => -i * (c === "word6" ? -5 : 1)), model: "rr/1" });
   const ids = setup({ rerank }, { text_included: false });
@@ -456,7 +458,11 @@ test("Reranker: absent with no rerank callback and for a labels-only set; presen
   const t = setup({ rerank });
   const label = t.q(".tumbler-search-rerank");
   assert.ok(label);
-  assert.strictEqual(label.nextSibling, t.q(".tumbler-search-distances"));
+  // Candidates and Keep top sit beside the Reranker, before Distance difference (class names
+  // compared, so a failure prints one line).
+  assert.strictEqual(label.nextSibling.className, "tumbler-search-candidates");
+  assert.strictEqual(label.nextSibling.nextSibling.className, "tumbler-search-top");
+  assert.strictEqual(label.nextSibling.nextSibling.nextSibling.className, "tumbler-search-distances");
   await ready(t);
   await type(t, "word3");
   const box = label.querySelector("input");
@@ -465,13 +471,17 @@ test("Reranker: absent with no rerank callback and for a labels-only set; presen
   await settled(t);
   const s = t.h.info().search;
   assert.strictEqual(s.searches[0].reranker, "rr/1");
-  assert.match(textOf(t.q(".tumbler-search-list").querySelector("summary")), /embedding order, then the reranker rr\/1/);
+  assert.match(textOf(t.q(".tumbler-search-list").querySelector("summary")), /embedding order, then the reranker rr\/1 \(top 20 of 40 candidates\)/);
   assert.ok(t.all(".tumbler-search-meta").some((m) => /same place|up \d|down \d/.test(textOf(m))));
-  assert.match(textOf(t.q(".tumbler-search-provenance-value")), /reranked by rr\/1: query and candidate texts sent to the reranker/);
+  assert.match(textOf(t.q(".tumbler-search-provenance-value")), /reranked by rr\/1 \(top 20 of 40 candidates\): query and candidate texts sent to the reranker/);
+  // 40 named points, 50 candidates asked: the note says so
+  assert.match(textOf(t.q(".tumbler-search-note")), /A: Only 40 named points can be results, so the reranker was given 40 candidates, not 50\./);
   t.h.setSearchCallbacks({ rerank: null });
   await settled(t);
   t.v.search.panel.update(t.h.info().search);
   assert.strictEqual(t.q(".tumbler-search-rerank"), null);
+  assert.strictEqual(t.q(".tumbler-search-candidates"), null);
+  assert.strictEqual(t.q(".tumbler-search-top"), null);
   t.h.destroy();
 });
 
@@ -791,4 +801,65 @@ test("mount on its own: a handle with no info and a theme getter that throws sti
   assert.strictEqual(panel.drawOverlay(ctx, () => ({ x: 1, y: 1 }), { queries: [new Float32Array(2)], filter: 1 }), false, "no data, nothing drawn");
   panel.destroy();
   assert.strictEqual(panelEl.children.length, 0);
+});
+
+test("Candidates and Keep top: labelled ranges beside the Reranker that drive the handle", async () => {
+  const seen = [];
+  const rerank = (query, candidates) => {
+    seen.push(candidates.length);
+    return { scores: candidates.map((_, i) => i), model: "rr/2" };
+  };
+  const t = setup({ rerank }, { n: 600 }); // 200 named points
+  await ready(t);
+  const cand = t.q(".tumbler-search-candidates");
+  const top = t.q(".tumbler-search-top");
+  assert.match(textOf(cand), /^Candidates /);
+  assert.match(textOf(top), /^Keep top /);
+  const ci = cand.querySelector("input");
+  const ti = top.querySelector("input");
+  assert.deepStrictEqual([ci.type, ci.min, ci.max, ci.value], ["range", "3", "100", "50"]);
+  assert.deepStrictEqual([ti.type, ti.min, ti.max, ti.value], ["range", "3", "50", "20"]);
+  const k = t.q(".tumbler-search-k").querySelector("input");
+  assert.strictEqual(k.max, "100", "Results goes to 100");
+  assert.strictEqual(k.disabled, false);
+  await type(t, "word3");
+  const box = t.q(".tumbler-search-rerank").querySelector("input");
+  box.checked = true;
+  box.dispatchEvent({ type: "change" });
+  await settled(t);
+  assert.strictEqual(k.disabled, true, "with the reranker on, Keep top sets the results");
+  assert.match(k.title, /Keep top sets how many results/);
+  ci.value = "100";
+  ci.dispatchEvent({ type: "input" });
+  await settled(t);
+  assert.strictEqual(t.h.searchSettings().candidates, 100);
+  assert.strictEqual(textOf(cand.querySelector("output")), "100");
+  assert.strictEqual(ti.max, "100");
+  ti.value = "60";
+  ti.dispatchEvent({ type: "input" });
+  await settled(t);
+  const s = t.h.info().search;
+  assert.strictEqual(s.settings.top, 60);
+  assert.strictEqual(seen.at(-1), 100, "the reranker got 100 candidates");
+  assert.strictEqual(s.searches[0].results.length, 60);
+  assert.match(textOf(t.q(".tumbler-search-provenance-value")), /the 100 nearest as candidates, the reranker's top 60 kept/);
+  // lowering candidates under top cuts top, and the range follows
+  t.h.setSearchSettings({ candidates: 30 }); // resolves as frames are pumped, by settled()
+  await settled(t);
+  t.v.search.panel.update(t.h.info().search);
+  assert.deepStrictEqual([ti.max, ti.value, textOf(top.querySelector("output"))], ["30", "30", "30"]);
+  t.h.destroy();
+});
+
+test("a 100-result list scrolls inside its own box", async () => {
+  const t = setup({ searchK: 100 }, { n: 600 });
+  await ready(t);
+  await type(t, "word3");
+  const list = t.q(".tumbler-search-list");
+  const ol = list.querySelector("ol");
+  assert.strictEqual(ol.children.length, 100);
+  assert.strictEqual(ol.style.overflowY, "auto");
+  assert.match(ol.style.maxHeight, /320px/);
+  assert.match(textOf(list.querySelector("summary")), /^A · word3 · 100 named results/);
+  t.h.destroy();
 });

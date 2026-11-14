@@ -287,3 +287,20 @@ test("four searches of 100 results: the pair reports are worked out in slices, n
   );
   h.destroy();
 });
+
+test("pair reports that cannot be made leave no pair line, and the searches are still shown", async () => {
+  const { h, dom } = setup();
+  const real = ET.searchSets.makePairReports;
+  ET.searchSets.makePairReports = () => {
+    throw new RangeError("a named result's index is not a row of the set");
+  };
+  try {
+    const r = await settle(dom, h.setSearches(["word3", "word9"]));
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.search.searches.length, 2);
+    assert.deepStrictEqual(r.search.pairs, []);
+  } finally {
+    ET.searchSets.makePairReports = real;
+  }
+  h.destroy();
+});

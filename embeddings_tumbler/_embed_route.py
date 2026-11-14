@@ -52,8 +52,11 @@ KEY_VARIABLES = ("EMBEDDINGS_API_KEY", "COLLEAGUE_API_KEY")
 
 MAX_BODY_BYTES = 1_048_576
 MAX_TEXT_CHARS = 8000
-MAX_CANDIDATES = 60
-MAX_CANDIDATE_CHARS = 4000
+# The viewer asks for at most 100 candidates (ET.search.MAX_CANDIDATES). At 4 UTF-8 bytes per
+# character, 100 candidates of 2,000 characters and a query of 8,000 come to about 832,000
+# bytes, inside MAX_BODY_BYTES; at 4,000 characters a candidate they would not (1.6 MB).
+MAX_CANDIDATES = 100
+MAX_CANDIDATE_CHARS = 2000
 REQUESTS_PER_MINUTE = 120
 WINDOW_SECONDS = 60.0
 GATEWAY_TIMEOUT_SECONDS = 20.0

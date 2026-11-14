@@ -230,8 +230,8 @@ def test_describe_names_models_query_form_and_limits(served):
         "rerank": {"model": "rerank-model"},
         "limits": {
             "maxTextChars": 8000,
-            "maxCandidates": 60,
-            "maxCandidateChars": 4000,
+            "maxCandidates": 100,
+            "maxCandidateChars": 2000,
             "requestsPerMinute": 120,
         },
     }
@@ -425,7 +425,7 @@ def test_bad_request(served, body):
     [
         {"op": "embed", "text": "x" * 8001},
         {"op": "rerank", "query": "x" * 8001, "candidates": ["a"]},
-        {"op": "rerank", "query": "q", "candidates": ["a", "x" * 4001]},
+        {"op": "rerank", "query": "q", "candidates": ["a", "x" * 2001]},
     ],
 )
 def test_text_too_long(served, body):
@@ -435,12 +435,21 @@ def test_text_too_long(served, body):
 
 def test_texts_at_the_limits_are_accepted(served):
     assert _post(served, {"op": "embed", "text": "x" * 8000})[0] == 200
-    body = {"op": "rerank", "query": "x" * 8000, "candidates": ["y" * 4000] * 60}
+    body = {"op": "rerank", "query": "x" * 8000, "candidates": ["y" * 2000] * 100}
     assert _post(served, body)[0] == 200
 
 
+def test_hundred_candidates_of_four_byte_text_fit_the_body_limit(served):
+    # The worst case a browser sends: every character 4 bytes in UTF-8 (JSON.stringify does not
+    # escape non-ASCII), 100 candidates at the per-candidate limit and the longest query.
+    body = {"op": "rerank", "query": "\U0001f30a" * 8000, "candidates": ["\U0001f41a" * 2000] * 100}
+    raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    assert len(raw) < 1_048_576
+    assert _request(served, body=raw)[0] == 200
+
+
 def test_too_many_candidates(served):
-    body = {"op": "rerank", "query": "q", "candidates": ["a"] * 61}
+    body = {"op": "rerank", "query": "q", "candidates": ["a"] * 101}
     status, headers, payload = _post(served, body)
     _assert_refused(status, headers, payload, "too-many-candidates", 413)
 

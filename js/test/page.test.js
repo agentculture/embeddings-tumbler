@@ -304,7 +304,7 @@ const DESCRIBE = {
   ok: true,
   embed: { model: "m-embed", query_form: "plain" },
   rerank: { model: "m-rerank" },
-  limits: { maxTextChars: 8000, maxCandidates: 60, maxCandidateChars: 5, requestsPerMinute: 120 },
+  limits: { maxTextChars: 8000, maxCandidates: 100, maxCandidateChars: 5, requestsPerMinute: 120 },
 };
 
 // A fake route: records bodies, answers each op the way the helper does.
@@ -339,6 +339,8 @@ test("a route that answers describe gives the viewer embed and rerank callbacks"
   const ranked = await opts.rerank("q", ["abcdefghij", "xy"]);
   assert.deepStrictEqual(ranked, { scores: [0, 1], model: "m-rerank" });
   assert.deepStrictEqual(route.seen.at(-1).candidates, ["abcde", "xy"], "cut to maxCandidateChars");
+  const hundred = Array.from({ length: 100 }, (_c, i) => "c" + i);
+  assert.strictEqual((await opts.rerank("q", hundred)).scores.length, 100, "100 candidates go through");
   assert.deepStrictEqual(route.seen[0], { op: "describe" });
   assert.strictEqual(w.body.getAttribute("data-page-state"), "ready");
 });
@@ -497,4 +499,14 @@ test("with no AbortController the probe still runs, and a viewer that fails to s
   const bad = await sampleWith({ route: fakeRoute(), mountThrows: true });
   assert.strictEqual(bad.body.getAttribute("data-page-state"), "error");
   assert.match(bad.els["wait-text"].textContent, /could not start the viewer/);
+});
+
+test("the rerank callback reads the candidate limit from describe and refuses more, sending nothing", async () => {
+  const route = fakeRoute({ ...DESCRIBE, limits: { ...DESCRIBE.limits, maxCandidates: 3 } });
+  const w = await sampleWith({ route });
+  const opts = w.mountOptions[0];
+  const before = route.seen.length;
+  await assert.rejects(opts.rerank("q", ["a", "b", "c", "d"]), /Too many candidates were sent to the reranker/);
+  assert.strictEqual(route.seen.length, before, "nothing was sent");
+  assert.deepStrictEqual((await opts.rerank("q", ["a", "b", "c"])).scores, [0, 1, 2]);
 });
