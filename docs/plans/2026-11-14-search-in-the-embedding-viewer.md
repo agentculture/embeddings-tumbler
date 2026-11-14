@@ -182,6 +182,26 @@ slug: `search-in-the-embedding-viewer` · status: `exported` · from frame: `sea
   - A legend names the three colours as text; the colours are checked on the dark and the light treatment
   - docs/reference-differences.md lists the coloured strip as an intended difference from the reference, and js/api/50-viewer.md describes the new formula
 
+### t17 — Real-vector demo set: about 1,000 Wikipedia items embedded by a real model, shipped as the standalone page's default, with the synthetic set kept (scripts, a committed corpus, js/page/, packaging)
+
+- instruction: Started ahead of this task under approved deviation d2. The main agent runs the embedding step once with the gateway key injected by grant and commits the real pair.
+- depends on: t9
+- covers: c48, h35
+- acceptance:
+  - A committed script builds the corpus from a rule-based Wikipedia list and a second builds the data pair from it through an embeddings endpoint; both are tested against fake endpoints, and the key never appears in any output
+  - The standalone page opens on the shipped real pair by default, falls back to the synthetic set when the pair is missing, and offers the synthetic set as an explicit choice; the provenance names the source, the model and the text's licence
+  - The pair is byte-identical in the wheel, the sdist and the npm tarball, viewer write writes it, an attribution notice ships with both packages, and each package stays under 5 MB
+
+### t18 — Candidates and top X: a search takes 3 to 100 candidates (50 by default) and the reranker keeps the top X (20 by default); with no reranker the results are 8 by default, up to 100 (search core, viewer, panel, embed route)
+
+- instruction: Started ahead of this task under approved deviation d2. Replaces the earlier 3 to 20 range and the hidden pool factor.
+- depends on: t9
+- covers: c49, h36
+- acceptance:
+  - With a fake reranker that reverses the order, 50 candidates and top 20 give the last 20 of the 50 nearest named points, the radius is the farthest kept result, and the reranker received exactly 50 candidates
+  - info().search, the provenance row and the panel state the candidates and the kept count; the panel's controls appear only when a reranker is connected
+  - The embed route accepts 100 candidates and refuses 101, and describe reports the limit
+
 ## Risks
 
 - [follow_up] With three or four searches the facing view scales to fit all of them, so two that touch can end up small beside a far one. A way to face a chosen pair is not specified (parked in the spec). (task t3)

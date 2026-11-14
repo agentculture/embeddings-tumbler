@@ -106,3 +106,15 @@ Obligation o12 is the one that binds the build to them.
 - **Owed:** A cell's colour is the mix of the three axis colours weighted by that dimension's squared component on each axis; a dimension that feeds only one axis shows that axis's colour exactly; opacity equals the existing contribution formula.
 - **Claim:** c47 (requirement)
 - **Status:** approved
+
+## o17: demo data -> person trying the viewer
+
+- **Owed:** The standalone page opens on real vectors by default and says where they came from, by which model and under which licence; neighbours in it reflect meaning (a real model's distances), and the synthetic set is one explicit choice away.
+- **Claim:** c48 (requirement)
+- **Status:** approved
+
+## o18: candidates -> reranker -> results
+
+- **Owed:** N candidates are taken by full-space distance among named points; with a reranker the top X by its scores are the results; without one the first K by distance are; every count is stated.
+- **Claim:** c49 (requirement)
+- **Status:** approved
