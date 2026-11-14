@@ -5,7 +5,8 @@ The built viewer is the standalone page (`embeddings_tumbler/static/index.html`)
 over the one core file. This document lists every difference between them that
 was intended, so a person can check them off, and then lists what a side-by-side
 look found that nobody had written down. It is prepared for the user's
-sign-off. **The sign-off has not happened; see the last section.**
+sign-off. **The user signed off on 2026-11-14, with one qualification; see the last
+section.**
 
 How to read this document:
 
