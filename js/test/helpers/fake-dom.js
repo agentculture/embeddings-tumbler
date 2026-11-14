@@ -48,6 +48,7 @@ class FakeNode {
     return p.childNodes[p.childNodes.indexOf(this) - 1] || null;
   }
   get nextElementSibling() {
+<<<<<<< HEAD
     const kids = this.parentNode ? this.parentNode.childNodes : [];
     return kids.slice(kids.indexOf(this) + 1).find((n) => n.nodeType === 1) || null;
   }
@@ -57,15 +58,87 @@ class FakeNode {
   }
   get isConnected() {
     const top = lineage(this).at(-1);
+=======
+    let n = this.nextSibling;
+    while (n && n.nodeType !== 1) n = n.nextSibling;
+    return n;
+  }
+  get previousElementSibling() {
+    let n = this.previousSibling;
+    while (n && n.nodeType !== 1) n = n.previousSibling;
+    return n;
+  }
+  get isConnected() {
+    let top = this;
+    while (top.parentNode) top = top.parentNode;
+>>>>>>> agent/sonar-B3
     const doc = top.ownerDocument;
     return !!doc && top === doc.documentElement;
   }
   remove() {
+<<<<<<< HEAD
     const p = this.parentNode;
     if (!p) return;
     const i = p.childNodes.indexOf(this);
     if (i >= 0) p.childNodes.splice(i, 1);
+=======
+    if (this.parentNode) this.parentNode.removeChild(this);
+  }
+  before(...items) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    const nodes = toNodes(this, items);
+    let prev = this.previousSibling;
+    while (prev && nodes.includes(prev)) prev = prev.previousSibling;
+    detachAll(nodes);
+    const ref = prev ? prev.nextSibling : parent.firstChild;
+    for (const n of nodes) parent.insertBefore(n, ref);
+  }
+  after(...items) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    const nodes = toNodes(this, items);
+    let next = this.nextSibling;
+    while (next && nodes.includes(next)) next = next.nextSibling;
+    detachAll(nodes);
+    for (const n of nodes) parent.insertBefore(n, next);
+  }
+  replaceWith(...items) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    const nodes = toNodes(this, items);
+    let next = this.nextSibling;
+    while (next && nodes.includes(next)) next = next.nextSibling;
+    detachAll(nodes.filter((n) => n !== this));
+    if (this.parentNode === parent) {
+      for (const n of nodes) if (n !== this) parent.insertBefore(n, this);
+      if (!nodes.includes(this)) parent.removeChild(this);
+    } else {
+      for (const n of nodes) parent.insertBefore(n, next);
+    }
+  }
+}
+
+// Turn ChildNode/ParentNode arguments into nodes (strings become text nodes).
+function toNodes(owner, items) {
+  const doc = owner.ownerDocument || null;
+  return items.map((it) =>
+    it !== null && typeof it === "object" && it.nodeType ? it : new FakeText(it, doc)
+  );
+}
+
+function detachAll(nodes) {
+  for (const n of nodes) if (n.parentNode) n.parentNode.removeChild(n);
+}
+
+class FakeText extends FakeNode {
+  constructor(text, doc) {
+    super();
+    this.nodeType = 3;
+    this.data = String(text);
+>>>>>>> agent/sonar-B3
     this.parentNode = null;
+    this.ownerDocument = doc || null;
   }
   before(...items) {
     const parent = this.parentNode;
@@ -219,7 +292,12 @@ class FakeParent extends FakeNode {
     return this.children[0] || null;
   }
   get lastElementChild() {
+<<<<<<< HEAD
     return this.children.at(-1) || null;
+=======
+    const c = this.children;
+    return c[c.length - 1] || null;
+>>>>>>> agent/sonar-B3
   }
   hasChildNodes() {
     return this.childNodes.length > 0;
@@ -234,8 +312,13 @@ class FakeParent extends FakeNode {
       for (const c of child.childNodes.slice()) this.insertBefore(c, ref);
       return child;
     }
+<<<<<<< HEAD
     if (child.contains?.(this)) throw new Error("fake DOM: hierarchy error");
     child.remove();
+=======
+    if (child.contains && child.contains(this)) throw new Error("fake DOM: hierarchy error");
+    if (child.parentNode) child.parentNode.removeChild(child);
+>>>>>>> agent/sonar-B3
     const i = ref === null || ref === undefined ? -1 : this.childNodes.indexOf(ref);
     if (i < 0) this.childNodes.push(child);
     else this.childNodes.splice(i, 0, child);
@@ -255,7 +338,11 @@ class FakeParent extends FakeNode {
     if (old.parentNode !== this) throw new Error("fake DOM: not a child");
     if (child !== old) {
       this.insertBefore(child, old);
+<<<<<<< HEAD
       old.remove();
+=======
+      this.removeChild(old);
+>>>>>>> agent/sonar-B3
     }
     return old;
   }
@@ -292,6 +379,20 @@ class FakeParent extends FakeNode {
   querySelector(sel) {
     return this.querySelectorAll(sel)[0] || null;
   }
+  querySelectorAll(sel) {
+    const out = [];
+    const walkTree = (el) => {
+      for (const c of el.children) {
+        if (matchesSelector(c, sel)) out.push(c);
+        walkTree(c);
+      }
+    };
+    walkTree(this);
+    return out;
+  }
+  querySelector(sel) {
+    return this.querySelectorAll(sel)[0] || null;
+  }
   get textContent() {
     return this.childNodes.map((c) => c.textContent).join("");
   }
@@ -303,6 +404,7 @@ class FakeParent extends FakeNode {
   }
 }
 
+<<<<<<< HEAD
 // element.classList: a live view of the class attribute, as a browser's DOMTokenList.
 class FakeTokenList {
   constructor(el) {
@@ -365,10 +467,20 @@ class FakeFragment extends FakeParent {
   constructor(doc) {
     super();
     this.ownerDocument = doc;
+=======
+class FakeFragment extends FakeParent {
+  constructor(doc) {
+    super();
+    this.ownerDocument = doc;
+    this.nodeType = 11;
+    this.childNodes = [];
+    this.parentNode = null;
+>>>>>>> agent/sonar-B3
   }
 }
 
 class FakeElement extends FakeParent {
+<<<<<<< HEAD
   nodeType = 1;
   childNodes = [];
   parentNode = null;
@@ -379,10 +491,24 @@ class FakeElement extends FakeParent {
   rect = null; // { left, top, width, height } set by tests; null = from parent or default
   pointerCapture = null; // the pointer id captured with setPointerCapture, if any
   _dataset = null;
+=======
+>>>>>>> agent/sonar-B3
   constructor(doc, tag) {
     super();
     this.ownerDocument = doc;
     this.tagName = String(tag).toUpperCase();
+<<<<<<< HEAD
+=======
+    this.nodeType = 1;
+    this.childNodes = [];
+    this.parentNode = null;
+    this.style = new FakeStyle();
+    this.attributes = new Map();
+    this.listeners = {};
+    this.tabIndex = -1;
+    this.rect = null; // { left, top, width, height } set by tests; null = from parent or default
+    this._dataset = null;
+>>>>>>> agent/sonar-B3
   }
   // className, id and hidden reflect their attributes, as in a browser. They write the
   // attribute map directly (not through an overridden setAttribute), like the old plain
@@ -414,7 +540,12 @@ class FakeElement extends FakeParent {
     return matchesSelector(this, sel);
   }
   closest(sel) {
+<<<<<<< HEAD
     return lineage(this).find((n) => n.nodeType === 1 && matchesSelector(n, sel)) || null;
+=======
+    for (let n = this; n && n.nodeType === 1; n = n.parentNode) if (matchesSelector(n, sel)) return n;
+    return null;
+>>>>>>> agent/sonar-B3
   }
   set innerHTML(_v) {
     throw new Error("fake DOM: innerHTML is not allowed");
@@ -456,7 +587,50 @@ class FakeElement extends FakeParent {
   }
   // A live token list over the class attribute.
   get classList() {
+<<<<<<< HEAD
     return new FakeTokenList(this);
+=======
+    const el = this;
+    const tokens = () => el.className.split(/\s+/).filter(Boolean);
+    const write = (list) => {
+      el.className = list.join(" ");
+    };
+    return {
+      get length() {
+        return tokens().length;
+      },
+      get value() {
+        return el.className;
+      },
+      item: (i) => tokens()[i] ?? null,
+      contains: (c) => tokens().includes(c),
+      add: (...cs) => {
+        const list = tokens();
+        for (const c of cs) if (!list.includes(c)) list.push(c);
+        write(list);
+      },
+      remove: (...cs) => {
+        write(tokens().filter((x) => !cs.includes(x)));
+      },
+      toggle: (c, force) => {
+        const has = tokens().includes(c);
+        const want = force === undefined ? !has : !!force;
+        if (want && !has) write(tokens().concat([c]));
+        else if (!want && has) write(tokens().filter((x) => x !== c));
+        return want;
+      },
+      replace: (from, to) => {
+        const list = tokens();
+        const i = list.indexOf(from);
+        if (i < 0) return false;
+        list[i] = to;
+        write(list.filter((x, j) => list.indexOf(x) === j));
+        return true;
+      },
+      forEach: (fn) => tokens().forEach(fn),
+      [Symbol.iterator]: () => tokens()[Symbol.iterator](),
+    };
+>>>>>>> agent/sonar-B3
   }
   addEventListener(type, fn, opts) {
     this.listeners[type] ??= [];

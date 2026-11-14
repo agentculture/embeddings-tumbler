@@ -5619,7 +5619,7 @@ ET.viewer = (function () {
   function lookup(el) {
     if (!el || typeof el !== "object") return null;
     if (live) return live.get(el) || null;
-    for (var i = 0; i < liveList.length; i++) if (liveList[i].el === el) return liveList[i].v;
+    for (var rec of liveList) if (rec.el === el) return rec.v;
     return null;
   }
   function remember(el, v) {
@@ -5636,7 +5636,9 @@ ET.viewer = (function () {
   // ---------- small pure helpers ----------
 
   function clamp(x, lo, hi) {
-    return x < lo ? lo : x > hi ? hi : x;
+    if (x < lo) return lo;
+    if (x > hi) return hi;
+    return x;
   }
 
   function hsl(h, s, l) {
@@ -5654,7 +5656,7 @@ ET.viewer = (function () {
 
   function thousands(n) {
     var s = String(Math.round(n));
-    var neg = s.charAt(0) === "-";
+    var neg = s.startsWith("-");
     if (neg) s = s.slice(1);
     var out = "";
     while (s.length > 3) {
@@ -5684,12 +5686,12 @@ ET.viewer = (function () {
       var h = m[1];
       if (h.length === 3 || h.length === 4) {
         return [0, 1, 2].map(function (i) {
-          return parseInt(h.charAt(i) + h.charAt(i), 16) / 255;
+          return Number.parseInt(h.charAt(i) + h.charAt(i), 16) / 255;
         });
       }
       if (h.length === 6 || h.length === 8) {
         return [0, 2, 4].map(function (i) {
-          return parseInt(h.slice(i, i + 2), 16) / 255;
+          return Number.parseInt(h.slice(i, i + 2), 16) / 255;
         });
       }
       return null;
@@ -5701,22 +5703,22 @@ ET.viewer = (function () {
     });
     if (parts.length < 3) return null;
     function num(p, scale) {
-      var pct = p.charAt(p.length - 1) === "%";
-      var x = parseFloat(p);
-      if (!isFinite(x)) return NaN;
+      var pct = p.endsWith("%");
+      var x = Number.parseFloat(p);
+      if (!Number.isFinite(x)) return Number.NaN;
       return pct ? x / 100 : x / scale;
     }
-    if (m[1].charAt(0) === "r") {
+    if (m[1].startsWith("r")) {
       var rgb = [num(parts[0], 255), num(parts[1], 255), num(parts[2], 255)];
-      if (rgb.some(isNaN)) return null;
+      if (rgb.some(Number.isNaN)) return null;
       return rgb.map(function (c) {
         return clamp(c, 0, 1);
       });
     }
-    var hue = parseFloat(parts[0]);
+    var hue = Number.parseFloat(parts[0]);
     var sat = num(parts[1], 100);
     var lig = num(parts[2], 100);
-    if (!isFinite(hue) || isNaN(sat) || isNaN(lig)) return null;
+    if (!Number.isFinite(hue) || Number.isNaN(sat) || Number.isNaN(lig)) return null;
     return hsl(((hue % 360) + 360) % 360, clamp(sat, 0, 1), clamp(lig, 0, 1));
   }
 
@@ -5749,12 +5751,12 @@ ET.viewer = (function () {
   function setStyles(el, styles) {
     var st = el.style;
     for (var k in styles) {
-      if (Object.prototype.hasOwnProperty.call(styles, k)) st[k] = styles[k];
+      if (Object.hasOwn(styles, k)) st[k] = styles[k];
     }
   }
 
   function readOption(options, key) {
-    if (options && Object.prototype.hasOwnProperty.call(options, key) && options[key] !== undefined) {
+    if (options && Object.hasOwn(options, key) && options[key] !== undefined) {
       return options[key];
     }
     return DEFAULT_OPTIONS[key];
@@ -5791,7 +5793,7 @@ ET.viewer = (function () {
     else if (typeof w.queueMicrotask === "function") w.queueMicrotask(rethrow);
     else {
       var c = w.console || (typeof console !== "undefined" ? console : null);
-      if (c && typeof c.error === "function") c.error("embeddings-tumbler: a host callback threw", err);
+      if (typeof c?.error === "function") c.error("embeddings-tumbler: a host callback threw", err);
     }
   }
 
@@ -6029,7 +6031,7 @@ ET.viewer = (function () {
       });
       b.type = "button";
       b.setAttribute("aria-pressed", "false");
-      b.setAttribute("data-mode", def.id);
+      b.dataset.mode = def.id;
       b.setAttribute("aria-keyshortcuts", i < 9 ? String(i + 1) : "");
       var title = text(v, "b", "tumbler-mode-title", def.title, {
         fontWeight: "400",
@@ -6168,12 +6170,13 @@ ET.viewer = (function () {
   function readTheme(v) {
     var cs = null;
     try {
-      cs = v.win && typeof v.win.getComputedStyle === "function" ? v.win.getComputedStyle(v.root) : null;
+      cs = typeof v.win?.getComputedStyle === "function" ? v.win.getComputedStyle(v.root) : null;
     } catch (err) {
+      // A host whose getComputedStyle throws gets the built-in theme.
       cs = null;
     }
     function raw(name) {
-      if (!cs || typeof cs.getPropertyValue !== "function") return "";
+      if (typeof cs?.getPropertyValue !== "function") return "";
       var s = cs.getPropertyValue(name);
       return typeof s === "string" ? s.trim() : "";
     }
@@ -6206,7 +6209,7 @@ ET.viewer = (function () {
       t.groups.push(colour("--tumbler-group-" + (i + 1)));
     }
     var style = v.options.lightStyle || raw("--tumbler-light-style");
-    t.lightStyle = LIGHT_STYLES.indexOf(style) >= 0 ? style : DEFAULT_LIGHT_STYLE;
+    t.lightStyle = LIGHT_STYLES.includes(style) ? style : DEFAULT_LIGHT_STYLE;
     // What the stage (sky, status, labels, messages over it) is drawn with: the host's
     // colours, except a light host with the "panel" style, whose stage stays dark.
     t.panelStage = light && t.lightStyle === "panel";
@@ -6227,7 +6230,7 @@ ET.viewer = (function () {
   // Resolve a named or otherwise unparsed colour through the browser: set it on a
   // hidden probe inside the viewer and read the computed value.
   function probeColour(v, s) {
-    if (!v.root || !v.win || typeof v.win.getComputedStyle !== "function") return null;
+    if (!v.root || typeof v.win?.getComputedStyle !== "function") return null;
     var probe = null;
     try {
       probe = v.doc.createElement("span");
@@ -6237,9 +6240,10 @@ ET.viewer = (function () {
       var c = parseColour(String(v.win.getComputedStyle(probe).color || ""));
       return c;
     } catch (err) {
+      // A colour the browser cannot resolve is no colour: the caller falls back to the default.
       return null;
     } finally {
-      if (probe && probe.parentNode) probe.parentNode.removeChild(probe);
+      probe?.remove();
     }
   }
 
@@ -6248,7 +6252,7 @@ ET.viewer = (function () {
     if (index < MAX_GROUP_PROPS && v.theme.groups[index]) return v.theme.groups[index];
     if (index < GROUP_HUES.length) return hsl(GROUP_HUES[index], 0.9, 0.62);
     // Past the reference's hues: golden-angle steps, same saturation and lightness.
-    return hsl((GROUP_HUES[GROUP_HUES.length - 1] + 137.508 * (index - GROUP_HUES.length + 1)) % 360, 0.9, 0.62);
+    return hsl((GROUP_HUES.at(-1) + 137.508 * (index - GROUP_HUES.length + 1)) % 360, 0.9, 0.62);
   }
 
   function applyTheme(v) {
@@ -6425,7 +6429,7 @@ ET.viewer = (function () {
 
   function groupIndexOf(v, group) {
     if (typeof group !== "string" || group === "") return -1;
-    if (Object.prototype.hasOwnProperty.call(v.groupIndex, group)) return v.groupIndex[group];
+    if (Object.hasOwn(v.groupIndex, group)) return v.groupIndex[group];
     var i = v.groupNames.length;
     v.groupIndex[group] = i;
     v.groupNames.push(group);
@@ -6506,7 +6510,7 @@ ET.viewer = (function () {
     var pc = paint(v, set, 0, set.count);
     var res = v.renderer.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
     v.lightLoad = pc.bright;
-    if (res && res.ok === false) fatal(v, res.message);
+    if (res?.ok === false) fatal(v, res.message);
     if (v.mode) v.mode.wiresVersion = -1;
     v.paintKey = paintKey(v);
   }
@@ -6588,10 +6592,11 @@ ET.viewer = (function () {
     try {
       d = m.inst.describe() || {};
     } catch (err) {
+      // A mode whose describe() throws is shown as a plain linear projection.
       d = {};
     }
     var out = m.title + ": " + (d.projection || "a linear projection");
-    if (typeof d.varianceShare === "number" && isFinite(d.varianceShare)) {
+    if (typeof d.varianceShare === "number" && Number.isFinite(d.varianceShare)) {
       out +=
         "; the directions it tours through hold " +
         percent(d.varianceShare) +
@@ -6603,7 +6608,7 @@ ET.viewer = (function () {
 
   function renderProvenance(v) {
     var list = v.provList;
-    while (list.firstChild) list.removeChild(list.firstChild);
+    list.replaceChildren();
     v.provView = null;
     var set = v.set;
     if (!set) {
@@ -6619,7 +6624,7 @@ ET.viewer = (function () {
     if (p.synthetic) provRow(v, "Synthetic", "yes: these vectors were generated, not produced by the named model");
     provRow(v, "Model", set.model);
     var dim = thousands(set.dimension);
-    if (r && r.kind === "top-k") dim += " (reduced from " + thousands(r.source_dimension) + ")";
+    if (r?.kind === "top-k") dim += " (reduced from " + thousands(r.source_dimension) + ")";
     provRow(v, "Dimension", dim);
     provRow(v, "Items", thousands(set.count));
     provRow(v, "Seed (view)", String(v.seed));
@@ -6702,7 +6707,7 @@ ET.viewer = (function () {
   function copyState(s) {
     if (!s) return null;
     var draw = {};
-    for (var k in s.draw) if (Object.prototype.hasOwnProperty.call(s.draw, k)) draw[k] = s.draw[k];
+    for (var k in s.draw) if (Object.hasOwn(s.draw, k)) draw[k] = s.draw[k];
     return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: draw };
   }
 
@@ -6714,18 +6719,18 @@ ET.viewer = (function () {
     var out = {};
     var k;
     var d = MODE_DEFAULTS[id];
-    if (d) for (k in d) if (Object.prototype.hasOwnProperty.call(d, k)) out[k] = d[k];
+    if (d) for (k in d) if (Object.hasOwn(d, k)) out[k] = d[k];
     var mo = v.options.modeOptions;
-    var host = mo && Object.prototype.hasOwnProperty.call(mo, id) ? mo[id] : null;
+    var host = mo && Object.hasOwn(mo, id) ? mo[id] : null;
     if (host && typeof host === "object") {
-      for (k in host) if (Object.prototype.hasOwnProperty.call(host, k)) out[k] = host[k];
+      for (k in host) if (Object.hasOwn(host, k)) out[k] = host[k];
     }
     return out;
   }
 
   // Start mode `id` on the current set. Returns true, or false after showing why not.
   function errorText(err, fallback) {
-    return err && err.message ? String(err.message) : fallback;
+    return err?.message ? String(err.message) : fallback;
   }
 
   // Start mode `id` on the current set. Returns true, or false after showing why not
@@ -6751,7 +6756,7 @@ ET.viewer = (function () {
       inst = ET.modes.create(id, modeOptionsFor(v, id));
       inst.enter(v.set, { seed: v.seed, from: from || null });
       prep = inst.prepare();
-      if (!prep || typeof prep.step !== "function") throw new TypeError(def.title + ": prepare() returned no stepper");
+      if (typeof prep?.step !== "function") throw new TypeError(def.title + ": prepare() returned no stepper");
     } catch (err) {
       v.modeError = errorText(err, "This view cannot show the data.");
       notify(v, v.modeError);
@@ -6790,8 +6795,9 @@ ET.viewer = (function () {
 
   function readyOf(m) {
     try {
-      return !!(m && m.inst.isReady());
+      return !!m?.inst.isReady();
     } catch (err) {
+      // A mode whose isReady() throws is not ready.
       return false;
     }
   }
@@ -6801,7 +6807,7 @@ ET.viewer = (function () {
   function recover(v) {
     if (!v.broken) return;
     v.broken = false;
-    if (v.noticeMessage && v.noticeMessage.indexOf("The viewer stopped") === 0) clearNotice(v);
+    if (v.noticeMessage?.startsWith("The viewer stopped")) clearNotice(v);
     v.prev = null;
     invalidate(v);
   }
@@ -6809,7 +6815,7 @@ ET.viewer = (function () {
   function setMode(v, id) {
     if (v.destroyed) return false;
     if (typeof id !== "string") return false;
-    if (v.mode && v.mode.id === id) return true;
+    if (v.mode?.id === id) return true;
     if (!v.set && ET.modes.get(id)) {
       v.modeId = id;
       paintModeButtons(v);
@@ -6841,36 +6847,47 @@ ET.viewer = (function () {
     }
   }
 
-  function applyUpdate(v, data) {
-    var res;
+  function validateSafely(v, data) {
     try {
-      res = ET.contract.validate(data, v.set);
+      return ET.contract.validate(data, v.set);
     } catch (err) {
       // The loader never throws for bad data (a hostile getter is its own
       // invalid-field refusal), so anything caught here is a fault, not the data's.
-      res = { ok: false, code: "internal", message: "Internal error while checking the data: " + errorText(err, String(err)) };
+      return { ok: false, code: "internal", message: "Internal error while checking the data: " + errorText(err, String(err)) };
     }
-    // Re-read the host's theme on every update (no polling); applied only if changed.
-    syncTheme(v);
-    if (v.set && paintKey(v) !== v.paintKey) recolour(v);
-    if (!res || !res.ok) {
-      return refuse(v, { ok: false, code: res ? res.code : "internal", message: res ? res.message : "Data refused." });
-    }
-    var op = "replace";
+  }
+
+  // "append" or "replace": what the data asks for. A getter that throws means replace.
+  function opOf(data) {
     try {
-      if (data.op === "append") op = "append";
+      return data.op === "append" ? "append" : "replace";
     } catch (err) {
-      op = "replace";
+      // A throwing op getter: the data is shown as a replace.
+      return "replace";
     }
-    clearNotice(v); // an older notice; a fallback view or a refusal sets its own
-    var out;
+  }
+
+  function applyOp(v, op, set) {
     try {
-      out = op === "append" ? applyAppend(v, res.set) : applyReplace(v, res.set);
+      return op === "append" ? applyAppend(v, set) : applyReplace(v, set);
     } catch (err) {
       // Nothing in the application path should throw; if it does, it is reported, the
       // loop is left to the frame guard, and the host gets a result.
-      out = { ok: false, code: "internal", message: "Internal error while showing the data: " + errorText(err, String(err)) };
+      return { ok: false, code: "internal", message: "Internal error while showing the data: " + errorText(err, String(err)) };
     }
+  }
+
+  function applyUpdate(v, data) {
+    var res = validateSafely(v, data);
+    // Re-read the host's theme on every update (no polling); applied only if changed.
+    syncTheme(v);
+    if (v.set && paintKey(v) !== v.paintKey) recolour(v);
+    if (!res?.ok) {
+      return refuse(v, { ok: false, code: res ? res.code : "internal", message: res ? res.message : "Data refused." });
+    }
+    var op = opOf(data);
+    clearNotice(v); // an older notice; a fallback view or a refusal sets its own
+    var out = applyOp(v, op, res.set);
     if (!out.ok) return refuse(v, out);
     if (v.fatalKind === "data") clearFatal(v);
     if (v.fatalKind === "gpu" && v.rendering) clearFatal(v);
@@ -6949,7 +6966,7 @@ ET.viewer = (function () {
       var st = r.status();
       if (!st.ok && !st.lost && !st.disposed) {
         var rb = r.rebuild();
-        if (!rb || !rb.ok) fatal(v, (rb && rb.message) || "The graphics card could not take the data back.");
+        if (!rb?.ok) fatal(v, rb?.message || "The graphics card could not take the data back.");
       }
       if (v.mode) v.mode.wiresVersion = -1;
       v.paintKey = paintKey(v);
@@ -6961,6 +6978,14 @@ ET.viewer = (function () {
 
   function gpuThrew(err) {
     return { ok: false, code: "gpu-failed", message: "The graphics card could not take the data: " + errorText(err, String(err)) };
+  }
+
+  // Start the first registered view other than the chosen one that can show the set.
+  function startOtherMode(v) {
+    for (var id of ET.modes.ids()) {
+      if (id !== v.modeId && startMode(v, id, null)) return true;
+    }
+    return false;
   }
 
   function applyReplace(v, set) {
@@ -6981,7 +7006,7 @@ ET.viewer = (function () {
         restore(v, snap);
         return gpuThrew(err);
       }
-      if (gpu && gpu.ok === false) {
+      if (gpu?.ok === false) {
         // This GPU cannot take the set (too many points, too wide, a failed build or
         // upload): the renderer may still hold the previous set, or nothing usable,
         // so the view goes back exactly to what it was, renderer copy included.
@@ -6999,12 +7024,9 @@ ET.viewer = (function () {
     // startMode leaves the old instance only when the new one has started.
     var started = startMode(v, v.modeId, null);
     var firstError = v.modeError;
-    if (!started) {
-      // The chosen view cannot show this data (too few dimensions, or a failing
-      // mode): try the others.
-      var ids = ET.modes.ids();
-      for (var i = 0; i < ids.length && !started; i++) if (ids[i] !== v.modeId) started = startMode(v, ids[i], null);
-    }
+    // The chosen view cannot show this data (too few dimensions, or a failing
+    // mode): try the others.
+    if (!started) started = startOtherMode(v);
     if (!started) {
       v.mode = oldMode;
       restore(v, snap);
@@ -7018,6 +7040,69 @@ ET.viewer = (function () {
     return { ok: true, op: "replace", count: set.count, added: set.count };
   }
 
+  // The labelled count and label sample after points [from, set.count) arrive.
+  function appendLabels(v, set, from) {
+    var hadLabelled = v.labelledCount;
+    v.labelledCount += countLabelled(set, from, set.count);
+    if (hadLabelled === 0 && v.labelledCount > 0) {
+      // The first labelled points arrived: rebuild the label sample from them.
+      v.labelSample = [];
+      extendLabelSample(v, set, 0);
+    } else extendLabelSample(v, set, from);
+  }
+
+  // Upload points [from, set.count) to the renderer. Returns null on success (the light
+  // load then counts them), or the refusal; the caller rolls the view back.
+  function uploadAppend(v, set, from) {
+    var gpu;
+    var pc = null;
+    try {
+      pc = paint(v, set, from, set.count); // may add groups: rolled back on failure
+      var D = set.dimension;
+      gpu = v.renderer.appendData({
+        vectors: set.vectors.subarray(from * D, set.count * D),
+        colours: pc.colours,
+        weights: pc.weights,
+      });
+    } catch (err) {
+      gpu = gpuThrew(err);
+      gpu.reason = "gpu-failed";
+    }
+    if (!gpu || gpu.ok === false) {
+      return { ok: false, code: gpu?.reason || "gpu-failed", message: gpu?.message || "append failed" };
+    }
+    v.lightLoad += pc.bright;
+    return null;
+  }
+
+  // Tell the running mode about k appended points. Returns null, or the refusal after
+  // putting the old set back and starting the same view again from the frame last drawn.
+  function appendToMode(v, m, set, k, snap) {
+    var r;
+    try {
+      r = m.inst.dataChanged(set, { op: "append", added: k, t: m.clock });
+    } catch (err) {
+      // The mode is in an unknown state: put the old set back and start the same
+      // view again from the frame last drawn.
+      var msg = m.title + " failed on the new points: " + errorText(err, String(err));
+      restore(v, snap);
+      v.mode = null;
+      leaveSafely(m.inst);
+      if (!startMode(v, m.id, copyState(v.last))) startMode(v, "tumble", copyState(v.last));
+      return { ok: false, code: "mode-failed", message: msg };
+    }
+    if (r?.restart) {
+      // The mode entered again: work queued for its earlier entry (a preparation
+      // or a refit still running) belongs to a state that is gone, so drop it.
+      m.jobs = [];
+      m.refit = null;
+      m.clock = 0;
+      m.readyAt = null;
+    }
+    if (typeof r?.work?.step === "function") m.jobs.push(r.work);
+    return null;
+  }
+
   function applyAppend(v, set) {
     var old = v.set;
     var from = old.count;
@@ -7029,58 +7114,18 @@ ET.viewer = (function () {
     }
     var t0 = now(v);
     var snap = snapshot(v);
-    var hadLabelled = v.labelledCount;
-    v.labelledCount += countLabelled(set, from, set.count);
-    if (hadLabelled === 0 && v.labelledCount > 0) {
-      // The first labelled points arrived: rebuild the label sample from them.
-      v.labelSample = [];
-      extendLabelSample(v, set, 0);
-    } else extendLabelSample(v, set, from);
+    appendLabels(v, set, from);
     if (v.renderer) {
-      var gpu;
-      try {
-        var pc = paint(v, set, from, set.count); // may add groups: rolled back on failure
-        var D = set.dimension;
-        gpu = v.renderer.appendData({
-          vectors: set.vectors.subarray(from * D, set.count * D),
-          colours: pc.colours,
-          weights: pc.weights,
-        });
-      } catch (err) {
-        gpu = gpuThrew(err);
-        gpu.reason = "gpu-failed";
-      }
-      if (!gpu || gpu.ok === false) {
+      var uploadFailed = uploadAppend(v, set, from);
+      if (uploadFailed) {
         restore(v, snap);
-        return { ok: false, code: gpu && gpu.reason ? gpu.reason : "gpu-failed", message: gpu && gpu.message ? gpu.message : "append failed" };
+        return uploadFailed;
       }
-      v.lightLoad += pc.bright;
     }
     v.set = set;
     if (v.mode) {
-      var m = v.mode;
-      var r;
-      try {
-        r = m.inst.dataChanged(set, { op: "append", added: k, t: m.clock });
-      } catch (err) {
-        // The mode is in an unknown state: put the old set back and start the same
-        // view again from the frame last drawn.
-        var msg = m.title + " failed on the new points: " + errorText(err, String(err));
-        restore(v, snap);
-        v.mode = null;
-        leaveSafely(m.inst);
-        if (!startMode(v, m.id, copyState(v.last))) startMode(v, "tumble", copyState(v.last));
-        return { ok: false, code: "mode-failed", message: msg };
-      }
-      if (r && r.restart) {
-        // The mode entered again: work queued for its earlier entry (a preparation
-        // or a refit still running) belongs to a state that is gone, so drop it.
-        m.jobs = [];
-        m.refit = null;
-        m.clock = 0;
-        m.readyAt = null;
-      }
-      if (r && r.work && typeof r.work.step === "function") m.jobs.push(r.work);
+      var modeFailed = appendToMode(v, v.mode, set, k, snap);
+      if (modeFailed) return modeFailed;
     } else startMode(v, v.modeId, null);
     v.sinceAppend = 0;
     describeSet(v);
@@ -7101,6 +7146,7 @@ ET.viewer = (function () {
       v.stripCtx = v.strip.getContext("2d");
       if (v.stripCtx) v.stripImage = v.stripCtx.createImageData(D, 1);
     } catch (err) {
+      // No 2-D context for the strip: the readout is simply not drawn.
       v.stripCtx = null;
     }
   }
@@ -7113,11 +7159,12 @@ ET.viewer = (function () {
       w = r.width;
       h = r.height;
     } catch (err) {
+      // No layout box yet: fall back to the element's client size below.
       w = 0;
     }
-    if (!(w > 0)) w = v.stage.clientWidth || 300;
-    if (!(h > 0)) h = v.stage.clientHeight || 150;
-    var dpr = Math.min(Number(v.options.maxPixelRatio) || 2, (v.win && v.win.devicePixelRatio) || 1);
+    w = w > 0 ? w : v.stage.clientWidth || 300;
+    h = h > 0 ? h : v.stage.clientHeight || 150;
+    var dpr = Math.min(Number(v.options.maxPixelRatio) || 2, v.win?.devicePixelRatio || 1);
     v.dpr = dpr;
     v.cssW = w;
     v.cssH = h;
@@ -7132,6 +7179,7 @@ ET.viewer = (function () {
     try {
       rootW = v.root.getBoundingClientRect().width;
     } catch (err) {
+      // No layout box for the root: lay out for the stage's width.
       rootW = w;
     }
     layoutForWidth(v, rootW || w);
@@ -7163,8 +7211,8 @@ ET.viewer = (function () {
   // ---------- the loop ----------
 
   function now(v) {
-    var p = v.win && v.win.performance;
-    if (p && typeof p.now === "function") return p.now();
+    var p = v.win?.performance;
+    if (typeof p?.now === "function") return p.now();
     return Date.now();
   }
 
@@ -7180,12 +7228,12 @@ ET.viewer = (function () {
 
   function schedule(v) {
     if (v.destroyed || v.raf || suspended(v)) return;
-    if (!v.win || typeof v.win.requestAnimationFrame !== "function") return;
+    if (typeof v.win?.requestAnimationFrame !== "function") return;
     v.raf = v.win.requestAnimationFrame(v.tick);
   }
 
   function unschedule(v) {
-    if (v.raf && v.win && typeof v.win.cancelAnimationFrame === "function") v.win.cancelAnimationFrame(v.raf);
+    if (v.raf && typeof v.win?.cancelAnimationFrame === "function") v.win.cancelAnimationFrame(v.raf);
     v.raf = 0;
     v.prev = null; // the next frame after a resume starts from a fresh clock
   }
@@ -7264,26 +7312,34 @@ ET.viewer = (function () {
       if (job.done) m.jobs.shift();
       else break;
     }
-    if (m.refit && v.running && now(v) - start < budget) {
-      var r0 = now(v);
-      m.refit.step(Math.max(1, budget - (r0 - start)));
-      var took = now(v) - r0;
-      m.refitSpent += took;
-      if (took > m.refitLongest) m.refitLongest = took;
-      if (m.refit.done) {
-        m.refit = null;
-        v.timing.lastRefit = {
-          atMs: now(v) - v.timing.mountAt,
-          durationMs: m.refitSpent,
-          longestStepMs: m.refitLongest,
-        };
-      }
+    if (m.refit && v.running && now(v) - start < budget) pumpRefit(v, m, start, budget);
+  }
+
+  // One step of a running refit inside what is left of the frame's budget.
+  function pumpRefit(v, m, start, budget) {
+    var r0 = now(v);
+    m.refit.step(Math.max(1, budget - (r0 - start)));
+    var took = now(v) - r0;
+    m.refitSpent += took;
+    if (took > m.refitLongest) m.refitLongest = took;
+    if (m.refit.done) {
+      m.refit = null;
+      v.timing.lastRefit = {
+        atMs: now(v) - v.timing.mountAt,
+        durationMs: m.refitSpent,
+        longestStepMs: m.refitLongest,
+      };
     }
   }
 
   // Tumble's refit policy after appends: once appends have been quiet for
   // refitQuietSeconds and the points added since the last fit are at least
   // refitShare of the set (and at least one), fit the directions again.
+  // x > 0, false for NaN and for anything that is not a number above zero.
+  function positive(x) {
+    return x > 0;
+  }
+
   function considerRefit(v, m) {
     // Never while paused (frames do not run at all while hidden or off screen): a
     // paused view must not take the refit's stall; it starts after resume.
@@ -7291,7 +7347,7 @@ ET.viewer = (function () {
     if (m.refit || m.jobs.length || typeof m.inst.refit !== "function") return;
     if (v.sinceAppend < v.options.refitQuietSeconds) return;
     var d = m.inst.describe();
-    if (!d || !d.varianceShareStale || !(d.pointsSinceFit > 0)) return;
+    if (!d?.varianceShareStale || !positive(d.pointsSinceFit)) return;
     if (d.pointsSinceFit < Math.max(1, Math.ceil(v.options.refitShare * v.set.count))) return;
     m.refit = m.inst.refit();
     m.refitSpent = 0;
@@ -7304,27 +7360,12 @@ ET.viewer = (function () {
     var r = v.renderer;
     v.sinceAppend += dt;
     if (!m || !v.set) {
-      if (r && v.rendering) r.draw({ clear: true, dt: dt });
-      v.status.textContent = v.set ? "this view cannot show the data" : "";
-      clearLabels(v, 0);
+      stepWithoutView(v, r, dt);
       return;
     }
     pump(v, m, start);
     var ready = m.inst.isReady();
-    if (ready && m.readyAt === null) {
-      m.readyAt = now(v);
-      // Show the mode's own status on this very frame: under reduced motion the loop
-      // may stop right after it, and the "finding ..." line must not be left behind.
-      v.statusClock = STATUS_EVERY;
-      if (v.timing.firstReadyMs === null) v.timing.firstReadyMs = m.readyAt - v.timing.mountAt;
-    }
-    var moving = ready && v.running;
-    if (moving) {
-      m.clock += dt * v.speed;
-      if (!v.drag.active) v.spin += dt * v.speed;
-    }
-    if (ready && typeof m.inst.mark === "function") m.inst.mark(m.clock);
-    if (ready) considerRefit(v, m);
+    if (ready) advanceReady(v, m, dt);
     var s = m.inst.stateAt(ready ? m.clock : 0);
     if (r && s.wires && s.wires.version !== m.wiresVersion) {
       r.setWires(s.wires.pairs, s.wires.lengths);
@@ -7336,28 +7377,62 @@ ET.viewer = (function () {
     v.needClear = false;
     v.last = s;
     v.lastDraw = ds;
-    if (v.showLabels || v.hover) drawOverlay(v, s, ds);
-    else clearOverlay(v);
+    drawLabels(v, s, ds);
     drawStrip(v, s.frame);
     v.statusClock += dt;
-    if (v.statusClock >= STATUS_EVERY) {
-      v.statusClock = 0;
-      var line = s.status;
-      if (v.userZoom !== 1) line += " · zoom " + v.userZoom.toFixed(1) + "×";
-      if (!v.running) line += " · paused";
-      if (line !== v.statusText) {
-        v.status.textContent = line;
-        v.statusText = line;
-      }
-      refreshViewRow(v);
-      v.root.setAttribute("aria-busy", ready && !m.jobs.length ? "false" : "true");
+    if (v.statusClock >= STATUS_EVERY) updateStatus(v, m, s, ready);
+  }
+
+  // Names, spokes and the hover ring when labels are on or the pointer is over the sky;
+  // otherwise the overlay is cleared.
+  function drawLabels(v, s, ds) {
+    if (v.showLabels || v.hover) drawOverlay(v, s, ds);
+    else clearOverlay(v);
+  }
+
+  // A frame with no data, or with data no view could show: a cleared picture.
+  function stepWithoutView(v, r, dt) {
+    if (r && v.rendering) r.draw({ clear: true, dt: dt });
+    v.status.textContent = v.set ? "this view cannot show the data" : "";
+    clearLabels(v, 0);
+  }
+
+  // A frame on which the mode is ready: note when it first became ready, move the
+  // clock and the spin while running, mark the time and consider a refit.
+  function advanceReady(v, m, dt) {
+    if (m.readyAt === null) {
+      m.readyAt = now(v);
+      // Show the mode's own status on this very frame: under reduced motion the loop
+      // may stop right after it, and the "finding ..." line must not be left behind.
+      v.statusClock = STATUS_EVERY;
+      if (v.timing.firstReadyMs === null) v.timing.firstReadyMs = m.readyAt - v.timing.mountAt;
     }
+    if (v.running) {
+      m.clock += dt * v.speed;
+      if (!v.drag.active) v.spin += dt * v.speed;
+    }
+    if (typeof m.inst.mark === "function") m.inst.mark(m.clock);
+    considerRefit(v, m);
+  }
+
+  // The status line, the view row and aria-busy, every STATUS_EVERY seconds.
+  function updateStatus(v, m, s, ready) {
+    v.statusClock = 0;
+    var line = s.status;
+    if (v.userZoom !== 1) line += " · zoom " + v.userZoom.toFixed(1) + "×";
+    if (!v.running) line += " · paused";
+    if (line !== v.statusText) {
+      v.status.textContent = line;
+      v.statusText = line;
+    }
+    refreshViewRow(v);
+    v.root.setAttribute("aria-busy", ready && !m.jobs.length ? "false" : "true");
   }
 
   function drawState(v, s, dt) {
     var out = {};
     var d = s.draw;
-    for (var k in d) if (Object.prototype.hasOwnProperty.call(d, k)) out[k] = d[k];
+    for (var k in d) if (Object.hasOwn(d, k)) out[k] = d[k];
     out.frame = s.frame;
     out.centre = s.centre;
     out.zoom = (d.zoom || 1) * v.userZoom;
@@ -7419,9 +7494,14 @@ ET.viewer = (function () {
     return ET.renderer.place(out, ds, v.W, v.H);
   }
 
-  function clearOverlay(v) {
+  // The overlay's 2-D context, looked up once (null when there is none).
+  function overlayContext(v) {
     if (v.overlayCtx === undefined) v.overlayCtx = safeContext2d(v.overlay);
-    if (v.overlayCtx && v.overlayDirty) {
+    return v.overlayCtx;
+  }
+
+  function clearOverlay(v) {
+    if (overlayContext(v) && v.overlayDirty) {
       v.overlayCtx.clearRect(0, 0, v.W, v.H);
       v.overlayDirty = false;
     }
@@ -7432,47 +7512,68 @@ ET.viewer = (function () {
     try {
       return canvas.getContext("2d") || null;
     } catch (err) {
+      // No 2-D context: the overlay (names, spokes, hover ring) is not drawn.
       return null;
     }
   }
 
+  // A new element for the label pool.
+  function newLabel(v) {
+    var el = make(v, "span", "tumbler-label", {
+      position: "absolute",
+      left: "0",
+      top: "0",
+      whiteSpace: "nowrap",
+      pointerEvents: "none",
+      willChange: "transform",
+    });
+    v.labelLayer.appendChild(el);
+    var rec = { el: el, text: null, key: "", shown: true };
+    v.labelPool.push(rec);
+    return rec;
+  }
+
+  // Type size of a label: the Wander stop large, a hovered name a little above the rest.
+  function labelFontSize(kind) {
+    if (kind === "stop") return "26px";
+    if (kind === "hover") return "12px";
+    return "11px";
+  }
+
+  // Where a label sits against its anchor point.
+  function labelShift(align) {
+    if (align === "center") return "translate(-50%, -100%)";
+    if (align === "right") return "translate(-100%, -50%)";
+    return "translate(0, -50%)";
+  }
+
+  function styleLabel(v, rec, style) {
+    var t = v.theme;
+    var big = style.kind === "stop";
+    setStyles(rec.el, {
+      fontFamily: big ? t.fontDisplay : t.fontData,
+      fontStyle: big ? "italic" : "normal",
+      fontSize: labelFontSize(style.kind),
+      letterSpacing: style.kind === "group" ? "0.06em" : "0",
+      textTransform: style.kind === "group" ? "uppercase" : "none",
+      color: style.colour,
+      textShadow: v.outline,
+    });
+  }
+
   function label(v, used, str, x, y, style) {
     if (used >= LABEL_POOL) return used;
-    var rec = v.labelPool[used];
-    if (!rec) {
-      var el = make(v, "span", "tumbler-label", {
-        position: "absolute",
-        left: "0",
-        top: "0",
-        whiteSpace: "nowrap",
-        pointerEvents: "none",
-        willChange: "transform",
-      });
-      v.labelLayer.appendChild(el);
-      rec = { el: el, text: null, key: "", shown: true };
-      v.labelPool.push(rec);
-    }
+    var rec = v.labelPool[used] || newLabel(v);
     if (rec.text !== str) {
       rec.el.textContent = str;
       rec.text = str;
     }
     var key = style.kind + "|" + style.colour;
     if (rec.key !== key) {
-      var t = v.theme;
-      var big = style.kind === "stop";
-      setStyles(rec.el, {
-        fontFamily: big ? t.fontDisplay : t.fontData,
-        fontStyle: big ? "italic" : "normal",
-        fontSize: big ? "26px" : style.kind === "hover" ? "12px" : "11px",
-        letterSpacing: style.kind === "group" ? "0.06em" : "0",
-        textTransform: style.kind === "group" ? "uppercase" : "none",
-        color: style.colour,
-        textShadow: v.outline,
-      });
+      styleLabel(v, rec, style);
       rec.key = key;
     }
-    var shift =
-      style.align === "center" ? "translate(-50%, -100%)" : style.align === "right" ? "translate(-100%, -50%)" : "translate(0, -50%)";
+    var shift = labelShift(style.align);
     rec.el.style.transform = "translate(" + x.toFixed(1) + "px, " + y.toFixed(1) + "px) " + shift;
     rec.el.style.opacity = String(Math.round(clamp(style.alpha, 0, 1) * 100) / 100);
     if (!rec.shown) {
@@ -7499,123 +7600,145 @@ ET.viewer = (function () {
   }
 
   function drawOverlay(v, s, ds) {
-    if (v.overlayCtx === undefined) v.overlayCtx = safeContext2d(v.overlay);
-    var ctx = v.overlayCtx;
-    var dpr = v.dpr;
-    var tmp = v.tmp3;
+    var ctx = overlayContext(v);
     if (ctx) {
       ctx.clearRect(0, 0, v.W, v.H);
       v.overlayDirty = false;
     }
     var used = 0;
     var fogMix = clamp(Number(s.draw.fog) || 0, 0, 1);
-    var fg = v.stageFg;
-    var sample = v.labelSample;
-    var n = sample.length;
+    var n = v.labelSample.length;
     if (v.sx.length < n) {
       v.sx = new Float32Array(LABEL_SAMPLE);
       v.sy = new Float32Array(LABEL_SAMPLE);
     }
     var needSample = (v.showLabels && fogMix < 0.97) || v.hover;
-    if (needSample) {
-      for (var j = 0; j < n; j++) {
-        var q = project(v, sample[j], s, ds, tmp);
-        v.sx[j] = q.x;
-        v.sy[j] = q.y;
-      }
-    }
+    if (needSample) projectSample(v, s, ds, n);
     // Group names at the middle of their labelled points, fading out as Wander's fog comes in.
-    if (v.showLabels && fogMix < 0.97 && v.groupNames.length) {
-      var G = v.groupNames.length;
-      var cx = new Float64Array(G);
-      var cy = new Float64Array(G);
-      var cn = new Float64Array(G);
-      for (var k = 0; k < n; k++) {
-        var g = v.groupIndex[v.set.points[sample[k]].group];
-        if (g === undefined) continue;
-        cx[g] += v.sx[k];
-        cy[g] += v.sy[k];
-        cn[g]++;
-      }
-      for (var gi = 0; gi < G; gi++) {
-        if (!cn[gi]) continue;
-        // Lighter than the points on a dark host (the reference's 72% lightness),
-        // darker on a light one so the names stay readable.
-        var col = cssRgb(v.theme.stage.light ? mix(groupColour(v, gi), [0, 0, 0], 0.45) : nameTint(groupColour(v, gi)));
-        used = label(v, used, shorten(v.groupNames[gi], 32), cx[gi] / cn[gi] / dpr, cy[gi] / cn[gi] / dpr - 14, {
-          kind: "group",
-          colour: col,
-          alpha: (1 - fogMix) * 0.8,
-          align: "center",
-        });
-      }
-    }
+    if (v.showLabels && fogMix < 0.97 && v.groupNames.length) used = drawGroupNames(v, used, fogMix, n);
     // Wander: the stop, its labelled neighbours and spokes to them.
-    var f = s.focus;
-    var m = v.mode;
-    if (f && m) {
-      if (f.to !== m.lastFocusTo) {
-        m.prevNeighbours = m.curNeighbours;
-        m.lastFocusTo = f.to;
-      }
-      m.curNeighbours = f.neighbours ? Array.prototype.slice.call(f.neighbours) : [];
-      if (f.phase === "dwell") used = spokes(v, ctx, f.to, m.curNeighbours, 1, s, ds, used, fg);
-      else {
-        var e = clamp(Number(f.e) || 0, 0, 1);
-        used = spokes(v, ctx, f.from, m.prevNeighbours || [], 1 - e * 1.6, s, ds, used, fg);
-        used = spokes(v, ctx, f.to, m.curNeighbours, e * e, s, ds, used, fg);
-      }
-    }
+    if (s.focus && v.mode) used = drawFocus(v, s, ds, used);
     // Hover: the nearest sampled point within 20 px.
-    if (v.hover && n) {
-      var best = -1;
-      var bd = 20 * dpr * (20 * dpr);
-      for (var h = 0; h < n; h++) {
-        var dx = v.sx[h] - v.hover.x * dpr;
-        var dy = v.sy[h] - v.hover.y * dpr;
-        var d2 = dx * dx + dy * dy;
-        if (d2 < bd) {
-          bd = d2;
-          best = h;
-        }
-      }
-      if (best >= 0) {
-        var bi = sample[best];
-        if (ctx) {
-          ctx.globalAlpha = 1;
-          ctx.lineWidth = 1.5 * dpr;
-          ctx.strokeStyle = v.stopColour;
-          ctx.beginPath();
-          ctx.arc(v.sx[best], v.sy[best], 8 * dpr, 0, TAU);
-          ctx.stroke();
-          v.overlayDirty = true;
-        }
-        var right = v.sx[best] > v.W * 0.7;
-        var grp = v.set.points[bi].group;
-        var str = labelText(v, bi) + (grp ? " · " + shorten(grp, 24) : "");
-        used = label(v, used, str, v.sx[best] / dpr + (right ? -14 : 14), v.sy[best] / dpr, {
-          kind: "hover",
-          colour: v.stopColour,
-          alpha: 1,
-          align: right ? "right" : "left",
-        });
-      }
-    }
+    if (v.hover && n) used = drawHover(v, used, n);
     if (ctx) ctx.globalAlpha = 1;
     clearLabels(v, used);
   }
 
-  function spokes(v, ctx, i, neighbours, alpha, s, ds, used, fg) {
-    if (!(i >= 0) || i >= v.set.count || alpha <= 0.02) return used;
+  // Screen positions of the first n points of the label sample, into v.sx and v.sy.
+  function projectSample(v, s, ds, n) {
+    var sample = v.labelSample;
+    var tmp = v.tmp3;
+    for (var j = 0; j < n; j++) {
+      var q = project(v, sample[j], s, ds, tmp);
+      v.sx[j] = q.x;
+      v.sy[j] = q.y;
+    }
+  }
+
+  function drawGroupNames(v, used, fogMix, n) {
+    var dpr = v.dpr;
+    var sample = v.labelSample;
+    var G = v.groupNames.length;
+    var cx = new Float64Array(G);
+    var cy = new Float64Array(G);
+    var cn = new Float64Array(G);
+    for (var k = 0; k < n; k++) {
+      var g = v.groupIndex[v.set.points[sample[k]].group];
+      if (g === undefined) continue;
+      cx[g] += v.sx[k];
+      cy[g] += v.sy[k];
+      cn[g]++;
+    }
+    for (var gi = 0; gi < G; gi++) {
+      if (!cn[gi]) continue;
+      // Lighter than the points on a dark host (the reference's 72% lightness),
+      // darker on a light one so the names stay readable.
+      var col = cssRgb(v.theme.stage.light ? mix(groupColour(v, gi), [0, 0, 0], 0.45) : nameTint(groupColour(v, gi)));
+      used = label(v, used, shorten(v.groupNames[gi], 32), cx[gi] / cn[gi] / dpr, cy[gi] / cn[gi] / dpr - 14, {
+        kind: "group",
+        colour: col,
+        alpha: (1 - fogMix) * 0.8,
+        align: "center",
+      });
+    }
+    return used;
+  }
+
+  function drawFocus(v, s, ds, used) {
+    var f = s.focus;
+    var m = v.mode;
+    if (f.to !== m.lastFocusTo) {
+      m.prevNeighbours = m.curNeighbours;
+      m.lastFocusTo = f.to;
+    }
+    m.curNeighbours = f.neighbours ? Array.prototype.slice.call(f.neighbours) : [];
+    if (f.phase === "dwell") return spokes(v, f.to, m.curNeighbours, 1, s, ds, used);
+    var e = clamp(Number(f.e) || 0, 0, 1);
+    used = spokes(v, f.from, m.prevNeighbours || [], 1 - e * 1.6, s, ds, used);
+    return spokes(v, f.to, m.curNeighbours, e * e, s, ds, used);
+  }
+
+  // The index into the label sample of the point nearest the pointer within 20 px, or -1.
+  function nearestSampled(v, n) {
+    var dpr = v.dpr;
+    var best = -1;
+    var bd = 20 * dpr * (20 * dpr);
+    for (var h = 0; h < n; h++) {
+      var dx = v.sx[h] - v.hover.x * dpr;
+      var dy = v.sy[h] - v.hover.y * dpr;
+      var d2 = dx * dx + dy * dy;
+      if (d2 < bd) {
+        bd = d2;
+        best = h;
+      }
+    }
+    return best;
+  }
+
+  function drawHover(v, used, n) {
+    var best = nearestSampled(v, n);
+    if (best < 0) return used;
+    var ctx = v.overlayCtx;
+    var dpr = v.dpr;
+    var bi = v.labelSample[best];
+    if (ctx) {
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.strokeStyle = v.stopColour;
+      ctx.beginPath();
+      ctx.arc(v.sx[best], v.sy[best], 8 * dpr, 0, TAU);
+      ctx.stroke();
+      v.overlayDirty = true;
+    }
+    var right = v.sx[best] > v.W * 0.7;
+    var grp = v.set.points[bi].group;
+    var str = labelText(v, bi) + (grp ? " · " + shorten(grp, 24) : "");
+    return label(v, used, str, v.sx[best] / dpr + (right ? -14 : 14), v.sy[best] / dpr, {
+      kind: "hover",
+      colour: v.stopColour,
+      alpha: 1,
+      align: right ? "right" : "left",
+    });
+  }
+
+  // i is a point index of the current set: 0 <= i < count (false for NaN or a non-number).
+  function isPointIndex(v, i) {
+    return i >= 0 && i < v.set.count;
+  }
+
+  // Spokes from point i to its neighbours, a ring round it and the names, at alpha.
+  // Drawn on the overlay's 2-D context when there is one.
+  function spokes(v, i, neighbours, alpha, s, ds, used) {
+    if (!isPointIndex(v, i) || alpha <= 0.02) return used;
+    var ctx = v.overlayCtx;
     var dpr = v.dpr;
     var p = project(v, i, s, ds, v.tmp3);
     var px = p.x;
     var py = p.y;
     var gc = groupColour(v, groupIndexOf(v, v.set.points[i].group));
     var col = cssRgb(v.theme.stage.light ? gc : nameTint(gc));
-    for (var k = 0; k < neighbours.length; k++) {
-      var j = neighbours[k];
-      if (!(j >= 0) || j >= v.set.count) continue;
+    for (var j of neighbours) {
+      if (!isPointIndex(v, j)) continue;
       var q = project(v, j, s, ds, v.tmp3);
       if (ctx) {
         ctx.globalAlpha = alpha * 0.5;
@@ -7708,6 +7831,41 @@ ET.viewer = (function () {
     invalidate(v);
   }
 
+  // A key pressed while the viewer has focus (no modifier, not in a form field).
+  // Returns true when the key did something, so its default action is prevented.
+  function handleKey(v, k, target) {
+    if (k === "Escape" || k === "Esc") {
+      if (v.noticeMessage === null) return false;
+      clearNotice(v);
+      return true;
+    }
+    if (/^[1-9]$/.test(k)) return switchByKey(v, Number(k) - 1);
+    if ((k === " " || k === "Spacebar") && target === v.root) {
+      setRunning(v, !v.running);
+      return true;
+    }
+    if (k === "+" || k === "=") {
+      setZoom(v, v.userZoom * 1.25);
+      return true;
+    }
+    if (k === "-" || k === "_") {
+      setZoom(v, v.userZoom / 1.25);
+      return true;
+    }
+    if (k === "0") {
+      setZoom(v, 1);
+      return true;
+    }
+    return false;
+  }
+
+  // Keys 1-9: the view of that mode button, if there is one.
+  function switchByKey(v, idx) {
+    if (idx >= v.modeButtons.length) return false;
+    setMode(v, v.modeButtons[idx].id);
+    return true;
+  }
+
   function wire(v) {
     var stage = v.stage;
     var pointers = {};
@@ -7719,6 +7877,7 @@ ET.viewer = (function () {
       try {
         r = stage.getBoundingClientRect();
       } catch (err) {
+        // No layout box: measure from the page origin.
         r = { left: 0, top: 0 };
       }
       return { x: e.clientX - r.left, y: e.clientY - r.top };
@@ -7845,26 +8004,9 @@ ET.viewer = (function () {
     listen(v, v.root, "keydown", function (e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       var target = e.target;
-      var tag = target && target.tagName ? String(target.tagName).toUpperCase() : "";
+      var tag = target?.tagName ? String(target.tagName).toUpperCase() : "";
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      var k = e.key;
-      var handled = true;
-      if (k === "Escape" || k === "Esc") {
-        if (v.noticeMessage !== null) clearNotice(v);
-        else handled = false;
-      } else if (/^[1-9]$/.test(k)) {
-        var ids = v.modeButtons.map(function (mb) {
-          return mb.id;
-        });
-        var idx = Number(k) - 1;
-        if (idx < ids.length) setMode(v, ids[idx]);
-        else handled = false;
-      } else if ((k === " " || k === "Spacebar") && target === v.root) setRunning(v, !v.running);
-      else if (k === "+" || k === "=") setZoom(v, v.userZoom * 1.25);
-      else if (k === "-" || k === "_") setZoom(v, v.userZoom / 1.25);
-      else if (k === "0") setZoom(v, 1);
-      else handled = false;
-      if (handled && e.preventDefault) e.preventDefault();
+      if (handleKey(v, e.key, target) && e.preventDefault) e.preventDefault();
     });
 
     v.modeButtons.forEach(function (mb) {
@@ -7883,7 +8025,7 @@ ET.viewer = (function () {
     });
     listen(v, v.speedInput, "input", function () {
       var s = Number(v.speedInput.value);
-      v.speed = isFinite(s) && s > 0 ? s : 1;
+      v.speed = Number.isFinite(s) && s > 0 ? s : 1;
     });
     listen(v, v.labelsInput, "change", function () {
       v.showLabels = !!v.labelsInput.checked;
@@ -7900,10 +8042,10 @@ ET.viewer = (function () {
       if (suspended(v)) unschedule(v);
       else invalidate(v);
     });
-    var IO = v.win && v.win.IntersectionObserver;
+    var IO = v.win?.IntersectionObserver;
     if (typeof IO === "function") {
       v.io = new IO(function (entries) {
-        var last = entries && entries.length ? entries[entries.length - 1] : null;
+        var last = entries?.length ? entries.at(-1) : null;
         if (!last) return;
         v.onScreen = !!last.isIntersecting;
         if (suspended(v)) unschedule(v);
@@ -7911,14 +8053,14 @@ ET.viewer = (function () {
       });
       v.io.observe(v.root);
     }
-    var RO = v.win && v.win.ResizeObserver;
+    var RO = v.win?.ResizeObserver;
     if (typeof RO === "function") {
       v.ro = new RO(function () {
         measure(v);
       });
       v.ro.observe(v.stage);
       v.ro.observe(v.root);
-    } else if (v.win && typeof v.win.addEventListener === "function") {
+    } else if (typeof v.win?.addEventListener === "function") {
       listen(v, v.win, "resize", function () {
         measure(v);
       });
@@ -7961,12 +8103,12 @@ ET.viewer = (function () {
 
   // One retry a second after a failed restore; further retries happen on update.
   function retryRebuild(v) {
-    if (v.retryTimer || !v.win || typeof v.win.setTimeout !== "function") return;
+    if (v.retryTimer || typeof v.win?.setTimeout !== "function") return;
     v.retryTimer = v.win.setTimeout(function () {
       v.retryTimer = 0;
       if (v.destroyed || !v.renderer) return;
       var r = v.renderer.rebuild();
-      if (r && r.ok) {
+      if (r?.ok) {
         v.rendering = true;
         clearFatal(v);
         if (v.mode) v.mode.wiresVersion = -1;
@@ -7977,24 +8119,40 @@ ET.viewer = (function () {
 
   // ---------- lifecycle ----------
 
+  // Every option: the host's value where it gave one, the default otherwise.
+  function readOptions(options) {
+    var opts = {};
+    for (var key in DEFAULT_OPTIONS) {
+      if (Object.hasOwn(DEFAULT_OPTIONS, key)) opts[key] = readOption(options, key);
+    }
+    return opts;
+  }
+
+  function prefersReducedMotion(win) {
+    try {
+      return !!win?.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    } catch (err) {
+      // A host whose matchMedia throws is treated as not asking for reduced motion.
+      return false;
+    }
+  }
+
+  // The view seed: a finite number or a non-empty string as given, otherwise 1.
+  function seedOf(seed) {
+    if (typeof seed === "number" && Number.isFinite(seed)) return seed;
+    if (typeof seed === "string" && seed !== "") return seed;
+    return 1;
+  }
+
   function mount(el, options) {
     if (!isElement(el)) throw new TypeError("EmbeddingsTumbler.mount needs a DOM element");
     var existing = lookup(el);
     if (existing) return existing.handle;
     var doc = el.ownerDocument;
     var win = doc.defaultView || null;
-    var opts = {};
-    for (var key in DEFAULT_OPTIONS) {
-      if (Object.prototype.hasOwnProperty.call(DEFAULT_OPTIONS, key)) opts[key] = readOption(options, key);
-    }
-    var reduced = false;
-    try {
-      reduced = !!(win && win.matchMedia && win.matchMedia("(prefers-reduced-motion: reduce)").matches);
-    } catch (err) {
-      reduced = false;
-    }
-    var seed = opts.seed;
-    if (!(typeof seed === "number" && isFinite(seed)) && !(typeof seed === "string" && seed !== "")) seed = 1;
+    var opts = readOptions(options);
+    var reduced = prefersReducedMotion(win);
+    var seed = seedOf(opts.seed);
     var v = {
       el: el,
       doc: doc,
@@ -8097,7 +8255,7 @@ ET.viewer = (function () {
     if (v.destroyed) return false;
     v.destroyed = true;
     unschedule(v);
-    if (v.retryTimer && v.win && typeof v.win.clearTimeout === "function") v.win.clearTimeout(v.retryTimer);
+    if (v.retryTimer && typeof v.win?.clearTimeout === "function") v.win.clearTimeout(v.retryTimer);
     v.retryTimer = 0;
     if (v.io) v.io.disconnect();
     if (v.ro) v.ro.disconnect();
@@ -8118,7 +8276,7 @@ ET.viewer = (function () {
     }
     v.renderer = null;
     v.rendering = false;
-    if (v.root && v.root.parentNode) v.root.parentNode.removeChild(v.root);
+    v.root?.remove();
     forget(v.el);
     v.set = null;
     v.last = null;
@@ -8159,7 +8317,7 @@ ET.viewer = (function () {
         longestFrameMs: v.timing.longestFrameMs,
         lastAppendMs: v.timing.lastAppendMs,
         refits: v.timing.refits,
-        lastRefit: v.timing.lastRefit ? Object.assign({}, v.timing.lastRefit) : null,
+        lastRefit: v.timing.lastRefit ? { ...v.timing.lastRefit } : null,
       },
     };
   }
@@ -8196,7 +8354,7 @@ ET.viewer = (function () {
       },
       seek: function (t) {
         var x = Number(t);
-        if (!isFinite(x) || x < 0) x = 0;
+        if (!Number.isFinite(x) || x < 0) x = 0;
         if (v.mode) v.mode.clock = x;
         v.spin = x;
         v.needClear = true;
@@ -8208,7 +8366,7 @@ ET.viewer = (function () {
       },
       setSpeed: function (s) {
         var x = Number(s);
-        if (isFinite(x) && x > 0) {
+        if (Number.isFinite(x) && x > 0) {
           v.speed = x;
           v.speedInput.value = String(x);
         }
