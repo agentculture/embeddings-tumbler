@@ -148,6 +148,16 @@
     }
   });
 
+  // Tap targets for devices with no keyboard.
+  var buttons = document.querySelectorAll("#keys button");
+  for (var bi = 0; bi < buttons.length; bi++) {
+    buttons[bi].addEventListener("click", function (e) {
+      var b = e.currentTarget;
+      if (b.dataset.mode) switchTo(b.dataset.mode);
+      else if (b.dataset.action === "pause") running = !running;
+    });
+  }
+
   switchTo(q.get("mode") || "tumble");
 
   var prev = performance.now();
