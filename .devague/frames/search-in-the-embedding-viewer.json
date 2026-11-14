@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T11:46:31Z",
+  "updated": "2026-11-14T12:04:27Z",
   "claims": [
     {
       "id": "c1",
@@ -493,9 +493,291 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "A query vector is only compared with data in the same space. A data file whose reduction is not 'none' (top-k or rotation), or whose producer shifted or scaled the vectors, is searched by embedding only if the file carries what is needed to apply the same change to the query; otherwise embedding search is refused with a plain message and search among loaded points still works. (challenge pass / adjacent systems: docs/data-contract.md reduction and the embeddings-cli export options --rotate and --top-k; a rotated file has the same dimension, so the dimension check alone would pass a wrong comparison.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "A rotated or top-k file never yields embedding results unless the query went through the same change; the refusal names the reduction found.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "The embed callback returns the vector together with the id of the model that made it, and the helper says which query form it used for models that embed queries and documents differently. (challenge pass / unstated assumptions: c18 refuses another model, but nothing said how the viewer learns the model.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "The model id shown for a search is the one the callback reported, and a callback that reports none is refused rather than assumed to match.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "Searches are worked out again after an append, and until then the panel says the results are from before the new points. (challenge pass / lifecycle: js/api/50-viewer.md Appends; Tumble already marks its variance share stale the same way.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "After an append no stale result is presented as current, and the re-run needs no action from the person.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "The scan for nearest points and the word matching run in slices inside the viewer's existing per-frame work budget, so a search never causes a long frame. (challenge pass / failure modes: js/api/50-viewer.md Heavy work, 8 ms budget; four searches over 10,000 points of 1,024 dimensions is about 40 million multiplications.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "Measured on the 10,000-point real file with four searches: no viewer frame exceeds the budget the heavy-work section states because of search.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "The latest search wins: an answer from the callback that arrives after a newer search was typed is dropped. A callback that fails, times out or returns a wrong-length or non-finite vector shows a plain message in the panel and leaves the view and the earlier results unchanged. Nothing runs after destroy. (challenge pass / failure modes and lifecycle.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "Shown by tests that deliver callback answers out of order, late, failing and malformed; in each the lit set is the latest valid search's or unchanged.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "The embed route of viewer serve is off unless asked for with a flag, is refused on a non-loopback bind unless a second flag says so, accepts only POST with a JSON content type from its own origin (Host and Origin checked, no cross-origin headers sent), limits text length and request rate, never logs query text, and never returns the gateway address or the gateway's own error text. With the flag off, viewer serve stays the static-only server it is today and still reads no environment variable. (challenge pass / security: embeddings_tumbler/_static_server.py and cli/_commands/viewer.py; serve can bind non-loopback with a warning, and any web page can send a request to a loopback port.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "Each refusal is shown by a test that would pass if the check were removed only by failing: a cross-origin request, a wrong Host, a GET, an oversized text, a non-loopback bind without the second flag; and the response and log contain neither the key, the gateway address nor the query text.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "When a search is embedded, the panel says the typed text is sent to the embedder the host configured; search among loaded points says it sends nothing. With a reranker, the panel says the query and the candidate texts are sent to it, and the Reranker toggle is absent for a labels-only set. (challenge pass / data flows: the project rule that the viewer sends text nowhere; docs/data-contract.md labels-only sets.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "The sentence about where the text goes is on screen whenever that kind of search is active, and matches what actually happens (a network log shows no request from the viewer itself).",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "requirement",
+      "text": "Search colours and the mark for a point found by several searches are defined for light backgrounds as well as dark, and no meaning rests on colour alone: each search has a letter, and the result lists and the pair reports carry everything the picture shows, as text. (challenge pass / overlooked actors: the soft-ink light treatment, where white would vanish; people who cannot use the canvas.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "Checked on the light treatment in a browser, and every fact in the picture can be read from the text of the panel alone.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "The view that faces the searches is the same for the same data, searches and seed: no unseeded randomness in its fit. (challenge pass / unstated assumptions: the project rule on reproducible views; the reference page's fit starts from unseeded random directions.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "Two fresh runs with the same data, searches and seed give the same fitted frame, bit for bit.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "Hosts and agents can drive search without the panel: the handle sets and clears searches (by text, by vector or by point id) and info() reports each search, its result ids and distances and whether it is waiting or stale. On the web component the callbacks are set as properties, not attributes. (challenge pass / overlooked actors and observability: js/api/50-viewer.md handle and info(); js/shells/web-component.js observes only src, mode and seed.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "Everything the panel can do can be done through the handle, and info() is enough for a test to assert results without reading pixels.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "Each intended difference between the built search and the two reference pages is listed in the repository, and the user signs off a side-by-side comparison before release. Known ones today: the references place a query from named words and use toy rerankers; the Focus reference draws on a plain canvas, has no multi-search and has an Only results toggle. (challenge pass / the artifact as part of the spec: docs/reference-differences.md is the precedent.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "The list is complete enough that the user's side-by-side look finds no unlisted difference, and release waits for the sign-off.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "assumption",
+      "text": "Distance is cosine distance (1 minus cosine similarity), named as such in the view; the contract does not require unit-length vectors, so this differs from straight-line distance for some files. The sky reference measures straight-line distance on centred vectors. (challenge pass / unstated assumptions: docs/data-contract.md line 207.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "assumption",
+      "text": "The helper reaches the gateway with the Python standard library only, so the package keeps zero runtime dependencies, and takes the gateway address and key only from its own environment. (challenge pass / hidden dependencies: pyproject.toml dependencies = [].)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c43",
+      "kind": "assumption",
+      "text": "Focus keeps the Only results toggle from its reference page; the other three views dim and never hide. (challenge pass / the artifact as part of the spec.)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
-  "open_vagueness": [],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "With three or four searches the facing view scales to fit all of them, so two that touch can end up small beside a far one (seen in the sky reference). A way to face a chosen pair is not specified.",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Labels and distance numbers overlap inside a tight cluster of results (seen in the sky reference). No decluttering rule is specified.",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Whether Wander should visit the results of a search. The reference leaves Wander's route unchanged.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Retrieval quality with EmbeddingGemma 2 queries, with any reranker, and on reduced files was not probed in this pass.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
   "scope_entries": [
     {
       "id": "s1",
@@ -526,8 +808,156 @@
       "surface": "docs/data-contract.md",
       "finding": "Schema v1 has text_included: a file may carry no texts, only labels. Results can show text only when the file has it.",
       "seeds": []
+    },
+    {
+      "id": "s6",
+      "surface": "challenge pass / depth",
+      "finding": "Rigorous. Escalation signals present: security-sensitive work (a server route that holds the gateway key; query text leaving the page through a callback).",
+      "seeds": []
+    },
+    {
+      "id": "s7",
+      "surface": "challenge pass / cheap probe: real gateway and the real 311-point file",
+      "finding": "Embedded three queries through the gateway with the file's own model (Qwen3-Embedding-0.6B) and ranked by cosine in plain Python. 'March' returned March then the other months; 'a cold winter morning' returned frosty, cold, January; a sentence about embedding vectors returned the matching facts and documents. Query and data norms are 1.000. So the callback route works on real data with no extra prompt for this model. Not probed: EmbeddingGemma 2, the reranker, or any reduced file.",
+      "seeds": []
+    },
+    {
+      "id": "s8",
+      "surface": "challenge pass / concurrency and reversibility lenses",
+      "finding": "Single-threaded page code; the only races are callback answers arriving out of order and appends during a search, both routed to requirements. Nothing in the spec migrates or deletes data; the feature can be left unused by not opening the panel. Clean otherwise.",
+      "seeds": []
+    },
+    {
+      "id": "s9",
+      "surface": "challenge pass / adjacent systems: Lattice and Wander limits",
+      "finding": "Lattice wires only its first 1,000 points and Wander stops only at labelled points (js/api/50-viewer.md), so a result outside those sets is lit but has no wire or stop. Not examined: how that reads on a 10,000-point file.",
+      "seeds": []
+    },
+    {
+      "id": "s10",
+      "surface": "challenge pass / not examined",
+      "finding": "Non-Chromium browsers; touch use of the panel on a phone beyond one rendered width; a screen reader on the real panel; memory with four searches on the largest real file; embeddings-cli needs no change as far as read, but its export options were read only from this session's notes, not the code.",
+      "seeds": []
     }
   ],
   "lapses": [],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c6",
+      "seam": "search -> lit set",
+      "behavior": "The lit points and their order equal an exact full-space ranking by the stated measure on the same vectors; on-screen position is never an input.",
+      "source_text": "Results are the nearest points in the full space, by the stated distance measure, never by position on screen. The view says which measure is used.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c7",
+      "seam": "search -> motion",
+      "behavior": "With a search active the frame keeps changing in every mode; the swing to face the searches ends by itself within the stated time; Pause and reduced motion stop motion exactly as they do without a search.",
+      "source_text": "Search never stops or holds the view. A new search swings the view for about six seconds toward the linear view whose first axes join the centres of the searches, while it keeps drifting; then the current mode's own motion carries on with the filter kept. A Face the searches button repeats the swing.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c4",
+      "seam": "several searches -> person watching",
+      "behavior": "A point is marked as shared only when it lies within the result radius of two or more searches, and each pair's report (shared count, closest pair, distance) is computed from full-space distances.",
+      "source_text": "A search panel under the stage takes one search per line, up to four. Each search becomes a marked point in its own colour; its nearest points stay bright and are joined to it, and the rest of the space dims. A point found by more than one search is shown white. Each pair of searches reports how many points both found and their closest pair of different results.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c9",
+      "seam": "search panel -> page layout",
+      "behavior": "Collapsed, the panel is one line and the filter stays on; opening and closing never clears a search; expanded state is exposed to assistive technology.",
+      "source_text": "The search panel takes room only when needed: collapsed by default to one line that names the current searches and how many points are lit; each search's result list is collapsed until opened. The filter stays on while the panel is closed.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c13",
+      "seam": "host callback -> viewer: embed(text)",
+      "behavior": "The viewer calls the callback with the query text and nothing else, accepts only a finite vector of the data's dimension with a matching model id, and makes no network request itself.",
+      "source_text": "Query embedding is a host callback, embed(text) -> vector. The core file still makes no network request. For local use and the standalone page, embeddings-tumbler viewer serve gains an embed route on its own origin that holds the gateway key in the server process (started under grant run).",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c35",
+      "seam": "browser -> viewer serve embed route",
+      "behavior": "The route exists only when enabled; it answers only same-origin POSTs on a loopback bind unless explicitly widened; no response or log contains the gateway key, the gateway address or the query text.",
+      "source_text": "The embed route of viewer serve is off unless asked for with a flag, is refused on a non-loopback bind unless a second flag says so, accepts only POST with a JSON content type from its own origin (Host and Origin checked, no cross-origin headers sent), limits text length and request rate, never logs query text, and never returns the gateway address or the gateway's own error text. With the flag off, viewer serve stays the static-only server it is today and still reads no environment variable. (challenge pass / security: embeddings_tumbler/_static_server.py and cli/_commands/viewer.py; serve can bind non-loopback with a warning, and any web page can send a request to a loopback port.)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c16",
+      "seam": "gateway key -> any page",
+      "behavior": "No file served to a browser and no response of the helper contains the gateway address or key; the key lives only in the helper's process environment.",
+      "source_text": "The gateway address and key never reach a page. The core file makes no request; embedding and reranking happen in the host's callback or in the local helper's server process.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c28",
+      "seam": "loaded points -> search without embedding",
+      "behavior": "With no embed callback, picking a point or typing words that match labels or texts produces a search; unmatched words are named; the panel says no text was sent anywhere.",
+      "source_text": "Search among the loaded points is supported as well, with no embedding: by picking a point, or by words matched against the labels and texts already in the data file. It works when the host supplies no embed callback.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c30",
+      "seam": "data file reduction -> query vector",
+      "behavior": "A query is compared only with vectors in the same space; a reduced or shifted file is searched by embedding only with the same change applied to the query, otherwise refused with a plain message.",
+      "source_text": "A query vector is only compared with data in the same space. A data file whose reduction is not 'none' (top-k or rotation), or whose producer shifted or scaled the vectors, is searched by embedding only if the file carries what is needed to apply the same change to the query; otherwise embedding search is refused with a plain message and search among loaded points still works. (challenge pass / adjacent systems: docs/data-contract.md reduction and the embeddings-cli export options --rotate and --top-k; a rotated file has the same dimension, so the dimension check alone would pass a wrong comparison.)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c11",
+      "seam": "host callback -> viewer: rerank",
+      "behavior": "Without a reranker there is no toggle; with one, results show their move from embedding order and the reranker's name; a labels-only set offers no reranking.",
+      "source_text": "A Reranker toggle re-orders the nearest results with a second scorer and says how far each result moved from its embedding order. The toggle appears only when the host supplied a reranker, and the view names the reranker in use.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c12",
+      "seam": "Focus mode -> core: the mode interface",
+      "behavior": "Focus registers as a fourth mode without editing an existing mode or the data contract, fits its view to the results, and lists each result's text or label as text.",
+      "source_text": "A fourth view named Focus: the view is fitted to the results of the search, a ranked list with each result's text sits beside the stage, and clicking a point searches from that point.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c40",
+      "seam": "built search -> the two reference pages",
+      "behavior": "On comparable data the built views show what docs/specs/reference/tumbler-sky-search.html and tumbler-focus-view.html show (searches, lit and dimmed points, links, shared points, the swing, the collapsed panel, the toggles, the Focus list); every intended difference is listed in the repository and the user signs off the side-by-side comparison before release.",
+      "source_text": "Each intended difference between the built search and the two reference pages is listed in the repository, and the user signs off a side-by-side comparison before release. Known ones today: the references place a query from named words and use toy rerankers; the Focus reference draws on a plain canvas, has no multi-search and has an Only results toggle. (challenge pass / the artifact as part of the spec: docs/reference-differences.md is the precedent.)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c20",
+      "seam": "query and result text -> page",
+      "behavior": "Query text, labels and result texts are inserted as text only; markup in any of them creates no element.",
+      "source_text": "Query text and results are inserted as text, never as markup, and are sent nowhere by the viewer; only the host's callback sees the query.",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
 }
