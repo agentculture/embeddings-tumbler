@@ -39,13 +39,13 @@ function scan(source) {
 
   // 1. The core object: one holder, `T`, declared from getCore() or the global.
   const mentions = code.match(/\bEmbeddingsTumbler\b/g) || [];
-  if (mentions.length !== 1 || !/var T = root\.EmbeddingsTumbler;/.test(code)) {
-    flag("the core global must be read exactly once, as `var T = root.EmbeddingsTumbler;`");
+  if (mentions.length !== 1 || !/(var|let|const) T = root\.EmbeddingsTumbler;/.test(code)) {
+    flag("the core global must be read exactly once, as `const T = root.EmbeddingsTumbler;`");
   }
   const calls = code.replace("function getCore()", "");
   for (const m of calls.matchAll(/\bgetCore\(\)/g)) {
     const before = calls.slice(Math.max(0, m.index - 12), m.index);
-    if (!/var T = $/.test(before)) flag("getCore() may only initialise T");
+    if (!/(var|let|const) T = $/.test(before)) flag("getCore() may only initialise T");
   }
   const members = new Set();
   for (const m of code.matchAll(/\bT\s*\.\s*([A-Za-z_$][\w$]*)(\s*\.\s*([A-Za-z_$][\w$]*))?/g)) {
@@ -53,7 +53,7 @@ function scan(source) {
     if (!ALLOWED.has(m[1])) flag("core member not in the public API subset: T." + m[1]);
   }
   if (/\bT\s*\[/.test(code)) flag("bracket access on the core object");
-  if (/=\s*T\s*[;,)]/.test(code.replace(/var T = (getCore\(\)|root\.EmbeddingsTumbler);/g, ""))) {
+  if (/=\s*T\s*[;,)]/.test(code.replace(/(var|let|const) T = (getCore\(\)|root\.EmbeddingsTumbler);/g, ""))) {
     flag("the core object is copied to another name");
   }
   if (/[(,]\s*T\s*[,)]/.test(code)) flag("the core object is passed to a function");
@@ -94,7 +94,7 @@ function scan(source) {
   const fetchCalls = (code.match(/\bfetch\s*\(/g) || []).length;
   const goodCalls = (code.match(/root\.fetch\(address, \{ credentials: "same-origin" \}\)/g) || []).length;
   if (fetchCalls !== goodCalls) flag("a fetch call is not exactly { credentials: \"same-origin\" }");
-  if (/headers|mode\s*:|cache\s*:|referrer|Authorization|apiKey|api_key|token\s*:/i.test(code.replace(/this\._token|var token|token ===|, token/g, ""))) {
+  if (/headers|mode\s*:|cache\s*:|referrer|Authorization|apiKey|api_key|token\s*:/i.test(code.replace(/this\._token|(var|let|const) token|token ===|[(,] token/g, ""))) {
     flag("a request header, option or key");
   }
   return bad;
@@ -116,8 +116,8 @@ test("the scan flags deliberate breaches (it can fail)", () => {
     "_internal": source.replace("T.destroy(this);", "T.destroy(this); T._internal.math;"),
     "registerMode": source.replace("T.destroy(this);", "T.registerMode({});"),
     "bracket access": source.replace("T.destroy(this);", 'T["get"](this);'),
-    "an alias": source.replace("var T = getCore();\n      var live", "var T = getCore();\n      var C = T;\n      var live"),
-    "direct global use": source.replace("var T = root.EmbeddingsTumbler;", "var T = root.EmbeddingsTumbler; root.EmbeddingsTumbler.get(1);"),
+    "an alias": source.replace("const T = getCore();\n      let url;", "const T = getCore();\n      const C = T;\n      let url;"),
+    "direct global use": source.replace("const T = root.EmbeddingsTumbler;", "const T = root.EmbeddingsTumbler; root.EmbeddingsTumbler.get(1);"),
     "a sample reference": source.replace("_clearNote() {", "_clearNote() { T.sample.generate();"),
     "getContext": source.replace("this._note = null;\n    }\n\n    get handle", "this._note = null;\n      this.getContext('webgl2');\n    }\n\n    get handle"),
     "gl call": source.replace("_clearNote() {", "_clearNote() { gl.drawArrays(0, 0, 1);"),
@@ -127,7 +127,7 @@ test("the scan flags deliberate breaches (it can fail)", () => {
     "an animation frame": source.replace("_clearNote() {", "_clearNote() { root.requestAnimationFrame(function () {});"),
     "innerHTML": source.replace("_clearNote() {", "_clearNote() { this.innerHTML = '';"),
     "a fetch with headers": source.replace('{ credentials: "same-origin" }', '{ credentials: "same-origin", headers: {} }'),
-    "an address": source.replace("var NAME", 'var u = "https://example.org"; var NAME'),
+    "an address": source.replace("const NAME", 'const u = "https://example.org"; const NAME'),
   };
   for (const [name, mutated] of Object.entries(cases)) {
     assert.notStrictEqual(mutated, source, "mutation did not apply: " + name);

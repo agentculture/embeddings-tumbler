@@ -18,9 +18,7 @@
 const { makeFakeGL } = require("./fake-gl.js");
 
 class FakeStyle {
-  constructor() {
-    this._custom = {};
-  }
+  _custom = {};
   setProperty(name, value) {
     if (name.startsWith("--")) this._custom[name] = String(value);
     else this[name] = String(value);
@@ -50,23 +48,24 @@ class FakeNode {
     return p.childNodes[p.childNodes.indexOf(this) - 1] || null;
   }
   get nextElementSibling() {
-    let n = this.nextSibling;
-    while (n && n.nodeType !== 1) n = n.nextSibling;
-    return n;
+    const kids = this.parentNode ? this.parentNode.childNodes : [];
+    return kids.slice(kids.indexOf(this) + 1).find((n) => n.nodeType === 1) || null;
   }
   get previousElementSibling() {
-    let n = this.previousSibling;
-    while (n && n.nodeType !== 1) n = n.previousSibling;
-    return n;
+    const kids = this.parentNode ? this.parentNode.childNodes : [];
+    return kids.slice(0, Math.max(0, kids.indexOf(this))).findLast((n) => n.nodeType === 1) || null;
   }
   get isConnected() {
-    let top = this;
-    while (top.parentNode) top = top.parentNode;
+    const top = lineage(this).at(-1);
     const doc = top.ownerDocument;
     return !!doc && top === doc.documentElement;
   }
   remove() {
-    if (this.parentNode) this.parentNode.removeChild(this);
+    const p = this.parentNode;
+    if (!p) return;
+    const i = p.childNodes.indexOf(this);
+    if (i >= 0) p.childNodes.splice(i, 1);
+    this.parentNode = null;
   }
   before(...items) {
     const parent = this.parentNode;
@@ -96,11 +95,18 @@ class FakeNode {
     detachAll(nodes.filter((n) => n !== this));
     if (this.parentNode === parent) {
       for (const n of nodes) if (n !== this) parent.insertBefore(n, this);
-      if (!nodes.includes(this)) parent.removeChild(this);
+      if (!nodes.includes(this)) this.remove();
     } else {
       for (const n of nodes) parent.insertBefore(n, next);
     }
   }
+}
+
+// The node, its parent, its parent's parent, ... up to the root.
+function lineage(node) {
+  const out = [];
+  for (let n = node; n; n = n.parentNode) out.push(n);
+  return out;
 }
 
 // Turn ChildNode/ParentNode arguments into nodes (strings become text nodes).
@@ -112,15 +118,15 @@ function toNodes(owner, items) {
 }
 
 function detachAll(nodes) {
-  for (const n of nodes) if (n.parentNode) n.parentNode.removeChild(n);
+  for (const n of nodes) n.remove();
 }
 
 class FakeText extends FakeNode {
+  nodeType = 3;
+  parentNode = null;
   constructor(text, doc) {
     super();
-    this.nodeType = 3;
     this.data = String(text);
-    this.parentNode = null;
     this.ownerDocument = doc || null;
   }
   get textContent() {
@@ -207,14 +213,13 @@ class FakeParent extends FakeNode {
     return this.childNodes[0] || null;
   }
   get lastChild() {
-    return this.childNodes[this.childNodes.length - 1] || null;
+    return this.childNodes.at(-1) || null;
   }
   get firstElementChild() {
     return this.children[0] || null;
   }
   get lastElementChild() {
-    const c = this.children;
-    return c[c.length - 1] || null;
+    return this.children.at(-1) || null;
   }
   hasChildNodes() {
     return this.childNodes.length > 0;
@@ -229,8 +234,8 @@ class FakeParent extends FakeNode {
       for (const c of child.childNodes.slice()) this.insertBefore(c, ref);
       return child;
     }
-    if (child.contains && child.contains(this)) throw new Error("fake DOM: hierarchy error");
-    if (child.parentNode) child.parentNode.removeChild(child);
+    if (child.contains?.(this)) throw new Error("fake DOM: hierarchy error");
+    child.remove();
     const i = ref === null || ref === undefined ? -1 : this.childNodes.indexOf(ref);
     if (i < 0) this.childNodes.push(child);
     else this.childNodes.splice(i, 0, child);
@@ -243,15 +248,14 @@ class FakeParent extends FakeNode {
   removeChild(child) {
     const i = this.childNodes.indexOf(child);
     if (i < 0) throw new Error("fake DOM: not a child");
-    this.childNodes.splice(i, 1);
-    child.parentNode = null;
+    child.remove();
     return child;
   }
   replaceChild(child, old) {
     if (old.parentNode !== this) throw new Error("fake DOM: not a child");
     if (child !== old) {
       this.insertBefore(child, old);
-      this.removeChild(old);
+      old.remove();
     }
     return old;
   }
@@ -272,8 +276,7 @@ class FakeParent extends FakeNode {
     for (const n of nodes) this.insertBefore(n, null);
   }
   contains(node) {
-    for (let n = node; n; n = n.parentNode) if (n === this) return true;
-    return false;
+    return lineage(node).includes(this);
   }
   querySelectorAll(sel) {
     const out = [];
@@ -300,30 +303,86 @@ class FakeParent extends FakeNode {
   }
 }
 
+// element.classList: a live view of the class attribute, as a browser's DOMTokenList.
+class FakeTokenList {
+  constructor(el) {
+    this._el = el;
+  }
+  _tokens() {
+    return this._el.className.split(/\s+/).filter(Boolean);
+  }
+  _write(list) {
+    if (list.length === 0 && !this._el.hasAttribute("class")) return;
+    this._el.className = list.join(" ");
+  }
+  get length() {
+    return this._tokens().length;
+  }
+  get value() {
+    return this._el.className;
+  }
+  item(i) {
+    return this._tokens()[i] ?? null;
+  }
+  contains(c) {
+    return this._tokens().includes(c);
+  }
+  add(...cs) {
+    const list = this._tokens();
+    for (const c of cs) if (!list.includes(c)) list.push(c);
+    this._write(list);
+  }
+  remove(...cs) {
+    this._write(this._tokens().filter((x) => !cs.includes(x)));
+  }
+  toggle(c, force) {
+    const has = this.contains(c);
+    const want = force === undefined ? !has : !!force;
+    if (want && !has) this.add(c);
+    else if (!want && has) this.remove(c);
+    return want;
+  }
+  replace(from, to) {
+    const list = this._tokens();
+    const i = list.indexOf(from);
+    if (i < 0) return false;
+    list[i] = to;
+    this._write(list.filter((x, j) => list.indexOf(x) === j));
+    return true;
+  }
+  forEach(fn) {
+    this._tokens().forEach(fn);
+  }
+  [Symbol.iterator]() {
+    return this._tokens()[Symbol.iterator]();
+  }
+}
+
 class FakeFragment extends FakeParent {
+  nodeType = 11;
+  childNodes = [];
+  parentNode = null;
   constructor(doc) {
     super();
     this.ownerDocument = doc;
-    this.nodeType = 11;
-    this.childNodes = [];
-    this.parentNode = null;
   }
 }
 
 class FakeElement extends FakeParent {
+  nodeType = 1;
+  childNodes = [];
+  parentNode = null;
+  style = new FakeStyle();
+  attributes = new Map();
+  listeners = {};
+  tabIndex = -1;
+  rect = null; // { left, top, width, height } set by tests; null = from parent or default
+  pointerCapture = null; // the pointer id captured with setPointerCapture, if any
+  _dataset = null;
   constructor(doc, tag) {
     super();
     this.ownerDocument = doc;
     this.tagName = String(tag).toUpperCase();
-    this.nodeType = 1;
-    this.childNodes = [];
-    this.parentNode = null;
-    this.style = new FakeStyle();
-    this.attributes = new Map();
-    this.listeners = {};
-    this.tabIndex = -1;
-    this.rect = null; // { left, top, width, height } set by tests; null = from parent or default
-    this._dataset = null;
   }
   // className, id and hidden reflect their attributes, as in a browser. They write the
   // attribute map directly (not through an overridden setAttribute), like the old plain
@@ -355,8 +414,7 @@ class FakeElement extends FakeParent {
     return matchesSelector(this, sel);
   }
   closest(sel) {
-    for (let n = this; n && n.nodeType === 1; n = n.parentNode) if (matchesSelector(n, sel)) return n;
-    return null;
+    return lineage(this).find((n) => n.nodeType === 1 && matchesSelector(n, sel)) || null;
   }
   set innerHTML(_v) {
     throw new Error("fake DOM: innerHTML is not allowed");
@@ -398,49 +456,11 @@ class FakeElement extends FakeParent {
   }
   // A live token list over the class attribute.
   get classList() {
-    const el = this;
-    const tokens = () => el.className.split(/\s+/).filter(Boolean);
-    const write = (list) => {
-      el.className = list.join(" ");
-    };
-    return {
-      get length() {
-        return tokens().length;
-      },
-      get value() {
-        return el.className;
-      },
-      item: (i) => tokens()[i] ?? null,
-      contains: (c) => tokens().includes(c),
-      add: (...cs) => {
-        const list = tokens();
-        for (const c of cs) if (!list.includes(c)) list.push(c);
-        write(list);
-      },
-      remove: (...cs) => {
-        write(tokens().filter((x) => !cs.includes(x)));
-      },
-      toggle: (c, force) => {
-        const has = tokens().includes(c);
-        const want = force === undefined ? !has : !!force;
-        if (want && !has) write(tokens().concat([c]));
-        else if (!want && has) write(tokens().filter((x) => x !== c));
-        return want;
-      },
-      replace: (from, to) => {
-        const list = tokens();
-        const i = list.indexOf(from);
-        if (i < 0) return false;
-        list[i] = to;
-        write(list.filter((x, j) => list.indexOf(x) === j));
-        return true;
-      },
-      forEach: (fn) => tokens().forEach(fn),
-      [Symbol.iterator]: () => tokens()[Symbol.iterator](),
-    };
+    return new FakeTokenList(this);
   }
   addEventListener(type, fn, opts) {
-    (this.listeners[type] = this.listeners[type] || []).push({ fn, opts });
+    this.listeners[type] ??= [];
+    this.listeners[type].push({ fn, opts });
     this.ownerDocument._track(+1);
   }
   removeEventListener(type, fn) {
@@ -463,7 +483,7 @@ class FakeElement extends FakeParent {
         ev.defaultPrevented = true;
       };
     }
-    for (let n = this; n; n = n.parentNode) {
+    for (const n of lineage(this)) {
       if (!n.listeners) continue;
       ev.currentTarget = n;
       for (const l of (n.listeners[ev.type] || []).slice()) l.fn.call(n, ev);
@@ -491,11 +511,18 @@ class FakeElement extends FakeParent {
   blur() {
     if (this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = this.ownerDocument.body;
   }
-  setPointerCapture() {}
-  releasePointerCapture() {}
+  setPointerCapture(id) {
+    this.pointerCapture = id;
+  }
+  releasePointerCapture(id) {
+    if (this.pointerCapture === id) this.pointerCapture = null;
+  }
+  hasPointerCapture(id) {
+    return this.pointerCapture === id;
+  }
   getBoundingClientRect() {
-    if (this.rect) return Object.assign({ left: 0, top: 0 }, this.rect);
-    if (this.parentNode && this.parentNode.getBoundingClientRect) {
+    if (this.rect) return { left: 0, top: 0, ...this.rect };
+    if (this.parentNode?.getBoundingClientRect) {
       const p = this.parentNode.getBoundingClientRect();
       return { left: p.left, top: p.top, width: p.width, height: this.tagName === "CANVAS" ? p.height : 320 };
     }
@@ -510,11 +537,11 @@ class FakeElement extends FakeParent {
 }
 
 class FakeCanvas extends FakeElement {
+  width = 300;
+  height = 150;
+  contexts = {};
   constructor(doc) {
     super(doc, "canvas");
-    this.width = 300;
-    this.height = 150;
-    this.contexts = {};
   }
   getContext(type) {
     const env = this.ownerDocument._env;
@@ -576,10 +603,7 @@ function makeFake2d(canvas) {
 //   noIntersectionObserver, noResizeObserver   leave them out of the window
 //   devicePixelRatio
 function makeFakeDom(opts) {
-  const env = Object.assign(
-    { noWebGL2: false, glOptions: null, reducedMotion: false, devicePixelRatio: 1, glStates: [] },
-    opts || {}
-  );
+  const env = { noWebGL2: false, glOptions: null, reducedMotion: false, devicePixelRatio: 1, glStates: [], ...opts };
   env.glStates = [];
   let listenerBalance = 0;
   const doc = {
@@ -603,7 +627,8 @@ function makeFakeDom(opts) {
     },
     created: [],
     addEventListener(type, fn) {
-      (doc.listeners[type] = doc.listeners[type] || []).push(fn);
+      doc.listeners[type] ??= [];
+      doc.listeners[type].push(fn);
       listenerBalance++;
     },
     removeEventListener(type, fn) {
@@ -707,7 +732,8 @@ function makeFakeDom(opts) {
     getComputedStyle(el) {
       return {
         getPropertyValue(name) {
-          for (let n = el; n && n.style; n = n.parentNode) {
+          for (const n of lineage(el)) {
+            if (!n.style) break;
             const v = n.style.getPropertyValue(name);
             if (v) return v;
           }
@@ -717,7 +743,8 @@ function makeFakeDom(opts) {
       };
     },
     addEventListener(type, fn) {
-      (winListeners[type] = winListeners[type] || []).push(fn);
+      winListeners[type] ??= [];
+      winListeners[type].push(fn);
       listenerBalance++;
     },
     removeEventListener(type, fn) {
@@ -782,7 +809,7 @@ function makeFakeDom(opts) {
     // A host element attached to the body.
     host(rect) {
       const el = doc.createElement("div");
-      el.rect = Object.assign({ left: 0, top: 0, width: 640, height: 640 }, rect || {});
+      el.rect = { left: 0, top: 0, width: 640, height: 640, ...rect };
       doc.body.appendChild(el);
       return el;
     },

@@ -19,21 +19,21 @@
 // compares to it (tests/browser/harness.py, leaks()).
 (function () {
   "use strict";
-  var w = window;
-  var H = (w.__harness = w.__harness || {});
-  var rafPending = new Map();
-  var timeouts = new Map();
-  var intervals = new Map();
-  var gl = [];
-  var observers = { IntersectionObserver: new Set(), ResizeObserver: new Set(), MutationObserver: new Set() };
-  var listeners = new Map();
-  var stats = { rafRequested: 0, timeoutsSet: 0, observersMade: 0, glCreated: 0 };
+  const w = window;
+  const H = (w.__harness = w.__harness || {});
+  const rafPending = new Map();
+  const timeouts = new Map();
+  const intervals = new Map();
+  const gl = [];
+  const observers = { IntersectionObserver: new Set(), ResizeObserver: new Set(), MutationObserver: new Set() };
+  const listeners = new Map();
+  const stats = { rafRequested: 0, timeoutsSet: 0, observersMade: 0, glCreated: 0 };
 
-  var raf = w.requestAnimationFrame.bind(w);
-  var caf = w.cancelAnimationFrame.bind(w);
+  const raf = w.requestAnimationFrame.bind(w);
+  const caf = w.cancelAnimationFrame.bind(w);
   w.requestAnimationFrame = function (cb) {
     stats.rafRequested++;
-    var id = raf(function (t) {
+    const id = raf(function (t) {
       rafPending.delete(id);
       cb(t);
     });
@@ -45,14 +45,14 @@
     return caf(id);
   };
 
-  var st = w.setTimeout.bind(w);
-  var ct = w.clearTimeout.bind(w);
-  var si = w.setInterval.bind(w);
-  var ci = w.clearInterval.bind(w);
+  const st = w.setTimeout.bind(w);
+  const ct = w.clearTimeout.bind(w);
+  const si = w.setInterval.bind(w);
+  const ci = w.clearInterval.bind(w);
   w.setTimeout = function (fn, ms) {
     stats.timeoutsSet++;
-    var rest = Array.prototype.slice.call(arguments, 2);
-    var id = st(function () {
+    const rest = Array.prototype.slice.call(arguments, 2);
+    const id = st(function () {
       timeouts.delete(id);
       if (typeof fn === "function") fn.apply(w, rest);
     }, ms);
@@ -64,7 +64,7 @@
     return ct(id);
   };
   w.setInterval = function () {
-    var id = si.apply(w, arguments);
+    const id = si.apply(w, arguments);
     intervals.set(id, true);
     return id;
   };
@@ -74,22 +74,22 @@
   };
 
   Object.keys(observers).forEach(function (name) {
-    var Orig = w[name];
+    const Orig = w[name];
     if (typeof Orig !== "function") return;
-    var live = observers[name];
-    var Wrapped = function (cb, opts) {
-      var inner = new Orig(cb, opts);
-      var targets = new Set();
+    const live = observers[name];
+    const Wrapped = function (cb, opts) {
+      const inner = new Orig(cb, opts);
+      const targets = new Set();
       stats.observersMade++;
-      var origObserve = inner.observe.bind(inner);
-      var origDisconnect = inner.disconnect.bind(inner);
+      const origObserve = inner.observe.bind(inner);
+      const origDisconnect = inner.disconnect.bind(inner);
       inner.observe = function (target, o) {
         targets.add(target);
         live.add(inner);
         return origObserve(target, o);
       };
       if (typeof inner.unobserve === "function") {
-        var origUnobserve = inner.unobserve.bind(inner);
+        const origUnobserve = inner.unobserve.bind(inner);
         inner.unobserve = function (target) {
           targets.delete(target);
           if (targets.size === 0) live.delete(inner);
@@ -107,11 +107,11 @@
     w[name] = Wrapped;
   });
 
-  var getContext = HTMLCanvasElement.prototype.getContext;
+  const getContext = HTMLCanvasElement.prototype.getContext;
   HTMLCanvasElement.prototype.getContext = function (type) {
-    var ctx = getContext.apply(this, arguments);
+    const ctx = getContext.apply(this, arguments);
     if (ctx && (type === "webgl2" || type === "webgl" || type === "experimental-webgl")) {
-      if (gl.indexOf(ctx) < 0) {
+      if (!gl.includes(ctx)) {
         gl.push(ctx);
         stats.glCreated++;
       }
@@ -119,41 +119,41 @@
     return ctx;
   };
 
-  var add = EventTarget.prototype.addEventListener;
-  var remove = EventTarget.prototype.removeEventListener;
+  const add = EventTarget.prototype.addEventListener;
+  const remove = EventTarget.prototype.removeEventListener;
   function key(target, type, fn, opts) {
-    var capture = typeof opts === "boolean" ? opts : !!(opts && opts.capture);
+    const capture = typeof opts === "boolean" ? opts : !!opts?.capture;
     return { target: target === w ? "window" : "document", type: type, fn: fn, capture: capture };
   }
   function find(k) {
-    var found = null;
+    let found = null;
     listeners.forEach(function (v, id) {
       if (v.target === k.target && v.type === k.type && v.fn === k.fn && v.capture === k.capture) found = id;
     });
     return found;
   }
-  var nextListener = 1;
+  let nextListener = 1;
   EventTarget.prototype.addEventListener = function (type, fn, opts) {
     if ((this === w || this === document) && fn) {
-      var k = key(this, type, fn, opts);
+      const k = key(this, type, fn, opts);
       if (find(k) === null) listeners.set(nextListener++, k);
     }
     return add.apply(this, arguments);
   };
   EventTarget.prototype.removeEventListener = function (type, fn, opts) {
     if (this === w || this === document) {
-      var id = find(key(this, type, fn, opts));
+      const id = find(key(this, type, fn, opts));
       if (id !== null) listeners.delete(id);
     }
     return remove.apply(this, arguments);
   };
 
   H.snapshot = function () {
-    var glLive = 0;
-    for (var i = 0; i < gl.length; i++) if (!gl[i].isContextLost()) glLive++;
-    var types = {};
+    let glLive = 0;
+    for (const ctx of gl) if (!ctx.isContextLost()) glLive++;
+    const types = {};
     listeners.forEach(function (v) {
-      var n = v.target + ":" + v.type;
+      const n = v.target + ":" + v.type;
       types[n] = (types[n] || 0) + 1;
     });
     return {
@@ -179,12 +179,18 @@
     return new Promise(function (resolve) {
       (function step(left) {
         if (left <= 0) resolve();
-        else raf(function () { step(left - 1); });
+        else {
+          raf(function () {
+            step(left - 1);
+          });
+        }
       })(n);
     });
   };
   H.sleep = function (ms) {
-    return new Promise(function (resolve) { st(resolve, ms); });
+    return new Promise(function (resolve) {
+      st(resolve, ms);
+    });
   };
   H.loaded = H.snapshot();
 })();

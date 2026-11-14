@@ -4,9 +4,9 @@
 // page under test is just the <embeddings-tumbler> element in the markup.
 (function () {
   "use strict";
-  var state = { events: [], violations: [], frameRequests: 0 };
+  const state = { events: [], violations: [], frameRequests: 0 };
   window.__wc = state;
-  var raf = window.requestAnimationFrame.bind(window);
+  const raf = window.requestAnimationFrame.bind(window);
   window.requestAnimationFrame = function (cb) {
     state.frameRequests++;
     return raf(cb);
@@ -16,30 +16,37 @@
   });
   ["tumbler-load", "tumbler-error"].forEach(function (type) {
     document.addEventListener(type, function (e) {
-      state.events.push({ type: type, detail: e.detail, target: e.target && e.target.id });
+      state.events.push({ type: type, detail: e.detail, target: e.target?.id });
     });
   });
+  // Lit pixels (any channel above 40) on the element's canvas now, or -1 without one.
+  function litNow(el) {
+    const gl = el.querySelector(".tumbler-canvas")?.getContext("webgl2");
+    if (!gl) return -1;
+    const w = gl.drawingBufferWidth;
+    const h = gl.drawingBufferHeight;
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    let lit = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i] > 40 || px[i + 1] > 40 || px[i + 2] > 40) lit++;
+    }
+    return lit;
+  }
   // The most lit pixels seen on the element's canvas over the next n animation frames
   // (read right after the viewer draws, before the frame is shown).
   window.__litMax = function (el, n) {
     return new Promise(function (resolve) {
-      var best = -1;
+      let best = -1;
       (function step(left) {
-        var c = el.querySelector(".tumbler-canvas");
-        var gl = c && c.getContext("webgl2");
-        if (gl) {
-          var w = gl.drawingBufferWidth;
-          var h = gl.drawingBufferHeight;
-          var px = new Uint8Array(w * h * 4);
-          gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
-          var lit = 0;
-          for (var i = 0; i < px.length; i += 4) {
-            if (px[i] > 40 || px[i + 1] > 40 || px[i + 2] > 40) lit++;
-          }
-          if (lit > best) best = lit;
+        best = Math.max(best, litNow(el));
+        if (left > 0) {
+          raf(function () {
+            step(left - 1);
+          });
+        } else {
+          resolve(best);
         }
-        if (left > 0) raf(function () { step(left - 1); });
-        else resolve(best);
       })(n);
     });
   };

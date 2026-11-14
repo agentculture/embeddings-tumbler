@@ -6,19 +6,19 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
-const { ROOT } = require("./helpers/load.js");
+const { runAsFunction, ROOT } = require("./helpers/load.js");
 
 const CODE = fs.readFileSync(path.join(ROOT, "js", "page", "page.js"), "utf8");
 const ORIGIN = "http://127.0.0.1:9";
 
 function el(id) {
+  const attrs = {};
   return {
     id,
     textContent: "",
     hidden: id === "note-sample" || id === "note-file",
     parentNode: null,
-    attrs: {},
+    attrs,
     setAttribute(k, v) {
       this.attrs[k] = String(v);
     },
@@ -31,6 +31,20 @@ function el(id) {
     removeChild(c) {
       c.parentNode = null;
     },
+    remove() {
+      if (this.parentNode) this.parentNode.removeChild(this);
+    },
+    // data-* attributes as the browser's dataset maps them ("pageState" <-> "data-page-state").
+    dataset: new Proxy(
+      {},
+      {
+        get: (_t, k) => attrs["data-" + String(k).replace(/[A-Z]/g, (m) => "-" + m.toLowerCase())],
+        set: (_t, k, v) => {
+          attrs["data-" + String(k).replace(/[A-Z]/g, (m) => "-" + m.toLowerCase())] = String(v);
+          return true;
+        },
+      }
+    ),
   };
 }
 
@@ -82,7 +96,8 @@ function runPage(search, fetchImpl) {
       cb();
     },
     addEventListener(type, fn) {
-      (listeners[type] = listeners[type] || []).push(fn);
+      listeners[type] ??= [];
+      listeners[type].push(fn);
     },
   };
   const document = {
@@ -90,22 +105,22 @@ function runPage(search, fetchImpl) {
     getElementById: (id) => els[id] || null,
     querySelectorAll: () => [],
   };
-  const context = vm.createContext({
+  const globals = {
     window,
     document,
-    performance: { mark() {} },
+    performance: { mark() { /* marks are not measured here */ } },
     URL,
     URLSearchParams,
     AbortController,
     console,
-  });
-  vm.runInContext(CODE, context, { filename: "page.js" });
+  };
+  runAsFunction(CODE, Object.keys(globals), Object.values(globals), "page");
   world.fire = (type, ev) => (listeners[type] || []).forEach((fn) => fn(ev || { type }));
   return world;
 }
 
 function response(body, headers) {
-  const h = Object.assign({}, headers || {});
+  const h = { ...headers };
   const res = {
     ok: true,
     status: 200,
@@ -150,6 +165,7 @@ test("a records file whose Content-Length is over the limit is refused before it
   assert.strictEqual(w.body.getAttribute("data-page-state"), "error");
   assert.match(w.els["wait-text"].textContent, /"big\.json" is too large/);
   assert.match(w.els["wait-text"].textContent, /64 MB/);
+  assert.strictEqual(w.els["wait-text"].getAttribute("role"), "alert", "a failure is announced as an alert");
 });
 
 test("a records file at the limit, or with no Content-Length, is read", async () => {
@@ -200,7 +216,8 @@ test("a load still in flight when the page is left is abandoned and changes noth
   await settle();
   assert.strictEqual(w.fetches.length, 1);
   const signal = w.fetches[0].init.signal;
-  assert.ok(signal && signal.aborted === false, "the request carries an abort signal");
+  assert.ok(signal, "the request carries an abort signal");
+  assert.strictEqual(signal.aborted, false, "the signal is not aborted yet");
   const before = w.els["wait-text"].textContent;
   w.fire("pagehide", { type: "pagehide", persisted: false });
   await settle();

@@ -47,6 +47,8 @@ test("before(), after() and replaceWith() place nodes and turn strings into text
   assert.equal(a.nextSibling, b);
   assert.equal(b.previousSibling, a);
   assert.equal(b.nextElementSibling, c);
+  assert.equal(c.previousElementSibling, b, "text nodes are skipped");
+  assert.equal(a.previousElementSibling, null);
 });
 
 test("append(), prepend() and replaceChildren() keep order and move existing nodes", () => {
@@ -152,6 +154,16 @@ test("matches(), closest() and #id selectors", () => {
   assert.equal(b.closest(".box"), parent);
   assert.equal(b.closest(".none"), null);
   assert.equal(parent.querySelector("#c").id, "c");
+});
+
+test("pointer capture is tracked per pointer id", () => {
+  const { a } = tree();
+  a.setPointerCapture(3);
+  assert.equal(a.hasPointerCapture(3), true);
+  a.releasePointerCapture(4);
+  assert.equal(a.hasPointerCapture(3), true);
+  a.releasePointerCapture(3);
+  assert.equal(a.hasPointerCapture(3), false);
 });
 
 test("guard rails still hold", () => {

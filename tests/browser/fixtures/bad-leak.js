@@ -4,17 +4,31 @@
   "use strict";
   window.__bad = {
     leak: function () {
-      var t = document.getElementById("target");
-      (function loop() { requestAnimationFrame(loop); })();
-      setTimeout(function () {}, 600000);
-      setInterval(function () {}, 600000);
-      new IntersectionObserver(function () {}).observe(t);
-      new ResizeObserver(function () {}).observe(t);
-      new MutationObserver(function () {}).observe(t, { childList: true });
-      var c = document.createElement("canvas");
+      const t = document.getElementById("target");
+      (function loop() {
+        requestAnimationFrame(loop);
+      })();
+      setTimeout(function () {
+        // never runs in time: a timer left pending
+      }, 600000);
+      setInterval(function () {
+        // never cleared: an interval left running
+      }, 600000);
+      new IntersectionObserver(function () {
+        // never disconnected
+      }).observe(t);
+      new ResizeObserver(function () {
+        // never disconnected
+      }).observe(t);
+      new MutationObserver(function () {
+        // never disconnected
+      }).observe(t, { childList: true });
+      const c = document.createElement("canvas");
       c.getContext("webgl2");
       document.body.appendChild(c);
-      window.addEventListener("resize", function () {});
+      window.addEventListener("resize", function () {
+        // never removed
+      });
       return true;
     },
   };

@@ -7,13 +7,14 @@ const assert = require("node:assert");
 const { loadAssembled } = require("./helpers/load.js");
 const { makeFakeDom, walk } = require("./helpers/fake-dom.js");
 const { makeSet } = require("./helpers/viewer-fixtures.js");
+const { byCodeUnits } = require("./helpers/order.js");
 
 const api = loadAssembled();
 
 function setup(domOpts, mountOpts) {
   const dom = makeFakeDom(domOpts);
   const el = dom.host();
-  const h = api.mount(el, Object.assign({ seed: 3 }, mountOpts || {}));
+  const h = api.mount(el, { seed: 3, ...mountOpts });
   return { dom, el, h, v: h._viewer };
 }
 
@@ -32,7 +33,7 @@ test("mount appends exactly one child to the element and touches nothing else", 
   const el = dom.host();
   const bodyBefore = dom.document.body.children.length;
   const headBefore = dom.document.head.children.length;
-  const winKeysBefore = Object.keys(dom.window).sort().join(",");
+  const winKeysBefore = Object.keys(dom.window).sort(byCodeUnits).join(",");
   const h = api.mount(el, { seed: 1 });
   assert.strictEqual(el.children.length, 1);
   assert.strictEqual(el.children[0].className, "tumbler");
@@ -42,7 +43,7 @@ test("mount appends exactly one child to the element and touches nothing else", 
   assert.strictEqual(dom.document.documentElement.className, "");
   assert.strictEqual(el.className, "", "the host element itself is not restyled or reclassed");
   assert.deepStrictEqual(Object.keys(el.style).filter((k) => k !== "_custom"), []);
-  assert.strictEqual(Object.keys(dom.window).sort().join(","), winKeysBefore, "no globals added");
+  assert.strictEqual(Object.keys(dom.window).sort(byCodeUnits).join(","), winKeysBefore, "no globals added");
   // Only the document's visibility listener (ResizeObserver exists, so no window resize).
   assert.strictEqual(dom.document.listenerCount(), 1);
   assert.strictEqual(dom.windowListenerCount(), 0);
@@ -608,7 +609,7 @@ test("the readout strip has one cell per dimension at any dimension", () => {
     assert.strictEqual(v.strip.width, d);
     const puts = v.strip.getContext("2d")._rec.puts;
     assert.ok(puts.length > 0);
-    assert.strictEqual(puts[puts.length - 1].width, d);
+    assert.strictEqual(puts.at(-1).width, d);
     assert.match(v.stripLast.textContent, new RegExp("dimension " + d.toLocaleString("en-US")));
     h.destroy();
   }
@@ -841,7 +842,7 @@ test("light background, dark stage panel: the stage keeps the night sky and scre
   assert.strictEqual(v.canvas.style.mixBlendMode, "screen");
   assert.strictEqual(v.canvas.style.filter, "none");
   assert.strictEqual(v.status.style.color, "rgb(255, 197, 107)", "stage text uses the dark palette");
-  const c = uploads[uploads.length - 1].slice(3, 6); // point 1: unlabelled, group 0
+  const c = uploads.at(-1).slice(3, 6); // point 1: unlabelled, group 0
   // Group 0's colour as given to the renderer: the reference's hsl(28, .9, .62), not inverted.
   assert.ok(c[0] > 0.9 && c[2] < 0.5, Array.from(c).join(","));
   h.destroy();
@@ -851,7 +852,7 @@ test("light background, coloured ink: complementary colours inverted keep each g
   const { h, v, uploads } = themed({ "--tumbler-background": "#ffffff", "--tumbler-light-style": "ink" });
   assert.strictEqual(v.canvas.style.filter, "invert(1)");
   assert.strictEqual(v.canvas.style.mixBlendMode, "multiply");
-  const c = uploads[uploads.length - 1];
+  const c = uploads.at(-1);
   // Orange group: after the CSS inversion the ink is 1 - uploaded, which must be orange-ish:
   // red channel strongest, blue weakest.
   const ink = [1 - c[0], 1 - c[1], 1 - c[2]];

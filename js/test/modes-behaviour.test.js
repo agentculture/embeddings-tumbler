@@ -159,7 +159,7 @@ test("Lattice wires are true neighbours in the full space, among the first 1,000
   const inst = F.ready(ET, "lattice", set, { seed: 8 });
   assert.strictEqual(inst.describe().neighbourLimit, 1000);
   const w = inst.stateAt(1).wires;
-  assert.ok(w && w.pairs.length > 0);
+  assert.ok(w?.pairs.length > 0);
   const ref = ET.math.knn(set.vectors, N, D, 3, { limit: 1000 });
   const seen = new Set();
   for (let e = 0; e < w.pairs.length; e += 2) {
@@ -312,7 +312,7 @@ test("each mode starts from the frame, centre and draw parameters it is handed",
   const D = set.dimension;
   const wander = F.ready(ET, "wander", set, { seed: 1 });
   const s = wander.stateAt(7.3);
-  const from = { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) };
+  const from = { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: { ...s.draw } };
   for (const id of ["tumble", "lattice", "wander"]) {
     const inst = F.ready(ET, id, set, { seed: 2, from });
     const s0 = inst.stateAt(0);
@@ -346,7 +346,8 @@ test("draw parameters port the reference's feel", () => {
   assert.ok(Math.abs(l.trails - 0.1) < 1e-12);
   assert.strictEqual(w.fog, 1);
   assert.ok(w.zoom > 2 && w.zoom < 3.5, "Wander's fixed zoom, scaled to the data");
-  assert.ok(t.zoom > 0 && isFinite(t.zoom));
+  assert.ok(t.zoom > 0);
+  assert.ok(Number.isFinite(t.zoom));
 });
 
 // ---------- Lattice's hidden directions (found on a real Atlas, plan task t16) ----------

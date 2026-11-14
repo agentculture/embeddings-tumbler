@@ -13,7 +13,7 @@ const api = loadAssembled();
 function setup(domOpts, mountOpts, rect) {
   const dom = makeFakeDom(domOpts);
   const el = dom.host(rect);
-  const h = api.mount(el, Object.assign({ seed: 3 }, mountOpts || {}));
+  const h = api.mount(el, { seed: 3, ...mountOpts });
   return { dom, el, h, v: h._viewer };
 }
 

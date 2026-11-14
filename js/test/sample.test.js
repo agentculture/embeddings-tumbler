@@ -3,25 +3,26 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
-const { loadAssembled, ROOT } = require("./helpers/load.js");
+const { loadAssembled, runAsFunction, ROOT } = require("./helpers/load.js");
 
 const SAMPLE_FILE = path.join(ROOT, "js", "sample", "sample-data.js");
 const REFERENCE = path.join(ROOT, "docs", "specs", "reference", "embedding-tumbler-demo.html");
 const sample = require(SAMPLE_FILE);
+const { byCodeUnits } = require("./helpers/order.js");
 const ET = loadAssembled()._internal;
 
-// Run the reference's own generator (cut out of the HTML by markers) in a vm context.
+// Run the reference's own generator (cut out of the HTML by markers), with no globals of its own.
 function runReference() {
   const html = fs.readFileSync(REFERENCE, "utf8");
   const start = html.indexOf("const D = 384, TAU");
   const end = html.indexOf("/* ---------- true neighbours");
-  assert.ok(start > 0 && end > start, "reference markers found");
+  assert.ok(start > 0, "reference start marker found");
+  assert.ok(end > start, "reference end marker found after the start");
   const code =
     "(function(){ 'use strict';\n" +
     html.slice(start, end) +
     "\nreturn { X, labels, regionOf, REGIONS, N, D, NAMED, isHalo }; })()";
-  return vm.runInContext(code, vm.createContext({}), { filename: "reference-generator.js" });
+  return runAsFunction("return " + code + ";", [], [], "reference-generator");
 }
 const ref = runReference();
 const bytes = (f32) => Buffer.from(f32.buffer, f32.byteOffset, f32.byteLength);
@@ -33,8 +34,8 @@ test("criterion 1: reference seed gives the reference's point count and group na
   assert.strictEqual(data.dimension, ref.D);
   const refGroups = Array.from(ref.REGIONS, (r) => r.name);
   assert.deepStrictEqual(
-    [...new Set(data.points.map((p) => p.group))].filter((g) => g !== "").sort(),
-    [...refGroups].sort()
+    [...new Set(data.points.map((p) => p.group))].filter((g) => g !== "").sort(byCodeUnits),
+    [...refGroups].sort(byCodeUnits)
   );
   assert.strictEqual(refGroups.length, 11);
 });
@@ -97,8 +98,12 @@ test("ids are unique and every vector is finite", () => {
 test("timing (informational)", () => {
   for (const dimension of [384, 1024]) {
     const t0 = process.hrtime.bigint();
-    sample.generate({ dimension });
+    const data = sample.generate({ dimension });
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
     console.log("generate() at " + dimension + "-d: " + ms.toFixed(0) + " ms");
+    assert.strictEqual(data.dimension, dimension);
+    assert.strictEqual(data.vectors.length, data.count * dimension);
+    assert.ok(Number.isFinite(ms));
+    assert.ok(ms >= 0);
   }
 });

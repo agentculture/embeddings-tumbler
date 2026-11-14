@@ -6,7 +6,7 @@
 function constantFor(name) {
   // Stable, distinct number for every GL constant name (as a real context would have).
   let h = 7;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.codePointAt(i)) >>> 0;
   return 0x10000 + (h % 0x7fff0000);
 }
 
@@ -57,17 +57,15 @@ const WEBGL2_METHODS = new Set(
 );
 
 function makeFakeGL(opts) {
-  const o = Object.assign(
-    {
-      maxTextureSize: 16384,
-      colorBufferFloat: true,
-      failCompile: false,
-      failLink: false,
-      fboIncomplete: false, // checkFramebufferStatus reports incomplete
-      throwOn: null, // name of a GL method that throws when called
-    },
-    opts || {}
-  );
+  const o = {
+    maxTextureSize: 16384,
+    colorBufferFloat: true,
+    failCompile: false,
+    failLink: false,
+    fboIncomplete: false, // checkFramebufferStatus reports incomplete
+    throwOn: null, // name of a GL method that throws when called
+    ...opts,
+  };
   const state = {
     live: new Set(), // every created object not yet deleted
     created: [], // every created object, ever
@@ -166,7 +164,9 @@ function makeFakeGL(opts) {
     texImage2D(target, level, internalFormat, width, height) {
       state.texImages.push({ width, height, internalFormat, texture: state.bound.get(state.activeUnit) });
     },
-    texSubImage2D(target, level, x, y, width, height, format, type, data) {
+    // WebGL's nine arguments: target, level, x, y, width, height, format, type, data.
+    texSubImage2D(...args) {
+      const [, , x, y, width, height, , , data] = args;
       state.texSubImages.push({
         unit: state.activeUnit,
         texture: state.bound.get(state.activeUnit),
@@ -211,7 +211,7 @@ function makeFakeGL(opts) {
 }
 
 function makeFakeCanvas(glOpts, canvasOpts) {
-  const co = Object.assign({ noWebGL2: false, throwOnGetContext: false }, canvasOpts || {});
+  const co = { noWebGL2: false, throwOnGetContext: false, ...canvasOpts };
   const { gl, state } = makeFakeGL(glOpts);
   const listeners = {};
   const canvas = {
@@ -223,7 +223,8 @@ function makeFakeCanvas(glOpts, canvasOpts) {
       return gl;
     },
     addEventListener(type, fn) {
-      (listeners[type] = listeners[type] || []).push(fn);
+      listeners[type] ??= [];
+      listeners[type].push(fn);
     },
     removeEventListener(type, fn) {
       listeners[type] = (listeners[type] || []).filter((f) => f !== fn);

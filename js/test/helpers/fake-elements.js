@@ -12,13 +12,12 @@
 //                         { status, json, buffer, url }   (json is a value or a function)
 //   create(attrs)         a new <embeddings-tumbler> (not yet in the document)
 //   connect(el), disconnect(el)   what a browser does when the element enters or leaves the page
-//   load()                run web-component.js in the shell's global scope (again if asked)
+//   load()                run web-component.js against `root` (again if asked)
 //   root       the global object the shell sees (customElements, location, URL, fetch, ...)
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
 const { makeFakeDom, FakeElement } = require("./fake-dom.js");
-const { loadAssembled, ROOT } = require("./load.js");
+const { loadAssembled, runAsFunction, ROOT } = require("./load.js");
 
 const SHELL = path.join(ROOT, "js", "shells", "web-component.js");
 const FIXTURES = path.join(ROOT, "tests", "fixtures", "contract");
@@ -31,10 +30,7 @@ function fixture(name) {
 }
 
 function makeShellEnv(options) {
-  const opts = Object.assign(
-    { origin: "http://host.test", sample: false, withCore: true, file: SHELL },
-    options || {}
-  );
+  const opts = { origin: "http://host.test", sample: false, withCore: true, file: SHELL, ...options };
   const dom = makeFakeDom();
   const doc = dom.document;
   const realCore = loadAssembled();
@@ -117,15 +113,16 @@ function makeShellEnv(options) {
   class CustomEvent {
     constructor(type, init) {
       this.type = type;
-      this.bubbles = !!(init && init.bubbles);
+      this.bubbles = !!init?.bubbles;
       this.detail = init ? init.detail : null;
     }
   }
 
+  doc.baseURI = opts.origin + "/page/index.html";
   const root = {
     customElements,
     HTMLElement,
-    document: Object.assign(doc, { baseURI: opts.origin + "/page/index.html" }),
+    document: doc,
     location: { origin: opts.origin },
     URL,
     fetch,
@@ -134,10 +131,11 @@ function makeShellEnv(options) {
     EmbeddingsTumbler: opts.withCore ? core : undefined,
   };
   root.globalThis = root;
-  const context = vm.createContext(root);
 
+  // The shell reads its environment only through `globalThis` (its `root`): it runs with
+  // `globalThis` bound to the stand-in object above.
   function load() {
-    vm.runInContext(fs.readFileSync(opts.file, "utf8"), context, { filename: "web-component.js" });
+    runAsFunction(fs.readFileSync(opts.file, "utf8"), ["globalThis"], [root], "web-component");
   }
   load();
 
@@ -164,7 +162,7 @@ function makeShellEnv(options) {
       return el;
     },
     disconnect(el) {
-      doc.body.removeChild(el);
+      el.remove();
       el.connected = false;
       el.disconnectedCallback();
       return el;
@@ -177,9 +175,11 @@ function makeShellEnv(options) {
       }
       return seen;
     },
-    // Let pending promise work (fetch chains) finish.
-    async settle() {
-      for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    // Let pending promise work (fetch chains) finish: 20 turns of the event loop, one
+    // after another.
+    settle() {
+      const turn = (left) => (left === 0 ? Promise.resolve() : new Promise((r) => setImmediate(r)).then(() => turn(left - 1)));
+      return turn(20);
     },
   };
 }

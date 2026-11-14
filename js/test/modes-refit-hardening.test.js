@@ -257,7 +257,7 @@ test("Tumble: a fresh enter and full prepare after an abandoned one gives the un
   const set = F.sampleSet(ET, SET);
   const times = F.ticks(6, 30);
   const clean = F.framesAt(F.ready(ET, "tumble", set, { seed: 4 }), times);
-  const other = F.sampleSet(ET, Object.assign({ seed: 777 }, SET));
+  const other = F.sampleSet(ET, { seed: 777, ...SET });
   for (const units of [1, 3, 8]) {
     const inst = ET.modes.create("tumble");
     inst.enter(other, { seed: 9 }); // other data and seed, so leftovers would show

@@ -9,26 +9,47 @@ function rng(seed) {
   };
 }
 
+const SET_DEFAULTS = {
+  n: 120,
+  d: 16,
+  groups: ["alpha", "beta", "gamma"],
+  labelEvery: 3,
+  seed: 7,
+  model: "test/model",
+  idPrefix: "p",
+  op: undefined,
+  provenance: undefined,
+  reduction: undefined,
+  text_included: true,
+  labelFor: null,
+  groupFor: null,
+};
+
+const TEST_PROVENANCE = {
+  source: "test: generated clusters",
+  producer: "viewer tests 1.0",
+  synthetic: true,
+  seed: 42,
+  limitations: ["made up for a unit test"],
+  uncertain: ["whether clusters mean anything"],
+};
+
+// Point i's record: its id, its label (labelFor, else every labelEvery-th point) and its
+// group (groupFor, else its cluster g, or none when g < 0).
+function pointRecord(o, i, g) {
+  const id = o.idPrefix + String(i).padStart(5, "0");
+  let label = "";
+  if (o.labelFor) label = o.labelFor(i, id);
+  else if (i % o.labelEvery === 0) label = "word" + i;
+  let group = "";
+  if (o.groupFor) group = o.groupFor(i);
+  else if (g >= 0) group = o.groups[g];
+  return { id, label, group };
+}
+
 // n points in d dimensions, in `groups` clusters; every `labelEvery`-th point labelled.
 function makeSet(opts) {
-  const o = Object.assign(
-    {
-      n: 120,
-      d: 16,
-      groups: ["alpha", "beta", "gamma"],
-      labelEvery: 3,
-      seed: 7,
-      model: "test/model",
-      idPrefix: "p",
-      op: undefined,
-      provenance: undefined,
-      reduction: undefined,
-      text_included: true,
-      labelFor: null,
-      groupFor: null,
-    },
-    opts || {}
-  );
+  const o = { ...SET_DEFAULTS, ...opts };
   const r = rng(o.seed);
   const centres = o.groups.map(() => Array.from({ length: o.d }, () => r() * 2 - 1));
   const vectors = new Float32Array(o.n * o.d);
@@ -38,10 +59,7 @@ function makeSet(opts) {
     for (let k = 0; k < o.d; k++) {
       vectors[i * o.d + k] = (g >= 0 ? centres[g][k] : 0) + (r() - 0.5) * 0.3;
     }
-    const id = o.idPrefix + String(i).padStart(5, "0");
-    const label = o.labelFor ? o.labelFor(i, id) : i % o.labelEvery === 0 ? "word" + i : "";
-    const group = o.groupFor ? o.groupFor(i) : g >= 0 ? o.groups[g] : "";
-    points.push({ id, label, group });
+    points.push(pointRecord(o, i, g));
   }
   const data = {
     schema_version: 1,
@@ -55,14 +73,7 @@ function makeSet(opts) {
   };
   if (o.op) data.op = o.op;
   if (o.op !== "append" || o.provenance) {
-    data.provenance = o.provenance || {
-      source: "test: generated clusters",
-      producer: "viewer tests 1.0",
-      synthetic: true,
-      seed: 42,
-      limitations: ["made up for a unit test"],
-      uncertain: ["whether clusters mean anything"],
-    };
+    data.provenance = o.provenance || structuredClone(TEST_PROVENANCE);
   }
   if (o.reduction) data.reduction = o.reduction;
   return data;

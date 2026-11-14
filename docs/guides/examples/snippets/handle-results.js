@@ -1,5 +1,5 @@
 // update() never throws for bad data. It returns a result and the viewer shows the message.
-var result = viewer.update(data);
+const result = viewer.update(data);
 if (result.ok) {
   console.log(result.op, "now showing", result.count, "points,", result.added, "added");
 } else {
