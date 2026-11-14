@@ -910,6 +910,9 @@ test("onSearchChange hears each change; a throwing one does not break the viewer
 });
 
 test("the search panel hook: nothing without ET.searchPanel; with it, mount, update, overlay, destroy", async () => {
+  // The core file now carries the real panel (t9); it is put back at the end.
+  const real = ET.searchPanel;
+  delete ET.searchPanel;
   const plain = setup();
   assert.strictEqual(plain.v.search.panel, null);
   plain.h.destroy();
@@ -967,7 +970,8 @@ test("the search panel hook: nothing without ET.searchPanel; with it, mount, upd
     assert.strictEqual(failed.v.search.panel, null);
     failed.h.destroy();
   } finally {
-    delete ET.searchPanel;
+    if (real) ET.searchPanel = real;
+    else delete ET.searchPanel;
   }
 });
 

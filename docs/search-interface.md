@@ -539,9 +539,10 @@ component and the standalone page build on them.
 10. A replace drops every search with no `searchChanged` call: the mode
     re-enters on the new set as a new instance with no search.
 11. The panel hook calls `ET.searchPanel.mount(parts, handle, { document,
-    light })` (`light`: the soft-ink stage), `panel.update(info().search)` on
-    every change (before `onSearchChange`), `panel.drawOverlay(ctx, project)`
-    every frame after the viewer's own overlay, and `panel.destroy()` in
+    light, theme, data })` (`light`: the soft-ink stage; `theme` and `data`
+    added by t9), `panel.update(info().search)` on every change (before
+    `onSearchChange`), `panel.drawOverlay(ctx, project, frame)` every frame
+    after the viewer's own overlay (`frame` added by t9), and `panel.destroy()` in
     `destroy`. A panel that throws is reported like a host callback's error and
     never stops the viewer. With no `ET.searchPanel` in the core file nothing
     happens.
@@ -619,12 +620,15 @@ usedText
 `parts`: `{ panel, stage, overlay, provenanceList, provenanceSummary }`, the
 viewer's `div.tumbler-panel`, `div.tumbler-stage`, `canvas.tumbler-overlay`,
 `dl.tumbler-provenance-list` and `summary.tumbler-provenance-summary`.
-`options`: `{ document }` and the theme's search colours. Returns:
+`options`: `{ document, light, theme(), data() }` (see "Clarifications from the
+build (t9)", item 1; the search colours are read from the custom properties).
+Returns:
 
 - `panel.update(search)`: redraw from `info().search` (the viewer calls it on
   every change).
-- `panel.drawOverlay(ctx, project)`: draw the query markers, links, result
-  labels and distances on the overlay canvas; the viewer calls it once per
+- `panel.drawOverlay(ctx, project, frame)`: draw the query markers and links on
+  the overlay canvas, and the result labels and distances as DOM text over the
+  stage (t9, items 1 and 2); the viewer calls it once per
   frame after its own overlay drawing. `project(vector)` maps a
   `Float32Array(D)` to `{ x, y, scale, depth }` in overlay pixels through the
   current frame, centre, zoom, yaw and pitch (the same mapping as
@@ -708,6 +712,65 @@ The dark defaults are the sky reference's. Decided here: the light defaults are
 darker hues of the same four, chosen to stay readable on a light stage, where the
 reference's colours and white would vanish; t9 checks them on the light
 treatment in a browser.
+
+### Clarifications from the build (t9)
+
+Task t9 found these while building the panel against the two reference pages.
+Each changes or adds to the text above; `js/api/45-search-panel.md` has the
+detail.
+
+1. **What the panel needs from the viewer.** `info().search` carries no query
+   vector and no point vector, and the viewer tells the panel about searches,
+   not data. So the hook passes more: `mount` options are `{ document, light,
+   theme(), data() }` (getters for the viewer's theme and the set shown), and
+   `drawOverlay(ctx, project, frame)` gets a third argument `{ queries, filter,
+   dpr, light, labels, mode, hidden(i) }` (each shown search's raw query vector
+   in letter order, the filter, the pixel ratio, whether labels are on, the
+   mode, Focus's hidden points). `drawOverlay` returns `false` when it drew
+   nothing, and the viewer then leaves the overlay's dirty flag alone. The
+   panel notices a new set and a mode change on the next frame.
+2. **Labels are DOM text.** The viewer never draws text on a canvas (its own
+   labels are spans; the fake 2-D context throws on `fillText`), so the panel's
+   letters, ranks, result texts and distances on the stage are spans in a
+   `div.tumbler-search-labels` layer after the overlay canvas, created with the
+   first search drawn. Rings and links are on the overlay canvas.
+3. **Overlap in a tight cluster** (the spec's parked follow-up): labels are
+   placed letters first, then nearest results first, and a label that would
+   overlap one already placed is left out; the lists carry every result and the
+   note says so. In Focus a result carries its rank (`1`, or `A1` with several
+   searches), as the Focus reference does; in the other views its text (cut to
+   28 characters), as the sky reference does. Distances on links have three
+   decimals (cosine distances of nearby results differ in the third).
+4. **Suggestions** (the Focus reference; asked for in every view): under the
+   box, up to 8 buttons with texts of named points that the line being typed
+   can match (the whole line starts the text, or the line's last word starts
+   one of its words). A click puts the text on that line and searches at once.
+   New: `div.tumbler-search-suggest`.
+5. **Focus lays the lists beside the stage** (the Focus reference): an
+   `aside.tumbler-search-side` after the stage holds a title, a sub line and,
+   per search, its letter and an ordered list of results. The viewer's root is
+   made a wrapping flex row while the mode is Focus, so the list is to the
+   right of the stage on a wide screen and below it on a narrow one. It is
+   there in Focus with no search too (an empty-state line, as the reference),
+   and is removed with the layout when another mode is chosen. The result lists
+   under the stage are hidden in Focus, since the list beside it carries them.
+6. **Other DOM added** to the layout above: `p.tumbler-search-live` (a visually
+   hidden polite live region with the summary), `label.tumbler-search-input-label`,
+   an `output` beside the Results range, `data-letter` on each list, a gap bar
+   (`span.tumbler-search-gap`) on each result with Distance difference on, and
+   the Search row's classes `tumbler-search-provenance-term` / `-value` and
+   `span.tumbler-search-provenance-clause` in the summary. The Reranker label is
+   absent from the row (not hidden) while no reranker is offered; Only results
+   is in the row but shown only in Focus.
+7. **Bar text while the first search is worked out**: `working out the search ·
+   waiting` (nothing is shown yet, so there is no lit count to name).
+8. **Spacing properties**: `--tumbler-search-bar-padding` (`10px 0`),
+   `--tumbler-search-title-size` (`24px`) and `--tumbler-search-side-gap`
+   (`16px`). With the defaults the closed panel measures 46 px.
+9. **The box follows searches it did not send** only when they include a point
+   or a vector search (a click in Focus, a host's call) or when the box is
+   empty, and never while the person is typing; a point search shows the
+   point's text. A host's text search never overwrites what the person typed.
 
 ## Web component (t10)
 

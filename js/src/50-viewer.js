@@ -3679,7 +3679,19 @@ ET.viewer = (function () {
       provenanceSummary: v.provSummary,
     };
     try {
-      v.search.panel = ET.searchPanel.mount(parts, v.handle, { document: v.doc, light: !!v.theme?.light }) || null;
+      v.search.panel =
+        ET.searchPanel.mount(parts, v.handle, {
+          document: v.doc,
+          light: !!v.theme?.light,
+          // The panel reads the theme it styles itself with, and the set for its suggestions
+          // and for where results sit on the stage (docs/search-interface.md, "Panel (t9)").
+          theme: function () {
+            return v.theme || null;
+          },
+          data: function () {
+            return v.set;
+          },
+        }) || null;
     } catch (err) {
       v.search.panel = null;
       reportHostError(v, err);
@@ -3693,13 +3705,36 @@ ET.viewer = (function () {
     var ctx = overlayContext(v);
     if (!ctx) return;
     try {
-      panel.drawOverlay(ctx, function (vector) {
-        return projectVector(v, vector, s, ds);
-      });
-      v.overlayDirty = true;
+      var drew = panel.drawOverlay(
+        ctx,
+        function (vector) {
+          return projectVector(v, vector, s, ds);
+        },
+        searchFrame(v)
+      );
+      if (drew !== false) v.overlayDirty = true;
     } catch (err) {
       reportHostError(v, err);
     }
+  }
+
+  // What the panel needs to draw this frame beyond the projection: each shown search's raw
+  // query vector (in letter order), the filter, the pixel ratio, whether labels are on, the
+  // mode, and which points are hidden (Focus's Only results).
+  function searchFrame(v) {
+    return {
+      queries: v.search.shown.map(function (q) {
+        return q.query;
+      }),
+      filter: v.search.filter,
+      dpr: v.dpr,
+      light: !!v.theme?.light,
+      labels: v.showLabels,
+      mode: v.modeId,
+      hidden: function (i) {
+        return hiddenPoint(v, i);
+      },
+    };
   }
 
   // A vector of the data's dimension through the frame shown, in overlay pixels.

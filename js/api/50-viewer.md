@@ -180,9 +180,10 @@ its "Clarifications from the build (t8)". In short:
   notes `rerank-failed`, `rerank-timeout`, `rerank-no-text`; `ET.search`'s codes
   pass through. Refusals other than `superseded` and `destroyed` go to
   `onError`; they are not shown as the stage notice.
-- The search panel (`ET.searchPanel`, task t9) is mounted when it is in the core
-  file and `searchPanel` is not `false`; it drives the viewer only through the
-  handle.
+- The search panel (`ET.searchPanel`, task t9, `js/api/45-search-panel.md`) is
+  mounted when it is in the core file and `searchPanel` is not `false`; it
+  drives the viewer only through the handle. In Focus it puts the ranked lists
+  beside the stage (the root becomes a wrapping flex row while in Focus).
 
 Tested in `js/test/viewer-search.test.js`.
 
@@ -379,6 +380,7 @@ div.tumbler                       role="group", aria-label, tabindex="0" (keys w
     div.tumbler-message           role="alert"; p.tumbler-message-text (no WebGL, lost GPU, refusal with no view)
     p.tumbler-empty               "No data yet. Call update(data) to show a set of embeddings." (no data, no message)
   div.tumbler-panel
+    section.tumbler-search        the search panel (js/api/45-search-panel.md): a one-line bar, collapsed
     div.tumbler-modes             role="group" aria-label="View"
       button.tumbler-mode         data-mode, aria-pressed; b.tumbler-mode-title + span.tumbler-mode-summary
     div.tumbler-readout           canvas.tumbler-strip + p.tumbler-readout-caption
@@ -423,6 +425,8 @@ the trails and the colours alone.
 | `--tumbler-font` | `system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif` | same | body text |
 | `--tumbler-font-data` | `ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace` | same | status, labels, controls, provenance |
 | `--tumbler-font-display` | `"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif` | same | title, mode names, Wander's stop name |
+| `--tumbler-search-1` .. `--tumbler-search-4` | `#ffc56b` `#6be0ff` `#ff8fb3` `#b6ff8a` | `#a35f00` `#00708a` `#b0245a` `#3d7a00` | search A..D: ring, links, letters (read live by the panel, `js/api/45-search-panel.md`) |
+| `--tumbler-shared` | `#ffffff` | `#1b2130` | the shared mark in the panel |
 | `--tumbler-stage-height` | `clamp(300px, 62vh, 860px)` | same | height of the stage (any CSS length) |
 
 ### Spacing custom properties

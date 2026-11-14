@@ -555,6 +555,8 @@ element it is mounted in, or any ancestor. It reads them at mount, on every
 | `--tumbler-line` | `#1b2436` | `#d6dae2` | rules and button borders |
 | `--tumbler-accent` | `#ffc56b` | `#a35f00` | status line, selected mode, checkboxes |
 | `--tumbler-ungrouped` | `#8cadff` | `#8cadff` | points with no group |
+| `--tumbler-search-1` .. `--tumbler-search-4` | `#ffc56b` `#6be0ff` `#ff8fb3` `#b6ff8a` | `#a35f00` `#00708a` `#b0245a` `#3d7a00` | searches A to D: query ring, links, letters and ranks |
+| `--tumbler-shared` | `#ffffff` | `#1b2130` | the mark for a point found by several searches, in the panel |
 | `--tumbler-group-1` to `--tumbler-group-24` | hues `hsl(h 90% 62%)` | same | group colours, in order of first appearance in the data |
 | `--tumbler-font` | system UI sans-serif | same | body text |
 | `--tumbler-font-data` | system monospace | same | status, labels, controls, provenance |
