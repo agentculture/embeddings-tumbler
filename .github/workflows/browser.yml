@@ -1,0 +1,42 @@
+name: Browser tests
+
+# The headless-browser suite under tests/browser (task t14). The main Tests workflow also
+# collects these files, but its runner has no Chromium, so there they skip. Here Chromium is
+# installed and TUMBLER_REQUIRE_BROWSER=1 turns every skip into a failure, so the suite cannot
+# stop running unnoticed. Rendering is software (SwiftShader): runners have no GPU.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  browser:
+    name: browser (Chromium, SwiftShader software rendering)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TUMBLER_REQUIRE_BROWSER: "1"
+      TUMBLER_BROWSER_RENDERER: swiftshader
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - run: uv sync
+
+      # The Chromium build matching the pinned Playwright (1.65.x), with its system libraries.
+      # TODO: cache ~/.cache/ms-playwright with actions/cache once its commit SHA is pinned
+      # here; no SHA for it is known in this repository yet, so it is not used.
+      - name: install Chromium for Playwright
+        run: uv run playwright install --with-deps chromium
+
+      - name: scan shipped files for external origins
+        run: python3 scripts/check_no_external_origin.py embeddings_tumbler/static
+
+      - name: browser suite (SwiftShader software rendering)
+        run: uv run pytest tests/browser -v
