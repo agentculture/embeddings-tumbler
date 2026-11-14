@@ -159,6 +159,11 @@ its "Clarifications from the build (t8)". In short:
   `filter` is eased toward 1 (time constant 0.35 s) while a search is shown and
   toward 0 when none is, then `setLit(null)`. With no search the key is left
   out and the draw state is exactly as before.
+- Results are the nearest named points (`ET.search.isNamed`: readable text
+  that is not just the id), and `insideCount` and the lit values count every
+  point at least as near as the last result, named or not. A set with no named
+  point ranks every point. A search from an unnamed point uses it as the query
+  only; a named one is its own first result.
 - A new search swings the current mode once (`inst.face(target, t, {
   searches })`) when the facing frame is ready; a mode with `searchChanged`
   (Focus) is told after every change and its returned stepper is pumped with
@@ -167,7 +172,8 @@ its "Clarifications from the build (t8)". In short:
   again from the query vectors held, with no new `embed` call and no swing. A
   replace clears every search.
 - In Focus a click on a point (press and release within 5 px, within 16 px of
-  the point) searches from it; with Only results on, unlit points are skipped
+  the point) searches from it (the clicked point is the query, and its first
+  result when it is named); with Only results on, unlit points are skipped
   by the click, the hover name and the group names.
 - New viewer codes: `no-embedder`, `embed-failed`, `embed-timeout`,
   `embed-malformed`, `too-many-searches`, `superseded`, `bad-search`, and the

@@ -201,21 +201,22 @@ test("with no search, info().search is the empty shape, nothing reaches setLit a
 
 test("a search from a point: results are the exact ranking and the lit set follows the radius", async () => {
   const { h, v, dom, lit } = setup();
-  const query = rowOf(v.set, 4);
-  const r = await settle(dom, h.setSearches([{ point: v.set.ids[4] }]));
+  // Point 3 is named (every third point carries a label), so it is its own first result.
+  const query = rowOf(v.set, 3);
+  const r = await settle(dom, h.setSearches([{ point: v.set.ids[3] }]));
   assert.strictEqual(r.ok, true);
   const s = h.info().search;
   assert.strictEqual(s.active, true);
   assert.strictEqual(s.waiting, false);
   const q = s.searches[0];
-  assert.deepStrictEqual([q.letter, q.kind, q.text, q.point, q.model, q.sentTo], ["A", "point", v.set.ids[4], v.set.ids[4], "test/model", "nowhere"]);
+  assert.deepStrictEqual([q.letter, q.kind, q.text, q.point, q.model, q.sentTo], ["A", "point", v.set.ids[3], v.set.ids[3], "test/model", "nowhere"]);
   const expected = ET.search.rank(v.set, query, { k: 8 });
   assert.deepStrictEqual(idsOf(s), expected.hits.map((x) => x.id));
   assert.deepStrictEqual(q.results.map((x) => x.distance), expected.hits.map((x) => x.distance));
-  assert.strictEqual(q.results[0].id, v.set.ids[4], "the point is its own nearest result");
+  assert.strictEqual(q.results[0].id, v.set.ids[3], "the point is its own nearest result");
   assert.strictEqual(q.radius, expected.radius);
   assert.strictEqual(q.k, 8);
-  assert.strictEqual(q.results[0].text, ET.search.pointText(v.set, 4));
+  assert.strictEqual(q.results[0].text, ET.search.pointText(v.set, 3));
   // The lit set: what info() says, what the renderer got, and the documented rule agree.
   const want = expectedLitIndices(v, query, 8);
   assert.strictEqual(s.litCount, want.length);
@@ -252,7 +253,7 @@ test("typed text goes to the embed callback with the text and nothing else", asy
   let v0 = null;
   const embed = function () {
     seen.push(Array.from(arguments));
-    return { vector: rowOf(v0.set, 7), model: "test/model", queryForm: "query" };
+    return { vector: rowOf(v0.set, 6), model: "test/model", queryForm: "query" };
   };
   const { h, v, dom } = setup({ embed });
   v0 = v;
@@ -261,7 +262,7 @@ test("typed text goes to the embed callback with the text and nothing else", asy
   assert.deepStrictEqual(seen, [["  harbour lights  "]]);
   const q = h.info().search.searches[0];
   assert.deepStrictEqual([q.kind, q.text, q.model, q.queryForm, q.sentTo], ["embedded", "  harbour lights  ", "test/model", "query", "embedder"]);
-  assert.strictEqual(q.results[0].index, 7);
+  assert.strictEqual(q.results[0].index, 6);
   assert.deepStrictEqual(h.info().search.embedder, { available: true });
   h.destroy();
 });
@@ -392,7 +393,7 @@ test("answers out of order: the latest search wins and the earlier answer is dro
   const first = h.setSearches(["first query"]);
   const second = h.setSearches(["second query"]);
   assert.strictEqual(h.info().search.waiting, true);
-  pending[1].d.resolve({ vector: rowOf(v.set, 20), model: "test/model" });
+  pending[1].d.resolve({ vector: rowOf(v.set, 21), model: "test/model" });
   const r2 = await settle(dom, second);
   assert.strictEqual(r2.ok, true);
   assert.deepStrictEqual(await first, { ok: false, code: "superseded", message: "A newer search replaced this one." });
@@ -403,24 +404,25 @@ test("answers out of order: the latest search wins and the earlier answer is dro
   await tick();
   const s = h.info().search;
   assert.strictEqual(s.searches[0].text, "second query");
-  assert.strictEqual(s.searches[0].results[0].index, 20);
+  assert.strictEqual(s.searches[0].results[0].index, 21);
   assert.strictEqual(lit.length, litAfter, "the late answer reached nothing");
-  assert.deepStrictEqual(litIndices(lit.at(-1).lit), expectedLitIndices(v, rowOf(v.set, 20), 8));
+  assert.deepStrictEqual(litIndices(lit.at(-1).lit), expectedLitIndices(v, rowOf(v.set, 21), 8));
   h.destroy();
 });
 
 test("a search replaced while its ranking scan is running is dropped cleanly", async () => {
   const { h, v, dom, lit } = setup({ prepareBudgetMs: 1 }, { n: 20000, d: 256, labelEvery: 1000 });
-  const a = h.setSearches([{ point: v.set.ids[5] }]);
+  // Named points are every 1,000th; a search from a named point has it as its first result.
+  const a = h.setSearches([{ point: v.set.ids[1000] }]);
   dom.frames(1);
   const job = v.search.work[0]?.job;
   assert.ok(job, "the ranking is queued as a stepper");
   assert.ok(!job.done, "one frame's budget does not finish a 20,000-point scan");
-  const b = h.setSearches([{ point: v.set.ids[6] }]);
+  const b = h.setSearches([{ point: v.set.ids[2000] }]);
   assert.strictEqual((await a).code, "superseded");
   const rb = await settle(dom, b);
   assert.strictEqual(rb.ok, true);
-  assert.strictEqual(rb.search.searches[0].results[0].index, 6);
+  assert.strictEqual(rb.search.searches[0].results[0].index, 2000);
   assert.strictEqual(lit.length, 1, "only the latest search reached the renderer");
   h.destroy();
 });
@@ -975,7 +977,7 @@ test("in Focus a click on a point searches from it; Only results hides unlit poi
   const { h, v, dom } = setup({ mode: "focus" });
   await until(dom, () => h.info().ready && v.last !== null);
   dom.frames(2);
-  const target = 7;
+  const target = 6; // a named point: the first result of a search from it is itself
   const at = (i) => {
     const D = v.set.dimension;
     const out = [0, 0, 0];

@@ -8,7 +8,9 @@ without editing any existing file. Reach it as `ET.modes.create("focus")`.
 
 Focus shows what is searched for. With searches active the frame is the fit of
 every search's query and named results; with none it is the fit of the whole
-set. When the searches change, the view turns smoothly onto the new fit. The
+set. Named results are named points (`js/api/24-search.md`, "Named points"), so
+the fit is of the query and readable points; a search from an unnamed point
+fits that point (the query) and the named points nearest to it. When the searches change, the view turns smoothly onto the new fit. The
 viewer's slow spin (yaw) goes on over the frame, so the view keeps turning.
 
 ## What the frame is

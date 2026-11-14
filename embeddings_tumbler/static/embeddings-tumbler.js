@@ -2407,10 +2407,12 @@
     return s2;
   }
 
-  // How many points come before (dist, idx) in the order by (distance, index).
-  function countBefore(distances, dist, idx) {
+  // How many candidates come before (dist, idx) in the order by (distance, index);
+  // `mask` null means every point is a candidate.
+  function countBefore(distances, dist, idx, mask) {
     var c = 0;
     for (var j = 0; j < distances.length; j++) {
+      if (mask && mask[j] === 0) continue;
       if (distances[j] < dist || (distances[j] === dist && j < idx)) c++;
     }
     return c;
@@ -2432,7 +2434,9 @@
     };
   }
 
-  function buildRanking(set, k, scaled, pool, distances, plainDistances, plainRanks) {
+  function buildRanking(set, k, scaled, pool, scan, plainRanks) {
+    var distances = scan.distances;
+    var plainDistances = scan.plainDistances;
     var pooled = [];
     for (var r = 0; r < pool.n; r++) {
       var i = pool.idx[r];
@@ -2447,6 +2451,7 @@
       measure: MEASURE,
       k: k,
       count: set.count,
+      named: scan.named,
       scaled: scaled,
       hits: hits,
       pool: pooled,
@@ -2485,15 +2490,58 @@
     }
   }
 
-  // The plain rank of each pooled point (a scaled search only).
-  function* pooledPlainRanks(pool, plainDistances, N, wk) {
+  // The plain rank of each pooled point among the candidates (a scaled search only).
+  function* pooledPlainRanks(pool, plainDistances, mask, N, wk) {
     var plainRanks = new Int32Array(pool.n);
     for (var r = 0; r < pool.n; r++) {
       var pi = pool.idx[r];
-      plainRanks[r] = 1 + countBefore(plainDistances, plainDistances[pi], pi);
+      plainRanks[r] = 1 + countBefore(plainDistances, plainDistances[pi], pi, mask);
       if (wk.add(N)) yield;
     }
     return plainRanks;
+  }
+
+  // ----- named points: the candidates for results ----------------------------
+
+  // Readable text: a string with something other than white space that is not the id.
+  function readable(value, id) {
+    return typeof value === "string" && value !== id && /\S/.test(value);
+  }
+
+  // The text of a point that is more than its id, or null.
+  function namedText(set, index) {
+    var point = set.points?.[index];
+    var id = set.ids[index];
+    var text = point?.metadata?.text;
+    if (readable(text, id)) return text;
+    if (readable(point?.label, id)) return point.label;
+    return null;
+  }
+
+  function isNamed(set, index) {
+    return namedText(set, index) !== null;
+  }
+
+  var NAME_COST = 64; // work counted per point when the named points are found
+  var namedCache = new WeakMap();
+
+  // { mask: Uint8Array(N) with 1 for a named point, count }; cached per set object.
+  function* namedGen(set, wk) {
+    var cached = namedCache.get(set);
+    if (cached) return cached;
+    var N = set.count;
+    var mask = new Uint8Array(N);
+    var count = 0;
+    for (var i = 0; i < N; i++) {
+      if (isNamed(set, i)) {
+        mask[i] = 1;
+        count++;
+      }
+      if (wk.add(NAME_COST)) yield;
+    }
+    var built = { mask: mask, count: count };
+    namedCache.set(set, built);
+    return built;
   }
 
   function* scanGen(set, q32, scale, k, wk) {
@@ -2502,17 +2550,21 @@
     var V = set.vectors;
     var scaled = !!scale;
     var setup = scanSetup(q32, scale, D);
-    var pool = new Pool(Math.min(POOL_FACTOR * k, N));
+    var named = yield* namedGen(set, wk);
+    // Results come from named points; with none named, every point is a candidate.
+    var mask = named.count > 0 ? named.mask : null;
+    var pool = new Pool(Math.min(POOL_FACTOR * k, mask ? named.count : N));
     var distances = new Float64Array(N);
     var plainDistances = scaled ? new Float64Array(N) : null;
     var acc = { dot: 0, nn: 0, dotS: 0, nnS: 0 };
     for (var i = 0; i < N; i++) {
       scanRow(V, i, D, setup, acc, distances, plainDistances);
-      pool.offer(i, distances[i]);
+      if (mask === null || mask[i] === 1) pool.offer(i, distances[i]);
       if (wk.add(scaled ? 4 * D : 2 * D)) yield;
     }
-    var plainRanks = scaled ? yield* pooledPlainRanks(pool, plainDistances, N, wk) : null;
-    return buildRanking(set, k, scaled, pool, distances, plainDistances, plainRanks);
+    var plainRanks = scaled ? yield* pooledPlainRanks(pool, plainDistances, mask, N, wk) : null;
+    var scan = { distances: distances, plainDistances: plainDistances, named: named.count };
+    return buildRanking(set, k, scaled, pool, scan, plainRanks);
   }
 
   function makeRank(set, vector, options) {
@@ -2523,7 +2575,7 @@
       throw new TypeError("scale must be a Float32Array of length " + D);
     }
     var k = clampK(options?.k);
-    var wk = new Tracker(set.count * (scale ? 4 * D : 2 * D));
+    var wk = new Tracker(set.count * (NAME_COST + (scale ? 4 * D : 2 * D)));
     return genStepper(scanGen(set, vector, scale, k, wk), wk);
   }
 
@@ -2578,16 +2630,8 @@
     return { ok: true, index: index, id: id, vector: set.vectors.slice(index * D, index * D + D) };
   }
 
-  function nonEmptyString(v) {
-    return typeof v === "string" && v !== "";
-  }
-
   function pointText(set, index) {
-    var point = set.points[index];
-    var text = point?.metadata?.text;
-    if (nonEmptyString(text)) return text;
-    if (nonEmptyString(point?.label)) return point.label;
-    return set.ids[index];
+    return namedText(set, index) ?? set.ids[index];
   }
 
   // ----- search by words ----------------------------------------------------------
@@ -2747,6 +2791,7 @@
     rerankOrder: rerankOrder,
     pointQuery: pointQuery,
     pointText: pointText,
+    isNamed: isNamed,
     tokens: tokens,
     makeWordQuery: makeWordQuery,
     wordQuery: wordQuery,

@@ -21,7 +21,11 @@ call time.
   `letter(j)`: `A`, `B`, `C`, `D`.
 - **Named results** of a search are its `hits` (after reranking, when a
   reranker ran). "Named" is the reference's word: they are listed by name in the
-  panel and joined to the query by a link.
+  panel and joined to the query by a link. They are named points
+  (`ET.search.isNamed`, `js/api/24-search.md`): the `k` nearest points that
+  carry readable text, or the nearest points of any kind when the set has no
+  named point. Points that are not named are never results, but they are
+  inside a search, lit and counted in `insideCounts` like any other point.
 - **The result radius** of a search is its ranking's `radius`: the distance of
   its farthest named result. A point is **inside** a search when its distance
   to that search's query, in that search's measure, is at most the radius.
