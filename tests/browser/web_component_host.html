@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'">
+<title>web component host check</title>
+<link rel="stylesheet" href="/tests/browser/web_component_host.css">
+</head>
+<body>
+<p class="intro">Plain host page that uses only the element. Driven by tests/browser/test_web_component.py.</p>
+<embeddings-tumbler id="wc" src="/tests/fixtures/contract/valid-384.json" seed="5"></embeddings-tumbler>
+<p class="after">Host content after the viewer.</p>
+<script src="/tests/browser/web_component_host_page.js"></script>
+<script src="/embeddings_tumbler/static/embeddings-tumbler.js"></script>
+<script src="/embeddings_tumbler/static/web-component.js"></script>
+</body>
+</html>
