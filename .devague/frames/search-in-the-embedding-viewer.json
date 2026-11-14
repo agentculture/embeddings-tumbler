@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T15:57:29Z",
+  "updated": "2026-11-14T16:32:13Z",
   "claims": [
     {
       "id": "c1",
@@ -1012,6 +1012,15 @@
       "id": "l11",
       "code": "assumption-for-measurement",
       "what": "t11: its browser tests import private helpers from another test file; the 'data file cannot redirect the route' case is tested only on a fake browser; only Chromium. Named-results fix: timings were taken at a load average near 58 and one single unit reached 12 ms; the sample-set result was measured in node, not a browser; the 4 ms unit limit is not proven because its test skips under load. Main agent then ran free-text search end to end on the real 311-point file through viewer serve --embed and the real gateway: two typed texts were embedded and lit their true neighbours, the reranker reordered them, every browser request stayed on the page's origin, and the server log held no key, gateway address or query text.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l12",
+      "code": "assumption-for-measurement",
+      "what": "t9: cognitive complexity not measured; a screen reader, keyboard-only use and focus order were not checked in a real browser; the light treatment was tested by changing the standalone page's properties at run time, not on a real light host; no browser test runs the panel against viewer serve --embed; the full Python suite was not re-run by the agent after its last fix (main agent ran it after merge: all pass). Differences from the two reference pages that it found were not written into the differences document (task t15 does that).",
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
