@@ -15,7 +15,60 @@
 // classList (add/remove/toggle/replace with several tokens), and dataset, a live two-way
 // view of the data-* attributes. className, id and hidden reflect their attributes.
 
+const assert = require("node:assert");
 const { makeFakeGL } = require("./fake-gl.js");
+
+// Guard rail for the assertions themselves. When an equality assertion fails, node prints
+// both values in full and diffs the two printouts. A fake node reaches its whole document,
+// every style and listener, and through them the viewer and its vectors, so one failed
+// `assert.strictEqual(nodeA, nodeB)` grew past 40 GB of memory (2026-11-14: the kernel
+// killed it twice and the machine then had to be reset). With this file loaded, an
+// equality assertion given a fake node (or an array holding one) compares by identity and
+// fails with a one-line message naming the two nodes; nothing is printed in full.
+function isFakeNode(v) {
+  return v instanceof FakeNode;
+}
+
+function holdsFakeNode(v) {
+  return isFakeNode(v) || (Array.isArray(v) && v.some(isFakeNode));
+}
+
+function nameOf(v) {
+  if (Array.isArray(v)) return "[" + v.map(nameOf).join(", ") + "]";
+  if (!isFakeNode(v)) return v === null || typeof v !== "object" ? String(v) : "an object";
+  if (v.nodeType === 3) return "text " + JSON.stringify(String(v.data).slice(0, 40));
+  if (v.nodeType !== 1) return "a fragment";
+  const cls = v.className ? "." + String(v.className).trim().split(/\s+/).join(".") : "";
+  return "<" + String(v.tagName).toLowerCase() + (v.id ? "#" + v.id : "") + cls + ">";
+}
+
+function sameNodes(a, b) {
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => x === b[i]);
+  return a === b;
+}
+
+function guardAssertions(target) {
+  const equal = ["equal", "strictEqual", "deepEqual", "deepStrictEqual"];
+  const unequal = ["notEqual", "notStrictEqual", "notDeepEqual", "notDeepStrictEqual"];
+  for (const name of equal.concat(unequal)) {
+    const real = target[name];
+    if (typeof real !== "function" || real.guardsFakeNodes) continue;
+    const wantSame = equal.includes(name);
+    const guarded = function (actual, expected, message) {
+      if (!holdsFakeNode(actual) && !holdsFakeNode(expected)) return real.apply(this, arguments);
+      if (sameNodes(actual, expected) === wantSame) return undefined;
+      if (message instanceof Error) throw message;
+      const said = wantSame
+        ? "expected " + nameOf(expected) + ", got " + nameOf(actual)
+        : "expected something other than " + nameOf(actual);
+      // No actual/expected on the error, and an operator of our own: node adds a printed
+      // diff for its own equality operators, and a reporter would print the values in full.
+      throw new assert.AssertionError({ message: message ? message + " (" + said + ")" : said, operator: "sameNode", stackStartFn: guarded });
+    };
+    guarded.guardsFakeNodes = true;
+    target[name] = guarded;
+  }
+}
 
 class FakeStyle {
   _custom = {};
@@ -842,5 +895,8 @@ function walk(root) {
   })(root);
   return out;
 }
+
+guardAssertions(assert);
+guardAssertions(assert.strict);
 
 module.exports = { makeFakeDom, FakeElement, FakeText, FakeFragment, walk };

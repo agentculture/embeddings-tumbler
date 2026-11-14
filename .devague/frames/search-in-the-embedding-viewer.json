@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T17:23:30Z",
+  "updated": "2026-11-14T17:26:19Z",
   "claims": [
     {
       "id": "c1",
@@ -818,7 +818,7 @@
         {
           "id": "h35",
           "text": "The provenance on the page names the source (Wikipedia, with the list and the retrieval date), the model and the licence of the text; the set is produced by a committed script from a committed list so it can be rebuilt; the package stays under 5 MB; and the synthetic set still loads when asked for.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -837,7 +837,7 @@
         {
           "id": "h36",
           "text": "The number of candidates and the number kept are both shown wherever a search states what it used; the lit radius follows the results actually kept; the reranker never sees more than the stated number of candidates; and the embed route's own limit admits 100 candidates.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -1217,7 +1217,7 @@
       "behavior": "The standalone page opens on real vectors by default and says where they came from, by which model and under which licence; neighbours in it reflect meaning (a real model's distances), and the synthetic set is one explicit choice away.",
       "source_text": "The demo's default data is real: about 1,000 items taken from Wikipedia and embedded by a real model, small enough to ship (about 4 MB). The synthetic set from the reference stays available.",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o18",
@@ -1226,7 +1226,7 @@
       "behavior": "N candidates are taken by full-space distance among named points; with a reranker the top X by its scores are the results; without one the first K by distance are; every count is stated.",
       "source_text": "A search takes more candidates and can keep the best of them: the nearest N by embedding are the candidates (3 to 100, 50 by default), and with the reranker on the top X of them are kept (20 by default). With no reranker the results stay at 8 by default and can be raised to 100.",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     }
   ]
 }
