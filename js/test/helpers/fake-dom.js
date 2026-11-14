@@ -9,6 +9,11 @@
 //
 // Guard rails: setting innerHTML / outerHTML or calling insertAdjacentHTML throws,
 // and so does setAttribute("style", ...), so a test fails if the viewer ever does it.
+//
+// The modern tree methods behave as in a browser: remove, before, after, replaceWith,
+// append, prepend, replaceChildren, insertBefore, replaceChild, toggleAttribute,
+// classList (add/remove/toggle/replace with several tokens), and dataset, a live two-way
+// view of the data-* attributes. className, id and hidden reflect their attributes.
 
 const { makeFakeGL } = require("./fake-gl.js");
 
@@ -30,34 +35,173 @@ class FakeStyle {
   }
 }
 
-class FakeText {
-  constructor(text) {
+// Shared tree behaviour of elements, text nodes and fragments: siblings, removal and the
+// ChildNode methods (remove, before, after, replaceWith). Strings passed to the insertion
+// methods become text nodes, as in a browser; nothing is ever parsed as markup.
+class FakeNode {
+  get nextSibling() {
+    const p = this.parentNode;
+    if (!p) return null;
+    return p.childNodes[p.childNodes.indexOf(this) + 1] || null;
+  }
+  get previousSibling() {
+    const p = this.parentNode;
+    if (!p) return null;
+    return p.childNodes[p.childNodes.indexOf(this) - 1] || null;
+  }
+  get nextElementSibling() {
+    let n = this.nextSibling;
+    while (n && n.nodeType !== 1) n = n.nextSibling;
+    return n;
+  }
+  get previousElementSibling() {
+    let n = this.previousSibling;
+    while (n && n.nodeType !== 1) n = n.previousSibling;
+    return n;
+  }
+  get isConnected() {
+    let top = this;
+    while (top.parentNode) top = top.parentNode;
+    const doc = top.ownerDocument;
+    return !!doc && top === doc.documentElement;
+  }
+  remove() {
+    if (this.parentNode) this.parentNode.removeChild(this);
+  }
+  before(...items) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    const nodes = toNodes(this, items);
+    let prev = this.previousSibling;
+    while (prev && nodes.includes(prev)) prev = prev.previousSibling;
+    detachAll(nodes);
+    const ref = prev ? prev.nextSibling : parent.firstChild;
+    for (const n of nodes) parent.insertBefore(n, ref);
+  }
+  after(...items) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    const nodes = toNodes(this, items);
+    let next = this.nextSibling;
+    while (next && nodes.includes(next)) next = next.nextSibling;
+    detachAll(nodes);
+    for (const n of nodes) parent.insertBefore(n, next);
+  }
+  replaceWith(...items) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    const nodes = toNodes(this, items);
+    let next = this.nextSibling;
+    while (next && nodes.includes(next)) next = next.nextSibling;
+    detachAll(nodes.filter((n) => n !== this));
+    if (this.parentNode === parent) {
+      for (const n of nodes) if (n !== this) parent.insertBefore(n, this);
+      if (!nodes.includes(this)) parent.removeChild(this);
+    } else {
+      for (const n of nodes) parent.insertBefore(n, next);
+    }
+  }
+}
+
+// Turn ChildNode/ParentNode arguments into nodes (strings become text nodes).
+function toNodes(owner, items) {
+  const doc = owner.ownerDocument || null;
+  return items.map((it) =>
+    it !== null && typeof it === "object" && it.nodeType ? it : new FakeText(it, doc)
+  );
+}
+
+function detachAll(nodes) {
+  for (const n of nodes) if (n.parentNode) n.parentNode.removeChild(n);
+}
+
+class FakeText extends FakeNode {
+  constructor(text, doc) {
+    super();
     this.nodeType = 3;
     this.data = String(text);
     this.parentNode = null;
+    this.ownerDocument = doc || null;
   }
   get textContent() {
     return this.data;
   }
+  set textContent(value) {
+    this.data = value === null || value === undefined ? "" : String(value);
+  }
+  get nodeValue() {
+    return this.data;
+  }
 }
 
-class FakeElement {
-  constructor(doc, tag) {
-    this.ownerDocument = doc;
-    this.tagName = String(tag).toUpperCase();
-    this.nodeType = 1;
-    this.childNodes = [];
-    this.parentNode = null;
-    this.style = new FakeStyle();
-    this.attributes = new Map();
-    this.listeners = {};
-    this.className = "";
-    this.hidden = false;
-    this.tabIndex = -1;
-    this.rect = null; // { left, top, width, height } set by tests; null = from parent or default
-  }
+// "fooBar" <-> "data-foo-bar", as the HTML dataset mapping does.
+function datasetAttr(prop) {
+  return "data-" + prop.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+}
+function datasetProp(attr) {
+  return attr.slice(5).replace(/-([a-z])/g, (_m, c) => c.toUpperCase());
+}
+
+// el.dataset: a live view of the element's data-* attributes, both ways. Writes go through
+// setAttribute, so they meet the same guard rails and attribute observers.
+function makeDataset(el) {
+  const keys = () =>
+    Array.from(el.attributes.keys())
+      .filter((a) => a.startsWith("data-"))
+      .map(datasetProp);
+  return new Proxy(
+    {},
+    {
+      get(_t, prop) {
+        if (typeof prop !== "string") return undefined;
+        const v = el.getAttribute(datasetAttr(prop));
+        return v === null ? undefined : v;
+      },
+      set(_t, prop, value) {
+        if (typeof prop !== "string") return false;
+        el.setAttribute(datasetAttr(prop), String(value));
+        return true;
+      },
+      has(_t, prop) {
+        return typeof prop === "string" && el.hasAttribute(datasetAttr(prop));
+      },
+      deleteProperty(_t, prop) {
+        if (typeof prop === "string") el.removeAttribute(datasetAttr(prop));
+        return true;
+      },
+      ownKeys() {
+        return keys();
+      },
+      getOwnPropertyDescriptor(_t, prop) {
+        if (typeof prop !== "string" || !el.hasAttribute(datasetAttr(prop))) return undefined;
+        return {
+          value: el.getAttribute(datasetAttr(prop)),
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        };
+      },
+    }
+  );
+}
+
+// Very small selector support: ".class", "tag", "[attr=value]", "#id".
+function matchesSelector(el, sel) {
+  if (el.nodeType !== 1) return false;
+  if (sel.startsWith(".")) return el.className.split(/\s+/).includes(sel.slice(1));
+  if (sel.startsWith("#")) return el.getAttribute("id") === sel.slice(1);
+  const m = /^\[([\w-]+)="?([^"\]]*)"?\]$/.exec(sel);
+  if (m) return el.getAttribute(m[1]) === m[2];
+  return el.tagName === sel.toUpperCase();
+}
+
+// Shared ParentNode behaviour of elements and fragments.
+class FakeParent extends FakeNode {
   get children() {
     return this.childNodes.filter((c) => c.nodeType === 1);
+  }
+  get childElementCount() {
+    return this.children.length;
   }
   get firstChild() {
     return this.childNodes[0] || null;
@@ -65,11 +209,36 @@ class FakeElement {
   get lastChild() {
     return this.childNodes[this.childNodes.length - 1] || null;
   }
-  appendChild(child) {
+  get firstElementChild() {
+    return this.children[0] || null;
+  }
+  get lastElementChild() {
+    const c = this.children;
+    return c[c.length - 1] || null;
+  }
+  hasChildNodes() {
+    return this.childNodes.length > 0;
+  }
+  // Insert child before ref (null = at the end). A fragment inserts its children.
+  insertBefore(child, ref) {
+    if (ref !== null && ref !== undefined && ref.parentNode !== this) {
+      throw new Error("fake DOM: reference node is not a child");
+    }
+    if (child === ref) return child;
+    if (child.nodeType === 11) {
+      for (const c of child.childNodes.slice()) this.insertBefore(c, ref);
+      return child;
+    }
+    if (child.contains && child.contains(this)) throw new Error("fake DOM: hierarchy error");
     if (child.parentNode) child.parentNode.removeChild(child);
-    this.childNodes.push(child);
+    const i = ref === null || ref === undefined ? -1 : this.childNodes.indexOf(ref);
+    if (i < 0) this.childNodes.push(child);
+    else this.childNodes.splice(i, 0, child);
     child.parentNode = this;
     return child;
+  }
+  appendChild(child) {
+    return this.insertBefore(child, null);
   }
   removeChild(child) {
     const i = this.childNodes.indexOf(child);
@@ -78,9 +247,47 @@ class FakeElement {
     child.parentNode = null;
     return child;
   }
+  replaceChild(child, old) {
+    if (old.parentNode !== this) throw new Error("fake DOM: not a child");
+    if (child !== old) {
+      this.insertBefore(child, old);
+      this.removeChild(old);
+    }
+    return old;
+  }
+  append(...items) {
+    for (const n of toNodes(this, items)) this.insertBefore(n, null);
+  }
+  prepend(...items) {
+    const nodes = toNodes(this, items);
+    detachAll(nodes);
+    const ref = this.firstChild;
+    for (const n of nodes) this.insertBefore(n, ref);
+  }
+  replaceChildren(...items) {
+    const nodes = toNodes(this, items);
+    detachAll(nodes);
+    for (const c of this.childNodes) c.parentNode = null;
+    this.childNodes = [];
+    for (const n of nodes) this.insertBefore(n, null);
+  }
   contains(node) {
     for (let n = node; n; n = n.parentNode) if (n === this) return true;
     return false;
+  }
+  querySelectorAll(sel) {
+    const out = [];
+    const walkTree = (el) => {
+      for (const c of el.children) {
+        if (matchesSelector(c, sel)) out.push(c);
+        walkTree(c);
+      }
+    };
+    walkTree(this);
+    return out;
+  }
+  querySelector(sel) {
+    return this.querySelectorAll(sel)[0] || null;
   }
   get textContent() {
     return this.childNodes.map((c) => c.textContent).join("");
@@ -89,7 +296,67 @@ class FakeElement {
     for (const c of this.childNodes) c.parentNode = null;
     this.childNodes = [];
     const s = value === null || value === undefined ? "" : String(value);
-    if (s !== "") this.appendChild(new FakeText(s));
+    if (s !== "") this.appendChild(new FakeText(s, this.ownerDocument));
+  }
+}
+
+class FakeFragment extends FakeParent {
+  constructor(doc) {
+    super();
+    this.ownerDocument = doc;
+    this.nodeType = 11;
+    this.childNodes = [];
+    this.parentNode = null;
+  }
+}
+
+class FakeElement extends FakeParent {
+  constructor(doc, tag) {
+    super();
+    this.ownerDocument = doc;
+    this.tagName = String(tag).toUpperCase();
+    this.nodeType = 1;
+    this.childNodes = [];
+    this.parentNode = null;
+    this.style = new FakeStyle();
+    this.attributes = new Map();
+    this.listeners = {};
+    this.tabIndex = -1;
+    this.rect = null; // { left, top, width, height } set by tests; null = from parent or default
+    this._dataset = null;
+  }
+  // className, id and hidden reflect their attributes, as in a browser. They write the
+  // attribute map directly (not through an overridden setAttribute), like the old plain
+  // properties did, so attribute observers see only explicit setAttribute calls.
+  get className() {
+    return this.attributes.get("class") || "";
+  }
+  set className(value) {
+    this.attributes.set("class", String(value));
+  }
+  get id() {
+    return this.attributes.get("id") || "";
+  }
+  set id(value) {
+    this.attributes.set("id", String(value));
+  }
+  get hidden() {
+    return this.attributes.has("hidden");
+  }
+  set hidden(value) {
+    if (value) this.attributes.set("hidden", "");
+    else this.attributes.delete("hidden");
+  }
+  get dataset() {
+    if (!this._dataset) this._dataset = makeDataset(this);
+    return this._dataset;
+  }
+  matches(sel) {
+    return matchesSelector(this, sel);
+  }
+  closest(sel) {
+    for (let n = this; n && n.nodeType === 1; n = n.parentNode) if (matchesSelector(n, sel)) return n;
+    return null;
   }
   set innerHTML(_v) {
     throw new Error("fake DOM: innerHTML is not allowed");
@@ -117,19 +384,59 @@ class FakeElement {
   removeAttribute(name) {
     this.attributes.delete(name);
   }
+  // toggleAttribute goes through setAttribute / removeAttribute, so it meets the same
+  // guard rails (a "style" or "on..." attribute still throws) and attribute observers.
+  toggleAttribute(name, force) {
+    const has = this.hasAttribute(name);
+    const want = force === undefined ? !has : !!force;
+    if (want && !has) this.setAttribute(name, "");
+    else if (!want && has) this.removeAttribute(name);
+    return want;
+  }
+  getAttributeNames() {
+    return Array.from(this.attributes.keys());
+  }
+  // A live token list over the class attribute.
   get classList() {
     const el = this;
+    const tokens = () => el.className.split(/\s+/).filter(Boolean);
+    const write = (list) => {
+      el.className = list.join(" ");
+    };
     return {
-      contains: (c) => el.className.split(/\s+/).includes(c),
-      add: (c) => {
-        if (!el.classList.contains(c)) el.className = (el.className + " " + c).trim();
+      get length() {
+        return tokens().length;
       },
-      remove: (c) => {
-        el.className = el.className
-          .split(/\s+/)
-          .filter((x) => x && x !== c)
-          .join(" ");
+      get value() {
+        return el.className;
       },
+      item: (i) => tokens()[i] ?? null,
+      contains: (c) => tokens().includes(c),
+      add: (...cs) => {
+        const list = tokens();
+        for (const c of cs) if (!list.includes(c)) list.push(c);
+        write(list);
+      },
+      remove: (...cs) => {
+        write(tokens().filter((x) => !cs.includes(x)));
+      },
+      toggle: (c, force) => {
+        const has = tokens().includes(c);
+        const want = force === undefined ? !has : !!force;
+        if (want && !has) write(tokens().concat([c]));
+        else if (!want && has) write(tokens().filter((x) => x !== c));
+        return want;
+      },
+      replace: (from, to) => {
+        const list = tokens();
+        const i = list.indexOf(from);
+        if (i < 0) return false;
+        list[i] = to;
+        write(list.filter((x, j) => list.indexOf(x) === j));
+        return true;
+      },
+      forEach: (fn) => tokens().forEach(fn),
+      [Symbol.iterator]: () => tokens()[Symbol.iterator](),
     };
   }
   addEventListener(type, fn, opts) {
@@ -199,27 +506,6 @@ class FakeElement {
   }
   get clientHeight() {
     return this.getBoundingClientRect().height;
-  }
-  // Very small selector support: ".class", "tag", "[attr=value]".
-  querySelectorAll(sel) {
-    const out = [];
-    const match = (el) => {
-      if (sel.startsWith(".")) return el.className.split(/\s+/).includes(sel.slice(1));
-      const m = /^\[([\w-]+)="?([^"\]]*)"?\]$/.exec(sel);
-      if (m) return el.getAttribute(m[1]) === m[2];
-      return el.tagName === sel.toUpperCase();
-    };
-    const walk = (el) => {
-      for (const c of el.children) {
-        if (match(c)) out.push(c);
-        walk(c);
-      }
-    };
-    walk(this);
-    return out;
-  }
-  querySelector(sel) {
-    return this.querySelectorAll(sel)[0] || null;
   }
 }
 
@@ -310,7 +596,10 @@ function makeFakeDom(opts) {
       return t === "canvas" ? new FakeCanvas(doc) : new FakeElement(doc, t);
     },
     createTextNode(s) {
-      return new FakeText(s);
+      return new FakeText(s, doc);
+    },
+    createDocumentFragment() {
+      return new FakeFragment(doc);
     },
     created: [],
     addEventListener(type, fn) {
@@ -511,4 +800,4 @@ function walk(root) {
   return out;
 }
 
-module.exports = { makeFakeDom, FakeElement, walk };
+module.exports = { makeFakeDom, FakeElement, FakeText, FakeFragment, walk };
