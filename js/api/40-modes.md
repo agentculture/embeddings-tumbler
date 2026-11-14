@@ -248,7 +248,7 @@ distribution or 1,500 points forming a new cluster three radii from the mean:
 | Set | Same distribution | New cluster |
 |-----|-------------------|-------------|
 | 12,288 x 384 | 1.15 (turn 9.1 s) | 1.33 (10.1 s) |
-| 12,288 x 1024 | 1.19 (6.0 s) | 1.00 (8.9 s) |
+| 12,288 x 1024 | 1.14 (7.2 s) | 1.00 (10.6 s) |
 | 4,000 x 1024 | 1.15 (1.5 s) | 1.25 (9.9 s) |
 
 The largest change of any single frame entry, the other measure, was at most
