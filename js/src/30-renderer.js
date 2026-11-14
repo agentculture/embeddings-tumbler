@@ -888,6 +888,63 @@ ET.renderer = (function () {
       return !disposed && !lost && gpu !== null && error === null;
     }
 
+    // Makes room for `total` points when the CPU copy is too small: a bigger layout if
+    // needed, double the capacity at least, the old points and lit values copied over.
+    // Returns { ok: true, reallocated } or the failed layout.
+    function growStorage(total) {
+      if (total <= store.capacity) return { ok: true, reallocated: false };
+      var lay = store.lay;
+      if (total > lay.maxPoints) {
+        lay = layout(store.dimension, total, maxTextureSize);
+        if (!lay.ok) return lay;
+      }
+      var cap = Math.min(lay.maxPoints, Math.max(total, store.capacity * 2));
+      var mem = allocate(lay, cap);
+      // points are contiguous at a fixed stride whatever the row packing
+      mem.vectors.set(store.vectors.subarray(0, store.count * lay.floatsPerPoint));
+      mem.attr.set(store.attr.subarray(0, store.count * 4));
+      store.vectors = mem.vectors;
+      store.attr = mem.attr;
+      if (store.lit) {
+        var grown = new Float32Array(cap); // appended points: lit value 0, no mark
+        grown.set(store.lit.subarray(0, store.count));
+        store.lit = grown;
+      }
+      store.capacity = cap;
+      store.lay = lay;
+      return { ok: true, reallocated: true };
+    }
+
+    // Uploads only the texture rows the points first..total touch, and their slice of
+    // the colour (and lit) buffers.
+    function uploadAppended(first, total) {
+      var lay = store.lay;
+      var P = lay.pointsPerRow,
+        r0 = Math.floor(first / P),
+        r1 = Math.floor((total - 1) / P),
+        rowFloats = lay.width * 4;
+      gl.activeTexture(gl.TEXTURE0); // never rely on whichever unit was left active
+      gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
+      gl.texSubImage2D(
+        gl.TEXTURE_2D,
+        0,
+        0,
+        r0,
+        lay.width,
+        r1 - r0 + 1,
+        gl.RGBA,
+        gl.FLOAT,
+        store.vectors.subarray(r0 * rowFloats, (r1 + 1) * rowFloats)
+      );
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
+      gl.bufferSubData(gl.ARRAY_BUFFER, first * 16, store.attr.subarray(first * 4, total * 4));
+      if (gpu.vboLit) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
+        gl.bufferSubData(gl.ARRAY_BUFFER, first * 4, store.lit.subarray(first, total));
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    }
+
     var api = {
       // Replace all points. Returns { ok: true, layout, uploaded } or { ok: false, reason, message }.
       setData: function (input) {
@@ -932,64 +989,17 @@ ET.renderer = (function () {
         var n = checkPoints(input, store.dimension);
         if (n === 0) return { ok: true, reallocated: false, uploaded: usable() };
         var total = store.count + n;
-        var lay = store.lay;
-        var reallocated = false;
-        if (total > store.capacity) {
-          if (total > lay.maxPoints) {
-            lay = layout(store.dimension, total, maxTextureSize);
-            if (!lay.ok) return lay;
-          }
-          var cap = Math.min(lay.maxPoints, Math.max(total, store.capacity * 2));
-          var mem = allocate(lay, cap);
-          // points are contiguous at a fixed stride whatever the row packing
-          mem.vectors.set(store.vectors.subarray(0, store.count * lay.floatsPerPoint));
-          mem.attr.set(store.attr.subarray(0, store.count * 4));
-          store.vectors = mem.vectors;
-          store.attr = mem.attr;
-          if (store.lit) {
-            var grown = new Float32Array(cap); // appended points: lit value 0, no mark
-            grown.set(store.lit.subarray(0, store.count));
-            store.lit = grown;
-          }
-          store.capacity = cap;
-          store.lay = lay;
-          reallocated = true;
-        }
+        var grown = growStorage(total);
+        if (!grown.ok) return grown;
+        var reallocated = grown.reallocated;
         var first = store.count;
         writePoints(input, n, first);
         if (store.lit) store.lit.fill(0, first, total); // appended points: lit value 0, no mark
         store.count = total;
         if (!usable()) return { ok: true, reallocated: reallocated, uploaded: false };
         try {
-          if (reallocated) {
-            uploadAllPoints();
-          } else {
-            // only the texture rows the new points touch, and their slice of the colour buffer
-            var P = lay.pointsPerRow,
-              r0 = Math.floor(first / P),
-              r1 = Math.floor((total - 1) / P),
-              rowFloats = lay.width * 4;
-            gl.activeTexture(gl.TEXTURE0); // never rely on whichever unit was left active
-            gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
-            gl.texSubImage2D(
-              gl.TEXTURE_2D,
-              0,
-              0,
-              r0,
-              lay.width,
-              r1 - r0 + 1,
-              gl.RGBA,
-              gl.FLOAT,
-              store.vectors.subarray(r0 * rowFloats, (r1 + 1) * rowFloats)
-            );
-            gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
-            gl.bufferSubData(gl.ARRAY_BUFFER, first * 16, store.attr.subarray(first * 4, total * 4));
-            if (gpu.vboLit) {
-              gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
-              gl.bufferSubData(gl.ARRAY_BUFFER, first * 4, store.lit.subarray(first, total));
-            }
-            gl.bindBuffer(gl.ARRAY_BUFFER, null);
-          }
+          if (reallocated) uploadAllPoints();
+          else uploadAppended(first, total);
         } catch (e) {
           return failGpu(e);
         }

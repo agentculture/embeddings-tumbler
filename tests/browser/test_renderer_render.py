@@ -168,7 +168,8 @@ def test_lit_values_follow_the_points_through_appends(search, case):
     res = search[case]
     assert all(step["ok"] for step in res["log"]), res["log"]
     reallocated = [step.get("reallocated") for step in res["log"] if "reallocated" in step]
-    assert False in reallocated and True in reallocated, "both append paths are taken"
+    assert False in reallocated, "the in-place append path is taken"
+    assert True in reallocated, "the reallocating append path is taken"
     bright = {"appendThenLit": {"17"}, "litThenAppend": {"7", "10"}}[case]
     sums = res["sums"]
     assert len(sums) == res["count"]

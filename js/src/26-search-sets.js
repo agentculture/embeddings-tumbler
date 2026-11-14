@@ -82,8 +82,8 @@ ET.searchSets = (function () {
   }
 
   function lightNamed(ranking, count, out) {
-    for (var h = 0; h < ranking.hits.length; h++) {
-      var at = ranking.hits[h].index;
+    for (const hit of ranking.hits) {
+      var at = hit.index;
       if (at < count) out.lit[at] = 1;
     }
   }
@@ -122,7 +122,7 @@ ET.searchSets = (function () {
       litCount: 0,
       sharedCount: 0,
     };
-    for (var s = 0; s < searches.length; s++) out.insideCounts.push(lightSearch(searches[s], count, how, out));
+    for (const search of searches) out.insideCounts.push(lightSearch(search, count, how, out));
     for (var i = 0; i < count; i++) {
       if (out.lit[i] > LIT_THRESHOLD) out.litCount++;
       if (out.inside[i] >= 2 && out.lit[i] > 0) {
@@ -194,17 +194,17 @@ ET.searchSets = (function () {
     var X = set.vectors;
     var D = set.dimension;
     var lengths = [];
-    for (var s = 0; s < searches.length; s++) lengths.push(hitLengths(X, D, set.count, searches[s].hits));
+    for (const search of searches) lengths.push(hitLengths(X, D, set.count, search.hits));
     var pairs = [];
     for (var a = 0; a < searches.length; a++) {
       for (var b = a + 1; b < searches.length; b++) {
         var ra = searches[a];
         var rb = searches[b];
         var inB = new Set();
-        for (var h = 0; h < rb.hits.length; h++) inB.add(rb.hits[h].index);
+        for (const hit of rb.hits) inB.add(hit.index);
         var commonIndices = [];
-        for (var g = 0; g < ra.hits.length; g++) {
-          if (inB.has(ra.hits[g].index)) commonIndices.push(ra.hits[g].index);
+        for (const hit of ra.hits) {
+          if (inB.has(hit.index)) commonIndices.push(hit.index);
         }
         pairs.push({
           a: a,
@@ -233,9 +233,9 @@ ET.searchSets = (function () {
 
   // Removes from v its components along each of `axes` (orthonormal rows), once.
   function removeAxes(v, axes, D) {
-    for (var k = 0; k < axes.length; k++) {
-      var p = dotD(v, axes[k], D);
-      for (var d = 0; d < D; d++) v[d] -= p * axes[k][d];
+    for (const axis of axes) {
+      var p = dotD(v, axis, D);
+      for (var d = 0; d < D; d++) v[d] -= p * axis[d];
     }
   }
 
@@ -280,10 +280,10 @@ ET.searchSets = (function () {
 
   function checkFacing(set, searches) {
     var D = set.dimension;
-    for (var j = 0; j < searches.length; j++) {
-      checkLength(searches[j].query, D, "each query");
-      if (!Array.isArray(searches[j].hits)) throw new TypeError("facing frame: each search needs a hits array");
-      for (var h = 0; h < searches[j].hits.length; h++) checkIndex(searches[j].hits[h].index, set.count);
+    for (const search of searches) {
+      checkLength(search.query, D, "each query");
+      if (!Array.isArray(search.hits)) throw new TypeError("facing frame: each search needs a hits array");
+      for (const hit of search.hits) checkIndex(hit.index, set.count);
     }
   }
 
@@ -306,8 +306,8 @@ ET.searchSets = (function () {
   // One search's rows: its query and its named results' loaded vectors.
   function searchRows(X, D, search) {
     var mine = [search.query];
-    for (var h = 0; h < search.hits.length; h++) {
-      var o = search.hits[h].index * D;
+    for (const hit of search.hits) {
+      var o = hit.index * D;
       mine.push(X.subarray(o, o + D));
     }
     return mine;
@@ -316,8 +316,8 @@ ET.searchSets = (function () {
   // The mean of rows (each optionally scaled by s), in double precision.
   function meanOfRows(rows, D, s) {
     var c = new Float64Array(D);
-    for (var r = 0; r < rows.length; r++) {
-      for (var d = 0; d < D; d++) c[d] += s ? rows[r][d] * s[d] : rows[r][d];
+    for (const row of rows) {
+      for (var d = 0; d < D; d++) c[d] += s ? row[d] * s[d] : row[d];
     }
     for (var e = 0; e < D; e++) c[e] /= rows.length;
     return c;
@@ -335,17 +335,31 @@ ET.searchSets = (function () {
   // search's scaled centre.
   function gatherRows(fit) {
     var out = { scaledCentres: [], plainCentres: [], offsets: [], plainRows: [] };
-    for (var j = 0; j < fit.searches.length; j++) {
-      var mine = searchRows(fit.X, fit.D, fit.searches[j]);
+    for (const search of fit.searches) {
+      var mine = searchRows(fit.X, fit.D, search);
       var c = meanOfRows(mine, fit.D, fit.scale);
       out.scaledCentres.push(c);
       out.plainCentres.push(meanOfRows(mine, fit.D, null));
-      for (var r = 0; r < mine.length; r++) {
-        out.plainRows.push(mine[r]);
-        out.offsets.push(offsetOf(mine[r], fit.D, fit.scale, c));
+      for (const row of mine) {
+        out.plainRows.push(row);
+        out.offsets.push(offsetOf(row, fit.D, fit.scale, c));
       }
     }
     return out;
+  }
+
+  // One pass of the power iteration over rows `from` on: w += (row . v) row for each,
+  // stopping after the row at which a unit of work ends. Returns the next row to do,
+  // or -1 when the rows ran out without a unit ending. (A plain function that resumes
+  // at `from`: the generator itself pays for a for...of over the rows, measured.)
+  function spreadPass(offsets, from, v, w, D, wk) {
+    for (var r = from; r < offsets.length; r++) {
+      var row = offsets[r];
+      var p = dotD(row, v, D);
+      for (var d = 0; d < D; d++) w[d] += p * row[d];
+      if (wk.add(2 * D)) return r + 1;
+    }
+    return -1;
   }
 
   // Step 5: a power iteration on the spread of the rows about their own centres,
@@ -357,11 +371,10 @@ ET.searchSets = (function () {
     ET.math.makeRandom(ET.math.mixSeed(fit.seed, FACE_SALT + axes.length)).fillGauss(v);
     for (var it = 0; it < FACE_ITERATIONS; it++) {
       var w = new Float64Array(D);
-      for (var r = 0; r < offsets.length; r++) {
-        var row = offsets[r];
-        var p = dotD(row, v, D);
-        for (var d = 0; d < D; d++) w[d] += p * row[d];
-        if (wk.add(2 * D)) yield;
+      var next = spreadPass(offsets, 0, v, w, D, wk);
+      while (next >= 0) {
+        yield;
+        next = spreadPass(offsets, next, v, w, D, wk);
       }
       var before = lengthD(w, D);
       removeAxes(w, axes, D);
@@ -421,8 +434,8 @@ ET.searchSets = (function () {
     var frame = signedFrame(axes, fit.current, D);
     var centre = Float32Array.from(meanOfRows(rows.plainCentres, D, null));
     var reach = FACE_MIN_REACH;
-    for (var r = 0; r < rows.plainRows.length; r++) {
-      reach = Math.max(reach, shownLength(frame, rows.plainRows[r], centre, D));
+    for (const row of rows.plainRows) {
+      reach = Math.max(reach, shownLength(frame, row, centre, D));
     }
     return {
       frame: frame,
@@ -488,11 +501,16 @@ ET.searchSets = (function () {
     return st;
   }
 
+  // Written as a comparison so that NaN (and undefined) are not enough.
+  function hasThreeDimensions(D) {
+    return D >= 3;
+  }
+
   function makeFacingFrame(set, searches, options) {
     var o = options || {};
     checkSearches(searches);
     var D = set.dimension;
-    if (!(D >= 3)) throw new RangeError("the facing frame needs at least 3 dimensions");
+    if (!hasThreeDimensions(D)) throw new RangeError("the facing frame needs at least 3 dimensions");
     var fit = {
       X: set.vectors,
       D: D,
@@ -513,7 +531,7 @@ ET.searchSets = (function () {
       };
     }
     var rowCount = 0;
-    for (var j = 0; j < searches.length; j++) rowCount += 1 + searches[j].hits.length;
+    for (const search of searches) rowCount += 1 + search.hits.length;
     var wk = new FaceWork(rowCount * D * (1 + 2 * FACE_ITERATIONS * 3));
     return faceStepper(facingGen(fit, wk), wk);
   }

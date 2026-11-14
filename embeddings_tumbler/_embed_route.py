@@ -42,6 +42,7 @@ from urllib.parse import urlsplit, urlunsplit
 from embeddings_tumbler._static_server import is_loopback
 
 ROUTE = "/_tumbler/search"
+JSON_TYPE = "application/json"
 
 DEFAULT_EMBED_URL = "http://localhost:8001/v1"
 DEFAULT_EMBED_MODEL = "Qwen/Qwen3-Embedding-0.6B"
@@ -233,8 +234,8 @@ def gateway_post(
     connection = connection_class(parts.hostname, parts.port, timeout=timeout)
     body = json.dumps(payload).encode("utf-8")
     headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
+        "Content-Type": JSON_TYPE,
+        "Accept": JSON_TYPE,
         "Authorization": f"Bearer {config.key}",
     }
     try:
@@ -424,7 +425,7 @@ class EmbedRoute:
         if origin != urlunsplit(("http", host, "", "", "")):
             raise Refusal("wrong-origin")
         ctype = _single(headers, "Content-Type", "wrong-content-type")
-        if ctype.split(";", 1)[0].strip().lower() != "application/json":
+        if ctype.split(";", 1)[0].strip().lower() != JSON_TYPE:
             raise Refusal("wrong-content-type")
 
     @staticmethod
@@ -566,7 +567,7 @@ def _send(handler, status: HTTPStatus, payload: dict) -> None:
     handler.send_response_only(status)
     handler.send_header("Server", handler.version_string())
     handler.send_header("Date", handler.date_time_string())
-    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Type", JSON_TYPE)
     handler.send_header("Content-Length", str(len(data)))
     handler.send_header("Cache-Control", "no-store")
     handler.send_header("X-Content-Type-Options", "nosniff")
