@@ -84,6 +84,16 @@ The state object and its arrays are **owned by the instance and reused** on the
 next `stateAt`/`step`/`status` call. Copy what you keep (the viewer keeps the
 last state as the next mode's `from`, so it copies it).
 
+### Optional: `inst.spin`
+
+A number, in radians per second: the yaw speed at which the viewer turns the
+view on top of the mode's frame while the mode is shown. Absent (or not a
+finite number of 0 or more): the viewer's own 0.06. Only Focus sets it (0.13,
+its reference's, while a search is shown); Tumble, Lattice and Wander do not, so their frames are
+unchanged. The viewer's spin clock advances by `spin / 0.06` times the elapsed
+time, so the yaw stays continuous across a change of mode. Added after the
+owner's browser look (2026-11-14).
+
 ### Preparation: `prepare()` and steppers
 
 `prepare()` returns a stepper `{ step(budgetMs?) -> done, done, ready, progress }`:

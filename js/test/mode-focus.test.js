@@ -129,7 +129,20 @@ test("with a search the frame is the fit of the results and the query", () => {
     assert.ok(inSpan(later.frame, direct.frame.slice(r * D, (r + 1) * D)) > 1 - 1e-5, "row " + r + " in the span");
   }
   assert.ok(sameBits(later.centre, direct.centre));
-  assert.ok(Math.abs(later.draw.zoom - direct.zoom) < 1e-9);
+  // Corrected after the owner's browser look (2026-11-14): the reference's zoom, the farthest
+  // result at 0.36 / 0.46 units, unless the query needs more room (at most 1.3 reaches out).
+  const shown = (x) => {
+    let sq = 0;
+    for (let r = 0; r < 3; r++) {
+      let p = 0;
+      for (let d = 0; d < D; d++) p += (x[d] - later.centre[d]) * later.frame[r * D + d];
+      sq += p * p;
+    }
+    return Math.sqrt(sq);
+  };
+  const hitReach = Math.max(...Array.from(e.indices, (i) => shown(rowOf(i))));
+  const reach = Math.max(hitReach, shown(e.query) / 1.3);
+  assert.ok(Math.abs(later.draw.zoom - 0.36 / 0.46 / reach) < 1e-6 * later.draw.zoom, later.draw.zoom);
   // The rows it was fitted to are spread in the view: it shows the query and results apart.
   const rows = [e.query, ...Array.from(e.indices, (i) => rowOf(i))];
   let spread = 0;
@@ -237,13 +250,14 @@ test("criterion 3: Only results hides the other points in Focus only", () => {
   const inst = focusReady();
   assert.strictEqual(inst.stateAt(5).draw.unlitGain, undefined, "no search: no hiding");
   apply(inst, searchOf([e]), 5);
-  assert.strictEqual(inst.stateAt(8).draw.unlitGain, undefined, "off by default: dimmed, not hidden");
+  // Corrected after the owner's browser look (2026-11-14): dimmed more than elsewhere (0.07)
+  assert.strictEqual(inst.stateAt(8).draw.unlitGain, 0.05, "off by default: dimmed, not hidden");
   assert.strictEqual(inst.searchChanged(searchOf([e], { onlyResults: true }), 9), null, "no refit for a setting");
   assert.strictEqual(inst.stateAt(10).draw.unlitGain, 0);
   assert.strictEqual(inst.describe().onlyResults, true);
   const frameWith = copyState(inst.stateAt(12));
   inst.searchChanged(searchOf([e], { onlyResults: false }), 13);
-  assert.strictEqual(inst.stateAt(12).draw.unlitGain, undefined);
+  assert.strictEqual(inst.stateAt(12).draw.unlitGain, 0.05);
   assert.ok(sameBits(inst.stateAt(12).frame, frameWith.frame), "the setting does not move the view");
   // With no usable search the setting hides nothing.
   inst.searchChanged({ searches: [], onlyResults: true }, 14);

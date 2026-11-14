@@ -6,13 +6,32 @@
 // results (ET.searchSets.makeFacingFrame, seeded); with none it is the fit of
 // the whole set (its three strongest directions). When the searches change the
 // view turns smoothly onto the new fit. The viewer keeps spinning the cloud on
-// top of the frame (yaw), so the view keeps turning slowly. The Only results
-// setting is reported as the draw key unlitGain 0, which hides points whose lit
-// value is 0. See docs/search-interface.md and js/api/43-mode-focus.md.
+// top of the frame (yaw); while a search is shown Focus asks for the Focus
+// reference's spin (the mode's `spin` member, 0.13 rad/s), so the view keeps
+// turning at a clearly visible speed; with none it turns as before. A results fit is zoomed the way the reference zooms it: the results'
+// reach fills 0.36 of the stage's shorter side. Unlit points are dimmer than in
+// the other modes (unlitGain FOCUS_UNLIT); the Only results setting is reported
+// as the draw key unlitGain 0, which hides points whose lit value is 0. See
+// docs/search-interface.md and js/api/43-mode-focus.md.
 // ---------------------------------------------------------------------------
 (function () {
   var M = ET.modes;
   var MAX_TURNS = 64; // turns kept; older ones are dropped (a seek that far back shows the oldest kept)
+  // Corrected after the owner's browser look (2026-11-14), to match
+  // docs/specs/reference/tumbler-focus-view.html:
+  var SPIN = 0.13; // rad/s of yaw the viewer turns Focus at with a search (the reference's; otherwise 0.06)
+  // The reference maps the results' reach to 0.36 of the stage's shorter side; the renderer
+  // maps one unit to 0.46 of it (ET.renderer.DEFAULTS.radius), so the reach is drawn at 0.36 / 0.46 units.
+  var FOCUS_UNIT = 0.36 / 0.46;
+  // The query may sit up to this many results' reaches from the centre (the stage's shorter
+  // half-side is 0.5 / 0.36 = 1.39 reaches), so a query far from its results stays on stage.
+  var QUERY_ROOM = 1.3;
+  var MIN_REACH = 1e-3; // a reach below this (all rows on one spot) reads as this
+  // Brightness of an unlit point in Focus while a search is shown (the renderer's default
+  // elsewhere is 0.07). The reference draws unlit points at 0.13 of a result's alpha on a
+  // 124-point page; the sample set's 12,288 points pile up under the bloom, so the value
+  // that reads as faint as the reference's is lower.
+  var FOCUS_UNLIT = 0.05;
 
   var DEFAULTS = {
     transition: 1.5, // seconds to turn from the entry view onto the first fit, and to blend draw parameters in
@@ -66,6 +85,7 @@
 
     var self = {
       time: 0,
+      spin: undefined, // SPIN while a usable search is asked for (see updateSpin)
       enter: enter,
       prepare: prepare,
       isReady: isReady,
@@ -116,6 +136,18 @@
       epoch++;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
       scratch = { frame: new Float32Array(3 * D), centre: new Float32Array(D) };
+      updateSpin();
+    }
+
+    // True when a search the set can use is asked for (a query of the set's dimension).
+    function hasUsableSearch() {
+      return !!want?.searches.some((s) => s.query.length === D);
+    }
+
+    // The reference's spin while a usable search is asked for; with none the member is left
+    // undefined, so the viewer turns Focus at its own speed and the no-search frames are as before.
+    function updateSpin() {
+      self.spin = hasUsableSearch() ? SPIN : undefined;
     }
 
     // ----- the fits, in bounded units -------------------------------------------
@@ -195,12 +227,36 @@
         },
         unit: function () {
           if (!fs.step(0)) return false;
-          job.result = { frame: fs.result.frame, centre: fs.result.centre, zoom: fs.result.zoom };
+          job.result = { frame: fs.result.frame, centre: fs.result.centre, zoom: resultsZoom(fs.result, list) };
           job.done = true;
           return true;
         },
       };
       return job;
+    }
+
+    // The length of (x - centre) in the fitted frame; x is D numbers of `a` from `at`.
+    function shownLength(fit, a, at) {
+      var sq = 0;
+      for (var k = 0; k < 3; k++) {
+        var p = 0;
+        for (var d = 0; d < D; d++) p += (a[at + d] - fit.centre[d]) * fit.frame[k * D + d];
+        sq += p * p;
+      }
+      return Math.sqrt(sq);
+    }
+
+    // The reference's zoom for a results fit: the farthest named result at FOCUS_UNIT units,
+    // pulled back only as far as needed to keep each query within QUERY_ROOM of that.
+    function resultsZoom(fit, list) {
+      var hits = 0;
+      var queries = 0;
+      for (var s of list) {
+        queries = Math.max(queries, shownLength(fit, s.query, 0));
+        for (var h of s.hits) hits = Math.max(hits, shownLength(fit, set.vectors, h.index * D));
+      }
+      var reach = Math.max(hits, queries / QUERY_ROOM, MIN_REACH);
+      return Number.isFinite(reach) ? FOCUS_UNIT / reach : fit.zoom;
     }
 
     function usableScale() {
@@ -314,6 +370,7 @@
       var next = snapshotOf(search);
       var same = sameFit(want, next);
       want = next;
+      updateSpin();
       if (same) return null;
       wantVersion++;
       if (!ready || empty || !set) return null; // the preparation reads `want` when it runs
@@ -362,7 +419,7 @@
         twinkle: 0.18,
         depthOfField: 1.1,
       };
-      if (want?.onlyResults && want.searches.some((s) => s.query.length === D)) draw.unlitGain = 0;
+      if (hasUsableSearch()) draw.unlitGain = want.onlyResults ? 0 : FOCUS_UNLIT;
       return M.blendDraw(draw, entry, t, opt.transition);
     }
 

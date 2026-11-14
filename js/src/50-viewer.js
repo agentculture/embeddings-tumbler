@@ -100,6 +100,9 @@ ET.viewer = (function () {
   var ZOOM_MIN = 0.2;
   var ZOOM_MAX = 12;
   var SPIN = 0.06; // rad/s of yaw while running (the reference's)
+  // The most wire light per pixel, where the wires' light lands, before the wires are
+  // scaled down (the renderer's draw key wireLoad; see "Crowded wires" in js/api/50-viewer.md).
+  var WIRE_LOAD = 8;
   var BUTTON_HEIGHT = "28px"; // the reference's Pause button
   var TOUCH_HEIGHT = "32px"; // the same buttons under 600 px wide
   // Spacing and sizes a host may adjust: each is set inline as var(--tumbler-<name>,
@@ -1930,10 +1933,18 @@ ET.viewer = (function () {
     }
     if (v.running) {
       m.clock += dt * v.speed;
-      if (!v.drag.active) v.spin += dt * v.speed;
+      if (!v.drag.active) v.spin += dt * v.speed * spinFactor(m);
     }
     if (typeof m.inst.mark === "function") m.inst.mark(m.clock);
     considerRefit(v, m);
+  }
+
+  // A mode may ask for its own spin with a `spin` member (rad/s, finite, 0 or more; Focus
+  // asks for 0.13). v.spin counts seconds at SPIN, so it advances by this factor: exactly 1
+  // for a mode that does not ask, and the yaw stays continuous across a change of mode.
+  function spinFactor(m) {
+    var r = m?.inst?.spin;
+    return typeof r === "number" && Number.isFinite(r) && r >= 0 ? r / SPIN : 1;
   }
 
   // The status line, the view row and aria-busy, every STATUS_EVERY seconds.
@@ -1973,6 +1984,9 @@ ET.viewer = (function () {
     // overall brightness comes down as their number goes up.
     var crowd = crowding(v);
     if (crowd < 1) out.gain = (out.gain === undefined ? 1 : out.gain) * crowd;
+    // Many wires through the same part of the stage pile up into white: the renderer scales
+    // them down past WIRE_LOAD (the key is left out when no wires are shown).
+    if (out.wires > 0) out.wireLoad = WIRE_LOAD;
     if (v.reducedMotion) out.twinkle = 0;
     // Search: how much the lit values apply (the key is left out with no search, so the
     // draw state is exactly as before search).
@@ -2137,8 +2151,10 @@ ET.viewer = (function () {
     }
     var needSample = (v.showLabels && fogMix < 0.97) || v.hover;
     if (needSample) projectSample(v, s, ds, n);
-    // Group names at the middle of their labelled points, fading out as Wander's fog comes in.
-    if (v.showLabels && fogMix < 0.97 && v.groupNames.length) used = drawGroupNames(v, used, fogMix, n);
+    // Group names at the middle of their labelled points, fading out as Wander's fog comes in;
+    // none in Focus while a search is shown (the results are what matters there).
+    var focusSearch = v.modeId === "focus" && v.search.filter > 0;
+    if (v.showLabels && fogMix < 0.97 && v.groupNames.length && !focusSearch) used = drawGroupNames(v, used, fogMix, n);
     // Wander: the stop, its labelled neighbours and spokes to them.
     if (s.focus && v.mode) used = drawFocus(v, s, ds, used);
     // Hover: the nearest sampled point within 20 px.
@@ -4023,7 +4039,7 @@ ET.viewer = (function () {
         var x = Number(t);
         if (!Number.isFinite(x) || x < 0) x = 0;
         if (v.mode) v.mode.clock = x;
-        v.spin = x;
+        v.spin = x * spinFactor(v.mode);
         v.needClear = true;
         invalidate(v);
         return v.mode ? v.mode.clock : 0;

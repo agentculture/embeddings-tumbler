@@ -476,6 +476,102 @@
     return res;
   }
 
+  // ----- corrected after the owner's browser look (2026-11-14) -----
+
+  // Pixel position (y down) of the point at grid coordinates (gx, gy).
+  function gridSpot(R, gx, gy, state) {
+    const p = R.place([gx, gy, 0], state, SIZE, SIZE);
+    return { x: Math.round(p.x), y: Math.round(p.y) };
+  }
+
+  // Wires follow the search: three wires along the grid's top and bottom rows, one with both
+  // ends lit (0-1), one with one end lit (20-21), one with neither (23-24). Each wire's
+  // brightness is read at its middle, away from the points, with filter 1 and (the control,
+  // which shows the measure sees each wire at full strength) filter 0. Also: frames with the
+  // lit values set but filter 0 equal, byte for byte, a renderer's that never had them.
+  function wiresCase(options) {
+    const R = window.EmbeddingsTumbler._internal.renderer;
+    const pairs = new Uint32Array([0, 1, 20, 21, 23, 24]);
+    const st = { ...GRID_STATE, pointSize: 2, minPointSize: 1, wires: 1, bloom: 0 };
+    const g = gridRenderer(options);
+    const plainR = gridRenderer(options);
+    for (const x of [g, plainR]) {
+      x.r.setData(gridData());
+      x.r.setWires(pairs);
+    }
+    g.r.setLit(litOf(GRID_N, { 0: 1, 1: 1, 20: 1 }));
+    const mids = { both: gridSpot(R, -0.6, -0.8, st), one: gridSpot(R, -0.6, 0.8, st), none: gridSpot(R, 0.6, 0.8, st) };
+    const read = (state) => {
+      g.r.draw(state);
+      const px = readAll(g.gl);
+      return { both: windowSum(px, mids.both, 2), one: windowSum(px, mids.one, 2), none: windowSum(px, mids.none, 2), px: px };
+    };
+    const lit = read({ ...st, filter: 1 });
+    const off = read({ ...st, filter: 0 });
+    plainR.r.draw({ ...st, filter: 0 });
+    const res = {
+      lit: { both: lit.both, one: lit.one, none: lit.none },
+      off: { both: off.both, one: off.one, none: off.none },
+      identity: firstDiff(off.px, readAll(plainR.gl)),
+      status: g.r.status(),
+    };
+    g.r.setLit(null);
+    g.r.draw({ ...st, filter: 1 });
+    plainR.r.draw({ ...st, filter: 1 });
+    res.clearedIdentity = firstDiff(readAll(g.gl), readAll(plainR.gl));
+    retire(g);
+    retire(plainR);
+    return res;
+  }
+
+  // Results are not fogged away: every grid point is far enough from the centre to be fully
+  // fogged (fogNear 0.1, fogWidth 0.1). Point 11 is lit 1, its mirror image 13 is not. With
+  // the search shown (filter 1), fog 1 against fog 0: the lit point reads the same, the unlit
+  // one (the control) is dimmed by the fog as before.
+  function fogCase(options) {
+    const R = window.EmbeddingsTumbler._internal.renderer;
+    const g = gridRenderer(options);
+    g.r.setData(gridData());
+    g.r.setLit(litOf(GRID_N, { 11: 1 }));
+    const base = { ...GRID_STATE, filter: 1, fogNear: 0.1, fogWidth: 0.1 };
+    const at = (state) => {
+      g.r.draw(state);
+      const px = readAll(g.gl);
+      return { lit: windowSum(px, gridPixel(R, 11, state), 6), unlit: windowSum(px, gridPixel(R, 13, state), 6) };
+    };
+    const clear = at({ ...base, fog: 0, unlitGain: 1 });
+    const fogged = at({ ...base, fog: 1, unlitGain: 1 });
+    g.r.draw({ ...base, filter: 0, fog: 1 });
+    const px = readAll(g.gl);
+    const noSearch = windowSum(px, gridPixel(R, 11, base), 6);
+    retire(g);
+    return { clear: clear, fogged: fogged, noSearchFogged: noSearch };
+  }
+
+  // Crowded wires: 300 wires over the grid, then 30 of them, in the same frame with wireLoad
+  // on. The 300 are scaled down (status().wireScale below 1), the 30 far less; with wireLoad 0
+  // (the control, and the renderer's default) nothing is scaled.
+  function crowdCase(options) {
+    const g = gridRenderer(options);
+    g.r.setData(gridData());
+    const pairs = new Uint32Array(600);
+    for (let e = 0; e < 300; e++) {
+      pairs[2 * e] = e % GRID_N;
+      pairs[2 * e + 1] = (e * 7 + 3) % GRID_N;
+    }
+    g.r.setWires(pairs);
+    const st = { ...GRID_STATE, wires: 1 };
+    const scaleAt = (zoom, load) => {
+      g.r.draw({ ...st, zoom: zoom, wireLoad: load });
+      return { scale: g.r.status().wireScale, lit: countLit(readAll(g.gl)) };
+    };
+    const res = { many: scaleAt(1, 8), manyOff: scaleAt(1, 0) };
+    g.r.setWires(pairs.subarray(0, 60));
+    res.few = scaleAt(1, 8);
+    retire(g);
+    return res;
+  }
+
   async function searchCases() {
     out.search = {
       identity: identityCase(),
@@ -486,6 +582,10 @@
       leak: leakCase(),
       restore: await litRestoreCase(),
       stages: { dark: markStage("stage-dark", false), light: markStage("stage-light", true) },
+      wires: wiresCase(),
+      wiresNoHdr: wiresCase({ hdr: false }),
+      fog: fogCase(),
+      crowd: crowdCase(),
     };
   }
 

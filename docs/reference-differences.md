@@ -175,6 +175,13 @@ not done; see "Not yet compared or not yet decided".
 - **Why:** the mode responds at once and the wires do not make the rest wait.
 - **Visible on the sample set:** yes, for the first seconds after switching to Lattice. After that both pages show the same 1,870 wires.
 
+### Crowded wires are dimmed instead of burning out to white
+
+- **Reference:** every wire is drawn at the same gain however many pile up in the same part of the picture. On the sample set the lattice burns out to a white mass, most of all when a swap is nearly through and the lattice collapses to a thin shape: 3,435 near-white pixels (channel sum above 600) on a 320 by 180 copy of the build's stage before this change, with the same rule.
+- **Build:** the viewer measures the wire light per pixel where the wires' light lands, from the number of wires and how tightly the current frame packs them on the stage, and scales all wires down by the same factor when it is above a fixed load (`js/api/50-viewer.md`, "Crowded wires"; the renderer's draw key `wireLoad`). A wire seen near its true length still flares against one that is not. The same rule applies with a search shown, on top of the wires following the search.
+- **Why:** the owner found Lattice "very bright" and asked for it to be toned down ("Please do", 2026-11-14), an approved deviation from the rule that the no-search picture must not change. Tumble, Wander and Focus draw exactly as before.
+- **Visible on the sample set:** yes. At a swap 90% through the near-white count falls from 3,435 to 693 (about 360 of those are the cores of labelled points), at 10% from 3,130 to 686; the wires stay visible as thin coloured lines, and the blocky glow around the brightest parts mostly goes with the burn-out (GPU, 1280 by 900, 2026-11-14).
+
 ## Wander
 
 ### Wander starts at once

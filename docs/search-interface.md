@@ -142,6 +142,9 @@ today's**: the existing frame-hash test passes unchanged. How that is achieved
 test is the judge, and it is never re-pinned. The no-HDR fallback applies the
 same terms.
 
+The wires and the fog also follow the lit values since the owner's browser look;
+see "Corrected after the owner's browser look (2026-11-14)" below.
+
 ## Modes (t6): the swing toward the facing frame
 
 Addition to `js/api/40-modes.md`. `face` is an **optional** member: it is not
@@ -299,6 +302,90 @@ pump. `search` is `null` (no search) or:
   px of the point) searches from that point: the viewer calls
   `setSearches([{ point: id }])`. Decided here: in the other three modes a click
   keeps today's meaning (it focuses the viewer), so their input is unchanged.
+
+## Corrected after the owner's browser look (2026-11-14)
+
+The owner tried the build in a browser and saw three things: Lattice with a
+search was very bright (the wires buried the results: 2,175 near-white pixels of
+57,600 on a 320 x 180 copy of the stage, against 0 in Tumble with the same
+searches), Focus looked like Tumble stopped (the whole cloud, group names over
+it, a slow turn), and Wander with a search was almost black (2 lit pixels: the
+search dimmed every unlit point and Wander's fog dimmed the results). What was
+changed:
+
+**Wires follow the search** (renderer). With `filter` above 0 and lit values
+set, the wires are drawn by a second wire program that reads each wire's lit
+value, the smaller of its two ends' lit values (so 1 only when both ends are
+lit): brightness is multiplied by `mix(1, mix(unlitGain, 1, l), filter)`. A wire
+between two results keeps its full strength; any other wire is dimmed like an
+unlit point (hidden with Only results). The wires' lit values are one float per
+wire end in a buffer of their own, made again by `setLit`, `setWires` and every
+rebuild, freed by `setLit(null)` and `dispose`. With `filter` 0 or no lit values
+the original wire program and calls are used, unchanged.
+
+**Results are not fogged away** (renderer). In the lit point program a point's
+fog strength is `fog * (1 - l * filter)`: a result's distance dimming is relieved
+in proportion to its lit value, so results stay visible wherever Wander's camera
+is, while unlit points keep the fog. The no-search point program is unchanged.
+
+**Focus looks like its reference** (`docs/specs/reference/tumbler-focus-view.html`):
+
+- While a search is shown it turns at the reference's 0.13 rad/s (with none it
+  turns at 0.06 as before, so its no-search frames are unchanged). A mode may ask for its own spin with an
+  optional numeric member `inst.spin` (rad/s, finite, 0 or more); the viewer turns
+  the view at that rate while the mode is shown, and at its own 0.06 rad/s for a
+  mode that does not ask (Tumble, Lattice and Wander do not; their frames are
+  unchanged). The viewer's spin clock advances by `spin / 0.06` times the
+  elapsed time, so the yaw is continuous across a change of mode, and `seek(t)`
+  sets it to what running for `t` seconds in the current mode gives.
+- A results fit is zoomed the reference's way: the farthest named result sits at
+  `0.36 / 0.46` units (the reference maps the results' reach to 0.36 of the
+  stage's shorter side, the renderer maps one unit to 0.46 of it), pulled back
+  only as far as needed to keep each query within 1.3 reaches of the centre (the
+  stage's shorter half-side is 1.39 reaches), so a query far from its results
+  stays on the stage. The viewer's zoom multiplies only the user's zoom on top.
+- While a search is shown, unlit points are drawn at `unlitGain` 0.05 (the
+  renderer's default elsewhere is 0.07), or 0 with Only results. The reference
+  draws unlit points at 0.13 of a result's strength on a 124-point page; the
+  sample set's 12,288 points pile up under the bloom, so 0.13 would read far
+  brighter here; 0.05 was picked by comparing screenshots with the reference
+  page (the cloud stays as faint context around the results). With no search
+  Focus sets no `unlitGain`.
+- The viewer draws no group names in Focus while a search is shown (`filter`
+  above 0). The query marker, the links and the rank labels are the panel's
+  (t9).
+
+**Crowded wires** (renderer draw key `wireLoad`, set by the viewer). Approved by
+the owner on 2026-11-14 as a deviation from "the no-search picture must not
+change", for Lattice only. When many wires pile up in the same part of the
+stage they burn out to white, so their brightness is scaled down, in the spirit
+of the viewer's rule for crowded points (`js/api/50-viewer.md`, "Crowded
+wires"). The renderer measures the wire light per pixel where the wires' light
+lands (`ET.renderer.wireDensity`, on an even sample of 192 wires spread over a
+grid of 64 cells across the stage's shorter side) and, with `wireLoad` above 0,
+multiplies the wires' gain by `min(1, wireLoad / light)`. It is off by default
+in the renderer; the viewer sets `wireLoad: 8` whenever wires are shown, so only
+Lattice changes. It applies with a search too, on top of the wires following it.
+
+Measured on the built-in sample set, Chromium on the GPU, 1280 x 900, one search
+of 8 results (`tide harbor`) unless said, on a 320 x 180 copy of the stage (lit:
+channel sum above 60; near white: above 600). Numbers before the change are from
+the build as merged before this correction.
+
+| What | Before | After |
+|------|--------|-------|
+| Lattice with the search, near-white pixels (four moments) | 2,652 to 3,846 | 135 to 366 (with the wire crowding too: 0 to 6) |
+| Lattice with no search, swap 90% through, near-white | 3,435 | 693 (of which about 360 are point cores) |
+| Lattice with no search, swap 10% through, near-white | 3,130 | 686 |
+| Wander, the marked results (two identical searches), white pixels at full size, six moments | 0 at five of six | 6 to 28 at every one |
+| Focus with the search, group names drawn | 11 | 0 |
+
+The 8 results of `tide harbor` lie within 0.03 to 0.07 of each other, so in
+Wander they cover only a few pixels however bright they are; with a ranking that
+lights the nearest named points and every point as near as the last of them
+(about 400 on the sample set) the count is far higher. The tests
+(`tests/browser/test_search_look.py`, `tests/browser/test_renderer_render.py`)
+assert ratios and floors that hold for both.
 
 ## Viewer (t8): options, handle and `info()`
 

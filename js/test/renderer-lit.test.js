@@ -136,6 +136,8 @@ test("the no-search point shader never reads a lit value; the lit one carries th
     "layout(location = 1) in float aLit;",
     "  float mark = step(1.5, aLit);",
     "  float l = clamp(aLit - 2.0 * mark, 0.0, 1.0);",
+    // corrected after the owner's browser look (2026-11-14): a lit point's fog is relieved
+    "  float fogK = uFog * (1.0 - l * uFilter);",
     "  vCol += vec3(0.9) * a * uGain * mark * uFilter;",
   ]);
   const stripped = lit
@@ -143,8 +145,10 @@ test("the no-search point shader never reads a lit value; the lit one carries th
     .filter((line) => !extra.has(line))
     .join("\n")
     .replace(" * mix(1.0, mix(0.8, 1.5, l), uFilter)", "")
-    .replace(" * mix(1.0, mix(uUnlit, 2.2, l), uFilter)", "");
+    .replace(" * mix(1.0, mix(uUnlit, 2.2, l), uFilter)", "")
+    .replaceAll(", fogK)", ", uFog)");
   assert.strictEqual(stripped, src.pointVertex);
+  assert.strictEqual((lit.match(/, fogK\)/g) || []).length, 2, "size and brightness both use the relieved fog");
 });
 
 test("the draw keys filter and unlitGain default to 0 and 0.07", () => {
