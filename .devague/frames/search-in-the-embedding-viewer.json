@@ -2,9 +2,9 @@
   "slug": "search-in-the-embedding-viewer",
   "title": "Search in the embedding viewer",
   "schema_version": 6,
-  "status": "drafting",
+  "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T11:41:41Z",
+  "updated": "2026-11-14T11:46:31Z",
   "claims": [
     {
       "id": "c1",
@@ -16,7 +16,7 @@
         {
           "id": "h1",
           "text": "It holds for real model vectors, not only the synthetic reference: a typed text is embedded by the same model as the data and the lit points are its true nearest neighbours.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -35,7 +35,7 @@
         {
           "id": "h2",
           "text": "A host can add search with one callback and no build step; a person at the standalone page can search without writing code, given the local helper.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -54,7 +54,7 @@
         {
           "id": "h3",
           "text": "It is true today: the shipped viewer has no way to select, highlight or dim points (checked in js/api/50-viewer.md).",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -73,7 +73,7 @@
         {
           "id": "h4",
           "text": "Each pair's report is computed from true distances, and a point is white only when it is inside the result radius of two or more searches.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -92,7 +92,7 @@
         {
           "id": "h5",
           "text": "What is lit is exactly what a retrieval over the same vectors with the same measure would return, so the picture can be trusted as a retrieval check.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -111,7 +111,7 @@
         {
           "id": "h6",
           "text": "The ranking equals an independent brute-force ranking on the same vectors; on-screen distance is never used for ranking and the page says a projection is a shadow.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -130,7 +130,7 @@
         {
           "id": "h7",
           "text": "After any search the frame is still changing every second in every mode; the swing ends by itself and never leaves the view held; reduced-motion and Pause still stop motion as before.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -149,7 +149,7 @@
         {
           "id": "h8",
           "text": "Switching mode with searches active keeps the lit set and the query markers, and Lattice still swaps axes and Wander still flies between points.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -168,7 +168,7 @@
         {
           "id": "h9",
           "text": "Collapsed, the panel is one line; closing it never clears or pauses the searches; it works by keyboard and states its expanded state to assistive technology.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -187,7 +187,7 @@
         {
           "id": "h10",
           "text": "The numbers shown are full-space distances by the stated measure, the same ones used for ranking, not lengths in the picture.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -206,7 +206,7 @@
         {
           "id": "h11",
           "text": "With no reranker supplied there is no toggle and no claim of reranking; with one, every result shows its move from embedding order and the reranker is named.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -225,7 +225,7 @@
         {
           "id": "h12",
           "text": "Focus is a separable mode like the other three: adding it changes no existing mode and no part of the data contract; with no search it still shows the whole set.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -280,7 +280,7 @@
         {
           "id": "h13",
           "text": "No file shipped to a browser and no response from the local helper contains the gateway address or key; the core file still passes the no-network scan; the helper's embed route answers only its own origin.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -299,7 +299,7 @@
         {
           "id": "h14",
           "text": "The fitted view is an orthonormal 3-direction frame applied to every point alike; nothing non-linear is introduced, and the status line says the view is fitted to the searches.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -313,12 +313,12 @@
       "kind": "requirement",
       "text": "A query vector whose dimension or model differs from the data shown is refused with a plain message and the view is left unchanged.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h15",
           "text": "A wrong-dimension or wrong-model vector from the callback never reaches the renderer, and the message names both dimensions or both models.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -332,12 +332,12 @@
       "kind": "requirement",
       "text": "The view states, beside the provenance, what a search used: the model that embedded the query, the distance measure, the number of results asked for and the reranker, if any.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h16",
           "text": "The search line is always visible while a search is active and matches what was actually used; it never names a model the callback did not report.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -351,12 +351,12 @@
       "kind": "requirement",
       "text": "Query text and results are inserted as text, never as markup, and are sent nowhere by the viewer; only the host's callback sees the query.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h17",
           "text": "A query or result text containing markup creates no element, and the core file makes no request when a search runs (network log shows only the host's own callback traffic).",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -370,7 +370,7 @@
       "kind": "non_goal",
       "text": "No index: search is an exact scan of the loaded points.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -382,7 +382,7 @@
       "kind": "non_goal",
       "text": "No answer generation and no chat. This shows retrieval; it does not write answers.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -394,12 +394,12 @@
       "kind": "success_signal",
       "text": "On a real data file of 10,000 points, a search lights its results within 1 second of the query vector arriving, and the frame rate with four searches active stays at 30 frames per second or more on the machine used for the earlier measurements.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h18",
           "text": "The time is measured from the vector arriving to the first frame with the lit set, on the 10,000-point real file, and the frame rate is read over at least 10 seconds with four searches active; the machine and renderer are stated.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -413,12 +413,12 @@
       "kind": "success_signal",
       "text": "With the panel collapsed, search adds at most one line (48 px or less) under the stage.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h19",
           "text": "Measured in a browser at desktop and phone width with searches active and the panel closed.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -432,7 +432,7 @@
       "kind": "assumption",
       "text": "Clicking a point searches from that point's own vector, so it works without the embed callback.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -444,7 +444,7 @@
       "kind": "assumption",
       "text": "Every loaded point at least as near as the last named result is lit too, as the sky reference does; results can be asked for from 3 to 20, 8 by default.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -456,7 +456,7 @@
       "kind": "assumption",
       "text": "Result text is shown when the data file includes text; otherwise the label is shown.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -473,7 +473,7 @@
         {
           "id": "h20",
           "text": "With no embed callback the panel still works and says plainly that it is matching loaded points, not embedding the text; words that match nothing are named, never silently dropped.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -487,7 +487,7 @@
       "kind": "assumption",
       "text": "A word search among loaded points places the query at the mean of the matching points' vectors and then lights the nearest points, as the sky reference does; when both are available the panel says which of the two kinds of search ran.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],

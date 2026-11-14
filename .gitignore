@@ -242,3 +242,6 @@ skills.local.yaml
 
 # JavaScript coverage reports (node --test, scripts/js_coverage.py)
 js-coverage*.lcov
+
+# devague working state (not committed by default)
+.devague/reviews/

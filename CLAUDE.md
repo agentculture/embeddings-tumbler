@@ -45,9 +45,10 @@ interface.
 
 Not done yet: no release has been published. The first npm release needs a
 one-time manual publish before CI's trusted publishing can take over
-(`docs/release.md`). Only Chromium has been tested automatically. A search
-view (type a query, see what it links to) is asked for and waits for its own
-spec.
+(`docs/release.md`). Only Chromium has been tested automatically. Search
+(type text, or several texts, and see what links to each) is specced but not
+built `(planned)`: `docs/specs/2026-11-14-search-in-the-embedding-viewer.md`,
+with two reference pages beside the original one in `docs/specs/reference/`.
 
 What real vectors showed, and what was changed because of it (Lattice's hidden
 directions, brightness of crowded sets), is in
