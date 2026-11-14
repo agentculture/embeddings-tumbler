@@ -49,7 +49,7 @@ token (`docs/release.md`). What the build delivered, measured against the plan,
 is in `docs/deliveries/2026-11-13-embeddable-space-viewer.md`. Not done yet:
 only Chromium has been tested automatically. Search
 (type text, or several texts, and see what links to each) is specced and
-planned (`docs/plans/2026-11-14-search-in-the-embedding-viewer.md`, 15 tasks)
+planned (`docs/plans/2026-11-14-search-in-the-embedding-viewer.md`, 16 tasks)
 but not built `(planned)`: `docs/specs/2026-11-14-search-in-the-embedding-viewer.md`,
 its obligations in the file of the same name ending `-obligations.md`, and two
 reference pages beside the original one in `docs/specs/reference/`.

@@ -73,6 +73,9 @@
 - Search has a choice of what is lit, including a variable lit power option in which a closer point is lit more strongly.
   - instruction: docs/specs/reference/tumbler-sky-search.html shows three settings: the results evenly; by closeness (every point glows in proportion to how near it is, fading out a little beyond the last result); named results only.
   - honesty: Brightness by closeness is computed from full-space distance by the stated measure, the setting in use is named in the panel, and the count of points lit matches what is drawn.
+- Each cell of the readout strip is coloured by which screen axis its dimension feeds: it mixes three colours according to how much that dimension contributes to the picture's horizontal, vertical and depth axes. Opacity keeps meaning what it means now, the size of the contribution.
+  - instruction: docs/specs/reference/tumbler-sky-search.html shows it: the share of each axis in the cell's contribution weights three fixed colours, and a legend names them.
+  - honesty: The three colours are named beside the strip, they are distinguishable from each other on the dark and the light treatment, opacity is computed exactly as before, and the change from the reference's single-colour strip is listed as an intended difference.
 
 ## Honesty conditions
 

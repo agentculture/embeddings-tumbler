@@ -100,3 +100,9 @@ Obligation o12 is the one that binds the build to them.
 - **Owed:** The lit setting decides which points are lit and how strongly; with brightness by closeness, a nearer point is never dimmer than a farther one for the same search; the panel names the setting in use.
 - **Claim:** c46 (requirement)
 - **Status:** approved
+
+## o16: viewing frame -> readout strip
+
+- **Owed:** A cell's colour is the mix of the three axis colours weighted by that dimension's squared component on each axis; a dimension that feeds only one axis shows that axis's colour exactly; opacity equals the existing contribution formula.
+- **Claim:** c47 (requirement)
+- **Status:** approved

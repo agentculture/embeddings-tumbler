@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-11-14T13:25:21Z",
-  "updated": "2026-11-14T13:58:04Z",
+  "updated": "2026-11-14T14:30:12Z",
   "targets": [
     {
       "id": "c1",
@@ -468,6 +468,20 @@
       "text": "Brightness by closeness is computed from full-space distance by the stated measure, the setting in use is named in the panel, and the count of points lit matches what is drawn.",
       "deferred": false,
       "deferred_reason": ""
+    },
+    {
+      "id": "c47",
+      "kind": "requirement",
+      "text": "Each cell of the readout strip is coloured by which screen axis its dimension feeds: it mixes three colours according to how much that dimension contributes to the picture's horizontal, vertical and depth axes. Opacity keeps meaning what it means now, the size of the contribution.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h34",
+      "kind": "honesty",
+      "text": "The three colours are named beside the strip, they are distinguishable from each other on the dark and the light treatment, opacity is computed exactly as before, and the change from the reference's single-colour strip is listed as an intended difference.",
+      "deferred": false,
+      "deferred_reason": ""
     }
   ],
   "tasks": [
@@ -832,6 +846,24 @@
         "h31"
       ],
       "instruction": "Follow the pattern of the first comparison (js/dev/side-by-side/ and tests/test_reference_differences.py)."
+    },
+    {
+      "id": "t16",
+      "summary": "Readout strip coloured by screen axis (js/src/50-viewer.js, the strip only): each cell mixes three colours by its dimension's share of the horizontal, vertical and depth axes; opacity unchanged.",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A frame whose first axis is a single dimension shows that cell in the horizontal colour exactly, and likewise for the other two axes; a cell fed equally by all three shows the even mix",
+        "Opacity per cell equals the value the existing formula gives (the existing strip-size and opacity tests pass unchanged; the colour test is rewritten)",
+        "A legend names the three colours as text; the colours are checked on the dark and the light treatment",
+        "docs/reference-differences.md lists the coloured strip as an intended difference from the reference, and js/api/50-viewer.md describes the new formula"
+      ],
+      "deps": [],
+      "covers": [
+        "c47",
+        "h34"
+      ],
+      "instruction": "Touch only the strip code in js/src/50-viewer.js, its tests, the API page and the differences document. It runs in the first wave, before the viewer API task touches the same file. The GL frame is not affected, so the frame hash must not change. The colours and legend are as on docs/specs/reference/tumbler-sky-search.html."
     }
   ],
   "risks": [

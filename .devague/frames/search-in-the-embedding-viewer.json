@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T14:28:04Z",
+  "updated": "2026-11-14T14:30:12Z",
   "claims": [
     {
       "id": "c1",
@@ -799,7 +799,7 @@
         {
           "id": "h34",
           "text": "The three colours are named beside the strip, they are distinguishable from each other on the dark and the light treatment, opacity is computed exactly as before, and the change from the reference's single-colour strip is listed as an intended difference.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -1061,7 +1061,7 @@
       "behavior": "A cell's colour is the mix of the three axis colours weighted by that dimension's squared component on each axis; a dimension that feeds only one axis shows that axis's colour exactly; opacity equals the existing contribution formula.",
       "source_text": "Each cell of the readout strip is coloured by which screen axis its dimension feeds: it mixes three colours according to how much that dimension contributes to the picture's horizontal, vertical and depth axes. Opacity keeps meaning what it means now, the size of the contribution.",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     }
   ]
 }

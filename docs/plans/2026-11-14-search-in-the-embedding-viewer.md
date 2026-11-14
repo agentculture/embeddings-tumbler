@@ -172,6 +172,16 @@ slug: `search-in-the-embedding-viewer` · status: `exported` · from frame: `sea
   - A side-by-side page shows each reference next to the built view on comparable data
   - The owner's sign-off line for search is recorded before release; the test for the document accepts an open sign-off but fails on a contradiction
 
+### t16 — Readout strip coloured by screen axis (js/src/50-viewer.js, the strip only): each cell mixes three colours by its dimension's share of the horizontal, vertical and depth axes; opacity unchanged
+
+- instruction: Touch only the strip code in js/src/50-viewer.js, its tests, the API page and the differences document. It runs in the first wave, before the viewer API task touches the same file. The GL frame is not affected, so the frame hash must not change. The colours and legend are as on docs/specs/reference/tumbler-sky-search.html.
+- covers: c47, h34
+- acceptance:
+  - A frame whose first axis is a single dimension shows that cell in the horizontal colour exactly, and likewise for the other two axes; a cell fed equally by all three shows the even mix
+  - Opacity per cell equals the value the existing formula gives (the existing strip-size and opacity tests pass unchanged; the colour test is rewritten)
+  - A legend names the three colours as text; the colours are checked on the dark and the light treatment
+  - docs/reference-differences.md lists the coloured strip as an intended difference from the reference, and js/api/50-viewer.md describes the new formula
+
 ## Risks
 
 - [follow_up] With three or four searches the facing view scales to fit all of them, so two that touch can end up small beside a far one. A way to face a chosen pair is not specified (parked in the spec). (task t3)
