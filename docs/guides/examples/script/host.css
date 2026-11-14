@@ -1,0 +1,22 @@
+body {
+  margin: 0;
+  padding: 16px;
+  background: #0b0f1a;
+  color: #e9eef6;
+  font: 16px/1.5 system-ui, sans-serif;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+button {
+  font: inherit;
+  padding: 6px 12px;
+}
+
+.space {
+  --tumbler-stage-height: 420px;
+  --tumbler-accent: #7fd1b9;
+}

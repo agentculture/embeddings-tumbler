@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "embeddings-tumbler/data",
+  "model": "example/tiny-model",
+  "dimension": 4,
+  "count": 2,
+  "text_included": true,
+  "provenance": {
+    "source": "two example sentences typed by hand",
+    "producer": "my-exporter 0.1.0",
+    "synthetic": true,
+    "seed": null,
+    "limitations": ["the vectors are made up, not produced by the named model"],
+    "uncertain": []
+  },
+  "vectors": {
+    "file": "minimal.f32",
+    "dtype": "float32",
+    "byte_order": "little",
+    "byte_length": 32
+  },
+  "points": [
+    {"id": "a", "label": "the cat sat on the mat", "group": "animals"},
+    {"id": "b", "label": "interest rates rose again", "group": "money"}
+  ]
+}
