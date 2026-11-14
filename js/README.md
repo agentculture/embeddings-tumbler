@@ -64,11 +64,15 @@ using only node's built-in runner and assert. No dependency is installed.
 const { loadAssembled, loadSources } = require("./helpers/load.js");
 
 const api = loadAssembled();                 // the committed assembled file
-const api2 = loadSources(["10-math.js"]);    // header + named modules + footer, via node:vm
+const api2 = loadSources(["10-math.js"]);    // header + named modules + footer, via require()
 const math = api2._internal.math;            // the shared namespace ET
 ```
 
-`loadSources()` with no argument loads every module in order. Source modules are
-evaluated in a fresh context each time, so tests do not leak state. (The static
-ban applies to the assembled file, not to this helper.) A test that exercises
-the whole viewer should use `loadAssembled()`.
+`loadSources()` with no argument loads every module in order. The modules are
+joined as the assembler would and written to a temporary file as the body of a
+function, which is loaded with node's own `require()` (no `eval`, no `node:vm`)
+and called once; the file is then dropped from `require`'s cache and deleted.
+So every call runs the modules afresh and tests do not leak state through
+them, but they run in node's ordinary global context, like the assembled file.
+(The static ban applies to the assembled file, not to this helper.) A test that
+exercises the whole viewer should use `loadAssembled()`.

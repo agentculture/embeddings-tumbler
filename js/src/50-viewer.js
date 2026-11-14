@@ -95,6 +95,16 @@ ET.viewer = (function () {
   var SPIN = 0.06; // rad/s of yaw while running (the reference's)
   var BUTTON_HEIGHT = "28px"; // the reference's Pause button
   var TOUCH_HEIGHT = "32px"; // the same buttons under 600 px wide
+  // Spacing and sizes a host may adjust: each is set inline as var(--tumbler-<name>,
+  // <default>), so a host stylesheet sets the custom property (no !important needed) and,
+  // with none set, the browser uses the viewer's own value. The browser resolves var()
+  // live, so these are never read into the theme. Two have a narrow value below 600 px
+  // (layoutForWidth); a host's property wins at every width. Documented in js/api/50-viewer.md.
+  var PANEL_PADDING = { wide: "6px 16px 16px", narrow: "6px 12px 14px" };
+  var MODE_TITLE_SIZE = { wide: "24px", narrow: "20px" };
+  function spaced(name, fallback) {
+    return "var(--tumbler-" + name + ", " + fallback + ")";
+  }
   // Names over the sky: the reference strokes each name with a 4 px line of the
   // background at 0.85 under the fill. As page text that is a ring of hard
   // shadows: 8 at 1.5 px (slightly soft) and 8 at 2 px (half strength), which
@@ -388,17 +398,17 @@ ET.viewer = (function () {
 
     var mast = make(v, "div", "tumbler-masthead", {
       position: "absolute",
-      top: "14px",
-      left: "16px",
-      right: "16px",
+      top: spaced("masthead-top", "14px"),
+      left: spaced("masthead-left", "16px"),
+      right: spaced("masthead-right", "16px"),
       pointerEvents: "none",
       zIndex: "2",
     });
     v.mastTitle = text(v, "p", "tumbler-title", "", {
-      margin: "0 0 6px",
+      margin: spaced("title-margin", "0 0 6px"),
       fontStyle: "italic",
       fontWeight: "400",
-      fontSize: "clamp(28px, 6vw, 56px)",
+      fontSize: spaced("title-size", "clamp(28px, 6vw, 56px)"),
       lineHeight: "0.95",
     });
     v.mastLine = text(v, "p", "tumbler-subtitle", "", {
@@ -413,9 +423,9 @@ ET.viewer = (function () {
 
     var status = text(v, "p", "tumbler-status", "waiting for data", {
       position: "absolute",
-      left: "16px",
-      right: "16px",
-      bottom: "10px",
+      left: spaced("status-left", "16px"),
+      right: spaced("status-right", "16px"),
+      bottom: spaced("status-bottom", "10px"),
       margin: "0",
       fontSize: "12px",
       lineHeight: "1.4",
@@ -500,8 +510,8 @@ ET.viewer = (function () {
     var panel = make(v, "div", "tumbler-panel", {
       display: "flex",
       flexDirection: "column",
-      gap: "14px",
-      padding: "6px 16px 16px",
+      gap: spaced("panel-gap", "14px"),
+      padding: spaced("panel-padding", PANEL_PADDING.wide),
     });
     v.panel = panel;
 
@@ -521,7 +531,7 @@ ET.viewer = (function () {
         border: "0",
         borderTop: "2px solid transparent",
         marginTop: "-1px",
-        padding: "10px 12px 8px 0",
+        padding: spaced("mode-padding", "10px 12px 8px 0"),
         cursor: "pointer",
         display: "flex",
         flexDirection: "column",
@@ -536,11 +546,11 @@ ET.viewer = (function () {
       b.setAttribute("aria-keyshortcuts", i < 9 ? String(i + 1) : "");
       var title = text(v, "b", "tumbler-mode-title", def.title, {
         fontWeight: "400",
-        fontSize: "24px",
+        fontSize: spaced("mode-title-size", MODE_TITLE_SIZE.wide),
         lineHeight: "1.1",
       });
       var summary = text(v, "span", "tumbler-mode-summary", def.summary || "", {
-        fontSize: "12.5px",
+        fontSize: spaced("mode-summary-size", "12.5px"),
         lineHeight: "1.35",
       });
       b.appendChild(title);
@@ -573,7 +583,7 @@ ET.viewer = (function () {
       gap: "4px 12px",
       flexWrap: "wrap",
       margin: "0",
-      fontSize: "11.5px",
+      fontSize: spaced("readout-caption-size", "11.5px"),
     });
     v.stripFirst = text(v, "span", "", "dimension 1");
     v.stripMiddle = text(v, "span", "", "how much each dimension contributes to the view right now");
@@ -591,7 +601,7 @@ ET.viewer = (function () {
       display: "flex",
       flexWrap: "wrap",
       alignItems: "center",
-      gap: "10px 18px",
+      gap: spaced("controls-gap", "10px 18px"),
       fontSize: "12px",
     });
     v.playButton = pillButton(v, "tumbler-play", "Pause");
@@ -1700,11 +1710,12 @@ ET.viewer = (function () {
     var narrow = width < 600;
     if (narrow === v.narrow) return;
     v.narrow = narrow;
+    var size = narrow ? "narrow" : "wide";
     v.modeButtons.forEach(function (mb) {
       mb.summary.style.display = narrow ? "none" : "";
-      mb.title.style.fontSize = narrow ? "20px" : "24px";
+      mb.title.style.fontSize = spaced("mode-title-size", MODE_TITLE_SIZE[size]);
     });
-    v.panel.style.padding = narrow ? "6px 12px 14px" : "6px 16px 16px";
+    v.panel.style.padding = spaced("panel-padding", PANEL_PADDING[size]);
     v.playButton.style.minHeight = narrow ? TOUCH_HEIGHT : BUTTON_HEIGHT;
     v.zoomResetButton.style.minHeight = narrow ? TOUCH_HEIGHT : BUTTON_HEIGHT;
   }

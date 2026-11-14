@@ -94,11 +94,38 @@ main {
 
 /* ---------- reference spacing for the viewer's parts ----------
  *
- * js/api/50-viewer.md documents these class names as stable for host CSS that
- * adjusts spacing; the viewer sets its own styles inline from script, so these
- * rules need !important to win. They change spacing and sizes only, never
- * colours, behaviour or content.
+ * The viewer sets its spacing inline as var(--tumbler-<name>, <its default>), so
+ * the page sets those custom properties on its host element and the browser uses
+ * them (js/api/50-viewer.md lists them). They change spacing and sizes only,
+ * never colours, behaviour or content. The class names below are stable for the
+ * few things the viewer does not set inline.
  */
+
+.space {
+  --tumbler-masthead-top: 22px;
+  --tumbler-masthead-left: var(--page-gutter-left);
+  --tumbler-masthead-right: var(--page-gutter-right);
+  --tumbler-title-size: clamp(34px, 6vw, 64px);
+  --tumbler-title-margin: 0 0 8px;
+  --tumbler-status-left: var(--page-gutter-left);
+  --tumbler-status-right: var(--page-gutter-right);
+  --tumbler-status-bottom: 16px;
+  --tumbler-panel-padding: 8px var(--page-gutter-right) 0 var(--page-gutter-left);
+  --tumbler-panel-gap: 20px;
+  --tumbler-mode-padding: 12px 16px 10px 0;
+  --tumbler-mode-title-size: 28px;
+  --tumbler-mode-summary-size: 13px;
+  /* The readout strip's size (22 px of cells between two 1 px lines) and the
+   * 6 px gap before its caption are the viewer's own defaults, the reference's. */
+  --tumbler-readout-caption-size: 12px;
+  --tumbler-controls-gap: 10px 22px;
+}
+
+@media (max-width: 600px) {
+  .space {
+    --tumbler-mode-title-size: 24px;
+  }
+}
 
 /* The sky blends into the panel below, as in the reference. */
 .space .tumbler-stage::after {
@@ -112,60 +139,16 @@ main {
   background: linear-gradient(to bottom, transparent, var(--page-bg));
 }
 
-.space .tumbler-masthead {
-  top: 22px !important;
-  left: var(--page-gutter-left) !important;
-  right: var(--page-gutter-right) !important;
-}
-
 .space .tumbler-title {
-  font-size: clamp(34px, 6vw, 64px) !important;
-  margin: 0 0 8px !important;
   letter-spacing: -0.01em;
   text-wrap: balance;
 }
 
-.space .tumbler-status {
-  left: var(--page-gutter-left) !important;
-  right: var(--page-gutter-right) !important;
-  bottom: 16px !important;
-}
-
-/* The instrument panel: centred under the full-bleed sky, the reference's width. */
+/* The instrument panel: centred under the full-bleed sky, the reference's width.
+ * The viewer sets neither the panel's width nor its margin. */
 .space .tumbler-panel {
   max-width: calc(1120px + var(--page-gutter-left) + var(--page-gutter-right));
-  margin: 0 auto !important;
-  padding: 8px var(--page-gutter-right) 0 var(--page-gutter-left) !important;
-  gap: 20px !important;
-}
-
-.space .tumbler-mode {
-  padding: 12px 16px 10px 0 !important;
-}
-
-.space .tumbler-mode-title {
-  font-size: 28px !important;
-}
-
-.space .tumbler-mode-summary {
-  font-size: 13px !important;
-}
-
-/* The readout strip's size (22 px of cells between two 1 px lines) and the
- * 6 px gap before its caption are the viewer's own defaults, the reference's. */
-
-.space .tumbler-readout-caption {
-  font-size: 12px !important;
-}
-
-.space .tumbler-controls {
-  gap: 10px 22px !important;
-}
-
-@media (max-width: 600px) {
-  .space .tumbler-mode-title {
-    font-size: 24px !important;
-  }
+  margin: 0 auto;
 }
 
 /* ---------- while the data loads, or when it cannot be shown ---------- */
@@ -297,7 +280,7 @@ body[data-page-state="error"] .notes {
 
 /* The page hides a mode's notes with the hidden attribute. The class rules above
  * set display on those elements, so this rule wins by specificity (two classes'
- * worth), not by !important; it sits last so a rule of equal weight cannot undo it. */
+ * worth), not by importance; it sits last so a rule of equal weight cannot undo it. */
 .notes [hidden],
 [hidden] {
   display: none;

@@ -126,3 +126,12 @@ def test_page_sources_and_shipped_copies_match():
 def test_page_text_hard_codes_no_dimension():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     assert "384" not in html, "the dimension comes from the data, filled in by page.js"
+
+
+@pytest.mark.parametrize("folder", [ROOT / "js" / "page", STATIC], ids=["source", "shipped"])
+def test_page_stylesheet_has_no_important(folder):
+    # The viewer takes its spacing from --tumbler-* custom properties (js/api/50-viewer.md),
+    # so the page sets properties and never needs !important to beat an inline style.
+    text = (folder / "page.css").read_text(encoding="utf-8")
+    found = re.findall(r"!\s*important", text, flags=re.IGNORECASE)
+    assert found == [], f"{len(found)} !important in {folder.name}/page.css"
