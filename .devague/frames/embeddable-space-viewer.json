@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T01:20:56Z",
+  "updated": "2026-11-14T02:01:35Z",
   "claims": [
     {
       "id": "c1",
@@ -1053,6 +1053,20 @@
       "skipped_check": "real touch device; browser-level pause, context-loss and leak tests; uncapped frame rate; Firefox and Safari",
       "refs": [
         "t8"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l14",
+      "code": "control-absent",
+      "what": "perf pass: merged before its two colleague reviews returned (main agent's choice; evidence at merge was the agent's 56/56 bit-identical math checks and 20,277 identical mode states against the previous code, plus all existing determinism tests passing unchanged). The refit-turn constant (0.5) was tuned on the same scenarios it is tested on; there is no guarantee for the largest-single-entry measure (worst seen 1.48 against a 1.5 bound). Browser figures are script time per frame including the 8 ms budget, not the largest single unit. A few units still reach 4-6 ms on a fresh load.",
+      "skipped_check": "independent review before merge; refit-turn bound on scenarios not used for tuning",
+      "refs": [
+        "d3",
+        "t4",
+        "t5",
+        "t7"
       ],
       "origin": "llm",
       "status": "proposed"
