@@ -13,6 +13,16 @@ send a simple (preflight-free) POST to a loopback port, so the checks are made h
 not left to the browser: the ``Host`` header must name the bound address (which a DNS
 rebinding attack cannot fake), the ``Origin`` header must be this server, the content
 type must be JSON (which a form cannot send), and no cross-origin header is ever sent.
+Each of those headers, and ``Content-Length``, must appear once: a repeat is refused.
+
+What leaves through errors: settings that ``http.client`` would refuse (a key or address
+with a control, space or non-ASCII character) are refused in :func:`load_config`, because
+``http.client``'s own error would quote them. Any exception the route did not expect is
+answered with the fixed ``gateway-failed`` refusal and logged as the usual fixed line;
+neither its text nor a traceback is written anywhere.
+
+Python 3.12 or later (the project's minimum) is assumed: the body timeout is caught as
+``TimeoutError``, which ``socket.timeout`` is an alias of from Python 3.10 on.
 """
 
 from __future__ import annotations
@@ -49,6 +59,8 @@ GATEWAY_TIMEOUT_SECONDS = 20.0
 BODY_TIMEOUT_SECONDS = 10.0
 # A 2,560-d vector as JSON is well under 100 KB; anything far larger is not an answer.
 MAX_GATEWAY_BYTES = 16 * 1_048_576
+# A model id the gateway names is shown to the page only up to this length.
+MAX_MODEL_CHARS = 200
 
 LIMITS = {
     "maxTextChars": MAX_TEXT_CHARS,
@@ -132,7 +144,14 @@ class RouteConfig:
         }
 
 
+def _header_safe(value: str) -> bool:
+    """Visible ASCII only (no space, control or non-ASCII character), as a header needs."""
+    return bool(value) and all("!" <= ch <= "~" for ch in value)
+
+
 def _usable_base_url(url: str) -> bool:
+    if not _header_safe(url):
+        return False
     try:
         parts = urlsplit(url)
         port = parts.port
@@ -170,12 +189,18 @@ def load_config(
     query_prefix: str | None = None,
 ) -> RouteConfig:
     """Read the gateway settings. Called only when ``--embed`` is given."""
-    key = next((environ[v] for v in KEY_VARIABLES if environ.get(v)), "")
-    if not key:
+    variable = next((v for v in KEY_VARIABLES if environ.get(v)), None)
+    if variable is None:
         names = " or ".join(KEY_VARIABLES)
         raise ConfigError(
             f"no gateway key: set {names}",
             "start the server under grant run so the key is only in its environment",
+        )
+    key = environ[variable]
+    if not _header_safe(key):
+        raise ConfigError(
+            f"{variable} holds characters a request header cannot carry",
+            "set it to the key alone: visible ASCII, no spaces or line breaks",
         )
     base_url = environ.get(URL_VARIABLE) or DEFAULT_EMBED_URL
     _check_base_url(base_url)
@@ -236,9 +261,11 @@ def _finite_number(value: object) -> bool:
 
 
 def _answered_model(answer: object, asked: str) -> str:
-    """The model the gateway says it used, else the one asked for."""
+    """The model the gateway says it used, else the one asked for (also when too long)."""
     model = answer.get("model") if isinstance(answer, dict) else None
-    return model if isinstance(model, str) and model else asked
+    if isinstance(model, str) and 0 < len(model) <= MAX_MODEL_CHARS:
+        return model
+    return asked
 
 
 def parse_embedding(answer: object) -> list[float] | None:
@@ -270,20 +297,20 @@ def _score_row(row: object, count: int) -> tuple[int, float] | None:
 def parse_rerank(answer: object, count: int) -> list[float] | None:
     """One score per candidate from ``results[].index`` / ``relevance_score``, or None.
 
-    The shape is the one vLLM's ``/v1/rerank`` documents; it is an assumption not yet
-    checked against the real gateway (see ``docs/search-interface.md``). Every candidate
-    must be scored exactly once.
+    The shape is the one vLLM's ``/v1/rerank`` documents, checked against the gateway on
+    2026-11-14 (``Qwen/Qwen3-Reranker-0.6B``). Every candidate must be scored exactly once:
+    ``count`` rows, each a distinct index below ``count``, so every index is present.
     """
     results = answer.get("results") if isinstance(answer, dict) else None
     if not isinstance(results, list) or len(results) != count:
         return None
-    scores: list[float | None] = [None] * count
+    scores: dict[int, float] = {}
     for row in results:
         parsed = _score_row(row, count)
-        if parsed is None or scores[parsed[0]] is not None:
+        if parsed is None or parsed[0] in scores:
             return None
         scores[parsed[0]] = parsed[1]
-    return [s for s in scores if s is not None]
+    return [scores[i] for i in range(count)]
 
 
 # --- the rate window ----------------------------------------------------------------
@@ -390,20 +417,21 @@ class EmbedRoute:
     # -- checks, in order ---------------------------------------------------------
 
     def _check_caller(self, headers) -> None:
-        host = (headers.get("Host") or "").strip().lower()
+        host = _single(headers, "Host", "wrong-host").strip().lower()
         if host not in self._hosts:
             raise Refusal("wrong-host")
-        origin = (headers.get("Origin") or "").strip().lower()
+        origin = _single(headers, "Origin", "wrong-origin").strip().lower()
         if origin != urlunsplit(("http", host, "", "", "")):
             raise Refusal("wrong-origin")
-        ctype = (headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-        if ctype != "application/json":
+        ctype = _single(headers, "Content-Type", "wrong-content-type")
+        if ctype.split(";", 1)[0].strip().lower() != "application/json":
             raise Refusal("wrong-content-type")
 
     @staticmethod
     def _length(headers) -> int:
-        raw = headers.get("Content-Length")
-        if raw is None or not raw.strip().isdigit():
+        raw = _single(headers, "Content-Length", "too-large").strip()
+        # ASCII digits only: str.isdigit alone also accepts other scripts' digits.
+        if not (raw.isascii() and raw.isdigit()):
             raise Refusal("too-large")
         length = int(raw)
         if length > MAX_BODY_BYTES:
@@ -488,7 +516,16 @@ class EmbedRoute:
             # The body did not arrive in time: drop the connection without an answer.
             _log(handler, state, "dropped")
             return
-        _send(handler, status, payload)
+        except Exception:  # noqa: BLE001 - its text could carry the key, address or query
+            refusal = Refusal("gateway-failed", _failed_message(state["op"]))
+            payload = {"ok": False, "code": refusal.code, "message": refusal.message}
+            status = refusal.status
+        try:
+            _send(handler, status, payload)
+        except OSError:
+            # The client went away before the answer was written.
+            _log(handler, state, "gone")
+            return
         _log(handler, state, str(int(status)))
 
     def _handle(self, handler, state: dict) -> dict[str, object]:
@@ -509,6 +546,18 @@ class EmbedRoute:
         if op in _OPS:
             state["op"] = op
         return self.answer(body)
+
+
+def _single(headers, name: str, code: str) -> str:
+    """The one value of header ``name`` ("" when absent); a repeat is refused with ``code``."""
+    values = headers.get_all(name) or []
+    if len(values) > 1:
+        raise Refusal(code)
+    return values[0] if values else ""
+
+
+def _failed_message(op: str) -> str:
+    return _RERANK_FAILED if op == "rerank" else _EMBED_FAILED
 
 
 def _send(handler, status: HTTPStatus, payload: dict) -> None:

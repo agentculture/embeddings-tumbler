@@ -756,13 +756,233 @@ def test_bind_accepts_only_the_bound_address_names():
     route = EmbedRoute(_config("http://127.0.0.1:9/v1"))
     route.bind("127.0.0.2", 80)
     for host in ("localhost", "127.0.0.2", "localhost:80", "[::1]:80", "[::1]"):
-        route._check_caller({"Host": host, "Origin": f"http://{host}", "Content-Type": JSON})
+        route._check_caller(
+            _message({"Host": host, "Origin": f"http://{host}", "Content-Type": JSON})
+        )
     with pytest.raises(Refusal):
-        route._check_caller({"Host": "localhost:81", "Origin": "x", "Content-Type": JSON})
+        route._check_caller(_message({"Host": "localhost:81", "Origin": "x", "Content-Type": JSON}))
     remote = EmbedRoute(_config("http://127.0.0.1:9/v1"))
     remote.bind("192.0.2.7", 8000)
     bound = "192.0.2.7:8000"
-    remote._check_caller({"Host": bound, "Origin": f"http://{bound}", "Content-Type": JSON})
+    remote._check_caller(
+        _message({"Host": bound, "Origin": f"http://{bound}", "Content-Type": JSON})
+    )
     for host in ("localhost:8000", "127.0.0.1:8000"):
         with pytest.raises(Refusal):
-            remote._check_caller({"Host": host, "Origin": f"http://{host}", "Content-Type": JSON})
+            remote._check_caller(
+                _message({"Host": host, "Origin": f"http://{host}", "Content-Type": JSON})
+            )
+
+
+# --- review follow-ups: header-unsafe settings, unexpected errors, headers ----------
+
+BAD_KEY = KEY + "\r\nX-Injected: " + KEY
+
+
+def _all_output(capsys, texts):
+    time.sleep(0.05)
+    cap = capsys.readouterr()
+    return [*texts, cap.out, cap.err]
+
+
+@pytest.mark.parametrize("bad", [BAD_KEY, KEY + "\n", KEY + " tail", KEY + "\x00", KEY + "é", " "])
+def test_load_config_refuses_a_key_a_header_cannot_carry(bad):
+    with pytest.raises(ConfigError) as exc:
+        load_config({"EMBEDDINGS_API_KEY": bad})
+    text = exc.value.message + exc.value.remediation
+    assert "EMBEDDINGS_API_KEY" in text
+    assert KEY not in text
+
+
+def test_load_config_names_the_fallback_variable_for_a_bad_key():
+    with pytest.raises(ConfigError) as exc:
+        load_config({"COLLEAGUE_API_KEY": BAD_KEY})
+    assert "COLLEAGUE_API_KEY" in exc.value.message
+    assert KEY not in exc.value.message
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"http://127.0.0.1:9/{ADDRESS_PART}\r\nX: y/v1",
+        f"http://127.0.0.1:9/{ADDRESS_PART} space/v1",
+        f"http://127.0.0.1:9/{ADDRESS_PART}é/v1",
+        f"http://127.0.0.1:9/{ADDRESS_PART}\x00/v1",
+    ],
+)
+def test_load_config_refuses_an_address_a_request_line_cannot_carry(url):
+    with pytest.raises(ConfigError) as exc:
+        load_config({"EMBEDDINGS_API_KEY": KEY, "EMBEDDINGS_EMBED_URL": url})
+    assert ADDRESS_PART not in exc.value.message + exc.value.remediation
+
+
+def _start_with(tmp_path, config):
+    route = EmbedRoute(config, gateway_timeout=0.5)
+    server, thread = _start(tmp_path, route)
+    return _Served(server, route), server, thread
+
+
+def _stop(server, thread):
+    server.shutdown()
+    server.server_close()
+    thread.join(5)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"key": BAD_KEY},  # http.client refuses the header, naming its value
+        {"base_url": None},  # filled in below: a path http.client refuses, naming it
+    ],
+)
+def test_settings_that_slipped_past_load_config_never_leak(tmp_path, gateway, capsys, overrides):
+    if overrides.get("base_url", "") is None:
+        # urlsplit drops CR and LF itself; a space reaches http.client, which refuses it.
+        overrides = {"base_url": f"http://127.0.0.1:{gateway.port}/{ADDRESS_PART} x/v1"}
+    served, server, thread = _start_with(tmp_path, _config(gateway.base, **overrides))
+    try:
+        texts = []
+        for body in (
+            {"op": "embed", "text": QUERY},
+            {"op": "rerank", "query": QUERY, "candidates": ["a"]},
+        ):
+            status, headers, raw, status_line = _request(served, body=body)
+            assert status == 502
+            assert json.loads(raw)["code"] == "gateway-failed"
+            texts += [status_line, json.dumps(headers), raw.decode()]
+        texts = _all_output(capsys, texts)
+        assert "Traceback" not in "\n".join(texts)
+        _scan(texts, gateway)
+    finally:
+        _stop(server, thread)
+
+
+def test_model_names_travel_in_the_body_only(tmp_path, gateway, capsys):
+    odd = "model\r\nX-Injected: 1"
+    served, server, thread = _start_with(
+        tmp_path, _config(gateway.base, embed_model=odd, rerank_model=odd)
+    )
+    gateway.model_in_answer = None
+    try:
+        payload = _post(served, {"op": "embed", "text": "x"})[2]
+        assert payload["model"] == odd
+        assert gateway.seen[-1]["body"]["model"] == odd
+        assert _post(served, {"op": "rerank", "query": "q", "candidates": ["a"]})[0] == 200
+        assert "X-Injected" not in capsys.readouterr().err
+    finally:
+        _stop(server, thread)
+
+
+def test_an_unexpected_error_is_a_fixed_refusal_and_a_fixed_log_line(served, capsys, monkeypatch):
+    def explode(self, body):
+        raise RuntimeError(f"{KEY} {GATEWAY_TEXT} {QUERY} {ADDRESS_PART}")
+
+    monkeypatch.setattr(EmbedRoute, "answer", explode)
+    status, headers, raw, status_line = _request(served, body={"op": "embed", "text": QUERY})
+    payload = json.loads(raw)
+    assert status == 502
+    assert payload == {
+        "ok": False,
+        "code": "gateway-failed",
+        "message": "The embedding service did not answer.",
+    }
+    texts = _all_output(capsys, [status_line, json.dumps(headers), raw.decode()])
+    log = texts[-1]
+    assert "Traceback" not in log
+    assert "RuntimeError" not in log
+    assert log.strip().endswith(f"POST {_embed_route.ROUTE} op=embed 502 51")
+    for sentinel in (KEY, GATEWAY_TEXT, QUERY, ADDRESS_PART):
+        assert sentinel not in "\n".join(texts)
+
+
+def test_a_client_gone_before_the_answer_is_written_is_quiet(served, capsys, monkeypatch):
+    def gone(*_a, **_k):
+        raise BrokenPipeError(KEY)
+
+    monkeypatch.setattr(_embed_route, "_send", gone)
+    with pytest.raises((http.client.HTTPException, OSError)):
+        _request(served, body={"op": "describe"})
+    err = "\n".join(_all_output(capsys, []))
+    assert "Traceback" not in err
+    assert KEY not in err
+    assert "gone" in err
+
+
+@pytest.mark.parametrize("length", ["¹²", "1²", "+17", "1_7"])
+def test_non_ascii_or_signed_digits_in_the_length_are_too_large(served, length):
+    # Headers are read as Latin-1, where the superscript digits pass str.isdigit.
+    lines = [*_good_lines(served)[:3], f"Content-Length: {length}"]
+    got, _, payload = _raw_post(served, lines)
+    assert got == 413
+    assert payload["code"] == "too-large"
+
+
+@pytest.mark.parametrize("length", ["١٧", "１７", "¹⁷", "²"])
+def test_parse_length_accepts_ascii_digits_only(length):
+    assert EmbedRoute._length(_message({"Content-Length": " 17 "})) == 17
+    with pytest.raises(Refusal):
+        EmbedRoute._length(_message({"Content-Length": length}))
+
+
+def test_a_long_model_name_from_the_gateway_falls_back_to_the_asked_model(served, gateway):
+    gateway.model_in_answer = "m" * 201
+    assert _post(served, {"op": "embed", "text": "x"})[2]["model"] == "embed-model"
+    body = {"op": "rerank", "query": "q", "candidates": ["a"]}
+    assert _post(served, body)[2]["model"] == "rerank-model"
+    gateway.model_in_answer = "m" * 200
+    assert _post(served, {"op": "embed", "text": "x"})[2]["model"] == "m" * 200
+
+
+def _message(pairs):
+    from email.message import Message
+
+    message = Message()
+    for name, value in pairs.items() if isinstance(pairs, dict) else pairs:
+        message[name] = value
+    return message
+
+
+def _raw_post(served, header_lines, body=b'{"op": "describe"}'):
+    head = f"POST {_embed_route.ROUTE} HTTP/1.1\r\n" + "".join(f"{h}\r\n" for h in header_lines)
+    with socket.create_connection(("127.0.0.1", served.port), timeout=5) as sock:
+        sock.sendall(head.encode("latin-1") + b"\r\n" + body)
+        chunks = []
+        while chunk := sock.recv(65536):
+            chunks.append(chunk)
+    data = b"".join(chunks)
+    head_part, _, payload = data.partition(b"\r\n\r\n")
+    return int(head_part.split()[1]), head_part.decode(), json.loads(payload)
+
+
+def _good_lines(served, length=18):
+    return [
+        f"Host: {served.host}",
+        f"Origin: {served.origin}",
+        f"Content-Type: {JSON}",
+        f"Content-Length: {length}",
+    ]
+
+
+def test_raw_post_baseline_is_answered(served):
+    assert _raw_post(served, _good_lines(served))[0] == 200
+
+
+@pytest.mark.parametrize(
+    "extra,code,status",
+    [
+        ("Host: {host}", "wrong-host", 403),
+        ("Host: evil.example", "wrong-host", 403),
+        ("Origin: {origin}", "wrong-origin", 403),
+        ("Origin: https://evil.example", "wrong-origin", 403),
+        ("Content-Type: application/json", "wrong-content-type", 415),
+        ("Content-Type: text/plain", "wrong-content-type", 415),
+        ("Content-Length: 18", "too-large", 413),
+        ("Content-Length: 5", "too-large", 413),
+    ],
+)
+def test_a_repeated_header_is_refused(served, extra, code, status):
+    line = extra.format(host=served.host, origin=served.origin)
+    got, head, payload = _raw_post(served, [*_good_lines(served), line])
+    assert got == status
+    assert payload["code"] == code
+    assert "access-control" not in head.lower()

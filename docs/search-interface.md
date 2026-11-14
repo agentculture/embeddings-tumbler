@@ -717,9 +717,10 @@ need it. Gateway calls: OpenAI-compatible `POST <base>/embeddings` with
 `{ "model", "input": [text] }`, reading `data[0].embedding`; rerank posts
 `{ "model", "query", "documents" }` to `<base>/rerank` and reads
 `results[].index` and `results[].relevance_score` into one score per
-candidate. The rerank shape is an assumption not yet checked against the
-gateway (the spec did not probe a reranker); t5 checks it and reports a
-difference rather than guessing.
+candidate. Both shapes were checked against the gateway on 2026-11-14: embed
+returned a 1,024-dimension unit vector with its model id, and rerank returned
+scores from `Qwen/Qwen3-Reranker-0.6B` with exactly this request and answer
+shape.
 
 ### Checks and refusals
 
