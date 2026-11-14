@@ -133,9 +133,14 @@ stage height, `--tumbler-stage-height` on `.space` (the reference's
 `page.css` also adjusts the viewer's spacing to the reference's (panel centred
 at 1,120 px under the full-bleed sky, masthead and status offsets, mode title
 and caption sizes, a 22 px readout strip, the sky fading into the panel).
-These rules use the class names `js/api/50-viewer.md` documents as stable, with
-`!important` because the viewer styles itself inline. They change spacing and
-sizes only.
+It does so by setting the viewer's spacing custom properties
+(`--tumbler-masthead-top`, `--tumbler-title-size`, `--tumbler-panel-gap` and
+the others `js/api/50-viewer.md` lists) on `.space`, and the narrow mode-title
+size in its own `max-width: 600px` media query, so it needs no `!important`
+(a test keeps `page.css` free of it). The few things the viewer does not set
+inline (the panel's width and centring, the title's letter spacing and
+balanced wrapping, the sky's fade) are plain rules on the class names
+`js/api/50-viewer.md` documents as stable. They change spacing and sizes only.
 
 ## Fonts
 

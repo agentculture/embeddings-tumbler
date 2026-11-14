@@ -169,9 +169,11 @@ with `subspace: 8`, `step(0)` until done:
 | 10,500 x 1024 | none | 890 ms | 1,746 | 1.4 ms |
 
 Total time is the blocking call's give or take noise (the pauses cost nothing
-measurable). Note for tests: in a `node:vm` context (`loadSources`) `Math`
-calls are much slower than in the assembled file and `performance` is absent
-(the clock falls back to `Date.now`), so measure with the assembled file.
+measurable). Note for tests: `loadSources` runs the modules through node's own
+`require()` in node's ordinary global context, so `performance` is present and
+the code runs at the assembled file's speed (a 3,000 x 384 `guidedTour` took
+2.0 to 2.2 s either way, three runs each, 2026-11-14). Still measure with the
+assembled file, which is what ships.
 
 ## The guided tour (Tumble)
 

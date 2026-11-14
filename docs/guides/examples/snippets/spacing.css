@@ -1,0 +1,16 @@
+/* Roomier spacing. The viewer uses each property where it is set, at every width, and its
+   own value where it is not; nothing needs to outrank the viewer's inline styles. */
+.space {
+  --tumbler-masthead-top: 22px;
+  --tumbler-title-size: clamp(34px, 6vw, 64px);
+  --tumbler-panel-gap: 20px;
+  --tumbler-mode-title-size: 28px;
+  --tumbler-controls-gap: 10px 22px;
+}
+
+/* A narrow value of your own: set the property again in your own media query. */
+@media (max-width: 600px) {
+  .space {
+    --tumbler-mode-title-size: 24px;
+  }
+}

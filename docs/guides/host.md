@@ -633,6 +633,55 @@ document.getElementById("space").style.setProperty("--tumbler-accent", "#ff8a65"
 viewer.refreshTheme();
 ```
 
+### Spacing
+
+The viewer also takes its main spacing and sizes from custom properties, so you
+can adjust them from your stylesheet without `!important`. Unlike the colours,
+these are used by the browser directly: a change takes effect at once, with no
+`refreshTheme()`, and never clears the picture. Leave a property unset and the
+viewer uses its own value. Two have a smaller value of the viewer's own when the
+viewer is under 600 px wide; a value you set is used at every width, so set it
+again in your own media query if you want a narrow one.
+
+| Property | Default | Under 600 px wide | Sets |
+|----------|---------|-------------------|------|
+| `--tumbler-masthead-top` | `14px` | same | the title block's distance from the top of the picture |
+| `--tumbler-masthead-left` | `16px` | same | the title block's left inset |
+| `--tumbler-masthead-right` | `16px` | same | the title block's right inset |
+| `--tumbler-title-size` | `clamp(28px, 6vw, 56px)` | same | the title's font size |
+| `--tumbler-title-margin` | `0 0 6px` | same | the margin around the title |
+| `--tumbler-status-left` | `16px` | same | the status line's left inset |
+| `--tumbler-status-right` | `16px` | same | the status line's right inset |
+| `--tumbler-status-bottom` | `10px` | same | the status line's distance from the bottom of the picture |
+| `--tumbler-panel-padding` | `6px 16px 16px` | `6px 12px 14px` | the padding of the panel below the picture |
+| `--tumbler-panel-gap` | `14px` | same | the space between the panel's parts |
+| `--tumbler-mode-padding` | `10px 12px 8px 0` | same | the padding of each mode button |
+| `--tumbler-mode-title-size` | `24px` | `20px` | the font size of the mode names |
+| `--tumbler-mode-summary-size` | `12.5px` | same (the summaries are hidden) | the font size of the mode summaries |
+| `--tumbler-readout-caption-size` | `11.5px` | same | the font size of the caption under the readout strip |
+| `--tumbler-controls-gap` | `10px 18px` | same | the row and column gaps between the controls |
+
+<!-- file: examples/snippets/spacing.css -->
+
+```css
+/* Roomier spacing. The viewer uses each property where it is set, at every width, and its
+   own value where it is not; nothing needs to outrank the viewer's inline styles. */
+.space {
+  --tumbler-masthead-top: 22px;
+  --tumbler-title-size: clamp(34px, 6vw, 64px);
+  --tumbler-panel-gap: 20px;
+  --tumbler-mode-title-size: 28px;
+  --tumbler-controls-gap: 10px 22px;
+}
+
+/* A narrow value of your own: set the property again in your own media query. */
+@media (max-width: 600px) {
+  .space {
+    --tumbler-mode-title-size: 24px;
+  }
+}
+```
+
 ## Lifecycle
 
 - **Mount once per element.** One element holds one viewer. `mount` on an element

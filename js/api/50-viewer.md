@@ -296,9 +296,11 @@ from before the performance pass and were not re-measured.
 
 `mount` appends **one** element to `el` and nothing anywhere else; `destroy`
 removes it. The host element's own attributes and styles are not touched.
-Class names are stable (for the harness and for host CSS that wants to adjust
-spacing; the viewer sets its styles inline from script, so host rules need
-`!important` to win):
+Class names are stable (for the harness and for host CSS). The viewer sets its
+styles inline from script, so a plain host rule on a class name only reaches
+what the viewer leaves unset; to change the spacing and sizes it does set, a host
+sets the spacing custom properties listed under "Theming" below, which need no
+`!important`:
 
 ```text
 div.tumbler                       role="group", aria-label, tabindex="0" (keys work while focus is inside)
@@ -327,7 +329,9 @@ attribute, no `<style>` element, no stylesheet, so a `style-src 'self'` policy
 with no inline styles allows it (checked with zero CSP violations in
 `tests/browser/test_viewer_render.py`). The layout reacts to the element's width
 (a `ResizeObserver`), since there are no media queries: below 600 px the mode
-summaries are hidden; below 520 px the provenance list stacks; the status line
+summaries are hidden, and the mode titles and the panel padding take their
+narrow defaults (see "Spacing custom properties") and the buttons their touch
+height; below 520 px the provenance list stacks; the status line
 and the controls wrap. The two breakpoints are evaluated on their own at every
 size change (a resize from 560 px to 360 px stacks the list). Checked at 390 px
 wide.
@@ -356,6 +360,44 @@ the trails and the colours alone.
 | `--tumbler-font-display` | `"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif` | same | title, mode names, Wander's stop name |
 | `--tumbler-light-style` | `soft` | same | `panel`, `ink` or `soft`: how a light background is drawn (below); ignored on a dark background |
 | `--tumbler-stage-height` | `clamp(300px, 62vh, 860px)` | same | height of the stage (any CSS length) |
+
+### Spacing custom properties
+
+The spacing and sizes a host is most likely to adjust are set inline as
+`var(--tumbler-<name>, <default>)`, so a host stylesheet sets the property on the
+host element or an ancestor and needs no `!important`. With none set, the browser
+uses the default, so a host that sets nothing sees exactly the viewer's own
+layout. The browser resolves `var()` itself and live: these properties are not
+read into the theme, a change to one needs no `refreshTheme()`, and it never
+clears the trails. Values are any CSS the property accepts (a length,
+`clamp()`, `var()` of the host's own properties).
+
+Two have a different default below 600 px (the viewer's own breakpoint, on the
+element's width). A host's value wins at every width; to have a narrow value of
+its own, a host sets the property again inside its own media query, as the
+standalone page does for the mode title.
+
+| Property | Default | Below 600 px | Sets |
+|----------|---------|--------------|------|
+| `--tumbler-masthead-top` | `14px` | same | `top` of `div.tumbler-masthead` |
+| `--tumbler-masthead-left` | `16px` | same | `left` of `div.tumbler-masthead` |
+| `--tumbler-masthead-right` | `16px` | same | `right` of `div.tumbler-masthead` |
+| `--tumbler-title-size` | `clamp(28px, 6vw, 56px)` | same | `font-size` of `p.tumbler-title` |
+| `--tumbler-title-margin` | `0 0 6px` | same | `margin` of `p.tumbler-title` |
+| `--tumbler-status-left` | `16px` | same | `left` of `p.tumbler-status` |
+| `--tumbler-status-right` | `16px` | same | `right` of `p.tumbler-status` |
+| `--tumbler-status-bottom` | `10px` | same | `bottom` of `p.tumbler-status` |
+| `--tumbler-panel-padding` | `6px 16px 16px` | `6px 12px 14px` | `padding` of `div.tumbler-panel` |
+| `--tumbler-panel-gap` | `14px` | same | `gap` of `div.tumbler-panel` (between the mode switch, readout, controls and provenance) |
+| `--tumbler-mode-padding` | `10px 12px 8px 0` | same | `padding` of each `button.tumbler-mode` |
+| `--tumbler-mode-title-size` | `24px` | `20px` | `font-size` of each `b.tumbler-mode-title` |
+| `--tumbler-mode-summary-size` | `12.5px` | same (the summaries are hidden) | `font-size` of each `span.tumbler-mode-summary` |
+| `--tumbler-readout-caption-size` | `11.5px` | same | `font-size` of `p.tumbler-readout-caption` |
+| `--tumbler-controls-gap` | `10px 18px` | same | `gap` (rows, then columns) of `div.tumbler-controls` |
+
+The viewer sets no width or margin on `div.tumbler-panel` and no letter spacing
+on the title, so a host centres or narrows the panel with a plain rule on the
+class name.
 
 - Colours accept hex, `rgb()`/`rgba()`, `hsl()`/`hsla()`, and anything else the
   browser resolves (resolved through a hidden probe element inside the viewer).
