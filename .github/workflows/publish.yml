@@ -189,7 +189,10 @@ jobs:
         if: steps.npm.outputs.state == 'absent'
         env:
           TARBALL: ${{ steps.build.outputs.tarball }}
-        run: npm publish "$TARBALL" --provenance --access public
+        # Verbose, so that a refused identity exchange says why in the job log
+        # (the first tokenless run failed with only "need auth"). npm redacts
+        # credentials in its own log lines.
+        run: npm publish "$TARBALL" --provenance --access public --loglevel verbose
 
   publish:
     if: github.event_name == 'push'
