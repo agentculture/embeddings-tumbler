@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.6] - 2026-11-14
+
+### Added
+
+- The plan for search in the viewer (`docs/plans/2026-11-14-search-in-the-embedding-viewer.md`, 15 tasks in 6 waves) and its split record.
+
 ## [0.11.5] - 2026-11-14
 
 ### Added
