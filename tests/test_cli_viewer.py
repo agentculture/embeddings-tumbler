@@ -295,3 +295,102 @@ def test_serve_bad_folder_and_port(tmp_path, capsys):
     assert main(["viewer", "serve", str(tmp_path / "missing")]) == 1
     assert main(["viewer", "serve", str(tmp_path), "--port", "70000"]) == 1
     assert capsys.readouterr().err.count("error:") == 2
+
+
+def _get_no_redirect(url):
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(url, timeout=5) as r:  # noqa: S310  # nosec B310
+            return r.status, dict(r.headers), r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers), e.read()
+
+
+def test_serve_directory_without_slash_redirects(served):
+    base, _ = served
+    status, headers, body = _get_no_redirect(base + "/sub")
+    assert status == 301
+    assert headers["Location"] == "/sub/"
+    assert body != b"sub"
+    status, headers, _ = _get_no_redirect(base + "/sub?x=1")
+    assert status == 301 and headers["Location"] == "/sub/?x=1"
+    # following the redirect lands on the folder's index
+    assert _get(base + "/sub")[2] == b"sub"
+    # a HEAD is redirected too, a missing folder or an escape is still a 404
+    assert _get_no_redirect(base + "/nope")[0] == 404
+    assert _get_no_redirect(base + "/..%2f..")[0] in (400, 404)
+
+
+def test_serve_redirect_does_not_point_off_site(served):
+    base, _ = served
+    # a request target starting with two slashes must not become a
+    # protocol-relative Location to another host
+    status, headers, _ = _get_no_redirect(base + "//sub")
+    assert status in (301, 404)
+    if status == 301:
+        assert not headers["Location"].startswith("//")
+
+
+def _ipv6_loopback_available() -> bool:
+    import socket
+
+    if not socket.has_ipv6:
+        return False
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+            s.bind(("::1", 0))
+    except OSError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(not _ipv6_loopback_available(), reason="no IPv6 loopback on this machine")
+def test_serve_ipv6_loopback(tmp_path, capsys, monkeypatch):
+    (tmp_path / "index.html").write_text("six")
+    started = {}
+    monkeypatch.setattr(viewer_cmd, "run_server", lambda s: started.setdefault("s", s))
+    assert main(["viewer", "serve", str(tmp_path), "--port", "0", "--host", "::1", "--json"]) == 0
+    server = started["s"]
+    cap = capsys.readouterr()
+    payload = json.loads(cap.out)
+    assert payload["host"] == "::1"
+    assert payload["url"] == f"http://[::1]:{payload['port']}/"
+    assert "warning" not in cap.err
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert _get(payload["url"])[2] == b"six"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
+def test_make_server_picks_address_family_from_host():
+    import socket
+
+    assert _static_server.address_family("127.0.0.1") == socket.AF_INET
+    assert _static_server.address_family("localhost") == socket.AF_INET
+    assert _static_server.address_family("::1") == socket.AF_INET6
+
+
+def test_serve_bind_failure_remediation_names_the_cause(tmp_path, capsys, monkeypatch):
+    import errno as _errno
+
+    def refuse(code):
+        def _make(*_a, **_k):
+            raise OSError(code, "refused")
+
+        return _make
+
+    monkeypatch.setattr(_static_server, "make_server", refuse(_errno.EADDRINUSE))
+    assert main(["viewer", "serve", str(tmp_path), "--port", "8000"]) == 2
+    assert "--port" in capsys.readouterr().err
+    monkeypatch.setattr(_static_server, "make_server", refuse(_errno.EADDRNOTAVAIL))
+    assert main(["viewer", "serve", str(tmp_path), "--host", "::1", "--json"]) == 2
+    cap = capsys.readouterr()
+    assert "--host" in cap.err and "Traceback" not in cap.err and cap.out == ""

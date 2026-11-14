@@ -10,11 +10,12 @@ from __future__ import annotations
 import ipaddress
 import os
 import posixpath
+import socket
 from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 DEFAULT_HOST = "127.0.0.1"
 
@@ -48,14 +49,32 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def resolve_request(root: Path, raw_path: str) -> Path | None:
-    """Map a request target to a regular file inside ``root``, or None."""
+def address_family(host: str) -> socket.AddressFamily:
+    """IPv6 for an IPv6 literal (``::1``), IPv4 for everything else."""
+    try:
+        if ipaddress.ip_address(host).version == 6:
+            return socket.AF_INET6
+    except ValueError:
+        pass
+    return socket.AF_INET
+
+
+def _parts(raw_path: str) -> tuple[str, list[str]] | None:
     path = unquote(urlsplit(raw_path).path)
     if "\x00" in path or "\\" in path:
         return None
     parts = [p for p in path.split("/") if p not in ("", ".")]
     if ".." in parts:
         return None
+    return path, parts
+
+
+def resolve_request(root: Path, raw_path: str) -> Path | None:
+    """Map a request target to a regular file inside ``root``, or None."""
+    split = _parts(raw_path)
+    if split is None:
+        return None
+    path, parts = split
     candidate = root.joinpath(*parts)
     if path.endswith("/") or candidate.is_dir():
         candidate = candidate / "index.html"
@@ -63,6 +82,31 @@ def resolve_request(root: Path, raw_path: str) -> Path | None:
     if not real.is_relative_to(root) or not real.is_file():
         return None
     return real
+
+
+def directory_redirect(root: Path, raw_path: str) -> str | None:
+    """The slash form of a request for a folder named without its trailing slash.
+
+    Returns the ``Location`` to send (``/sub/``, query kept), or None when the
+    request is not for such a folder. Only a folder inside ``root`` that has an
+    ``index.html`` the server would serve is redirected; everything else falls
+    through to the normal (404) path. Like ``http.server``, so that relative
+    links in the folder's page resolve against the folder, not its parent.
+    """
+    split = _parts(raw_path)
+    if split is None:
+        return None
+    path, parts = split
+    if path.endswith("/") or not parts:
+        return None
+    if resolve_request(root, raw_path) is None:
+        return None
+    real = Path(os.path.realpath(root.joinpath(*parts)))
+    if not real.is_dir() or not real.is_relative_to(root):
+        return None
+    query = urlsplit(raw_path).query
+    location = "/" + "/".join(quote(p) for p in parts) + "/"
+    return location + ("?" + query if query else "")
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -75,6 +119,14 @@ class _Handler(BaseHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def _send_head(self) -> Path | None:
+        location = directory_redirect(self._root, self.path)
+        if location is not None:
+            self.send_response(HTTPStatus.MOVED_PERMANENTLY)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return None
         target = resolve_request(self._root, self.path)
         if target is None:
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
@@ -109,12 +161,17 @@ class _Handler(BaseHTTPRequestHandler):
             super().log_message(format, *args)
 
 
+class _ThreadingHTTPServerV6(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
 def make_server(
     root: Path, host: str = DEFAULT_HOST, port: int = 0, *, quiet: bool = False
 ) -> ThreadingHTTPServer:
     """Build (bind) the server without starting it. ``port`` 0 picks a free port."""
     real_root = Path(os.path.realpath(root))
     handler = partial(_Handler, root=real_root, quiet=quiet)
-    server = ThreadingHTTPServer((host, port), handler)
+    server_class = _ThreadingHTTPServerV6 if address_family(host) == socket.AF_INET6 else None
+    server = (server_class or ThreadingHTTPServer)((host, port), handler)
     server.daemon_threads = True
     return server

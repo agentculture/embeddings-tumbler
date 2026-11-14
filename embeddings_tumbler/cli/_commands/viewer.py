@@ -8,6 +8,7 @@ the agent-first set (whoami, learn, explain, overview, doctor).
 from __future__ import annotations
 
 import argparse
+import errno
 import sys
 from pathlib import Path
 
@@ -89,10 +90,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
     try:
         server = _static_server.make_server(root, args.host, args.port, quiet=_json(args))
     except OSError as err:
+        if err.errno == errno.EADDRINUSE:
+            remedy = "pick another --port (0 picks a free one)"
+        else:
+            remedy = "check that --host is an address of this machine (127.0.0.1 or ::1)"
         raise CliError(
-            EXIT_ENV_ERROR,
-            f"could not bind {args.host}:{args.port}: {err}",
-            "pick another --port (0 picks a free one)",
+            EXIT_ENV_ERROR, f"could not bind {args.host}:{args.port}: {err}", remedy
         ) from err
     host, port = server.server_address[:2]
     shown = f"[{host}]" if ":" in host else host
