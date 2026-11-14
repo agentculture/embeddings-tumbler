@@ -1050,8 +1050,11 @@
     // A schedule of swaps: during cycle c = floor(t / period), axis c mod 3
     // turns a quarter turn into a hidden direction drawn from the stream
     // mixSeed(seed ^ SALT_SWAP, c). frameAt(t) is a pure function of (frame0, seed, period,
-    // basis, t); it replays cycle starts from frame0 when time goes backwards.
+    // basis, t); when time goes backwards it replays cycle starts from the nearest
+    // kept one (bounded memory: at most 33 kept frames).
     // opts: { seed (0), period (3.4 s, the reference's), basis, basisRows }
+    var SWAP_CHECKPOINT_SPACING = 16; // cycles between kept cycle starts at first
+    var SWAP_CHECKPOINTS = 32;
     function makeSwapTour(frame0, D, opts) {
       checkDim(D);
       if (D < 4) throw new RangeError("axis swaps need a dimension of at least four");
@@ -1073,21 +1076,48 @@
       var start = new Float32Array(first);
       var hidden = new Float32Array(D);
       var cycle = -1;
+      // Cycle starts kept so that a backward seek replays from the nearest one, not
+      // from frame0: at most SWAP_CHECKPOINTS (besides cycle 0), spaced further
+      // apart as the tour goes on. A replay from one gives the same bits as a
+      // replay from frame0 (the same steps on the same values).
+      var marks = [{ c: 0, start: first }];
+      var spacing = SWAP_CHECKPOINT_SPACING;
+      var steps = 0; // swap steps computed in all, for tests
+
+      function keep() {
+        if (cycle % spacing !== 0) return;
+        var at = marks.length;
+        while (at > 0 && marks[at - 1].c > cycle) at--;
+        if (marks[at - 1].c === cycle) return;
+        marks.splice(at, 0, { c: cycle, start: new Float32Array(start) });
+        if (marks.length > SWAP_CHECKPOINTS + 1) {
+          spacing *= 2;
+          marks = marks.filter(function (m) {
+            return m.c % spacing === 0;
+          });
+        }
+      }
 
       function enterCycle(c) {
-        if (c < cycle) {
-          start.set(first);
-          cycle = -1;
+        var near = marks[0];
+        for (var i = marks.length - 1; i >= 0; i--) {
+          if (marks[i].c <= c) {
+            near = marks[i];
+            break;
+          }
         }
-        if (cycle < 0) {
-          cycle = 0;
-          hiddenDirection(start, D, makeRandom(mixSeed(seed ^ SALT_SWAP, 0)), basis, basisRows, hidden);
+        if (c < cycle || cycle < 0 || near.c > cycle) {
+          start.set(near.start);
+          cycle = near.c;
+          hiddenDirection(start, D, makeRandom(mixSeed(seed ^ SALT_SWAP, cycle)), basis, basisRows, hidden);
         }
         while (cycle < c) {
           swapStep(start, cycle % 3, hidden, 1, D, start);
           orthonormalize(start, 3, D);
           cycle++;
+          steps++;
           hiddenDirection(start, D, makeRandom(mixSeed(seed ^ SALT_SWAP, cycle)), basis, basisRows, hidden);
+          keep();
         }
       }
 
@@ -1114,6 +1144,12 @@
         hiddenAt: function (t) {
           stateAt(t);
           return new Float32Array(hidden);
+        },
+        steps: function () {
+          return steps;
+        },
+        checkpoints: function () {
+          return marks.length;
         },
       };
     }

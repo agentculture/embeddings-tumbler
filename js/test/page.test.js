@@ -43,9 +43,10 @@ function runPage(search, fetchImpl) {
   const body = el("body");
   body.setAttribute("data-page-state", "loading");
   const listeners = {};
-  const world = { els, body, mounted: 0, generated: 0, fetches: [], listeners };
+  const world = { els, body, mounted: 0, generated: 0, fetches: [], listeners, updates: [] };
   const handle = {
-    update() {
+    update(data) {
+      world.updates.push(data);
       return { ok: true };
     },
     mode() {
@@ -163,6 +164,31 @@ test("a records file at the limit, or with no Content-Length, is read", async ()
     // Not a file-form set: handed to the viewer, which refuses it itself.
     assert.strictEqual(w.mounted, 1);
   }
+});
+
+test("a data file is handed over with its descriptor and the fetched block, so the viewer checks both", async () => {
+  const records = {
+    kind: "embeddings-tumbler/data",
+    schema_version: 1,
+    model: "m",
+    dimension: 1,
+    count: 2,
+    vectors: { file: "x.f32", dtype: "float64", byte_order: "big", byte_length: 8 },
+    points: [],
+  };
+  const w = runPage("?data=x.json", (url) =>
+    Promise.resolve(url.endsWith(".json") ? response(JSON.stringify(records)) : response(""))
+  );
+  await settle();
+  await settle();
+  assert.strictEqual(w.fetches.length, 2);
+  assert.strictEqual(w.updates.length, 1);
+  const v = w.updates[0].vectors;
+  assert.strictEqual(v.dtype, "float64", "the descriptor's fields reach the viewer");
+  assert.strictEqual(v.byte_order, "big");
+  assert.strictEqual(v.byte_length, 8);
+  assert.strictEqual(v.file, "x.f32");
+  assert.strictEqual(Object.prototype.toString.call(v.data), "[object ArrayBuffer]");
 });
 
 test("a load still in flight when the page is left is abandoned and changes nothing", async () => {

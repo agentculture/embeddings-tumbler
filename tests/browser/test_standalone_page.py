@@ -24,6 +24,7 @@ Playwright, a matching Chromium build, or WebGL 2 is not available, and fails in
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -85,6 +86,11 @@ def host_folder(tmp_path_factory):
     assert main(["viewer", "write", str(folder), "--apply"]) == 0
     for name in ("valid-384.json", "valid-384.f32", "bumped-version.json"):
         shutil.copy(FIXTURES / name, folder / name)
+    # The same pair whose descriptor declares big-endian float64: the file form's own
+    # checks must refuse it, not draw the bytes as garbage.
+    wrong = json.loads((FIXTURES / "valid-384.json").read_text(encoding="utf-8"))
+    wrong["vectors"].update({"dtype": "float64", "byte_order": "big"})
+    (folder / "float64-384.json").write_text(json.dumps(wrong), encoding="utf-8")
     for name in ("index.html", "page.css", "page.js", "embeddings-tumbler.js", "sample-data.js"):
         assert (folder / name).is_file(), f"viewer write did not ship {name}"
     return folder
@@ -210,5 +216,13 @@ def test_a_refused_set_shows_the_viewers_message_and_no_points(browser, base_url
     r = _open(browser, base_url, "?data=bumped-version.json")
     assert r["state"] == "refused"
     assert "schema version 2" in (r["info"]["message"] or "")
+    assert r["lit"] is not None and r["lit"] < 50, r["lit"]
+    assert r["csp"] == [] and r["console_errors"] == [] and r["foreign"] == []
+
+
+def test_a_descriptor_declaring_another_dtype_is_refused(browser, base_url):
+    r = _open(browser, base_url, "?data=float64-384.json")
+    assert r["state"] == "refused"
+    assert 'Field "vectors.dtype" is missing or not valid.' in (r["info"]["message"] or "")
     assert r["lit"] is not None and r["lit"] < 50, r["lit"]
     assert r["csp"] == [] and r["console_errors"] == [] and r["foreign"] == []

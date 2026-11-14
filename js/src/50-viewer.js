@@ -86,6 +86,7 @@ ET.viewer = (function () {
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
   var CROWD_POWER = 1;
+  var BRIGHT_WEIGHT = 0.7; // a point painted at this weight or more counts toward the light load
   var LABEL_SAMPLE = 300; // labelled points projected on the CPU per frame for labels
   var LABEL_POOL = 64; // label elements at most
   var STATUS_EVERY = 0.12; // seconds between status-line updates (the reference's)
@@ -834,7 +835,21 @@ ET.viewer = (function () {
     v.stopColour = st.light ? sfg : "rgb(255, 255, 255)";
     v.neighbourColour = cssRgb(mix(st.foreground, st.muted, 0.375));
     v.accent255 = [Math.round(t.accent[0] * 255), Math.round(t.accent[1] * 255), Math.round(t.accent[2] * 255)];
+  }
+
+  // Read the host's theme and, only when it differs from the one applied, apply it
+  // and clear the trails (drawn in the old colours). An update or a refreshTheme()
+  // with the theme unchanged leaves the trails, label styles and colours alone.
+  // Returns true when the theme changed.
+  function syncTheme(v) {
+    var t = readTheme(v);
+    var key = JSON.stringify(t);
+    if (key === v.themeKey) return false;
+    v.theme = t;
+    v.themeKey = key;
+    applyTheme(v);
     v.needClear = true;
+    return true;
   }
 
   // The dark outline under every name, in the stage's background colour.
@@ -896,8 +911,7 @@ ET.viewer = (function () {
 
   function refreshTheme(v) {
     if (v.destroyed) return;
-    v.theme = readTheme(v);
-    applyTheme(v);
+    syncTheme(v);
     if (v.set && paintKey(v) !== v.paintKey) recolour(v);
     invalidate(v);
   }
@@ -924,10 +938,13 @@ ET.viewer = (function () {
   // weight from their index. When no point is labelled at all (a labels-only set
   // whose labels are its ids), every point gets a middle weight so the view is not
   // all dust.
+  // Also returns `bright`: the sum of the weights of the bright points painted (weight
+  // BRIGHT_WEIGHT or more), which crowding() reads as the light load.
   function paint(v, set, from, to) {
     var n = to - from;
     var colours = new Float32Array(n * 3);
     var weights = new Float32Array(n);
+    var bright = 0;
     var isLabelled = ET.modes.isLabelled;
     for (var i = from; i < to; i++) {
       var p = set.points[i];
@@ -948,8 +965,9 @@ ET.viewer = (function () {
       colours[o + 1] = c[1];
       colours[o + 2] = c[2];
       weights[i - from] = w;
+      if (w >= BRIGHT_WEIGHT) bright += w;
     }
-    return { colours: colours, weights: weights };
+    return { colours: colours, weights: weights, bright: bright };
   }
 
   // Coloured ink: the hue fully saturated and darkened (labelled points a little
@@ -988,6 +1006,7 @@ ET.viewer = (function () {
     if (!set || !v.renderer || set.count === 0) return;
     var pc = paint(v, set, 0, set.count);
     var res = v.renderer.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
+    v.lightLoad = pc.bright;
     if (res && res.ok === false) fatal(v, res.message);
     if (v.mode) v.mode.wiresVersion = -1;
     v.paintKey = paintKey(v);
@@ -1191,13 +1210,14 @@ ET.viewer = (function () {
   // Options for a mode instance: the viewer's defaults (none today), then the host's
   // modeOptions. Tumble's refit turns onto the new tour over its own
   // refitTransition ("auto": sized to the turn); mode entry keeps the mode's 1.5 s.
-  var MODE_DEFAULTS = {};
+  var MODE_DEFAULTS = Object.create(null);
   function modeOptionsFor(v, id) {
     var out = {};
     var k;
     var d = MODE_DEFAULTS[id];
     if (d) for (k in d) if (Object.prototype.hasOwnProperty.call(d, k)) out[k] = d[k];
-    var host = v.options.modeOptions && v.options.modeOptions[id];
+    var mo = v.options.modeOptions;
+    var host = mo && Object.prototype.hasOwnProperty.call(mo, id) ? mo[id] : null;
     if (host && typeof host === "object") {
       for (k in host) if (Object.prototype.hasOwnProperty.call(host, k)) out[k] = host[k];
     }
@@ -1331,9 +1351,8 @@ ET.viewer = (function () {
       // invalid-field refusal), so anything caught here is a fault, not the data's.
       res = { ok: false, code: "internal", message: "Internal error while checking the data: " + errorText(err, String(err)) };
     }
-    // Re-read the host's theme on every update (no polling).
-    v.theme = readTheme(v);
-    applyTheme(v);
+    // Re-read the host's theme on every update (no polling); applied only if changed.
+    syncTheme(v);
     if (v.set && paintKey(v) !== v.paintKey) recolour(v);
     if (!res || !res.ok) {
       return refuse(v, { ok: false, code: res ? res.code : "internal", message: res ? res.message : "Data refused." });
@@ -1353,13 +1372,7 @@ ET.viewer = (function () {
       // loop is left to the frame guard, and the host gets a result.
       out = { ok: false, code: "internal", message: "Internal error while showing the data: " + errorText(err, String(err)) };
     }
-    if (!out.ok) {
-      if (!out.accepted) return refuse(v, out);
-      clearNotice(v);
-      call(v, v.options.onError, strip(out));
-      invalidate(v);
-      return strip(out);
-    }
+    if (!out.ok) return refuse(v, out);
     if (v.fatalKind === "data") clearFatal(v);
     if (v.fatalKind === "gpu" && v.rendering) clearFatal(v);
     if (op === "replace") recover(v);
@@ -1385,13 +1398,14 @@ ET.viewer = (function () {
 
   // What a failed update restores.
   function snapshot(v) {
-    var gi = {};
-    for (var k in v.groupIndex) if (Object.prototype.hasOwnProperty.call(v.groupIndex, k)) gi[k] = v.groupIndex[k];
+    var gi = Object.create(null); // group names are untrusted: no inherited names
+    for (var k in v.groupIndex) gi[k] = v.groupIndex[k];
     return {
       set: v.set,
       groupIndex: gi,
       groupNames: v.groupNames.slice(),
       labelledCount: v.labelledCount,
+      lightLoad: v.lightLoad,
       labelSample: v.labelSample.slice(),
       last: v.last,
       spin: v.spin,
@@ -1405,6 +1419,7 @@ ET.viewer = (function () {
     v.groupIndex = snap.groupIndex;
     v.groupNames = snap.groupNames;
     v.labelledCount = snap.labelledCount;
+    v.lightLoad = snap.lightLoad;
     v.labelSample = snap.labelSample;
     v.last = snap.last;
     v.spin = snap.spin;
@@ -1426,7 +1441,9 @@ ET.viewer = (function () {
       if (set) {
         var pc = paint(v, set, 0, set.count);
         r.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
+        v.lightLoad = pc.bright;
       } else {
+        v.lightLoad = 0;
         var D = r.status().dimension || 1;
         r.setData({ vectors: new Float32Array(0), dimension: D });
       }
@@ -1449,19 +1466,28 @@ ET.viewer = (function () {
 
   function applyReplace(v, set) {
     var snap = snapshot(v);
-    v.groupIndex = {};
+    v.groupIndex = Object.create(null);
     v.groupNames = [];
     v.labelledCount = countLabelled(set, 0, set.count);
     v.labelSample = [];
     extendLabelSample(v, set, 0);
-    var gpu = null;
+    v.lightLoad = 0;
     if (v.renderer) {
+      var gpu;
       try {
         var pc = paint(v, set, 0, set.count);
         gpu = v.renderer.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
+        v.lightLoad = pc.bright;
       } catch (err) {
         restore(v, snap);
         return gpuThrew(err);
+      }
+      if (gpu && gpu.ok === false) {
+        // This GPU cannot take the set (too many points, too wide, a failed build or
+        // upload): the renderer may still hold the previous set, or nothing usable,
+        // so the view goes back exactly to what it was, renderer copy included.
+        restore(v, snap);
+        return { ok: false, code: gpu.reason || "gpu-failed", message: gpu.message || "The graphics card could not take the data." };
       }
     }
     v.set = set;
@@ -1490,11 +1516,6 @@ ET.viewer = (function () {
     sizeStrip(v);
     describeSet(v);
     renderProvenance(v);
-    if (gpu && gpu.ok === false) {
-      // Accepted, but this GPU cannot draw it: the data and provenance stand.
-      fatal(v, gpu.message);
-      return { ok: false, accepted: true, code: gpu.reason, message: gpu.message };
-    }
     return { ok: true, op: "replace", count: set.count, added: set.count };
   }
 
@@ -1534,6 +1555,7 @@ ET.viewer = (function () {
         restore(v, snap);
         return { ok: false, code: gpu && gpu.reason ? gpu.reason : "gpu-failed", message: gpu && gpu.message ? gpu.message : "append failed" };
       }
+      v.lightLoad += pc.bright;
     }
     v.set = set;
     if (v.mode) {
@@ -1619,7 +1641,14 @@ ET.viewer = (function () {
   }
 
   // No media queries without a stylesheet, so the layout reacts to the element's width.
+  // Two breakpoints, each evaluated on its own: 520 px for the provenance grid (one
+  // column below it) and 600 px for the rest of the narrow layout.
   function layoutForWidth(v, width) {
+    var oneColumn = width < 520;
+    if (oneColumn !== v.oneColumn) {
+      v.oneColumn = oneColumn;
+      v.provList.style.gridTemplateColumns = oneColumn ? "minmax(0, 1fr)" : "max-content minmax(0, 1fr)";
+    }
     var narrow = width < 600;
     if (narrow === v.narrow) return;
     v.narrow = narrow;
@@ -1627,7 +1656,6 @@ ET.viewer = (function () {
       mb.summary.style.display = narrow ? "none" : "";
       mb.title.style.fontSize = narrow ? "20px" : "24px";
     });
-    v.provList.style.gridTemplateColumns = width < 520 ? "minmax(0, 1fr)" : "max-content minmax(0, 1fr)";
     v.panel.style.padding = narrow ? "6px 12px 14px" : "6px 16px 16px";
     v.playButton.style.minHeight = narrow ? TOUCH_HEIGHT : BUTTON_HEIGHT;
     v.zoomResetButton.style.minHeight = narrow ? TOUCH_HEIGHT : BUTTON_HEIGHT;
@@ -1856,11 +1884,16 @@ ET.viewer = (function () {
     return out;
   }
 
-  // Brightness factor for crowded sets, 1 for sets up to CROWD_REF bright points. A
-  // bright point is a labelled one (weight 1), or any point of a set with no labelled
-  // point at all (weight 0.7). The built-in sample set has 290, so it is unchanged.
+  // Brightness factor for crowded sets, 1 up to a light load of CROWD_REF. The light
+  // load is the sum of the weights of the bright points actually uploaded (weight
+  // BRIGHT_WEIGHT or more): a labelled point counts 1, a point of a set with no
+  // labelled point 0.7, the dim unlabelled points of a labelled set nothing. So it
+  // is the labelled count, or 0.7 times the point count when nothing is labelled;
+  // points uploaded at 0.7 before the first labelled point arrived by append keep
+  // counting 0.7, as they are still drawn at that weight. The built-in sample set
+  // has 290, so it is unchanged.
   function crowding(v) {
-    var n = v.labelledCount > 0 ? v.labelledCount : 0.7 * (v.set ? v.set.count : 0);
+    var n = v.set ? v.lightLoad : 0;
     return n > CROWD_REF ? Math.pow(CROWD_REF / n, CROWD_POWER) : 1;
   }
 
@@ -2497,9 +2530,10 @@ ET.viewer = (function () {
       statusClock: STATUS_EVERY,
       statusText: "",
       sinceAppend: Infinity,
-      groupIndex: {},
+      groupIndex: Object.create(null), // group name -> index; names are untrusted
       groupNames: [],
       labelledCount: 0,
+      lightLoad: 0, // see crowding()
       labelSample: [],
       labelPool: [],
       sx: new Float32Array(LABEL_SAMPLE),
@@ -2515,6 +2549,7 @@ ET.viewer = (function () {
       fpsAt: null,
       fpsFrames: 0,
       narrow: null,
+      oneColumn: null,
       dpr: 1,
       W: 2,
       H: 2,
@@ -2533,6 +2568,7 @@ ET.viewer = (function () {
       lastSpent: 0,
       lostTime: false,
       paintKey: null,
+      themeKey: null,
     };
     v.timing.mountAt = now(v);
     v.tick = function (t) {
@@ -2540,8 +2576,7 @@ ET.viewer = (function () {
     };
     build(v);
     el.appendChild(v.root);
-    v.theme = readTheme(v); // read once the root inherits the host's properties
-    applyTheme(v);
+    syncTheme(v); // read once the root inherits the host's properties
     v.playButton.textContent = v.running ? "Pause" : "Play";
     v.playButton.setAttribute("aria-pressed", v.running ? "false" : "true");
     paintModeButtons(v);

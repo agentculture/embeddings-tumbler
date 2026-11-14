@@ -59,6 +59,7 @@
     var glide = null;
     var swap = null;
     var guided = false; // the swap tour draws from the fitted directions
+    var fitAtEntry = false; // decided once per entry: the entry waits for the fit
     var fitShare = null; // share of variance in those directions
     var epoch = 0; // bumped by enter and leave: work queued for an earlier entry does nothing
     var hold = null;
@@ -92,6 +93,7 @@
       swap = ET.math.makeSwapTour(hold, D, { seed: seed, period: opt.period });
       guided = false;
       fitShare = null;
+      fitAtEntry = wantsGuided(s);
       epoch++;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
     }
@@ -112,9 +114,11 @@
       };
     }
 
-    // Does this set get hidden directions from its strongest directions?
-    function wantsGuided() {
-      return opt.hidden !== "full" && Math.min(opt.subspace, D) >= 4 && set.count > 1;
+    // Does set `s` get hidden directions from its strongest directions? Decided
+    // once, at entry (fitAtEntry), so an append never leaves the mode waiting for a
+    // fit that was not scheduled.
+    function wantsGuided(s) {
+      return opt.hidden !== "full" && Math.min(opt.subspace, s.dimension) >= 4 && s.count > 1;
     }
 
     // The fit, in small units: centring, then the strongest directions (the same
@@ -241,13 +245,13 @@
         ]);
       }
       var tasks = [statsTask()];
-      if (wantsGuided()) tasks = tasks.concat(fitTasks());
+      if (fitAtEntry) tasks = tasks.concat(fitTasks());
       tasks.push(knnTask());
       return M.stepper(tasks);
     }
 
     function isReady() {
-      return empty ? emptyReady : glide !== null && (guided || !wantsGuided());
+      return empty ? emptyReady : glide !== null && (guided || !fitAtEntry);
     }
 
     function lastT() {
@@ -331,12 +335,14 @@
     // Append: the swap tour goes on unchanged and the camera glides to the new
     // mean. If new points fall inside the neighbour limit, neighbours are
     // measured again (the old wires stay until the new ones are shown). The
-    // first points onto an empty set, a replace, or another dimension: start
+    // first points onto an empty set, the points that make a set entered without a
+    // fit (one point) big enough for one, a replace, or another dimension: start
     // over from the current view.
     function dataChanged(newSet, info) {
       var i = info || {};
       var t = i.t === undefined ? self.time : M.checkTime(i.t);
-      if (i.op !== "append" || newSet.dimension !== D || empty || !isReady()) {
+      var fitNow = !fitAtEntry && newSet.dimension === D && wantsGuided(newSet);
+      if (i.op !== "append" || newSet.dimension !== D || empty || fitNow || !isReady()) {
         var from = entry;
         if (isReady()) {
           var s = stateAt(t);

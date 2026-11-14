@@ -239,6 +239,41 @@ test("a vector file name that is not plain is never fetched; the viewer refuses 
   }
 });
 
+test("the file form's own checks run on src data: wrong dtype, byte order or declared length is refused", async () => {
+  const cases = [
+    [{ dtype: "float64" }, "invalid-field", 'Field "vectors.dtype" is missing or not valid.'],
+    [{ byte_order: "big" }, "invalid-field", 'Field "vectors.byte_order" is missing or not valid.'],
+    [{ byte_length: 12 }, "invalid-field", 'Field "vectors.byte_length" is missing or not valid.'],
+  ];
+  for (const [change, code, message] of cases) {
+    const env = makeShellEnv();
+    const json = JSON.parse(JSON.stringify(A.json));
+    Object.assign(json.vectors, change);
+    env.route(DIR + "f.json", () => ({ json }));
+    env.route(DIR + json.vectors.file, () => ({ buffer: A.buffer }));
+    const el = env.create({ src: "data/f.json" });
+    const seen = env.listen(el);
+    env.connect(el);
+    await env.settle();
+    assert.strictEqual(seen.length, 1, JSON.stringify(change));
+    assert.strictEqual(seen[0].type, "tumbler-error", JSON.stringify(change));
+    assert.strictEqual(seen[0].detail.code, code);
+    assert.strictEqual(seen[0].detail.message, message, "the core's own message");
+    assert.strictEqual(el.handle.info().count, 0, "nothing drawn");
+  }
+});
+
+test("a block shorter than declared is refused with the contract's block-length message", async () => {
+  const env = makeShellEnv();
+  serve(env, "a", A);
+  env.route(DIR + A.json.vectors.file, () => ({ buffer: A.buffer.slice(0, A.buffer.byteLength - 4) }));
+  const el = env.create({ src: "data/a.json" });
+  const seen = env.listen(el);
+  env.connect(el);
+  await env.settle();
+  assert.strictEqual(seen[0].detail.code, "block-length");
+});
+
 test("valid JSON that is not a data set is handed to the viewer, which refuses it plainly", async () => {
   const env = makeShellEnv();
   env.route(DIR + "n.json", () => ({ json: { hello: 1 } }));

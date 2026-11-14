@@ -19,7 +19,7 @@ twice does nothing the second time. Without custom element support it does nothi
 
 | Attribute | Meaning |
 |-----------|---------|
-| `src` | URL of a data JSON file **on the page's own origin** (resolved against the page's base URL). The vector block named by `vectors.file` is fetched from the same folder. Changing `src` loads the new file as a replace. Removing `src` leaves what is shown. |
+| `src` | URL of a data JSON file **on the page's own origin** (resolved against the page's base URL). The vector block named by `vectors.file` is fetched from the same folder and handed to the core beside its descriptor (`vectors.data`), so the core runs the file form's checks (`dtype`, `byte_order`, `byte_length`) with the contract's own codes and messages. Changing `src` loads the new file as a replace. Removing `src` leaves what is shown. |
 | `mode` | `tumble`, `lattice` or `wander`. Read at mount; changing it later switches the running viewer. |
 | `seed` | The view seed, a number or a word. Read at mount; changing it later mounts a fresh viewer and reloads the data (points added with `update()` are lost). |
 

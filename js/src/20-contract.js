@@ -95,7 +95,10 @@
     if (v !== null && typeof v === "object") {
       var o = {};
       var keys = Object.keys(v);
-      for (var j = 0; j < keys.length; j++) o[keys[j]] = clone(v[keys[j]]);
+      // defineProperty, not assignment: a key named "__proto__" stays a key.
+      for (var j = 0; j < keys.length; j++) {
+        Object.defineProperty(o, keys[j], { value: clone(v[keys[j]]), writable: true, enumerable: true, configurable: true });
+      }
       return o;
     }
     return v;
@@ -195,7 +198,7 @@
     if (d.count !== d.points.length) {
       return refuse("count-mismatch", { count: d.count, found: d.points.length }, base);
     }
-    var seen = {};
+    var seen = Object.create(null); // ids are untrusted: no inherited names
     for (var i = 0; i < d.points.length; i++) {
       var id = d.points[i].id;
       if (has(seen, id)) return refuse("duplicate-id", { id: id }, base);
@@ -313,7 +316,7 @@
       if (red.kind !== base.reduction.kind) {
         return refuse("reduction-mismatch", { found: red.kind, expected: base.reduction.kind }, base);
       }
-      var held = {};
+      var held = Object.create(null);
       for (var b = 0; b < base.points.length; b++) held[base.points[b].id] = true;
       for (var n = 0; n < points.length; n++) {
         if (has(held, points[n].id)) return refuse("id-exists", { id: points[n].id }, base);
@@ -363,10 +366,20 @@
     }
   }
 
+  // A file-form descriptor carrying its fetched block: { file, dtype, byte_order,
+  // byte_length, data }, as a host or a shell hands update() a data file it fetched.
+  function isDescriptorWithBlock(v) {
+    return isObject(v) && !isFloat32Array(v) && !isArrayBuffer(v) && has(v, "data");
+  }
+
   // validate(data, base): in-memory form. Returns { ok: true, set } or
-  // { ok: false, code, message, set: base || null }.
+  // { ok: false, code, message, set: base || null }. When `vectors` is the file
+  // form's descriptor with the fetched block in `vectors.data`, the data is checked
+  // as the file form (the descriptor's dtype, byte order and declared length too),
+  // exactly as finish() would.
   function validate(data, base) {
     return guarded(base, function () {
+      if (isObject(data) && isDescriptorWithBlock(data.vectors)) return finishFile(data, data.vectors.data, base);
       var r = checkRecordsInner(data, "memory", base);
       if (!r.ok) return r;
       return finishInner(data, data.vectors, base);
@@ -386,13 +399,17 @@
   // Float32Array). Runs checks 1 to 11. A missing or wrong-typed block is block-unreadable.
   function finish(records, block, base) {
     return guarded(base, function () {
-      var r = checkRecordsInner(records, "file", base);
-      if (!r.ok) return r;
-      if (!isArrayBuffer(block) && !isFloat32Array(block)) {
-        return refuse("block-unreadable", { file: records.vectors.file }, base);
-      }
-      return finishInner(records, block, base);
+      return finishFile(records, block, base);
     });
+  }
+
+  function finishFile(records, block, base) {
+    var r = checkRecordsInner(records, "file", base);
+    if (!r.ok) return r;
+    if (!isArrayBuffer(block) && !isFloat32Array(block)) {
+      return refuse("block-unreadable", { file: records.vectors.file }, base);
+    }
+    return finishInner(records, block, base);
   }
 
   function siblingUrl(jsonUrl, file) {
