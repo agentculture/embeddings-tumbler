@@ -88,3 +88,15 @@ Obligation o12 is the one that binds the build to them.
 - **Owed:** Query text, labels and result texts are inserted as text only; markup in any of them creates no element.
 - **Claim:** c20 (requirement)
 - **Status:** approved
+
+## o14: search -> the space as that search sees it
+
+- **Owed:** With the option on, ranking, shown distances and the fitted picture all use the same per-dimension scaling by that search's vector; with it off, nothing is scaled; the view states which is in effect.
+- **Claim:** c44 (requirement)
+- **Status:** approved
+
+## o15: search -> what is lit
+
+- **Owed:** The lit setting decides which points are lit and how strongly; with brightness by closeness, a nearer point is never dimmer than a farther one for the same search; the panel names the setting in use.
+- **Claim:** c46 (requirement)
+- **Status:** approved

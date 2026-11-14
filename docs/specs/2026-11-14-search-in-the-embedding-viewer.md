@@ -67,6 +67,12 @@
   - honesty: Everything the panel can do can be done through the handle, and info() is enough for a test to assert results without reading pixels.
 - Each intended difference between the built search and the two reference pages is listed in the repository, and the user signs off a side-by-side comparison before release. Known ones today: the references place a query from named words and use toy rerankers; the Focus reference draws on a plain canvas, has no multi-search and has an Only results toggle. (challenge pass / the artifact as part of the spec: docs/reference-differences.md is the precedent.)
   - honesty: The list is complete enough that the user's side-by-side look finds no unlisted difference, and release waits for the sign-off.
+- A 'from this search's point of view' option on a search. Distances are measured with each dimension scaled by that search's vector, so lit points and their order reflect the search's context. The picture is fitted to that scaled space, and the view states that distances are measured in the search's context.
+  - instruction: docs/specs/reference/tumbler-focus-view.html shows it on real vectors: scale each dimension by the absolute value of the query's component, renormalise, then rank and fit.
+  - honesty: The option is linear (a per-dimension scale), the view says when it is on, each result can show where plain distance had it, and the option never applies one search's scaling to another search's results.
+- Search has a choice of what is lit, including a variable lit power option in which a closer point is lit more strongly.
+  - instruction: docs/specs/reference/tumbler-sky-search.html shows three settings: the results evenly; by closeness (every point glows in proportion to how near it is, fading out a little beyond the last result); named results only.
+  - honesty: Brightness by closeness is computed from full-space distance by the stated measure, the setting in use is named in the panel, and the count of points lit matches what is drawn.
 
 ## Honesty conditions
 
@@ -105,6 +111,7 @@
 - Distance is cosine distance (1 minus cosine similarity), named as such in the view; the contract does not require unit-length vectors, so this differs from straight-line distance for some files. The sky reference measures straight-line distance on centred vectors. (challenge pass / unstated assumptions: docs/data-contract.md line 207.)
 - The helper reaches the gateway with the Python standard library only, so the package keeps zero runtime dependencies, and takes the gateway address and key only from its own environment. (challenge pass / hidden dependencies: pyproject.toml dependencies = \[\].)
 - Focus keeps the Only results toggle from its reference page; the other three views dim and never hide. (challenge pass / the artifact as part of the spec.)
+- With several searches active, the point-of-view option belongs to one chosen search at a time: its scaling is used for its own results and for the picture, while the other searches keep plain distance.
 
 ## Scope exploration
 
@@ -118,6 +125,8 @@
 - `s8` — `challenge pass / concurrency and reversibility lenses`: Single-threaded page code; the only races are callback answers arriving out of order and appends during a search, both routed to requirements. Nothing in the spec migrates or deletes data; the feature can be left unused by not opening the panel. Clean otherwise.
 - `s9` — `challenge pass / adjacent systems: Lattice and Wander limits`: Lattice wires only its first 1,000 points and Wander stops only at labelled points (js/api/50-viewer.md), so a result outside those sets is lit but has no wire or stop. Not examined: how that reads on a 10,000-point file.
 - `s10` — `challenge pass / not examined`: Non-Chromium browsers; touch use of the panel on a phone beyond one rendered width; a screen reader on the real panel; memory with four searches on the largest real file; embeddings-cli needs no change as far as read, but its export options were read only from this session's notes, not the code.
+- `s11` — `challenge pass / cheap probe: the point-of-view option on real vectors`: 44 words through the gateway's Qwen3 model, query 'water'. Ratio of water-to-other distance over water-to-water distance: 1.24 as embedded, 1.44 with each dimension scaled by the query. On the 124-item Focus reference the option reorders results modestly (water: river moves above flood, salt replaces shower in the first eight). One model, one query set; small sample.
+  - seeds: `c44`
 
 ## Decisions
 
