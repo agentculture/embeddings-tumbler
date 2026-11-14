@@ -21,24 +21,36 @@
     // ----- seeded random source --------------------------------------------
 
     // Ported from the reference. Returns a function giving uniform numbers in [0, 1).
+    // The state is a 32-bit word that wraps around (the wrap is the algorithm). The
+    // reference keeps it as a signed word; here it is kept unsigned (>>> 0), which
+    // holds the same 32 bits, and every operation below reads only those bits, so
+    // the stream is the reference's, bit for bit.
     function mulberry32(seed) {
-      var a = seed | 0;
+      var a = seed >>> 0;
       return function () {
-        a = (a + 0x6d2b79f5) | 0;
+        a = (a + 0x6d2b79f5) >>> 0;
         var t = Math.imul(a ^ (a >>> 15), 1 | a);
         t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
         return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
       };
     }
 
+    // The UTF-16 code unit at index i of s (what charCodeAt gives): codePointAt
+    // gives a whole code point at the first half of a surrogate pair, so its first
+    // (high) unit is rebuilt from it; everywhere else the two agree.
+    function utf16UnitAt(s, i) {
+      var cp = s.codePointAt(i);
+      return cp > 0xffff ? 0xd800 + ((cp - 0x10000) >> 10) : cp;
+    }
+
     // A seed may be a number or a string. Numbers are truncated to 32 bits;
-    // strings are hashed (FNV-1a). Anything else is refused.
+    // strings are hashed (FNV-1a over their UTF-16 code units). Anything else is refused.
     function toSeed(value) {
-      if (typeof value === "number" && isFinite(value)) return Math.floor(value) >>> 0;
+      if (typeof value === "number" && Number.isFinite(value)) return Math.floor(value) >>> 0;
       if (typeof value === "string") {
         var h = 0x811c9dc5;
         for (var i = 0; i < value.length; i++) {
-          h ^= value.charCodeAt(i);
+          h ^= utf16UnitAt(value, i);
           h = Math.imul(h, 0x01000193);
         }
         return h >>> 0;
@@ -48,8 +60,10 @@
 
     // Derive an independent 32-bit seed from (seed, salt), so that, for example,
     // cycle c of a schedule draws from its own stream whatever came before it.
+    // The salt is reduced to 32 bits (>>> 0) and the arithmetic wraps; the XOR
+    // already gives a signed 32-bit word.
     function mixSeed(seed, salt) {
-      var h = (toSeed(seed) ^ Math.imul((salt | 0) + 0x9e3779b9, 0x85ebca6b)) | 0;
+      var h = toSeed(seed) ^ Math.imul((salt >>> 0) + 0x9e3779b9, 0x85ebca6b);
       h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
       h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
       h ^= h >>> 16;
@@ -88,23 +102,44 @@
 
     // ----- argument checks -----------------------------------------------------
 
+    // Comparisons for the argument checks, written once as positive predicates.
+    // NaN, undefined and anything else that does not compare as a number fail
+    // them, which is the point: a check must refuse those. (A rewrite such as
+    // `x < min` in place of `!(x >= min)` would let NaN through.)
+    function atLeast(x, min) {
+      return x >= min;
+    }
+    function above(x, min) {
+      return x > min;
+    }
+    function intAtLeast(x, min) {
+      return x >= min && Math.floor(x) === x;
+    }
+
+    // ToInt32, exactly what `x | 0` gives: non-numbers and NaN become 0 and large
+    // values wrap modulo 2^32. Used to read integer options as the module always
+    // has (Math.trunc would differ: NaN stays NaN, and nothing wraps).
+    function toInt32(x) {
+      return Math.imul(x, 1);
+    }
+
     function checkDim(D) {
-      if (!(D >= 1) || Math.floor(D) !== D) throw new RangeError("dimension must be a positive integer");
+      if (!intAtLeast(D, 1)) throw new RangeError("dimension must be a positive integer");
     }
 
     // `rows` directions of length D in `dirs`, exactly: a mismatch is a caller bug.
     function checkRows(dirs, rows, D, what) {
-      if (!(rows >= 1) || Math.floor(rows) !== rows || rows > D) {
+      if (!intAtLeast(rows, 1) || rows > D) {
         throw new TypeError(what + ": rows must be an integer from 1 to the dimension");
       }
-      if (!dirs || dirs.length !== rows * D) {
+      if (dirs?.length !== rows * D) {
         throw new TypeError(what + ": expected " + rows * D + " values (rows * dimension)");
       }
     }
 
     function checkData(X, N, D) {
       checkDim(D);
-      if (!(N >= 0) || Math.floor(N) !== N) throw new RangeError("count must be a non-negative integer");
+      if (!intAtLeast(N, 0)) throw new RangeError("count must be a non-negative integer");
       if (!X || X.length < N * D) throw new RangeError("vector block is shorter than count * dimension");
     }
 
@@ -160,7 +195,7 @@
     }
 
     function clockNow() {
-      if (typeof performance !== "undefined" && performance && typeof performance.now === "function") {
+      if (typeof performance !== "undefined" && typeof performance?.now === "function") {
         return performance.now();
       }
       return Date.now();
@@ -194,8 +229,10 @@
       return st;
     }
 
+    // Callers pass sums that start from +0, so x is never -0 (the one value where
+    // this and the nested comparison `x < 0 ? 0 : x > 1 ? 1 : x` would differ).
     function clamp01(x) {
-      return x < 0 ? 0 : x > 1 ? 1 : x;
+      return Math.min(Math.max(x, 0), 1);
     }
 
     // ----- centring and variance -------------------------------------------
@@ -236,14 +273,14 @@
     // Centring is a translation: all pairwise distances are unchanged.
     function centre(X, N, D, opts) {
       checkData(X, N, D);
-      return runAll(centreGen(X, N, D, !!(opts && opts.inPlace), NO_PAUSE));
+      return runAll(centreGen(X, N, D, !!opts?.inPlace, NO_PAUSE));
     }
 
     // The same, as a stepper whose result is centre()'s, bit for bit.
     function makeCentre(X, N, D, opts) {
       checkData(X, N, D);
       var wk = new Tracker(2 * N * D);
-      return genStepper(centreGen(X, N, D, !!(opts && opts.inPlace), wk), wk);
+      return genStepper(centreGen(X, N, D, !!opts?.inPlace, wk), wk);
     }
 
     function* totalVarianceGen(Y, N, D, wk) {
@@ -286,7 +323,7 @@
       checkData(Y, N, D);
       checkRows(dirs, rows, D, "varianceShare");
       var total = totalVariance(Y, N, D);
-      if (!(total > 0)) return 0;
+      if (!above(total, 0)) return 0;
       var sums = runAll(projectedSquaresGen(Y, N, D, dirs, rows, NO_PAUSE));
       var s = 0;
       for (var r = 0; r < rows; r++) s += N > 0 ? sums[r] / N : 0;
@@ -320,6 +357,26 @@
       return M;
     }
 
+    // Squared length of v[vo .. vo + D), summed in index order.
+    function sqNorm(v, vo, D) {
+      var s = 0;
+      for (var d = 0; d < D; d++) s += v[vo + d] * v[vo + d];
+      return s;
+    }
+
+    // Remove from v[vo .. vo + D) its components along rows 0..rows-1 of M
+    // (row-major, meant to be orthonormal), one row at a time, in two passes.
+    function removeSpan(v, vo, M, rows, D) {
+      for (var pass = 0; pass < 2; pass++) {
+        for (var j = 0; j < rows; j++) {
+          var oj = j * D;
+          var dp = 0;
+          for (var d = 0; d < D; d++) dp += v[vo + d] * M[oj + d];
+          for (var d2 = 0; d2 < D; d2++) v[vo + d2] -= dp * M[oj + d2];
+        }
+      }
+    }
+
     // Row i of M made orthogonal to rows 0..i-1 (twice) and normalised; v is scratch.
     function orthoRow(M, i, D, v) {
       var oi = i * D;
@@ -328,27 +385,16 @@
         v[d] = M[oi + d];
         before += v[d] * v[d];
       }
-      for (var pass = 0; pass < 2; pass++) {
-        for (var j = 0; j < i; j++) {
-          var oj = j * D;
-          var dp = 0;
-          for (var d2 = 0; d2 < D; d2++) dp += v[d2] * M[oj + d2];
-          for (var d3 = 0; d3 < D; d3++) v[d3] -= dp * M[oj + d3];
-        }
-      }
-      var nn = 0;
-      for (var d4 = 0; d4 < D; d4++) nn += v[d4] * v[d4];
-      if (!(nn > 1e-24) || nn <= 1e-12 * before) nn = fallbackRow(M, i, D, v);
+      removeSpan(v, 0, M, i, D);
+      var nn = sqNorm(v, 0, D);
+      if (!above(nn, 1e-24) || nn <= 1e-12 * before) nn = fallbackRow(M, i, D, v);
       var inv = 1 / Math.sqrt(nn);
       for (var d6 = 0; d6 < D; d6++) M[oi + d6] = v[d6] * inv;
     }
 
-    // Standard basis vectors in order of least coverage by rows 0..i-1 (ties
-    // to the lower index), each made orthogonal to those rows; the first whose
-    // remainder does not collapse is written into v. Returns its squared norm.
-    // Since i < D, some basis vector always keeps at least (D - i) / D of its
-    // length, so the search ends.
-    function fallbackRow(M, i, D, v) {
+    // The indices 0..D-1 ordered by how much rows 0..i-1 of M cover each
+    // standard basis vector (least first, ties to the lower index).
+    function coverageOrder(M, i, D) {
       var cover = new Float64Array(D);
       var order = [];
       for (var c = 0; c < D; c++) {
@@ -360,22 +406,26 @@
       order.sort(function (a, b) {
         return cover[a] - cover[b] || a - b;
       });
+      return order;
+    }
+
+    // Standard basis vectors in order of least coverage by rows 0..i-1 (ties
+    // to the lower index), each made orthogonal to those rows; the first whose
+    // remainder does not collapse is written into v. Returns its squared norm.
+    // Since i < D, some basis vector always keeps at least (D - i) / D of its
+    // length, so the search ends.
+    function fallbackRow(M, i, D, v) {
+      var order = coverageOrder(M, i, D);
       var bestNorm = -1;
       var bestC = order[0];
+      var nn = 0;
       for (var t = 0; t <= D; t++) {
         // after trying every candidate, settle on the one that kept the most
         var cand = t < D ? order[t] : bestC;
-        for (var d = 0; d < D; d++) v[d] = d === cand ? 1 : 0;
-        for (var pass = 0; pass < 2; pass++) {
-          for (var j2 = 0; j2 < i; j2++) {
-            var oj = j2 * D;
-            var dp = 0;
-            for (var d2 = 0; d2 < D; d2++) dp += v[d2] * M[oj + d2];
-            for (var d3 = 0; d3 < D; d3++) v[d3] -= dp * M[oj + d3];
-          }
-        }
-        var nn = 0;
-        for (var d4 = 0; d4 < D; d4++) nn += v[d4] * v[d4];
+        v.fill(0);
+        v[cand] = 1;
+        removeSpan(v, 0, M, i, D);
+        nn = sqNorm(v, 0, D);
         if (t === D || nn > 1e-6) return nn;
         if (nn > bestNorm) {
           bestNorm = nn;
@@ -412,16 +462,14 @@
     // `centre` may be null (zero). Returns Float32Array(N * rows).
     function project(X, N, D, frame, centreVec, out, rows) {
       checkData(X, N, D);
-      var R = rows === undefined || rows === null ? 3 : rows;
+      var R = rows ?? 3;
       checkRows(frame, R, D, "project");
       if (centreVec && centreVec.length !== D) throw new TypeError("project: centre must have dimension values");
       if (out && out.length < N * R) throw new TypeError("project: out is shorter than count * rows");
       var P = out || new Float32Array(N * R);
       var x = new Float64Array(D);
       for (var i = 0; i < N; i++) {
-        var o = i * D;
-        if (centreVec) for (var d = 0; d < D; d++) x[d] = X[o + d] - centreVec[d];
-        else for (var d0 = 0; d0 < D; d0++) x[d0] = X[o + d0];
+        loadRow(X, i * D, D, centreVec, x);
         for (var r = 0; r < R; r++) {
           var s = 0;
           var or = r * D;
@@ -430,6 +478,12 @@
         }
       }
       return P;
+    }
+
+    // x = the row of X starting at o, minus centreVec when one is given.
+    function loadRow(X, o, D, centreVec, x) {
+      if (centreVec) for (var d = 0; d < D; d++) x[d] = X[o + d] - centreVec[d];
+      else for (var d0 = 0; d0 < D; d0++) x[d0] = X[o + d0];
     }
 
     // ----- small symmetric eigenproblems (cyclic Jacobi) ---------------------
@@ -447,45 +501,59 @@
       var V = new Float64Array(n * n);
       for (var i = 0; i < n; i++) V[i * n + i] = 1;
       for (var sweep = 0; sweep < 100; sweep++) {
-        var off = 0;
-        var diag = 0;
+        if (jacobiSettled(a, n)) break;
         for (var p = 0; p < n; p++) {
-          diag += a[p * n + p] * a[p * n + p];
-          for (var q = p + 1; q < n; q++) off += a[p * n + q] * a[p * n + q];
-        }
-        if (off <= 1e-30 * (diag + 1e-300) || off === 0) break;
-        for (var p2 = 0; p2 < n; p2++) {
-          for (var q2 = p2 + 1; q2 < n; q2++) {
-            var apq = a[p2 * n + q2];
-            if (apq === 0) continue;
-            var app = a[p2 * n + p2];
-            var aqq = a[q2 * n + q2];
-            var theta = (aqq - app) / (2 * apq);
-            var t = (theta >= 0 ? 1 : -1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
-            var c = 1 / Math.sqrt(t * t + 1);
-            var s = t * c;
-            for (var k = 0; k < n; k++) {
-              var akp = a[k * n + p2];
-              var akq = a[k * n + q2];
-              a[k * n + p2] = c * akp - s * akq;
-              a[k * n + q2] = s * akp + c * akq;
-            }
-            for (var k2 = 0; k2 < n; k2++) {
-              var apk = a[p2 * n + k2];
-              var aqk = a[q2 * n + k2];
-              a[p2 * n + k2] = c * apk - s * aqk;
-              a[q2 * n + k2] = s * apk + c * aqk;
-            }
-            for (var k3 = 0; k3 < n; k3++) {
-              var vkp = V[k3 * n + p2];
-              var vkq = V[k3 * n + q2];
-              V[k3 * n + p2] = c * vkp - s * vkq;
-              V[k3 * n + q2] = s * vkp + c * vkq;
-            }
-          }
-          if (wk.add(6 * n * (n - p2))) yield;
+          for (var q = p + 1; q < n; q++) jacobiRotate(a, V, n, p, q);
+          if (wk.add(6 * n * (n - p))) yield;
         }
       }
+      return canonicalEigen(a, V, n);
+    }
+
+    // True once the off-diagonal mass is negligible against the diagonal.
+    function jacobiSettled(a, n) {
+      var off = 0;
+      var diag = 0;
+      for (var p = 0; p < n; p++) {
+        diag += a[p * n + p] * a[p * n + p];
+        for (var q = p + 1; q < n; q++) off += a[p * n + q] * a[p * n + q];
+      }
+      return off <= 1e-30 * (diag + 1e-300) || off === 0;
+    }
+
+    // One Jacobi rotation zeroing a[p][q], applied to a (both sides) and to V.
+    function jacobiRotate(a, V, n, p, q) {
+      var apq = a[p * n + q];
+      if (apq === 0) return;
+      var app = a[p * n + p];
+      var aqq = a[q * n + q];
+      var theta = (aqq - app) / (2 * apq);
+      var t = (theta >= 0 ? 1 : -1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+      var c = 1 / Math.sqrt(t * t + 1);
+      var s = t * c;
+      for (var k = 0; k < n; k++) {
+        var akp = a[k * n + p];
+        var akq = a[k * n + q];
+        a[k * n + p] = c * akp - s * akq;
+        a[k * n + q] = s * akp + c * akq;
+      }
+      for (var k2 = 0; k2 < n; k2++) {
+        var apk = a[p * n + k2];
+        var aqk = a[q * n + k2];
+        a[p * n + k2] = c * apk - s * aqk;
+        a[q * n + k2] = s * apk + c * aqk;
+      }
+      for (var k3 = 0; k3 < n; k3++) {
+        var vkp = V[k3 * n + p];
+        var vkq = V[k3 * n + q];
+        V[k3 * n + p] = c * vkp - s * vkq;
+        V[k3 * n + q] = s * vkp + c * vkq;
+      }
+    }
+
+    // Eigenvalues (the diagonal of a) in descending order, ties to the lower
+    // index, with the matching columns of V as rows, each signed canonically.
+    function canonicalEigen(a, V, n) {
       var order = [];
       for (var j = 0; j < n; j++) order.push(j);
       order.sort(function (x, y) {
@@ -497,18 +565,24 @@
       for (var r = 0; r < n; r++) {
         var col = order[r];
         values[r] = a[col * n + col];
-        var big = 0;
-        var sign = 1;
-        for (var k4 = 0; k4 < n; k4++) {
-          var comp = V[k4 * n + col];
-          if (Math.abs(comp) > big) {
-            big = Math.abs(comp);
-            sign = comp < 0 ? -1 : 1;
-          }
-        }
+        var sign = largestSign(V, n, col);
         for (var k5 = 0; k5 < n; k5++) vectors[r * n + k5] = sign * V[k5 * n + col];
       }
       return { values: values, vectors: vectors };
+    }
+
+    // The sign of column col's largest-magnitude component (the first such, +1 if all zero).
+    function largestSign(V, n, col) {
+      var big = 0;
+      var sign = 1;
+      for (var k4 = 0; k4 < n; k4++) {
+        var comp = V[k4 * n + col];
+        if (Math.abs(comp) > big) {
+          big = Math.abs(comp);
+          sign = comp < 0 ? -1 : 1;
+        }
+      }
+      return sign;
     }
 
     // ----- principal directions ---------------------------------------------
@@ -545,11 +619,13 @@
       var o = opts || {};
       var maxIt = o.maxIterations === undefined ? 60 : o.maxIterations;
       var tol = o.tolerance === undefined ? 1e-6 : o.tolerance;
-      if (!(maxIt >= 0) || Math.floor(maxIt) !== maxIt) {
+      if (!intAtLeast(maxIt, 0)) {
         throw new RangeError("maxIterations must be a non-negative integer");
       }
-      if (!(tol >= 0) || !isFinite(tol)) throw new RangeError("tolerance must be a finite number >= 0");
-      if (o.oversample !== undefined && (!(o.oversample >= 0) || Math.floor(o.oversample) !== o.oversample)) {
+      // `+tol` is the number conversion the global isFinite applied, so a numeric
+      // string such as "0.5" is still accepted and "Infinity" still refused.
+      if (!atLeast(tol, 0) || !Number.isFinite(+tol)) throw new RangeError("tolerance must be a finite number >= 0");
+      if (o.oversample !== undefined && !intAtLeast(o.oversample, 0)) {
         throw new RangeError("oversample must be a non-negative integer");
       }
     }
@@ -557,10 +633,10 @@
     // A rough count of the multiply-adds a fit takes (for progress only),
     // assuming a dozen iterations.
     function pcaWorkEstimate(N, D, k, o) {
-      var K = Math.max(1, Math.min(k | 0, D));
-      var S = o.sampleRows | 0;
+      var K = Math.max(1, Math.min(toInt32(k), D));
+      var S = toInt32(o.sampleRows);
       var n = S > 0 && N > S ? S : N;
-      var p = Math.min(n <= D ? n : D, K + (o.oversample === undefined ? Math.max(4, K) : o.oversample));
+      var p = Math.min(n, D, K + (o.oversample === undefined ? Math.max(4, K) : o.oversample));
       var fit = n <= D ? (n * n * D) / 2 + 12 * p * n * n : 12 * 2 * n * D * p;
       return n * D + N * D + fit + K * N * D;
     }
@@ -570,33 +646,16 @@
     function* pcaGen(Y, N, D, k, o, wk, inner) {
       var maxIt = o.maxIterations === undefined ? 60 : o.maxIterations;
       var tol = o.tolerance === undefined ? 1e-6 : o.tolerance;
-      var S = o.sampleRows | 0;
-      if (S > 0 && N > S) {
-        var Ys = new Float32Array(S * D);
-        for (var si = 0; si < S; si++) {
-          var src = Math.floor((si * N) / S) * D;
-          for (var sd = 0; sd < D; sd++) Ys[si * D + sd] = Y[src + sd];
-          if (wk.add(D)) yield;
-        }
-        var innerOpts = {};
-        for (var key in o) if (key !== "sampleRows") innerOpts[key] = o[key];
-        var fitted = yield* pcaGen(Ys, S, D, k, innerOpts, wk, true);
-        Ys = null;
-        fitted.totalVariance = yield* totalVarianceGen(Y, N, D, wk);
-        fitted.method += "-sampled";
-        fitted.sampledRows = S;
-        yield* finishPcaGen(Y, N, D, fitted, wk);
-        return fitted;
-      }
+      var S = toInt32(o.sampleRows);
+      if (S > 0 && N > S) return yield* sampledPcaGen(Y, N, D, k, o, S, wk);
       // k is clamped into 1..D. Directions beyond the data's rank (at most
       // N - 1 for centred data) are an orthonormal completion with variance 0.
-      var K = Math.max(1, Math.min(k | 0, D));
+      var K = Math.max(1, Math.min(toInt32(k), D));
       var total = yield* totalVarianceGen(Y, N, D, wk);
-      var dirs = new Float32Array(K * D);
       var result = {
         count: K,
         dimension: D,
-        directions: dirs,
+        directions: new Float32Array(K * D),
         variances: new Float64Array(K),
         shares: new Float64Array(K),
         totalVariance: total,
@@ -606,70 +665,104 @@
         converged: true,
         sampledRows: N,
       };
-      if (N === 0 || !(total > 0)) {
-        yield* orthonormalizeGen(dirs, K, D, wk);
+      if (N === 0 || !above(total, 0)) {
+        yield* orthonormalizeGen(result.directions, K, D, wk);
         result.method = "degenerate";
-        if (!inner) yield* finishPcaGen(Y, N, D, result, wk);
-        return result;
-      }
-      var seed = mixSeed(o.seed === undefined ? 0 : o.seed, SALT_PCA);
-      if (N <= D) {
-        var G = yield* gramGen(Y, N, D, wk);
-        var vecs; // rows in N-space
-        var nv = Math.min(K, N);
-        if (N <= 64) {
-          vecs = (yield* symmetricEigenGen(G, N, wk)).vectors;
-          result.method = "gram-exact";
-        } else {
-          var it = yield* subspaceIterationGen(
-            function (Q, p, W) {
-              return denseApplyGen(G, N, Q, p, W, wk);
-            },
-            N,
-            nv,
-            o.oversample,
-            seed,
-            maxIt,
-            tol,
-            wk
-          );
-          vecs = it.vectors;
-          result.method = "gram-iterative";
-          result.iterations = it.iterations;
-          result.converged = it.converged;
-        }
-        for (var j = 0; j < nv; j++) {
-          var oj = j * D;
-          for (var a = 0; a < N; a++) {
-            var w = vecs[j * N + a];
-            if (w === 0) continue;
-            var oa = a * D;
-            for (var d = 0; d < D; d++) dirs[oj + d] += w * Y[oa + d];
-            if (wk.add(D)) yield;
-          }
-        }
-        yield* orthonormalizeGen(dirs, K, D, wk);
       } else {
-        var it2 = yield* subspaceIterationGen(
-          function (Q, p, W) {
-            return covarianceApplyGen(Y, N, D, Q, p, W, wk);
-          },
-          D,
-          K,
-          o.oversample,
-          seed,
-          maxIt,
-          tol,
-          wk
-        );
-        for (var j2 = 0; j2 < K * D; j2++) dirs[j2] = it2.vectors[j2];
-        yield* orthonormalizeGen(dirs, K, D, wk);
-        result.method = "covariance-iterative";
-        result.iterations = it2.iterations;
-        result.converged = it2.converged;
+        var fit = {
+          seed: mixSeed(o.seed === undefined ? 0 : o.seed, SALT_PCA),
+          maxIt: maxIt,
+          tol: tol,
+          oversample: o.oversample,
+        };
+        if (N <= D) yield* gramFitGen(Y, N, D, fit, result, wk);
+        else yield* covarianceFitGen(Y, N, D, fit, result, wk);
       }
       if (!inner) yield* finishPcaGen(Y, N, D, result, wk);
       return result;
+    }
+
+    // The fit on S rows taken at an even stride, with the variances and shares
+    // then computed over all N rows.
+    function* sampledPcaGen(Y, N, D, k, o, S, wk) {
+      var Ys = new Float32Array(S * D);
+      for (var si = 0; si < S; si++) {
+        var src = Math.floor((si * N) / S) * D;
+        for (var sd = 0; sd < D; sd++) Ys[si * D + sd] = Y[src + sd];
+        if (wk.add(D)) yield;
+      }
+      var innerOpts = {};
+      for (var key in o) if (key !== "sampleRows") innerOpts[key] = o[key];
+      var fitted = yield* pcaGen(Ys, S, D, k, innerOpts, wk, true);
+      Ys = null;
+      fitted.totalVariance = yield* totalVarianceGen(Y, N, D, wk);
+      fitted.method += "-sampled";
+      fitted.sampledRows = S;
+      yield* finishPcaGen(Y, N, D, fitted, wk);
+      return fitted;
+    }
+
+    // N <= D: eigenvectors of the N x N Gram matrix (exact by Jacobi up to 64
+    // rows, by subspace iteration above), mapped back to directions in R^D.
+    function* gramFitGen(Y, N, D, fit, result, wk) {
+      var K = result.count;
+      var G = yield* gramGen(Y, N, D, wk);
+      var vecs; // rows in N-space
+      var nv = Math.min(K, N);
+      if (N <= 64) {
+        vecs = (yield* symmetricEigenGen(G, N, wk)).vectors;
+        result.method = "gram-exact";
+      } else {
+        var it = yield* subspaceIterationGen(
+          function (Q, p, W) {
+            return denseApplyGen(G, N, Q, p, W, wk);
+          },
+          N,
+          nv,
+          fit,
+          wk
+        );
+        vecs = it.vectors;
+        result.method = "gram-iterative";
+        result.iterations = it.iterations;
+        result.converged = it.converged;
+      }
+      yield* combineRowsGen(vecs, nv, Y, N, D, result.directions, wk);
+      yield* orthonormalizeGen(result.directions, K, D, wk);
+    }
+
+    // dirs row j += sum over a of vecs[j][a] * Y row a, for j < nv (zero weights skipped).
+    function* combineRowsGen(vecs, nv, Y, N, D, dirs, wk) {
+      for (var j = 0; j < nv; j++) {
+        var oj = j * D;
+        for (var a = 0; a < N; a++) {
+          var w = vecs[j * N + a];
+          if (w === 0) continue;
+          var oa = a * D;
+          for (var d = 0; d < D; d++) dirs[oj + d] += w * Y[oa + d];
+          if (wk.add(D)) yield;
+        }
+      }
+    }
+
+    // N > D: subspace iteration on the covariance, applied without forming it.
+    function* covarianceFitGen(Y, N, D, fit, result, wk) {
+      var K = result.count;
+      var dirs = result.directions;
+      var it = yield* subspaceIterationGen(
+        function (Q, p, W) {
+          return covarianceApplyGen(Y, N, D, Q, p, W, wk);
+        },
+        D,
+        K,
+        fit,
+        wk
+      );
+      for (var j = 0; j < K * D; j++) dirs[j] = it.vectors[j];
+      yield* orthonormalizeGen(dirs, K, D, wk);
+      result.method = "covariance-iterative";
+      result.iterations = it.iterations;
+      result.converged = it.converged;
     }
 
     // Exact variances and shares along the result's directions, over all rows.
@@ -686,10 +779,6 @@
         s += result.shares[r];
       }
       result.share = clamp01(s);
-    }
-
-    function gram(Y, N, D) {
-      return runAll(gramGen(Y, N, D, NO_PAUSE));
     }
 
     function* gramGen(Y, N, D, wk) {
@@ -732,50 +821,71 @@
       W.fill(0);
       var z = new Float64Array(4 * p);
       for (var i = 0; i < N; i += 4) {
-        var oa = i * D;
-        var ob = i + 1 < N ? oa + D : oa;
-        var oc = i + 2 < N ? oa + 2 * D : oa;
-        var od = i + 3 < N ? oa + 3 * D : oa;
-        for (var j = 0; j < p; j++) {
-          var sa = 0;
-          var sb = 0;
-          var sc = 0;
-          var sd = 0;
-          var oj = j * D;
-          for (var d = 0; d < D; d++) {
-            var q = Q[oj + d];
-            sa += Y[oa + d] * q;
-            sb += Y[ob + d] * q;
-            sc += Y[oc + d] * q;
-            sd += Y[od + d] * q;
-          }
-          z[4 * j] = sa;
-          z[4 * j + 1] = i + 1 < N ? sb : 0;
-          z[4 * j + 2] = i + 2 < N ? sc : 0;
-          z[4 * j + 3] = i + 3 < N ? sd : 0;
-        }
-        for (var j2 = 0; j2 < p; j2++) {
-          var a = z[4 * j2];
-          var b = z[4 * j2 + 1];
-          var c = z[4 * j2 + 2];
-          var e = z[4 * j2 + 3];
-          var o2 = j2 * D;
-          for (var d2 = 0; d2 < D; d2++) {
-            W[o2 + d2] += a * Y[oa + d2] + b * Y[ob + d2] + (c * Y[oc + d2] + e * Y[od + d2]);
-          }
-        }
+        var live = Math.min(4, N - i); // real rows in this group
+        projectFour(Y, i * D, live, Q, p, D, z);
+        accumulateFour(Y, i * D, live, z, p, D, W);
         if (wk.add(8 * p * D)) yield;
+      }
+    }
+
+    // Offset in Y of row r of the group of four starting at offset oa: a row
+    // beyond the `live` real ones repeats the first.
+    function rowOffset(oa, r, live, D) {
+      return r < live ? oa + r * D : oa;
+    }
+
+    // z[4j + r] = (Y row r of the group at oa) . (Q row j), 0 for a row beyond
+    // the `live` real ones.
+    function projectFour(Y, oa, live, Q, p, D, z) {
+      var ob = rowOffset(oa, 1, live, D);
+      var oc = rowOffset(oa, 2, live, D);
+      var od = rowOffset(oa, 3, live, D);
+      for (var j = 0; j < p; j++) {
+        var sa = 0;
+        var sb = 0;
+        var sc = 0;
+        var sd = 0;
+        var oj = j * D;
+        for (var d = 0; d < D; d++) {
+          var q = Q[oj + d];
+          sa += Y[oa + d] * q;
+          sb += Y[ob + d] * q;
+          sc += Y[oc + d] * q;
+          sd += Y[od + d] * q;
+        }
+        z[4 * j] = sa;
+        z[4 * j + 1] = live > 1 ? sb : 0;
+        z[4 * j + 2] = live > 2 ? sc : 0;
+        z[4 * j + 3] = live > 3 ? sd : 0;
+      }
+    }
+
+    // W row j += the four rows weighted by z[4j .. 4j + 3], in a fixed order.
+    function accumulateFour(Y, oa, live, z, p, D, W) {
+      var ob = rowOffset(oa, 1, live, D);
+      var oc = rowOffset(oa, 2, live, D);
+      var od = rowOffset(oa, 3, live, D);
+      for (var j2 = 0; j2 < p; j2++) {
+        var a = z[4 * j2];
+        var b = z[4 * j2 + 1];
+        var c = z[4 * j2 + 2];
+        var e = z[4 * j2 + 3];
+        var o2 = j2 * D;
+        for (var d2 = 0; d2 < D; d2++) {
+          W[o2 + d2] += a * Y[oa + d2] + b * Y[ob + d2] + (c * Y[oc + d2] + e * Y[od + d2]);
+        }
       }
     }
 
     // Block subspace iteration with Rayleigh-Ritz for the top k eigenvectors
     // of a symmetric positive semi-definite operator on R^n. Deterministic for
     // a given seed. `applyGen(Q, p, W)` returns a generator that fills W.
+    // `fit` is { seed, maxIt, tol, oversample } (oversample may be undefined).
     // Returns { vectors: Float64Array(k*n) rows, values, iterations, converged }.
-    function* subspaceIterationGen(applyGen, n, k, oversample, seed, maxIt, tol, wk) {
-      var extra = oversample === undefined ? Math.max(4, k) : oversample;
+    function* subspaceIterationGen(applyGen, n, k, fit, wk) {
+      var extra = fit.oversample === undefined ? Math.max(4, k) : fit.oversample;
       var p = Math.min(n, k + extra);
-      var rng = makeRandom(seed);
+      var rng = makeRandom(fit.seed);
       var Q = new Float64Array(p * n);
       rng.fillGauss(Q, 0, p * n);
       yield* orthonormalizeGen(Q, p, n, wk);
@@ -785,47 +895,61 @@
       var eig = null;
       var iterations = 0;
       var converged = false;
-      for (var it = 0; it <= maxIt; it++) {
+      for (var it = 0; it <= fit.maxIt; it++) {
         yield* applyGen(Q, p, W);
         iterations = it + 1;
-        for (var a = 0; a < p; a++) {
-          for (var b = a; b < p; b++) {
-            var s = 0;
-            for (var x = 0; x < n; x++) s += Q[a * n + x] * W[b * n + x];
-            B[a * p + b] = s;
-            B[b * p + a] = s;
-          }
-          if (wk.add((p - a) * n)) yield;
-        }
+        yield* rayleighGen(Q, W, B, p, n, wk);
         eig = yield* symmetricEigenGen(B, p, wk);
-        if (prev) {
-          var worst = 0;
-          for (var r = 0; r < k; r++) {
-            var dv = Math.abs(eig.values[r] - prev[r]);
-            if (dv > worst) worst = dv;
-          }
-          if (worst <= tol * Math.max(eig.values[0], 1e-300)) {
-            converged = true;
-            break;
-          }
+        if (prev && ritzSettled(eig.values, prev, k, fit.tol)) {
+          converged = true;
+          break;
         }
-        if (it === maxIt) break;
+        if (it === fit.maxIt) break;
         prev = eig.values;
         var tmp = Q;
         Q = W;
         W = tmp;
         yield* orthonormalizeGen(Q, p, n, wk);
       }
+      var vectors = yield* ritzVectorsGen(eig.vectors, Q, k, p, n, wk);
+      return { vectors: vectors, values: eig.values.slice(0, k), iterations: iterations, converged: converged };
+    }
+
+    // B (p x p, symmetric) = Q W^T, with Q and W given as p rows of length n.
+    function* rayleighGen(Q, W, B, p, n, wk) {
+      for (var a = 0; a < p; a++) {
+        for (var b = a; b < p; b++) {
+          var s = 0;
+          for (var x = 0; x < n; x++) s += Q[a * n + x] * W[b * n + x];
+          B[a * p + b] = s;
+          B[b * p + a] = s;
+        }
+        if (wk.add((p - a) * n)) yield;
+      }
+    }
+
+    // True when the top k Ritz values moved by at most tol relative to the largest.
+    function ritzSettled(values, prev, k, tol) {
+      var worst = 0;
+      for (var r = 0; r < k; r++) {
+        var dv = Math.abs(values[r] - prev[r]);
+        if (dv > worst) worst = dv;
+      }
+      return worst <= tol * Math.max(values[0], 1e-300);
+    }
+
+    // The top k Ritz vectors in R^n: row r = sum over c of evecs[r][c] * Q row c.
+    function* ritzVectorsGen(evecs, Q, k, p, n, wk) {
       var vectors = new Float64Array(k * n);
       for (var r2 = 0; r2 < k; r2++) {
         for (var c = 0; c < p; c++) {
-          var w = eig.vectors[r2 * p + c];
+          var w = evecs[r2 * p + c];
           if (w === 0) continue;
           for (var x2 = 0; x2 < n; x2++) vectors[r2 * n + x2] += w * Q[c * n + x2];
           if (wk.add(n)) yield;
         }
       }
-      return { vectors: vectors, values: eig.values.slice(0, k), iterations: iterations, converged: converged };
+      return vectors;
     }
 
     // ----- the guided tour (Tumble) ------------------------------------------
@@ -839,7 +963,7 @@
     // opts: { seed (0), speed (0.42 rad/s, the reference's rate) }
     function makeTour(basis, m, D, opts) {
       checkDim(D);
-      if (!(m >= 3)) throw new RangeError("a tour needs at least three directions");
+      if (!atLeast(m, 3)) throw new RangeError("a tour needs at least three directions");
       if (m > D) throw new RangeError("a tour cannot use more directions than the dimension");
       var o = opts || {};
       var seed = toSeed(o.seed === undefined ? 0 : o.seed);
@@ -890,7 +1014,7 @@
       }
 
       function frameAt(t, out) {
-        if (typeof t !== "number" || !isFinite(t)) throw new RangeError("time must be a finite number");
+        if (typeof t !== "number" || !Number.isFinite(t)) throw new RangeError("time must be a finite number");
         var F = out || new Float32Array(3 * D);
         coefficientsAt(t, A);
         F64.fill(0);
@@ -959,7 +1083,7 @@
 
     function checkGuidedTour(Y, N, D, o) {
       checkData(Y, N, D);
-      var m = Math.min(o.subspace === undefined ? 8 : o.subspace | 0, D);
+      var m = Math.min(o.subspace === undefined ? 8 : toInt32(o.subspace), D);
       if (m < 3) throw new RangeError("a guided tour needs a subspace of at least three directions");
       if (needsFit(o.pca, m, D)) checkPca(Y, N, D, tourPcaOpts(o));
       return m;
@@ -991,31 +1115,12 @@
       for (var i = 0; i < 3 * D; i++) v[i] = frame[i];
       for (var attempt = 0; attempt < 8; attempt++) {
         var useBasis = basis && m > 3 && attempt < 4;
-        if (useBasis) {
-          for (var d = 0; d < D; d++) v[3 * D + d] = 0;
-          for (var j = 0; j < m; j++) {
-            var g = rng.gauss();
-            for (var d2 = 0; d2 < D; d2++) v[3 * D + d2] += g * basis[j * D + d2];
-          }
-        } else {
-          rng.fillGauss(v, 3 * D, D);
-        }
-        var before = 0;
-        for (var d3 = 0; d3 < D; d3++) before += v[3 * D + d3] * v[3 * D + d3];
-        for (var pass = 0; pass < 2; pass++) {
-          for (var r = 0; r < 3; r++) {
-            var dp = 0;
-            for (var d4 = 0; d4 < D; d4++) dp += v[3 * D + d4] * v[r * D + d4];
-            for (var d5 = 0; d5 < D; d5++) v[3 * D + d5] -= dp * v[r * D + d5];
-          }
-        }
-        var nn = 0;
-        for (var d6 = 0; d6 < D; d6++) nn += v[3 * D + d6] * v[3 * D + d6];
-        if (nn > 1e-12 * before && nn > 0) {
-          var inv = 1 / Math.sqrt(nn);
-          for (var d7 = 0; d7 < D; d7++) h[d7] = v[3 * D + d7] * inv;
-          return h;
-        }
+        if (useBasis) drawInBasis(v, 3 * D, D, rng, basis, m);
+        else rng.fillGauss(v, 3 * D, D);
+        var before = sqNorm(v, 3 * D, D);
+        removeSpan(v, 3 * D, v, 3, D);
+        var nn = sqNorm(v, 3 * D, D);
+        if (nn > 1e-12 * before && nn > 0) return scaleInto(h, v, 3 * D, D, 1 / Math.sqrt(nn));
       }
       if (D <= 3) throw new RangeError("no hidden direction exists when the dimension is three or less");
       orthonormalize(v, 4, D);
@@ -1023,9 +1128,24 @@
       return h;
     }
 
+    // h = v[vo .. vo + D) * inv. Returns h.
+    function scaleInto(h, v, vo, D, inv) {
+      for (var d = 0; d < D; d++) h[d] = v[vo + d] * inv;
+      return h;
+    }
+
+    // v[vo .. vo + D) = a Gaussian combination of the m rows of basis.
+    function drawInBasis(v, vo, D, rng, basis, m) {
+      for (var d = 0; d < D; d++) v[vo + d] = 0;
+      for (var j = 0; j < m; j++) {
+        var g = rng.gauss();
+        for (var d2 = 0; d2 < D; d2++) v[vo + d2] += g * basis[j * D + d2];
+      }
+    }
+
     // The eased quarter turn of the reference: theta = (pi/2)(u - sin(2 pi u)/(2 pi)).
     function swapAngle(u) {
-      var x = u <= 0 ? 0 : u >= 1 ? 1 : u;
+      var x = Math.min(Math.max(u, 0), 1);
       return (Math.PI / 2) * (x - Math.sin(TAU * x) / TAU);
     }
 
@@ -1061,7 +1181,7 @@
       var o = opts || {};
       var seed = toSeed(o.seed === undefined ? 0 : o.seed);
       var period = o.period === undefined ? 3.4 : o.period;
-      if (!(period > 0)) throw new RangeError("period must be positive");
+      if (!above(period, 0)) throw new RangeError("period must be positive");
       var basis = o.basis || null;
       var basisRows = 0;
       if (basis) {
@@ -1122,7 +1242,7 @@
       }
 
       function stateAt(t) {
-        if (typeof t !== "number" || !isFinite(t)) throw new RangeError("time must be a finite number");
+        if (typeof t !== "number" || !Number.isFinite(t)) throw new RangeError("time must be a finite number");
         var x = t < 0 ? 0 : t / period;
         var c = Math.floor(x);
         enterCycle(c);
@@ -1165,8 +1285,8 @@
     function makeKnn(X, N, D, k, opts) {
       checkData(X, N, D);
       var o = opts || {};
-      var S = o.limit === undefined ? N : Math.max(0, Math.min(N, o.limit | 0));
-      var K = Math.max(0, Math.min(k | 0, S - 1));
+      var S = o.limit === undefined ? N : Math.max(0, Math.min(N, toInt32(o.limit)));
+      var K = Math.max(0, Math.min(toInt32(k), S - 1));
       var indices = new Int32Array(S * K);
       var distances = new Float32Array(S * K);
       var bestD = new Float64Array(K + 1);
@@ -1183,30 +1303,11 @@
         var oi = i * D;
         for (var j = 0; j < S; j++) {
           if (j === i) continue;
-          var oj = j * D;
           var bound = filled === K ? bestD[K - 1] : Infinity;
-          var s = 0;
-          var d = 0;
-          // Partial sums with an exact early exit: once the running sum exceeds
-          // the current k-th best, j cannot enter the list.
-          while (d < D) {
-            var end = d + 64 < D ? d + 64 : D;
-            for (; d < end; d++) {
-              var t = X[oi + d] - X[oj + d];
-              s += t * t;
-            }
-            if (s > bound) break;
-          }
+          var s = partialSqDistance(X, oi, j * D, D, bound);
           if (s > bound || (filled === K && s === bound && j > bestI[K - 1])) continue;
-          // insert j, keeping (distance, index) ascending
-          var pos = filled < K ? filled : K - 1;
-          while (pos > 0 && (bestD[pos - 1] > s || (bestD[pos - 1] === s && bestI[pos - 1] > j))) {
-            bestD[pos] = bestD[pos - 1];
-            bestI[pos] = bestI[pos - 1];
-            pos--;
-          }
-          bestD[pos] = s;
-          bestI[pos] = j;
+          // insert j at the end (or over the last when full), keeping order
+          insertBest(bestD, bestI, Math.min(filled, K - 1), s, j);
           if (filled < K) filled++;
         }
         for (var q = 0; q < K; q++) {
@@ -1216,7 +1317,7 @@
       }
 
       state.step = function (rows) {
-        var r = rows === undefined ? S : Math.max(1, rows | 0);
+        var r = rows === undefined ? S : Math.max(1, toInt32(rows));
         if (state.done) return true;
         var stop = Math.min(S, state.next + r);
         for (var i = state.next; i < stop; i++) row(i);
@@ -1225,6 +1326,38 @@
         return state.done;
       };
       return state;
+    }
+
+    // Squared distance between the rows of X at offsets oi and oj, summed in
+    // index order in blocks of 64 values, with an exact early exit: once the
+    // running sum exceeds `bound` (the current k-th best) after a block, the
+    // row cannot enter the list and the partial sum is returned.
+    function partialSqDistance(X, oi, oj, D, bound) {
+      var s = 0;
+      var d = 0;
+      while (d < D) {
+        var end = Math.min(d + 64, D);
+        for (; d < end; d++) {
+          var t = X[oi + d] - X[oj + d];
+          s += t * t;
+        }
+        if (s > bound) break;
+      }
+      return s;
+    }
+
+    // Put (s, j) at position `pos` of the lists of (distance, index) pairs,
+    // first moving up every pair before it that sorts after it, so the lists
+    // stay ascending (distance first, then index).
+    function insertBest(bestD, bestI, pos, s, j) {
+      var at = pos;
+      while (at > 0 && (bestD[at - 1] > s || (bestD[at - 1] === s && bestI[at - 1] > j))) {
+        bestD[at] = bestD[at - 1];
+        bestI[at] = bestI[at - 1];
+        at--;
+      }
+      bestD[at] = s;
+      bestI[at] = j;
     }
 
     // All at once: makeKnn(...).step() to completion.
@@ -1257,7 +1390,7 @@
     function checkLocalFrame(X, N, D, ids) {
       checkData(X, N, D);
       var M = ids.length;
-      if (!(M >= 1)) throw new RangeError("localFrame needs at least one point id");
+      if (!atLeast(M, 1)) throw new RangeError("localFrame needs at least one point id");
       for (var q = 0; q < M; q++) {
         var id = ids[q];
         if (!(id >= 0 && id < N) || Math.floor(id) !== id) {
@@ -1266,7 +1399,9 @@
       }
     }
 
-    function* localFrameGen(X, N, D, ids, out, wk) {
+    // The rows `ids` of X, centred on their own mean (accumulated in double
+    // precision), as a Float64Array(ids.length * D).
+    function centredRows(X, D, ids) {
       var M = ids.length;
       var mean = new Float64Array(D);
       for (var a = 0; a < M; a++) {
@@ -1279,13 +1414,19 @@
         var oa2 = ids[a2] * D;
         for (var d2 = 0; d2 < D; d2++) Yl[a2 * D + d2] = X[oa2 + d2] - mean[d2];
       }
+      return Yl;
+    }
+
+    function* localFrameGen(X, N, D, ids, out, wk) {
+      var M = ids.length;
+      var Yl = centredRows(X, D, ids);
       if (wk.add(2 * M * D)) yield;
       var G = yield* gramGen(Yl, M, D, wk);
       var eig = yield* symmetricEigenGen(G, M, wk);
       var F64 = new Float64Array(3 * D);
       var axes = Math.min(3, M);
       for (var ax = 0; ax < axes; ax++) {
-        if (!(eig.values[ax] > 1e-12 * Math.max(eig.values[0], 1e-300))) continue;
+        if (!above(eig.values[ax], 1e-12 * Math.max(eig.values[0], 1e-300))) continue;
         for (var b = 0; b < M; b++) {
           var w = eig.vectors[ax * M + b];
           for (var d3 = 0; d3 < D; d3++) F64[ax * D + d3] += w * Yl[b * D + d3];
@@ -1321,8 +1462,7 @@
       }
       var best = PERMS[0];
       var bestScore = -1;
-      for (var p = 0; p < PERMS.length; p++) {
-        var pr = PERMS[p];
+      for (const pr of PERMS) {
         var sc = Math.abs(m[pr[0] * 3]) + Math.abs(m[pr[1] * 3 + 1]) + Math.abs(m[pr[2] * 3 + 2]);
         if (sc > bestScore) {
           bestScore = sc;
@@ -1339,7 +1479,7 @@
     }
 
     function smoothstep(u) {
-      var x = u <= 0 ? 0 : u >= 1 ? 1 : u;
+      var x = Math.min(Math.max(u, 0), 1);
       return x * x * (3 - 2 * x);
     }
 
@@ -1364,38 +1504,49 @@
     // Infinity when all same-group pairs coincide but groups are apart; 1 when
     // every grouped point coincides.
     function groupSeparation(P, N, dim, groups) {
-      var within = 0;
-      var nWithin = 0;
-      var between = 0;
-      var nBetween = 0;
+      var sums = pairDistanceSums(P, N, dim, groups);
+      if (sums.nWithin === 0 || sums.nBetween === 0) return Number.NaN;
+      // Every same-group pair coincides: Infinity when the groups are apart,
+      // 1 (nothing to see) when everything coincides.
+      if (sums.within === 0) return sums.between > 0 ? Infinity : 1;
+      return sums.between / sums.nBetween / (sums.within / sums.nWithin);
+    }
+
+    function ungrouped(g) {
+      return g === "" || g === null || g === undefined;
+    }
+
+    // Sums and counts of the distances between grouped points, over all pairs
+    // i < j in order, split into same-group and different-group pairs.
+    function pairDistanceSums(P, N, dim, groups) {
+      var sums = { within: 0, nWithin: 0, between: 0, nBetween: 0 };
       for (var i = 0; i < N; i++) {
         var gi = groups[i];
-        if (gi === "" || gi === null || gi === undefined) continue;
-        var oi = i * dim;
+        if (ungrouped(gi)) continue;
         for (var j = i + 1; j < N; j++) {
           var gj = groups[j];
-          if (gj === "" || gj === null || gj === undefined) continue;
-          var oj = j * dim;
-          var s = 0;
-          for (var d = 0; d < dim; d++) {
-            var t = P[oi + d] - P[oj + d];
-            s += t * t;
-          }
-          var dist = Math.sqrt(s);
+          if (ungrouped(gj)) continue;
+          var dist = Math.sqrt(sqDistance(P, i * dim, j * dim, dim));
           if (gi === gj) {
-            within += dist;
-            nWithin++;
+            sums.within += dist;
+            sums.nWithin++;
           } else {
-            between += dist;
-            nBetween++;
+            sums.between += dist;
+            sums.nBetween++;
           }
         }
       }
-      if (nWithin === 0 || nBetween === 0) return NaN;
-      // Every same-group pair coincides: Infinity when the groups are apart,
-      // 1 (nothing to see) when everything coincides.
-      if (within === 0) return between > 0 ? Infinity : 1;
-      return between / nBetween / (within / nWithin);
+      return sums;
+    }
+
+    // Squared distance between the rows of P at offsets oi and oj, summed in index order.
+    function sqDistance(P, oi, oj, dim) {
+      var s = 0;
+      for (var d = 0; d < dim; d++) {
+        var t = P[oi + d] - P[oj + d];
+        s += t * t;
+      }
+      return s;
     }
 
     // Group separation of the data as seen through one frame.
