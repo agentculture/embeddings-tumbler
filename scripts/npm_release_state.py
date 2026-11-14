@@ -26,7 +26,8 @@ import sys
 #: The only arguments that reach the npm command line: a package name (scope optional) and
 #: an exact version. Anything else, such as a word starting with "-", is refused.
 PACKAGE = re.compile(r"(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*")
-VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?")
+#: re.ASCII keeps \d to the digits 0-9 (in a str pattern it would also match other scripts' digits).
+VERSION = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?", re.ASCII)
 
 
 class StateError(Exception):

@@ -608,33 +608,37 @@ def write(out_dir: Path) -> list[Path]:
     return written
 
 
-def inside_current_folder(path: Path) -> Path:
-    """``path`` checked to resolve (symlinks followed) inside the current folder.
+def inside_current_folder(value: str) -> str:
+    """The real path of ``value`` (symlinks followed), checked to be inside the current folder.
 
-    Returns the resolved path, relative to the current folder when ``path`` was relative.
-    RefusedTarget when it is not inside.
+    SonarSource's documented path-traversal check: both paths through ``os.path.realpath``,
+    then a plain ``startswith(base + os.sep)``; the current folder itself is accepted too.
+    RefusedTarget when the path is not inside.
     """
-    base = Path(os.path.realpath(os.getcwd()))
-    real = Path(os.path.realpath(path))
-    if not real.is_relative_to(base):
-        raise RefusedTarget(f"--out {path} is outside the current folder {base}")
-    return real if path.is_absolute() else real.relative_to(base)
+    base = os.path.realpath(os.getcwd())
+    full = os.path.realpath(os.path.join(base, value))
+    if full == base or full.startswith(base + os.sep):
+        return full
+    raise RefusedTarget(f"--out {value} is outside the current folder {base}")
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--out", type=Path, help="output folder inside the current one (default: the fixtures)"
+        "--out", help="output folder inside the current one (default: the fixtures)"
     )
     args = parser.parse_args(argv)
     try:
-        out = DEFAULT_OUT if args.out is None else inside_current_folder(args.out)
+        out = DEFAULT_OUT if args.out is None else Path(inside_current_folder(args.out))
         written = write(out)
     except RefusedTarget as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    # A relative --out is echoed relative to the current folder, as it was given.
+    relative = args.out is not None and not os.path.isabs(args.out)
+    base = os.path.realpath(os.getcwd())
     for path in written:
-        print(path)
+        print(os.path.relpath(path, base) if relative else path)
     return 0
 
 

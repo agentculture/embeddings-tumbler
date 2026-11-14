@@ -77,47 +77,62 @@ def _parts(raw_path: str) -> tuple[str, list[str]] | None:
 
 
 def resolve_request(root: Path, raw_path: str) -> Path | None:
-    """Map a request target to a regular file inside ``root``, or None."""
+    """Map a request target to a regular file inside ``root``, or None.
+
+    The request's path is resolved against the root first (symlinks followed) and must stay
+    inside it before the file system is asked anything about it.
+    """
     split = _parts(raw_path)
     if split is None:
         return None
     path, parts = split
-    candidate = root.joinpath(*parts)
-    if path.endswith("/") or candidate.is_dir():
-        candidate = candidate / "index.html"
-    real = Path(os.path.realpath(candidate))
-    if not real.is_relative_to(root) or not real.is_file():
+    base = os.path.realpath(root)
+    full = os.path.realpath(os.path.join(base, *parts))
+    if full != base and not full.startswith(base + os.sep):
         return None
-    return real
+    if path.endswith("/") or os.path.isdir(full):
+        full = os.path.realpath(os.path.join(full, "index.html"))
+    if not full.startswith(base + os.sep) or not os.path.isfile(full):
+        return None
+    return Path(full)
 
 
-def _listed_folder_name(folder: str, part: str) -> str | None:
+def _listed_folder_name(base: str, folder: str, part: str) -> str | None:
     """The name, as ``folder``'s listing spells it, of the sub-folder ``part`` names.
 
-    The entry with exactly that name wins; otherwise the entry that is the same folder
-    (a case-insensitive file system). None when ``part`` is not a sub-folder.
+    ``base`` is the served root's real path. Both the folder and the sub-folder are
+    resolved (symlinks followed) and must be inside it before either is looked at, so the
+    request never selects a folder outside the root to list. The entry with exactly that
+    name wins; otherwise the entry that is the same folder (a case-insensitive file
+    system). None when ``part`` is not a sub-folder inside the root.
     """
-    wanted = os.path.join(folder, part)
+    listed = os.path.realpath(folder)
+    wanted = os.path.realpath(os.path.join(listed, part))
+    if not wanted.startswith(base + os.sep):
+        return None
+    if listed != base and not listed.startswith(base + os.sep):
+        return None
     if not os.path.isdir(wanted):
         return None
-    with os.scandir(folder) as entries:
-        listed = [e for e in entries if e.is_dir()]
-    exact = next((e.name for e in listed if e.name == part), None)
+    with os.scandir(listed) as entries:
+        folders = [e for e in entries if e.is_dir()]
+    exact = next((e.name for e in folders if e.name == part), None)
     if exact is not None:
         return exact
-    return next((e.name for e in listed if os.path.samefile(e.path, wanted)), None)
+    return next((e.name for e in folders if os.path.samefile(e.path, wanted)), None)
 
 
-def _folder_names_on_disk(root: Path, parts: list[str]) -> list[str] | None:
-    """The names of the folders under ``root`` that ``parts`` names, as listed on disk.
+def _folder_names_on_disk(base: str, parts: list[str]) -> list[str] | None:
+    """The names of the folders under the root ``base`` that ``parts`` names, as listed.
 
     Each level is looked up in its parent's directory listing, so the names returned are
-    the file system's own, not text from the request. None when a level is not a folder.
+    the file system's own, not text from the request. None when a level is not a folder
+    inside the root.
     """
     names: list[str] = []
-    current = str(root)
+    current = base
     for part in parts:
-        name = _listed_folder_name(current, part)
+        name = _listed_folder_name(base, current, part)
         if name is None:
             return None
         names.append(name)
@@ -140,16 +155,18 @@ def directory_redirect(root: Path, raw_path: str) -> str | None:
     path, parts = split
     if path.endswith("/") or not parts:
         return None
-    if resolve_request(root, raw_path) is None:
+    # Resolved against the root and confined to it before the file system is touched.
+    base = os.path.realpath(root)
+    full = os.path.realpath(os.path.join(base, *parts))
+    if not full.startswith(base + os.sep):
         return None
-    real = Path(os.path.realpath(root.joinpath(*parts)))
-    if not real.is_dir() or not real.is_relative_to(root):
+    if not os.path.isdir(full) or resolve_request(root, raw_path) is None:
         return None
     # The Location is rebuilt, never echoed: the path is made of the folder names as the
     # file system lists them, each percent-encoded, and the query is parsed, encoded again
     # and checked against what encoding can produce, so no control character or header
     # break from the request can reach the response header.
-    names = _folder_names_on_disk(root, parts)
+    names = _folder_names_on_disk(base, parts)
     if names is None:
         return None
     query = urlencode(parse_qsl(urlsplit(raw_path).query, keep_blank_values=True))

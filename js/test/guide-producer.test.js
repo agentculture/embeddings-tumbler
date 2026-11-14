@@ -27,12 +27,15 @@ function folderFetch(dir) {
   };
 }
 
+// The script only reads and writes inside the folder it runs in, so it runs in the temporary
+// folder, with the sample input copied there, and writes the pair into that same folder.
 function run(extra, name, dir) {
+  fs.copyFileSync(path.join(PRODUCER, "sample-input.jsonl"), path.join(dir, "sample-input.jsonl"));
   const r = spawnSync(
     "python3",
-    ["-I", path.join(PRODUCER, "write_data_file.py"), path.join(PRODUCER, "sample-input.jsonl"), dir, name,
+    ["-I", path.join(PRODUCER, "write_data_file.py"), "sample-input.jsonl", ".", name,
       "--model", "synthetic/cold-test", "--synthetic", "--seed", "7", "--limitation", "made-up vectors"].concat(extra),
-    { encoding: "utf8" }
+    { encoding: "utf8", cwd: dir }
   );
   assert.strictEqual(r.status, 0, r.stderr);
 }

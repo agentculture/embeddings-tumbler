@@ -487,3 +487,33 @@ def test_the_redirect_location_uses_the_folder_names_on_disk(tmp_path: Path) -> 
     assert directory_redirect(root, "/data") is None
     assert directory_redirect(root, "/data/page.txt") is None
     assert directory_redirect(root, "/nope") is None
+
+
+def test_the_redirect_never_lists_a_folder_outside_the_root(tmp_path: Path, monkeypatch) -> None:
+    from embeddings_tumbler import _static_server
+    from embeddings_tumbler._static_server import directory_redirect, resolve_request
+
+    root_dir, outside = tmp_path / "root", tmp_path / "outside"
+    (root_dir / "c").mkdir(parents=True)
+    (root_dir / "c" / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    outside.mkdir()
+    (outside / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    # root/a leads outside the root; outside/x leads back in, to root/c.
+    (root_dir / "a").symlink_to(outside, target_is_directory=True)
+    (outside / "x").symlink_to(root_dir / "c", target_is_directory=True)
+    root = root_dir.resolve()
+    listed = []
+    real_scandir = _static_server.os.scandir
+
+    def recording_scandir(path):
+        listed.append(os.path.realpath(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(_static_server.os, "scandir", recording_scandir)
+    assert directory_redirect(root, "/a") is None
+    assert resolve_request(root, "/a/") is None
+    assert directory_redirect(root, "/a/x") is None
+    assert directory_redirect(root, "/c") == "/c/"
+    assert listed
+    for path in listed:
+        assert path == str(root) or path.startswith(str(root) + os.sep), path
