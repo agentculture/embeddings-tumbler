@@ -10,7 +10,7 @@
  * Nothing here is loaded from another origin. The reference's faces
  * (Instrument Serif, IBM Plex Sans, IBM Plex Mono) are named first in each
  * stack so a machine that has them installed uses them; otherwise the stack
- * falls back to local faces. See docs/reference-differences-fonts.md.
+ * falls back to local faces. See "Fonts" in docs/reference-differences.md.
  *
  * Single dark look by choice, as in the reference: the subject is light on
  * darkness.
@@ -64,6 +64,9 @@ body {
 main {
   display: block;
   padding-bottom: 56px;
+  /* A long file name or address in the page's own text must not push the page
+   * wider than a phone (the viewer sets its own wrapping inside #space). */
+  overflow-wrap: anywhere;
 }
 
 /* ---------- the viewer's host element: theme and size ---------- */
@@ -152,9 +155,8 @@ main {
   font-size: 13px !important;
 }
 
-.space .tumbler-strip {
-  height: 22px !important;
-}
+/* The readout strip's size (22 px of cells between two 1 px lines) and the
+ * 6 px gap before its caption are the viewer's own defaults, the reference's. */
 
 .space .tumbler-readout-caption {
   font-size: 12px !important;
@@ -273,6 +275,7 @@ body[data-page-state="error"] .notes {
   margin: 0;
   max-width: 62ch;
   color: #c5cddb;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {

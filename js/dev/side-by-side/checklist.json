@@ -52,6 +52,10 @@
     {
      "title": "The starting frame",
      "visible": "no"
+    },
+    {
+     "title": "Tumble's summary under its tab",
+     "visible": "yes"
     }
    ]
   },
@@ -106,6 +110,10 @@
     },
     {
      "title": "Auto-framing uses a fixed sample",
+     "visible": "no"
+    },
+    {
+     "title": "Auto-framing keeps the outermost regions and their names inside the stage",
      "visible": "yes"
     }
    ]
@@ -259,38 +267,9 @@
     {
      "title": "No document type, so the reference runs in quirks mode",
      "visible": "unknown"
-    }
-   ]
-  },
-  {
-   "group": "Unintended differences found",
-   "items": [
-    {
-     "title": "Group names and Wander's names lack the reference's dark outline",
-     "visible": "yes"
     },
     {
-     "title": "Wander's stop name, neighbour names and ring are styled differently",
-     "visible": "yes"
-    },
-    {
-     "title": "Tumble fills the stage and reaches its edges",
-     "visible": "yes"
-    },
-    {
-     "title": "The readout strip has no borders and no gap before its caption",
-     "visible": "yes"
-    },
-    {
-     "title": "The speed slider is narrower and the Pause button smaller",
-     "visible": "yes"
-    },
-    {
-     "title": "The reference's page has an 8 px margin; the build is truly full-bleed",
-     "visible": "yes"
-    },
-    {
-     "title": "The mode summaries are worded differently",
+     "title": "No style reset, so the reference has an 8 px page margin",
      "visible": "yes"
     }
    ]

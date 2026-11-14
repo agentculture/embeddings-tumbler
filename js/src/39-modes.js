@@ -347,12 +347,24 @@ ET.modes = (function () {
     return ET.math.randomFrame(D, ET.math.makeRandom(ET.math.mixSeed(seed, SALT_START)));
   }
 
-  // The reference's auto-framing: zoom = 0.78 / rms of the projected coordinates
-  // of a fixed sample (the first `sample` points, 512 by default; fixed so an
-  // append past it does not change the framing).
+  // Auto-framing. The reference's rule is zoom = 0.78 / rms of the projected
+  // coordinates. On a guided tour the regions sit far apart as compact blobs,
+  // so the outermost ones (and their names) left the stage although the rms was
+  // the reference's (measured on the sample set: the tour's 98th-percentile
+  // radius is 1.6 times its rms, and the group names sit on the outermost
+  // blobs). So the zoom is also capped so that the 98th-percentile radius of the
+  // sample lands at AUTO_FIT units, which leaves room for the names inside the
+  // shorter side of the stage (the renderer maps 1 unit to 0.46 of it, so the
+  // edge is at 1.087 units). zoom = min(0.78 / rms, AUTO_FIT / p98). An even
+  // cloud keeps the reference's framing. The sample is fixed (the first
+  // `sample` points, 512 by default) so an append past it does not change the
+  // framing. A pure function of the data, the frame and the centre.
+  var AUTO_FIT = 0.88;
+  var radii = new Float64Array(0);
   function autoZoom(X, N, D, frame, centre, sample) {
     var n = Math.min(N, sample || 512);
     if (n <= 0) return 1;
+    if (radii.length < n) radii = new Float64Array(n);
     var sq = 0;
     for (var i = 0; i < n; i++) {
       var o = i * D;
@@ -365,10 +377,17 @@ ET.modes = (function () {
         b += x * frame[D + d];
         c += x * frame[2 * D + d];
       }
-      sq += a * a + b * b + c * c;
+      var r2 = a * a + b * b + c * c;
+      sq += r2;
+      radii[i] = r2;
     }
     var rms = Math.sqrt(sq / n);
-    return rms > 0 ? 0.78 / rms : 1;
+    if (!(rms > 0)) return 1;
+    var view = radii.subarray(0, n);
+    view.sort();
+    var p98 = Math.sqrt(view[Math.min(n - 1, Math.floor(0.98 * (n - 1)))]);
+    var zoom = 0.78 / rms;
+    return p98 > 0 && AUTO_FIT / p98 < zoom ? AUTO_FIT / p98 : zoom;
   }
 
   // The sample set's typical radius (root mean squared distance from the mean,
@@ -454,6 +473,7 @@ ET.modes = (function () {
     blendDraw: blendDraw,
     startFrame: startFrame,
     autoZoom: autoZoom,
+    AUTO_FIT: AUTO_FIT,
     REFERENCE_RADIUS: REFERENCE_RADIUS,
     thousands: thousands,
     isLabelled: isLabelled,

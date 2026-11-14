@@ -466,7 +466,7 @@
   M.register({
     id: "wander",
     title: "Wander",
-    summary: "Fly through the space, hopping from neighbour to neighbour.",
+    summary: "Fly through the space, hopping neighbour to neighbour",
     create: create,
   });
 })();
