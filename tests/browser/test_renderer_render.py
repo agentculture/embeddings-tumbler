@@ -212,3 +212,49 @@ def test_dispose_frees_the_lit_buffer_and_restore_brings_it_back(search):
     assert res["lit"] is True
     assert res["litPixels"] > 200, res
     assert res["diff"] == -1, "the dimmed picture after restore equals the one before"
+
+
+# --------------------------------------------------------------------------- the owner's look
+# Corrected after the owner's browser look (2026-11-14); see docs/search-interface.md.
+
+
+@pytest.mark.parametrize("case", ["wires", "wiresNoHdr"])
+def test_wires_follow_the_search(search, case):
+    res = search[case]
+    off, lit = res["off"], res["lit"]
+    # control: with the lit values not applied every wire is seen at full strength
+    assert min(off.values()) > 100, res
+    # with the search shown, a wire between two results keeps its strength ...
+    assert lit["both"] > 0.8 * off["both"], res
+    # ... and a wire with an unlit end is dimmed like an unlit point
+    assert lit["one"] < 0.3 * off["one"], res
+    assert lit["none"] < 0.3 * off["none"], res
+    assert lit["both"] > 3 * lit["one"], res
+
+
+@pytest.mark.parametrize("case", ["wires", "wiresNoHdr"])
+def test_wires_with_no_search_are_byte_identical(search, case):
+    """Lit values set but not applied, and then cleared: the wire frame is a never-lit one's."""
+    res = search[case]
+    assert res["identity"] == -1, res
+    assert res["clearedIdentity"] == -1, res
+
+
+def test_a_lit_point_is_not_fogged_away(search):
+    res = search["fog"]
+    clear, fogged = res["clear"], res["fogged"]
+    # control: the unlit point is dimmed by the fog, so the fog is on and the measure sees it
+    assert fogged["unlit"] < 0.5 * clear["unlit"], res
+    # the lit point reads (nearly) as it does with no fog
+    assert fogged["lit"] > 0.85 * clear["lit"], res
+    # and far brighter than the same point fogged with no search
+    assert fogged["lit"] > 3 * res["noSearchFogged"], res
+
+
+def test_crowded_wires_are_scaled_down(search):
+    res = search["crowd"]
+    assert res["manyOff"]["scale"] == 1, res
+    assert res["many"]["scale"] < 0.8, res
+    assert res["few"]["scale"] == 1, res  # ten times fewer wires through the same stage
+    # the scaled-down wires are still drawn
+    assert res["many"]["lit"] > 0.3 * res["manyOff"]["lit"], res

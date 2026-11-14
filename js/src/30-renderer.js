@@ -17,7 +17,8 @@
 //     is rebuilt from the data it keeps, and without WebGL 2 it reports instead of
 //     throwing.
 //   * Search: setLit() gives per-point lit values and a shared mark, drawn by a second
-//     point program only when they apply; without them the frame is drawn as before.
+//     point program (and, for the wires, a second wire program) only when they apply;
+//     without them the frame is drawn as before.
 //
 // The API is documented in js/api/30-renderer.md.
 // ---------------------------------------------------------------------------
@@ -55,9 +56,15 @@ ET.renderer = (function () {
     background: Object.freeze([0, 0, 0]), // added under the image, linear RGB 0..1
     filter: 0, // 0..1: how much the lit values (setLit) apply this frame; 0 = drawn as without search
     unlitGain: 0.07, // brightness factor of a point with lit value 0, at filter 1
+    // 0 = off. Above 0: the most wire light per pixel, measured where the wires' light lands,
+    // that the wires may pile up to; above it the wires' brightness is scaled down (wireDensity).
+    wireLoad: 0,
   });
 
-  // The point program's uniforms (the lit program adds uFilter and uUnlit).
+  var WIRE_SAMPLE = 192; // wires sampled (at an even stride) to measure how they pile up
+  var WIRE_CELLS = 64; // grid cells across the stage's shorter side for that measure
+
+  // The point program's uniforms (the lit programs add uFilter and uUnlit).
   var POINT_UNIFORMS = ["uPx", "uMinPx", "uFog", "uTime", "uGain", "uDim", "uTwinkle", "uDof", "uFogNear", "uFogWidth"];
   var VIEW_UNIFORMS = ["uX", "uF", "uRot", "uView", "uZoom", "uFocus"];
 
@@ -87,6 +94,7 @@ ET.renderer = (function () {
       point: null,
       pointLit: null, // the point program that reads lit values, compiled on first setLit
       line: null,
+      lineLit: null, // the wire program that reads each wire's lit value, compiled with pointLit
       progLayout: null,
       quadVao: null,
       texX: null,
@@ -101,6 +109,8 @@ ET.renderer = (function () {
       litCapacity: 0, // points vboLit was allocated for
       vboLine: null,
       vaoLine: null,
+      vboWireLit: null, // one float per wire end: the smaller lit value of the wire's two ends
+      vaoLineLit: null, // vboLine at locations 0..2 and vboWireLit at location 3
       fbo: null,
       texHdr: null,
       hdrW: 0,
@@ -161,10 +171,13 @@ ET.renderer = (function () {
   // change. lit true is a second program that also reads the per-point lit value (aLit:
   // the value in 0..1, plus 2 when the shared mark is drawn) and the draw keys filter
   // (uFilter) and unlitGain (uUnlit): results swell and brighten, the rest shrink and dim,
-  // and a marked point adds white.
+  // and a marked point adds white. A lit point's fog (distance dimming) is also reduced in
+  // proportion to its lit value times filter, so results stay visible wherever the camera
+  // is while unlit points keep the fog.
   function pointMain(lit) {
     var sizeTail = lit ? " * mix(1.0, mix(0.8, 1.5, l), uFilter)" : "";
     var colourTail = lit ? " * mix(1.0, mix(uUnlit, 2.2, l), uFilter)" : "";
+    var fogAmount = lit ? "fogK" : "uFog";
     return ["uniform float uPx, uMinPx, uFog, uTime, uGain, uDim, uTwinkle, uDof, uFogNear, uFogWidth;"]
       .concat(lit ? ["uniform float uFilter, uUnlit;"] : [])
       .concat(["layout(location = 0) in vec4 aCol;"])
@@ -180,16 +193,50 @@ ET.renderer = (function () {
         "  float w = aCol.a;",
         "  float blur = 1.0 + uDof * zf * zf;", // out-of-focus points swell and dim
       ])
-      .concat(lit ? ["  float mark = step(1.5, aLit);", "  float l = clamp(aLit - 2.0 * mark, 0.0, 1.0);"] : [])
+      .concat(
+        lit
+          ? [
+              "  float mark = step(1.5, aLit);",
+              "  float l = clamp(aLit - 2.0 * mark, 0.0, 1.0);",
+              "  float fogK = uFog * (1.0 - l * uFilter);",
+            ]
+          : []
+      )
       .concat([
-        "  float size = uPx * q.w * (0.55 + 1.5 * w) * blur * mix(1.0, 0.45 + 1.25 * fog, uFog)" + sizeTail + ";",
+        "  float size = uPx * q.w * (0.55 + 1.5 * w) * blur * mix(1.0, 0.45 + 1.25 * fog, " + fogAmount + ")" + sizeTail + ";",
         "  gl_PointSize = max(size, uMinPx);",
         "  float tw = (1.0 - uTwinkle) + uTwinkle * sin(uTime * (1.3 + fract(fid * 0.618) * 2.2) + fid * 12.9898);",
-        "  float a = (0.16 + 0.84 * w * w) * tw / pow(blur, 1.5) * mix(1.0, 0.22 + 0.78 * fog * fog, uFog);",
+        "  float a = (0.16 + 0.84 * w * w) * tw / pow(blur, 1.5) * mix(1.0, 0.22 + 0.78 * fog * fog, " + fogAmount + ");",
         "  vCol = aCol.rgb * a * uGain * mix(1.0, uDim, step(w, 0.99))" + colourTail + ";",
       ])
       .concat(lit ? ["  vCol += vec3(0.9) * a * uGain * mark * uFilter;"] : [])
       .concat(["}"])
+      .join("\n");
+  }
+
+  // The wire vertex shader's body. lit false gives the program drawn whenever no search
+  // applies, line for line the shader that existed before search. lit true also reads the
+  // wire's lit value (aWireLit: the smaller lit value of its two ends, so 1 only when both
+  // ends are lit) and the draw keys filter and unlitGain: a wire between results keeps its
+  // full strength, any other wire is dimmed like an unlit point.
+  function lineMain(lit, wireScale) {
+    var colourTail = lit ? " * mix(1.0, mix(uUnlit, 1.0, aWireLit), uFilter)" : "";
+    return ["uniform float uGain, uWireDof;"]
+      .concat(lit ? ["uniform float uFilter, uUnlit;"] : [])
+      .concat(["layout(location = 0) in uvec2 aPair;", "layout(location = 1) in float aLen;", "layout(location = 2) in vec3 aCol;"])
+      .concat(lit ? ["layout(location = 3) in float aWireLit;"] : [])
+      .concat([
+        "out vec3 vCol;",
+        "void main() {",
+        "  float d0, d1, zf;",
+        "  vec3 p = proj(int(aPair.x), d0), p2 = proj(int(aPair.y), d1);",
+        "  vec4 q = place(p, zf);",
+        "  gl_Position = vec4(q.xy, 0.0, 1.0);",
+        // 1 = a typical shadow length; higher = seen nearer its true length
+        "  float t = length(p - p2) / max(aLen, 1e-6) * " + wireScale + ";",
+        "  vCol = aCol * (0.03 + 0.2 * t * t * t) * uGain / (1.0 + uWireDof * zf * zf)" + colourTail + ";",
+        "}",
+      ])
       .join("\n");
   }
 
@@ -242,26 +289,8 @@ ET.renderer = (function () {
       "  o = vec4(vCol * g, 1.0);",
       "}",
     ].join("\n");
-    var lineVertex =
-      head +
-      proj +
-      "\n" +
-      [
-        "uniform float uGain, uWireDof;",
-        "layout(location = 0) in uvec2 aPair;",
-        "layout(location = 1) in float aLen;",
-        "layout(location = 2) in vec3 aCol;",
-        "out vec3 vCol;",
-        "void main() {",
-        "  float d0, d1, zf;",
-        "  vec3 p = proj(int(aPair.x), d0), p2 = proj(int(aPair.y), d1);",
-        "  vec4 q = place(p, zf);",
-        "  gl_Position = vec4(q.xy, 0.0, 1.0);",
-        // 1 = a typical shadow length; higher = seen nearer its true length
-        "  float t = length(p - p2) / max(aLen, 1e-6) * " + wireScale + ";",
-        "  vCol = aCol * (0.03 + 0.2 * t * t * t) * uGain / (1.0 + uWireDof * zf * zf);",
-        "}",
-      ].join("\n");
+    var lineVertex = head + proj + "\n" + lineMain(false, wireScale);
+    var lineVertexLit = head + proj + "\n" + lineMain(true, wireScale);
     var lineFragment =
       "#version 300 es\nprecision mediump float; in vec3 vCol; out vec4 o; void main() { o = vec4(vCol, 1.0); }";
     var quadVertex = [
@@ -294,11 +323,88 @@ ET.renderer = (function () {
       pointVertexLit: pointVertexLit,
       pointFragment: pointFragment,
       lineVertex: lineVertex,
+      lineVertexLit: lineVertexLit,
       lineFragment: lineFragment,
       quadVertex: quadVertex,
       fadeFragment: fadeFragment,
       toneFragment: toneFragment,
     };
+  }
+
+  // ---------- how tightly the wires pile up on screen ----------
+
+  // The wire light per pixel where the wires' light lands, before any gain: the light of an
+  // even sample of the wires (each wire's brightness as the wire shader computes it, times
+  // its length on screen) is spread over a coarse grid of the stage, and the light-weighted
+  // mean of the cells' light per pixel is returned, scaled up from the sample to every wire.
+  // It grows when the frame packs the wires tightly (many wires through the same cells) and
+  // with the number of wires. src: { vectors (stride floats per point), stride, dimension,
+  // pairs, lengths, count }; view: a merged draw state plus width and height in pixels.
+  function wireDensity(src, view) {
+    var m = Math.min(src.count, WIRE_SAMPLE);
+    if (m <= 0) return 0;
+    var W = view.width;
+    var H = view.height;
+    var cell = Math.max(2, Math.min(W, H) / WIRE_CELLS);
+    var cols = Math.ceil(W / cell);
+    var grid = new Float64Array(cols * Math.ceil(H / cell));
+    var scale = Math.sqrt(src.dimension / 3);
+    var a = new Float64Array(6);
+    for (var k = 0; k < m; k++) {
+      var e = Math.floor((k * src.count) / m);
+      projectInto(src, view, src.pairs[2 * e], a, 0);
+      projectInto(src, view, src.pairs[2 * e + 1], a, 3);
+      var t = (Math.hypot(a[0] - a[3], a[1] - a[4], a[2] - a[5]) / Math.max(src.lengths[e], 1e-6)) * scale;
+      var ends = [screenOf(a, 0, view), screenOf(a, 3, view)];
+      var dof = 1 + (view.wireDepthOfField * (ends[0].zf * ends[0].zf + ends[1].zf * ends[1].zf)) / 2;
+      splat(grid, cols, cell, ends, ((0.03 + 0.2 * t * t * t) / dof) * (src.count / m));
+    }
+    var total = 0;
+    var squares = 0;
+    for (var c of grid) {
+      total += c;
+      squares += c * c;
+    }
+    return total > 0 ? squares / total / (cell * cell) : 0;
+  }
+
+  // Point i's coordinates along the frame (centred), into out[at .. at + 3).
+  function projectInto(src, view, i, out, at) {
+    var D = src.dimension;
+    var o = i * src.stride;
+    var x = 0;
+    var y = 0;
+    var z = 0;
+    for (var d = 0; d < D; d++) {
+      var v = src.vectors[o + d] - (view.centre ? view.centre[d] : 0);
+      x += v * view.frame[d];
+      y += v * view.frame[D + d];
+      z += v * view.frame[2 * D + d];
+    }
+    out[at] = x;
+    out[at + 1] = y;
+    out[at + 2] = z;
+  }
+
+  // Canvas pixels and depth from the focus plane of the coordinates at p[at .. at + 3).
+  function screenOf(p, at, view) {
+    var q = place([p[at], p[at + 1], p[at + 2]], view, view.width, view.height);
+    return { x: q.x, y: q.y, zf: q.depth };
+  }
+
+  // Add `light` per pixel of the segment's length along it, cell by cell.
+  function splat(grid, cols, cell, ends, light) {
+    var dx = ends[1].x - ends[0].x;
+    var dy = ends[1].y - ends[0].y;
+    var len = Math.max(1, Math.hypot(dx, dy));
+    var steps = Math.max(1, Math.ceil(len / cell));
+    var rows = grid.length / cols;
+    for (var i = 0; i < steps; i++) {
+      var f = (i + 0.5) / steps;
+      var cx = Math.floor((ends[0].x + dx * f) / cell);
+      var cy = Math.floor((ends[0].y + dy * f) / cell);
+      if (cx >= 0 && cx < cols && cy >= 0 && cy < rows) grid[cy * cols + cx] += (light * len) / steps;
+    }
   }
 
   // ---------- the screen mapping, in JavaScript (mirrors place() in the shader) ----------
@@ -352,6 +458,11 @@ ET.renderer = (function () {
       var v = lit[i] > 0 ? Math.min(1, lit[i]) : 0;
       out[i] = shared?.[i] ? v + 2 : v;
     }
+  }
+
+  // A GPU lit value without its mark: the lit value in 0..1.
+  function plainLit(x) {
+    return x >= 1.5 ? x - 2 : x;
   }
 
   function isIndexArray(a) {
@@ -425,6 +536,7 @@ ET.renderer = (function () {
     var error = null; // set when a rebuild failed
     var hdr = false;
     var needClear = true;
+    var wireScale = 1; // the wire crowding factor of the last frame that drew wires
 
     function track(kind, obj) {
       gpu.objects.push({ kind: kind, obj: obj });
@@ -579,7 +691,7 @@ ET.renderer = (function () {
       if (gpu.progLayout?.texelsPerPoint === lay.texelsPerPoint && gpu.progLayout.pointsPerRow === lay.pointsPerRow) {
         return;
       }
-      for (var key of ["point", "pointLit", "line"]) {
+      for (var key of ["point", "pointLit", "line", "lineLit"]) {
         if (gpu[key]) release(gpu[key].program);
         gpu[key] = null;
       }
@@ -617,13 +729,55 @@ ET.renderer = (function () {
       if (store.lit) uploadLit();
     }
 
-    // Free the lit buffer and its vertex array (the lit program is kept).
+    // Free the lit buffers and their vertex arrays (the lit programs are kept).
     function dropLit() {
+      dropPointLit();
+      dropWireLit();
+    }
+
+    function dropPointLit() {
       if (gpu.vaoPointLit) release(gpu.vaoPointLit);
       if (gpu.vboLit) release(gpu.vboLit);
       gpu.vaoPointLit = null;
       gpu.vboLit = null;
       gpu.litCapacity = 0;
+    }
+
+    function dropWireLit() {
+      if (gpu.vaoLineLit) release(gpu.vaoLineLit);
+      if (gpu.vboWireLit) release(gpu.vboWireLit);
+      gpu.vaoLineLit = null;
+      gpu.vboWireLit = null;
+    }
+
+    // Each wire's lit value, the smaller of its two ends' (the mark removed), once per wire
+    // end: 1 only when both ends are lit.
+    function wireLitValues() {
+      var out = new Float32Array(wires.count * 2);
+      for (var e = 0; e < wires.count; e++) {
+        var v = Math.min(plainLit(store.lit[wires.pairs[2 * e]]), plainLit(store.lit[wires.pairs[2 * e + 1]]));
+        out[2 * e] = v;
+        out[2 * e + 1] = v;
+      }
+      return out;
+    }
+
+    // The wires' lit values on the GPU, with a vertex array that reads the wire buffer and
+    // them; dropped when there are no lit values, no wires or no wire buffer.
+    function uploadWireLit() {
+      dropWireLit();
+      if (!store.lit || !wires.count || !gpu.vboLine) return;
+      gpu.vaoLineLit = track("vertexArray", gl.createVertexArray());
+      gl.bindVertexArray(gpu.vaoLineLit);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLine);
+      lineAttributes();
+      gpu.vboWireLit = track("buffer", gl.createBuffer());
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboWireLit);
+      gl.bufferData(gl.ARRAY_BUFFER, wireLitValues(), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(3);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 4, 0);
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
     }
 
     // Send the CPU lit values to the GPU: one bufferSubData of the current points when the
@@ -637,14 +791,16 @@ ET.renderer = (function () {
           src.pointFragment,
           VIEW_UNIFORMS.concat(POINT_UNIFORMS, ["uFilter", "uUnlit"])
         );
+        gpu.lineLit = compile(src.lineVertexLit, src.lineFragment, VIEW_UNIFORMS.concat(["uGain", "uWireDof", "uFilter", "uUnlit"]));
       }
+      uploadWireLit();
       if (gpu.vboLit && gpu.litCapacity === store.capacity) {
         gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, store.lit.subarray(0, store.count));
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
         return;
       }
-      dropLit();
+      dropPointLit();
       gpu.vaoPointLit = track("vertexArray", gl.createVertexArray());
       gl.bindVertexArray(gpu.vaoPointLit);
       gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
@@ -691,14 +847,21 @@ ET.renderer = (function () {
       gpu.vboLine = track("buffer", gl.createBuffer());
       gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLine);
       gl.bufferData(gl.ARRAY_BUFFER, buf, gl.STATIC_DRAW);
+      lineAttributes();
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      if (gpu.lineLit) uploadWireLit(); // the wires' lit vertex array named the old buffer
+    }
+
+    // The wire buffer's three attributes (pair, true length, colour) on the bound vertex
+    // array, read from the buffer bound to ARRAY_BUFFER.
+    function lineAttributes() {
       gl.enableVertexAttribArray(0);
       gl.vertexAttribIPointer(0, 2, gl.UNSIGNED_INT, 24, 0);
       gl.enableVertexAttribArray(1);
       gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 24, 8);
       gl.enableVertexAttribArray(2);
       gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
-      gl.bindVertexArray(null);
-      gl.bindBuffer(gl.ARRAY_BUFFER, null);
     }
 
     // Build (or rebuild after a context loss) every GPU object from the kept data.
@@ -834,14 +997,8 @@ ET.renderer = (function () {
     // The wires (when shown), then the points.
     function drawScene(s, gain, W, H) {
       var R = Math.min(W, H) * s.radius;
-      if (wires.count && s.wires > 0.02 && gpu.vaoLine) {
-        setView(gpu.line, s, W, H, R);
-        gl.uniform1f(gpu.line.u.uGain, gain * s.wires * s.wireGain);
-        gl.uniform1f(gpu.line.u.uWireDof, s.wireDepthOfField);
-        gl.bindVertexArray(gpu.vaoLine);
-        gl.drawArrays(gl.LINES, 0, wires.count * 2);
-      }
       var lit = litApplies(s);
+      if (wires.count && s.wires > 0.02 && gpu.vaoLine) drawWires(s, gain, W, H, R, lit && gpu.vaoLineLit !== null);
       var prog = lit ? gpu.pointLit : gpu.point;
       var pu = prog.u;
       setView(prog, s, W, H, R);
@@ -861,6 +1018,37 @@ ET.renderer = (function () {
       }
       gl.bindVertexArray(lit ? gpu.vaoPointLit : gpu.vaoPoint);
       gl.drawArrays(gl.POINTS, 0, store.count);
+    }
+
+    // The wires. litWires false: the program and calls used before search existed.
+    function drawWires(s, gain, W, H, R, litWires) {
+      var prog = litWires ? gpu.lineLit : gpu.line;
+      setView(prog, s, W, H, R);
+      wireScale = s.wireLoad > 0 ? wireCrowding(s, W, H) : 1;
+      gl.uniform1f(prog.u.uGain, wireScale === 1 ? gain * s.wires * s.wireGain : gain * s.wires * s.wireGain * wireScale);
+      gl.uniform1f(prog.u.uWireDof, s.wireDepthOfField);
+      if (litWires) {
+        gl.uniform1f(prog.u.uFilter, Math.min(1, s.filter));
+        gl.uniform1f(prog.u.uUnlit, Math.max(0, s.unlitGain));
+      }
+      gl.bindVertexArray(litWires ? gpu.vaoLineLit : gpu.vaoLine);
+      gl.drawArrays(gl.LINES, 0, wires.count * 2);
+    }
+
+    // The factor that keeps the wires' light per pixel, where it lands, at s.wireLoad or
+    // below: 1 while the wires are spread out, less while the frame packs them tightly.
+    function wireCrowding(s, W, H) {
+      var view = { ...s, width: W, height: H };
+      var src = {
+        vectors: store.vectors,
+        stride: store.lay.floatsPerPoint,
+        dimension: store.dimension,
+        pairs: wires.pairs,
+        lengths: wires.lengths,
+        count: wires.count,
+      };
+      var light = wireDensity(src, view) * s.wires * s.wireGain * s.gain;
+      return light > s.wireLoad ? s.wireLoad / light : 1;
     }
 
     // Tone-map the HDR target onto the canvas, with the mip-chain bloom.
@@ -1116,6 +1304,7 @@ ET.renderer = (function () {
           count: store.count,
           capacity: store.capacity,
           wires: wires.count,
+          wireScale: wireScale,
           lit: store.lit !== null,
           maxTextureSize: maxTextureSize,
           layout: store.lay,
@@ -1179,6 +1368,7 @@ ET.renderer = (function () {
     DEFAULTS: DEFAULTS,
     layout: layout,
     shaderSources: shaderSources,
+    wireDensity: wireDensity,
     place: place,
     create: create,
   };

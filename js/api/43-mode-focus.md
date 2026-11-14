@@ -19,8 +19,14 @@ viewer's slow spin (yaw) goes on over the frame, so the view keeps turning.
   the first axes join their centres, otherwise the spread of the rows gives the
   axes. The point-of-view `scale`, when given, is passed through, so the frame is
   fitted in the scaled space and mapped back to an orthonormal frame on the
-  loaded vectors. `draw.zoom` is the facing frame's zoom and the centre its
-  centre.
+  loaded vectors. The centre is the facing frame's centre. `draw.zoom` is the
+  Focus reference's zoom (corrected after the owner's browser look, 2026-11-14):
+  the farthest named result at `0.36 / 0.46` units (the reference maps the
+  results' reach to 0.36 of the stage's shorter side, the renderer maps one unit
+  to 0.46 of it), pulled back only as far as needed to keep each query within
+  1.3 reaches of the centre, so a query far from its results stays on the stage
+  (the stage's shorter half-side is 1.39 reaches). Lengths are measured on the
+  loaded vectors in the fitted frame, as the facing frame measures its reach.
 - **With none:** the three strongest principal directions of the whole set
   (`ET.math.makePrincipalDirections`, `k = 3`, seeded, on at most `fitRows`
   rows at an even stride), about the set's mean, framed by `ET.modes.autoZoom`.
@@ -51,6 +57,14 @@ before the oldest kept turn shows its starting view).
 
 The members of `js/api/40-modes.md`, plus:
 
+### `inst.spin` (0.13 while a usable search is shown, else undefined)
+
+The yaw speed, in radians per second, at which the viewer turns the view while
+Focus is shown with a usable search (a query of the set's dimension): the Focus
+reference's 0.13. With none it is undefined, so Focus turns as before (the viewer's own, for modes that do
+not ask, is 0.06). An optional mode member (`js/api/40-modes.md`). Corrected
+after the owner's browser look (2026-11-14), when Focus at 0.06 looked paused.
+
 ### `inst.searchChanged(search, t) -> stepper | null`
 
 `search` is `null` (no search) or the shape in `docs/search-interface.md`:
@@ -77,8 +91,13 @@ arrays are copied. `t` is the mode time of the change.
 
 With `onlyResults` true and at least one usable search, `stateAt(t).draw.unlitGain`
 is `0`; the renderer then draws points whose lit value is 0 with no brightness
-(`js/api/30-renderer.md`). In every other case the key is **absent** (the
-renderer's default 0.07 applies), and the other three modes never set it. The
+(`js/api/30-renderer.md`). With a usable search and `onlyResults` false it is
+`0.05`, dimmer than the renderer's default 0.07 used by the other modes
+(corrected after the owner's browser look, 2026-11-14: the reference draws unlit
+points at 0.13 of a result's strength on a 124-point page, and on the sample
+set's 12,288 points, which pile up under the bloom, 0.05 reads like it; picked
+by comparing screenshots). With no usable search the key is **absent**, and the
+other three modes never set it. The
 viewer (t8) passes `state.draw` to the renderer as it does for every mode, so the
 key reaches it with no further change; the viewer's hit test and labels must skip
 points whose lit value is 0 while `describe().onlyResults` is true and the mode

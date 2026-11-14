@@ -47,13 +47,29 @@ width, maxTextureSize, maxPoints, rows(points) }` or `{ ok: false, reason,
 message }` with `reason` `"bad-dimension"`, `"dimension-too-large"`
 (`ceil(D / 4) > maxTextureSize`) or `"too-many-points"` (`count > maxPoints`).
 
-### `ET.renderer.shaderSources(layout) -> { pointVertex, pointVertexLit, pointFragment, lineVertex, lineFragment, quadVertex, fadeFragment, toneFragment }`
+### `ET.renderer.shaderSources(layout) -> { pointVertex, pointVertexLit, pointFragment, lineVertex, lineVertexLit, lineFragment, quadVertex, fadeFragment, toneFragment }`
 
 Pure. The GLSL ES 3.00 sources. `pointVertexLit` is the point shader that also
 reads the per-point lit value (see `renderer.setLit` below);
 `pointVertex` is the one drawn without search, unchanged by it. The projection loop bound (`const int TEXELS`),
 the row packing (`const int PER_ROW`) and the wire-brightness scale
 (`sqrt(D / 3)`) are generated from the layout. Exposed for tests.
+
+### `ET.renderer.wireDensity(src, view) -> number`
+
+How tightly the wires pile up on screen: the wire light per pixel where the
+wires' light lands, before any gain. `src`: `{ vectors, stride, dimension,
+pairs, lengths, count }` (vectors at `stride` floats per point, as the renderer
+stores them; `count` wires); `view`: a draw state with `frame` (and `centre`,
+`zoom`, `yaw`, `pitch`, `radius`, `focus`, `wireDepthOfField`) plus `width` and
+`height` in pixels. An even sample of at most 192 wires is projected (`O(192 *
+D)`); each wire's brightness as the wire shader computes it (`0.03 + 0.2 t^3`,
+over its depth of field) times its length on screen is spread along it over a
+grid of 64 cells across the stage's shorter side; the light-weighted mean of the
+cells' light per pixel is returned, scaled from the sample to every wire. It
+grows with the number of wires and with how tightly the frame packs them; 0 with
+no wires or none on the stage. Used by `draw` when `wireLoad` is above 0.
+Corrected after the owner's browser look (2026-11-14).
 
 ### `ET.renderer.place(p, state, width, height) -> { x, y, scale, depth }`
 
@@ -249,7 +265,24 @@ still clears (and fades trails).
 | `vignette` | brightness at the corners (1 = none) | `0.72` |
 | `background` | `[r, g, b]` linear 0..1, added under the image | `[0, 0, 0]` |
 | `filter` | 0..1, how much the lit values (`setLit`) apply this frame; 0 draws exactly as without search. The viewer eases it toward 1 while a search is active and toward 0 when none is. | `0` |
-| `unlitGain` | brightness factor of a point with lit value 0, at `filter` 1 (Focus's Only results uses `0`: unlit points are hidden) | `0.07` |
+| `unlitGain` | brightness factor of a point with lit value 0, at `filter` 1 (Focus's Only results uses `0`: unlit points are hidden); also of a wire with an unlit end | `0.07` |
+| `wireLoad` | `0` = off. Above 0: the most wire light per pixel (`wireDensity` times `wires * wireGain * gain`) the wires may pile up to; above it the wires' gain is multiplied by `wireLoad / light`. The viewer sets `8` whenever wires are shown. | `0` |
+
+Corrected after the owner's browser look (2026-11-14); see
+`docs/search-interface.md`, "Corrected after the owner's browser look":
+
+- **Wires follow the search.** With `filter` above 0 and lit values set, the
+  wires are drawn by a second wire program (`lineVertexLit`) that reads each
+  wire's lit value (the smaller of its two ends', mark removed; one float per
+  wire end in a buffer of its own, made again by `setLit`, `setWires` and every
+  rebuild, freed by `setLit(null)` and `dispose`): brightness times
+  `mix(1, mix(unlitGain, 1, l), filter)`. With `filter` 0 or no lit values the
+  original wire program and calls are used.
+- **A lit point's fog is relieved.** In the lit point program the fog strength
+  is `fog * (1 - l * filter)` for both the size and the brightness terms, so a
+  result is not dimmed away by distance while unlit points keep the fog.
+- **Crowded wires** are scaled down with `wireLoad` (above). `status().wireScale`
+  is the factor of the last frame that drew wires (1 when off or not crowded).
 
 Mode mapping from the reference: Tumble is the defaults; Lattice sets
 `wires = 1`, `dim = 0.55`, `trails = 0.10`; Wander sets `fog = 1` and a fixed
@@ -272,7 +305,7 @@ on its own schedule.
 
 ### `renderer.status() -> object`
 
-`{ ok, available, disposed, lost, hdr, error, dimension, count, capacity, wires,
+`{ ok, available, disposed, lost, hdr, error, dimension, count, capacity, wires, wireScale,
 lit, maxTextureSize, layout }`. `lit` is true while lit values are set
 (`setLit`). `ok` is false after a failed build or upload
 (`error` holds the message) or after dispose. `count`, `wires` and `layout`

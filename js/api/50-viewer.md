@@ -663,6 +663,31 @@ count nothing. `n` is updated with every upload and rolled back with a failed
 one. At 600 or fewer nothing changes; the built-in sample set has 290. Found on a real 10,000-point Atlas, where every point carries text:
 `docs/evidence/2026-11-14-real-atlas-proof.md`.
 
+## Crowded wires
+
+Lattice's wires pile up where the frame packs them tightly (most of all when a
+swap is nearly through and the lattice collapses to a thin shape) and burned out
+to white. Whenever wires are shown, the viewer sets the renderer's draw key
+`wireLoad` to 8: the renderer measures the wire light per pixel where the wires'
+light lands (`ET.renderer.wireDensity`, from the number of wires and where the
+current frame puts them on the stage) and scales the wires' brightness by
+`8 / light` when the light is above 8. The factor is the same for every wire, so
+a wire seen near its true length still flares against one that is not. The key
+is left out when no wires are shown, so Tumble, Wander and Focus draw exactly as
+before. Measured on the built-in sample set (GPU, 320 x 180 copy of the stage,
+channel sum above 600): near-white pixels at a swap 90% through went from 3,435
+to 693, of which about 360 are the cores of labelled points; at 10% from 3,130
+to 686. Approved by the owner on 2026-11-14 as a change of Lattice's no-search
+picture (`docs/reference-differences.md`).
+
+## Spin and group names in Focus
+
+The view turns at 0.06 rad/s on top of the mode's frame, or at the mode's own
+`inst.spin` when it has one (Focus: 0.13; `js/api/40-modes.md`). `seek(t)` sets
+the spin to what running for `t` seconds in the current mode gives. While a
+search is shown (the filter above 0) Focus draws no group names; the results are
+what matters there. Both added after the owner's browser look (2026-11-14).
+
 ## Measured frame rates
 
 Chromium (Playwright), dev page `js/dev/viewer-demo/?one=1`, one viewer,

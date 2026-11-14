@@ -77,6 +77,10 @@
     {
      "title": "The dimming, trails and wires no longer wait for the neighbours",
      "visible": "yes"
+    },
+    {
+     "title": "Crowded wires are dimmed instead of burning out to white",
+     "visible": "yes"
     }
    ]
   },
