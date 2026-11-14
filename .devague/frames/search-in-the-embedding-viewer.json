@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T14:46:58Z",
+  "updated": "2026-11-14T14:55:45Z",
   "claims": [
     {
       "id": "c1",
@@ -931,6 +931,15 @@
       "id": "l2",
       "code": "assumption-for-measurement",
       "what": "t1: the helper route's rerank request and answer shape is an assumption about the gateway, not checked; the limits and timeouts in the interface (text length, candidates, rate, body size, 15 s and 20 s) and the under-4-ms stepper rule are judgement, not measurement; the cost of the pair reports is estimated, not timed; the Focus reference page and the viewer and web component sources were read only in part. The plan names js/api/39-modes.md, which is js/api/40-modes.md.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "assumption-for-measurement",
+      "what": "t2: line coverage was not measured by the agent (its loader hides the module from node's coverage); the under-4-ms unit was met in warm runs but a cold first unit under load took 4.1 ms plain and 13 ms scaled; nothing was run in a browser. Main agent measured coverage with the CI method after merge.",
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
