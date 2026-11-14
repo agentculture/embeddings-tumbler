@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T15:40:04Z",
+  "updated": "2026-11-14T15:52:40Z",
   "claims": [
     {
       "id": "c1",
@@ -994,6 +994,15 @@
       "id": "l9",
       "code": "assumption-for-measurement",
       "what": "t8: nothing in a browser exercised search; the cost of the pair reports inside the viewer was not measured; complexity under 15 is the agent's estimate; 24 added lines (defensive branches) are uncovered. Main agent then drove search through the handle in Chromium: it works in all four modes with no errors, but found that results on the sample set are unnamed points (the build ranks every point, where the spec and the reference rank named points and light everything as near), that Wander with a search is almost dark (2 lit pixels of 57,600), and that Focus changes only 12 to 15 percent of its lit pixels per second.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l10",
+      "code": "assumption-for-measurement",
+      "what": "t10: no coverage figure for the web component's new lines (the shell is run through a function evaluation that the coverage tool cannot attribute, as before this change); the example embeds point ids only because the sample data carries no text; the search panel was not part of what was tested; the full suite was not re-run by the agent after its last comment edit (main agent ran it after merge).",
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
