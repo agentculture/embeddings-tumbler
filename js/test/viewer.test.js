@@ -964,3 +964,28 @@ test("after a long update() call the next frame does not leap ahead either", () 
   assert.ok(h.time() - t0 < 0.02, "one normal frame, not a clamped 50 ms: " + (h.time() - t0));
   h.destroy();
 });
+
+// ---------- crowded sets (found on a real Atlas, plan task t16) ----------
+
+test("a set with thousands of labelled points is drawn dimmer, a small one is not", () => {
+  // Real data files carry a text label on every point, so every point is a bright one.
+  const small = setup();
+  small.h.update(makeSet({ n: 300, d: 8, labelEvery: 1 }));
+  small.dom.frames(3);
+  assert.ok(small.v.lastDraw.gain === undefined || small.v.lastDraw.gain === 1, "300 labelled points: unchanged");
+  small.h.destroy();
+
+  const big = setup();
+  big.h.update(makeSet({ n: 4800, d: 8, labelEvery: 1 }));
+  big.dom.frames(3);
+  // 600 bright points are shown at full brightness; beyond that (600 / n) ^ 0.75.
+  assert.ok(Math.abs(big.v.lastDraw.gain - Math.pow(600 / 4800, 0.75)) < 1e-9, `gain ${big.v.lastDraw.gain}`);
+  big.h.destroy();
+
+  // No labelled point at all (labels are the ids): every point has weight 0.7.
+  const plain = setup();
+  plain.h.update(makeSet({ n: 4800, d: 8, labelFor: (i, id) => id }));
+  plain.dom.frames(3);
+  assert.ok(Math.abs(plain.v.lastDraw.gain - Math.pow(600 / (0.7 * 4800), 0.75)) < 1e-9, `gain ${plain.v.lastDraw.gain}`);
+  plain.h.destroy();
+});

@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T03:52:29Z",
+  "updated": "2026-11-14T05:45:30Z",
   "claims": [
     {
       "id": "c1",
@@ -1168,6 +1168,41 @@
       "skipped_check": "a real CI run; npm 11 output format",
       "refs": [
         "t13"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l24",
+      "code": "assumption-for-measurement",
+      "what": "The viewer's brightness was tuned only on the synthetic sample set (290 labelled points of 12,288); a real 10,000-point file, where every point carries text, burned out to a white ball. Found and fixed in t16.",
+      "skipped_check": "a draw check on a set where every point is labelled",
+      "refs": [
+        "t8",
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l25",
+      "code": "assumption-for-measurement",
+      "what": "Lattice was accepted on the sample set only; on real vectors its group separation equals a random frame (1.126 vs 1.114). Measured in t16, left open for the owner.",
+      "skipped_check": "a group-separation measurement of Lattice on real vectors, as was done for Tumble",
+      "refs": [
+        "t7",
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l26",
+      "code": "assumption-for-measurement",
+      "what": "t16's 30 fps criterion says 'on the user's desktop'; it was measured in headless Chromium on the development machine (Radeon 760M), not on screen by the user with the real file.",
+      "skipped_check": "the user's own on-screen reading of the 10,000-point real file",
+      "refs": [
+        "t16"
       ],
       "origin": "llm",
       "status": "proposed"

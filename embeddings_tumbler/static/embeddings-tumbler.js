@@ -4889,6 +4889,8 @@ ET.viewer = (function () {
     onPauseChange: null,
   };
 
+  var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
+  var CROWD_POWER = 0.75;
   var LABEL_SAMPLE = 300; // labelled points projected on the CPU per frame for labels
   var LABEL_POOL = 64; // label elements at most
   var STATUS_EVERY = 0.12; // seconds between status-line updates (the reference's)
@@ -6646,9 +6648,21 @@ ET.viewer = (function () {
       out.gain = soft ? 0.55 : 0.7;
       out.bloom = soft ? 0.3 : 0.45;
     }
+    // Many full-weight points pile up into a white (or, in ink, black) ball, so the
+    // overall brightness comes down as their number goes up.
+    var crowd = crowding(v);
+    if (crowd < 1) out.gain = (out.gain === undefined ? 1 : out.gain) * crowd;
     if (v.reducedMotion) out.twinkle = 0;
     out.clear = !!v.needClear;
     return out;
+  }
+
+  // Brightness factor for crowded sets, 1 for sets up to CROWD_REF bright points. A
+  // bright point is a labelled one (weight 1), or any point of a set with no labelled
+  // point at all (weight 0.7). The built-in sample set has 290, so it is unchanged.
+  function crowding(v) {
+    var n = v.labelledCount > 0 ? v.labelledCount : 0.7 * (v.set ? v.set.count : 0);
+    return n > CROWD_REF ? Math.pow(CROWD_REF / n, CROWD_POWER) : 1;
   }
 
   // ---------- overlay: labels, spokes, hover ----------
