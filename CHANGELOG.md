@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-11-14
+
+### Added
+
+- Search in the viewer (in progress on this branch): the search core (exact cosine ranking in slices, word search among loaded points, several searches with lit values, shared points, pair reports, a point-of-view option and a seeded facing view), a per-point lit value and shared mark in the renderer, and a local embed route for `viewer serve --embed` that keeps the gateway key in the server process.
+
+### Changed
+
+- The readout strip is coloured by screen axis: each cell mixes three colours by its dimension share of the horizontal, vertical and depth axes, with a legend; opacity is unchanged.
+
 ## [0.11.6] - 2026-11-14
 
 ### Added
