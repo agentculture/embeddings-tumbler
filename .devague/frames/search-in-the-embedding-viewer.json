@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T17:26:19Z",
+  "updated": "2026-11-14T18:46:37Z",
   "claims": [
     {
       "id": "c1",
@@ -1061,6 +1061,39 @@
       "what": "t9: cognitive complexity not measured; a screen reader, keyboard-only use and focus order were not checked in a real browser; the light treatment was tested by changing the standalone page's properties at run time, not on a real light host; no browser test runs the panel against viewer serve --embed; the full Python suite was not re-run by the agent after its last fix (main agent ran it after merge: all pass). Differences from the two reference pages that it found were not written into the differences document (task t15 does that).",
       "skipped_check": "",
       "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l13",
+      "code": "control-absent",
+      "what": "Task agents ran node tests with no memory limit. One failed assertion on two fake page elements made node print and diff the whole object graph; the process passed 40 GB, was killed by the kernel at 19:35 and 19:45, the agent ran it a third time, and the machine was reset at about 20:04. Scratchpad files (briefs, rules, test page, state file) were lost with it.",
+      "skipped_check": "a memory cap and a timeout on every test run by an agent",
+      "refs": [
+        "js/test/search-panel.test.js in agent/search-morek; fixed in 02a4296"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l14",
+      "code": "provenance-missing",
+      "what": "t18 timings (scan, pair reports, facing frame at 100 results) are single-machine medians of 20 on a machine under varying load; the 'before' figures for 100 results used hit lists built by hand because the old code capped k at 20; the bench scripts were lost in the reset so the table in docs/search-interface.md cannot be re-run as written.",
+      "skipped_check": "",
+      "refs": [
+        "docs/search-interface.md, Measured with 100 candidates"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l15",
+      "code": "n-below-claim",
+      "what": "t18's new browser test ran only in Chromium at desktop width; the Candidates and Keep top controls were not looked at on a phone-width page or by the owner.",
+      "skipped_check": "",
+      "refs": [
+        "tests/browser/test_search_candidates.py"
+      ],
       "origin": "llm",
       "status": "proposed"
     }
