@@ -34,7 +34,7 @@ jobs:
       - run: uv sync
 
       # The Chromium build matching the pinned Playwright (1.65.x), with its system libraries.
-      # TODO: cache ~/.cache/ms-playwright with actions/cache once its commit SHA is pinned
+      # TODO: cache the Playwright browser folder with actions/cache once its commit SHA is pinned
       # here; no SHA for it is known in this repository yet, so it is not used.
       - name: install Chromium for Playwright
         run: uv run playwright install --with-deps chromium
