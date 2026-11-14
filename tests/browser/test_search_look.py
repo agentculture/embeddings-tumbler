@@ -227,7 +227,9 @@ def test_lattice_wires_follow_the_search(look):
     # the wires measured and fully faded in; the filter fully out, then fully in
     for frame in (none, found):
         state = frame["state"]
-        assert state["mode"] == "lattice" and state["paused"] and not state["preparing"], look
+        assert state["mode"] == "lattice", look
+        assert state["paused"], look
+        assert not state["preparing"], look
         assert state["time"] == T90, look
         assert state["wires"] > 0, look
         assert state["wiresShownAt"] + WIRE_FADE <= T90, look
