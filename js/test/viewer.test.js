@@ -989,3 +989,85 @@ test("a set with thousands of labelled points is drawn dimmer, a small one is no
   assert.ok(Math.abs(plain.v.lastDraw.gain - Math.pow(600 / (0.7 * 4800), 0.75)) < 1e-9, `gain ${plain.v.lastDraw.gain}`);
   plain.h.destroy();
 });
+
+// ---------- preparations abandoned midway ----------
+
+// Two data objects appended into one full set (same points, same order).
+function joined(a, b) {
+  const all = makeSet({ n: a.count + b.count, d: a.dimension });
+  all.vectors = new Float32Array(a.vectors.length + b.vectors.length);
+  all.vectors.set(a.vectors, 0);
+  all.vectors.set(b.vectors, a.vectors.length);
+  all.points = a.points.concat(b.points);
+  return all;
+}
+
+function untilReady(dom, h, limit) {
+  let n = 0;
+  while (!h.info().ready && n++ < (limit || 1000)) dom.flush();
+  assert.ok(h.info().ready, "the view became ready");
+}
+
+test("switching modes while a mode is still preparing works, and switching back starts clean", () => {
+  const { dom, h, v } = setup();
+  h.update(makeSet({ n: 2000, d: 64 }));
+  dom.flush();
+  assert.ok(!h.info().ready, "Tumble is still preparing");
+  assert.strictEqual(h.setMode("lattice"), true);
+  dom.flush();
+  assert.strictEqual(h.setMode("wander"), true, "and again before Lattice is ready");
+  assert.strictEqual(h.setMode("tumble"), true, "and back to a fresh Tumble");
+  dom.flush();
+  untilReady(dom, h);
+  dom.frames(10);
+  assert.strictEqual(h.mode(), "tumble");
+  assert.ok(h.time() > 0, "the clock runs");
+  assert.ok(!v.broken, "the loop did not stop");
+  assert.ok(!v.noticeMessage, "no notice: " + v.noticeMessage);
+  assert.strictEqual(v.mode.inst.describe().pointsSinceFit, 0);
+  for (const x of v.last.frame) assert.ok(Number.isFinite(x));
+  // Lattice entered while Tumble prepared, left to finish this time
+  assert.strictEqual(h.setMode("lattice"), true);
+  untilReady(dom, h);
+  dom.frames(5);
+  assert.ok(!v.broken && !v.noticeMessage);
+  h.destroy();
+});
+
+// The whole set at once, against the first part followed by an append that arrives
+// after `flushes` frames of preparation (0: before the mode ran any work).
+function appendedVersusWhole(mode, n, flushes) {
+  const first = makeSet({ n, d: 64 });
+  const more = makeSet({ n: 200, d: 64, op: "append", idPrefix: "m", seed: 9 });
+  function frameAt(sets, t) {
+    const { dom, h, v } = setup({}, { mode });
+    h.update(sets[0]);
+    if (sets[1]) {
+      for (let i = 0; i < flushes; i++) dom.flush();
+      assert.ok(!h.info().ready, "still preparing when the points arrive");
+      h.update(sets[1]);
+    }
+    untilReady(dom, h);
+    // checked on the very frame it turns ready: never ready on a fit of the first part
+    if (mode === "tumble") assert.strictEqual(v.mode.inst.describe().pointsSinceFit, 0, "fitted on every point");
+    h.pause();
+    dom.frames(5);
+    h.seek(t);
+    dom.frames(1);
+    const out = Array.from(v.last.frame);
+    assert.ok(!v.broken && !v.noticeMessage, String(v.noticeMessage));
+    h.destroy();
+    return out;
+  }
+  assert.deepStrictEqual(frameAt([first, more], 2.5), frameAt([joined(first, more)], 2.5));
+}
+
+for (const mode of ["tumble", "lattice", "wander"]) {
+  test(`${mode}: points appended before its preparation ran give the frames of the whole set sent at once`, () => {
+    appendedVersusWhole(mode, 2000, 0);
+  });
+}
+
+test("tumble: points appended in the middle of its fit give the frames of the whole set sent at once", () => {
+  appendedVersusWhole("tumble", 6000, 1);
+});

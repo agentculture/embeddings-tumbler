@@ -97,6 +97,18 @@ last state as the next mode's `from`, so it copies it).
   mode time until `isReady()`**: start the mode clock at 0 when it turns true.
   That way the frame sequence is fixed by data, seed, entry view and time, never
   by how fast the preparation ran.
+- A preparation may be **abandoned midway**: stop pumping it and `leave()`,
+  `enter` again, or let a `dataChanged` restart the mode. Tumble's steppers
+  belong to the entry (and, for `refit()`, the refit call) that made them: a
+  stepper left over from an earlier one does nothing if it is pumped later (it
+  reports done and changes no state), so it can never make the instance ready
+  on old data or put an old fit in place. A fresh `enter` and full `prepare`
+  after an abandoned one give frames bit-identical to a run that was never
+  interrupted (tested in `js/test/modes-refit-hardening.test.js`, including a
+  caller that keeps pumping the old stepper, and an abandoned refit followed by
+  another). Lattice and Wander do not guard their steppers this way; the viewer
+  drops the queued work of an entry a restart replaced (see "How the viewer
+  drives a mode"), which covers all three.
 
 `ET.modes.stepper(tasks)` builds one from `{ run() -> done, required?, weight?,
 progress?() }` tasks; a mode written elsewhere can use it.
@@ -232,12 +244,33 @@ the turn the frame is Q(s) applied to the new tour's moving frame, s going from
 first quarter, slowing down over the last). A rotation does not change the
 tour's own rate, and Q(s) is a rotation for every s, so the frame stays
 orthonormal and never folds. With `refitTransition: "auto"` the turn's length
-is chosen so that the turn adds at most half the tour's mean rate of change
-(Frobenius norm per second, the mean over 12 s from T): `max(refitTransitionMin,
-min(refitTransitionMax, 1.33 x turn rate / (0.5 x tour rate)))`. It is a pure
-function of the two tours and T, so frames stay a pure function of data
-history, seed, entry view, event times and t. The entry `transition` is not
-used for refits.
+is chosen so that the turn adds at most half the tour's mean rate of change:
+`max(refitTransitionMin, min(refitTransitionMax, 1.33 x turn rate / (0.5 x tour
+rate)))`. The tour rate is the new tour's own rate of change (Frobenius norm per
+second), averaged over 24 samples in the 12 s from T, read from that tour's
+closed form (`coefficientsAt`), whether or not the tour is still the one shown
+over those 12 s: a later refit switching inside the window does not change it.
+The turn rate is measured on A and B. So the length is a pure function of the
+frame shown at T, the new tour and T, all fixed once T is; nothing a later event
+changes is read (tested: a second refit switching 1 s after the first, while
+the first turn still runs, leaves every frame before it bit-identical). Frames
+stay a pure function of data history, seed, entry view, event times and t. The
+entry `transition` is not used for refits.
+
+When A and B are equal or nearly so (a refit that changes nothing: the same
+data, or points appended at the mean), the turn is the identity: a principal
+angle, or the angle of the turn inside the span, below 1e-6 rad does not turn
+(float32 frames carry noise near 1e-7, and dividing by it would only make a
+direction out of noise). The frame shown simply continues, finite and
+orthonormal, and with `"auto"` the turn takes `refitTransitionMin`. Each plane's direction
+off B's span is made orthogonal to all three of B's principal vectors. A
+principal vector that comes out reversed (`A'_j = -B'_j`) turns half a turn
+through a direction off B's span; at 3-d there is no such direction (no
+rotation takes B to A), and the turn is a rotation that does not reach A.
+During the turn the turned rows are orthonormalised once, in double precision,
+before they are stored as float32; a second pass on the stored rows changes no
+entry by more than 1e-6 (tested at 8-d to 1024-d). Tested in
+`js/test/modes-refit-hardening.test.js`.
 
 Measured, the largest per-frame change of the frame (Frobenius norm) during
 the turn against the largest in the same length of normal running just before
@@ -253,7 +286,9 @@ distribution or 1,500 points forming a new cluster three radii from the mean:
 
 The largest change of any single frame entry, the other measure, was at most
 1.48 in the same runs. Tested at 48-d and 128-d for both kinds and both speeds
-(`js/test/modes-refit.test.js`, bound 1.5).
+(`js/test/modes-refit.test.js`, bound 1.4): with the test's seed 3 the ratio
+is 1.03 to 1.25, and over seeds 1 to 8 as well it is at most 1.31 (measured
+2026-11-14; speed 1 and 3 agree to 0.001).
 
 | Option | Default | Meaning |
 |--------|---------|---------|
@@ -432,6 +467,13 @@ set with one point (no variance) reports a share of 0.
 - `makeGlide`, `alignment`, `applyAlignment`, `entryFrom`, `blendDraw`,
   `startFrame`, `thousands`, `isLabelled`, `checkTime`, `stepper`: the pieces
   the three modes share, documented in the source.
+- `refitTurn`: Tumble's refit turn, for tests and for a mode written elsewhere.
+  `make(A, B, D) -> blend` (A the frame shown, B the new tour's aligned start;
+  `blend.rate` is the turn's largest rate per unit of s, `blend.duration` is
+  0 until the caller sets it), `apply(blend, s, F, D) -> F` (Q(s) applied to
+  the rows of F in place; s = 1 takes B to A, s = 0 is the identity),
+  `ease(u)` (the turn's progress curve) and `tourRate(tour, t0)` (the mean
+  rate above).
 
 ## How the viewer (t8) drives a mode
 
@@ -469,6 +511,13 @@ function frame(dt) {                       // once per animation frame
 - **Appends:** call `r = dataChanged(newSet, { op: "append", added: k, t: clock })`
   on the active instance; pump `r.work` if it is not `null` (as `prep`), and
   when `r.restart` is true set the mode clock to 0 and wait for `isReady()`.
+  On a restart, drop any work still queued for the earlier entry (an unfinished
+  preparation or refit) before queueing `r.work`; the viewer does
+  (`js/test/viewer.test.js`: points appended before or in the middle of a
+  preparation give the frames of the whole set sent at once, and the view is
+  never ready on a fit of the first part).
+- **Switching modes while one prepares** is allowed: the old instance is left
+  and its stepper dropped (tested through the viewer).
 - **Refit (Tumble):** `inst.refit()` (or `refit(clock)`) and pump the stepper;
   with `mark(clock)` each frame the switch happens at the frame the fit
   finished.
