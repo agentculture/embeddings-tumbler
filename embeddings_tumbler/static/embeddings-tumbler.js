@@ -1,11 +1,11 @@
-/*! embeddings-tumbler 0.10.1 | source: github.com/agentculture/embeddings-tumbler | assembled from js/src by scripts/assemble.py, do not edit by hand */
+/*! embeddings-tumbler 0.11.0 | source: github.com/agentculture/embeddings-tumbler | assembled from js/src by scripts/assemble.py, do not edit by hand */
 (function (root) {
   "use strict";
 
   // Shared internal namespace. Every later module adds its functions here
   // (ET.math = {...}, ET.contract = {...}) and reads earlier modules' from it.
   var ET = {};
-  ET.version = "0.10.1";
+  ET.version = "0.11.0";
   // The public API object. Only 50-viewer.js fills this (mount, update, destroy).
   ET.api = {};
   // ---------------------------------------------------------------------------

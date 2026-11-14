@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-11-14
+
+### Added
+
+- The viewer: one dependency-free core file (`embeddings_tumbler/static/embeddings-tumbler.js`) with `mount`, `update` and `destroy`, assembled from `js/src/` by `scripts/assemble.py`: the mathematics, the contract loader, a WebGL 2 renderer, the three modes (Tumble, Lattice, Wander) and the viewer API.
+- The data contract, schema version 1 (`docs/data-contract.md`): a JSON record file with a little-endian float32 vector block beside it, with fixtures.
+- Three delivery forms over the same file: the script, the `<embeddings-tumbler>` web component and a standalone page; a built-in synthetic sample set.
+- CLI verbs `viewer overview`, `viewer write <folder>` and `viewer serve <folder>`.
+- An npm package (`@culture.dev/embeddings-tumbler`) carrying the same files as the wheel, a byte-identity check across wheel, sdist and tarball, and release workflows that publish by trusted publishing (`docs/release.md`).
+- A browser test harness (Playwright, Chromium) with three host fixtures under `Content-Security-Policy: default-src 'self'`, and a scanner for references to other origins.
+- Host and producer guides with working example pages and a second, independent producer (`docs/guides/`).
+- The real-Atlas proof on two embedding models (`docs/evidence/2026-11-14-real-atlas-proof.md`) and the list of intended differences from the reference with the owner's sign-off (`docs/reference-differences.md`).
+
+### Changed
+
+- README and CLAUDE.md describe the viewer as built.
+- Lattice draws its hidden directions from the data's strongest directions (the reference draws them from the full space); `hidden: "full"` keeps the reference's rule.
+- On a light background the default treatment is `soft` ink.
+
 ## [0.10.1] - 2026-11-13
 
 ### Added

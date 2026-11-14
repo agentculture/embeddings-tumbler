@@ -28,17 +28,31 @@ As of 2026-11-13 no repository surveyed for this work (`embeddings-lens`,
 viewer; the only one was a demo page whose data is generated in the page. That
 page is the reference: `docs/specs/reference/embedding-tumbler-demo.html`.
 
-## Current state: being built
+## Current state: built, first release pending
 
-The viewer is being built from the converged spec and plan by a workforce run.
-Landed so far: the data contract and its fixtures (`docs/data-contract.md`,
-`tests/fixtures/contract/`), the JavaScript layout and assembler (`js/`,
-`scripts/assemble.py`), the contract loader (`js/src/20-contract.js`), the
-mathematics module (`js/src/10-math.js`) and the `viewer write` / `viewer
-serve` CLI verbs. Not landed yet: the renderer, the three modes, the viewer
-API (`mount` / `update` / `destroy`), the two shells, packaging for npm and
-the browser harness. `js/README.md` is the module convention and `js/api/`
-documents each module's interface.
+The viewer is built from the converged spec and plan (18 tasks, by a workforce
+run that ended 2026-11-14). In the repository: the data contract and its
+fixtures (`docs/data-contract.md`, `tests/fixtures/contract/`); the core file,
+assembled from `js/src/` by `scripts/assemble.py` (mathematics, contract
+loader, WebGL 2 renderer, the three modes, the viewer API `mount` / `update` /
+`destroy`); the built-in sample set; the two shells (`js/shells/`,
+`js/page/`); the shipped copies under `embeddings_tumbler/static/`; the
+`viewer overview | write | serve` CLI verbs; packaging for the wheel and for
+npm with a byte-identity check (`scripts/check_packages.py`); the browser
+harness (`tests/browser/`); the host and producer guides (`docs/guides/`).
+`js/README.md` is the module convention and `js/api/` documents each module's
+interface.
+
+Not done yet: no release has been published. The first npm release needs a
+one-time manual publish before CI's trusted publishing can take over
+(`docs/release.md`). Only Chromium has been tested automatically. A search
+view (type a query, see what it links to) is asked for and waits for its own
+spec.
+
+What real vectors showed, and what was changed because of it (Lattice's hidden
+directions, brightness of crowded sets), is in
+`docs/evidence/2026-11-14-real-atlas-proof.md`. Intended differences from the
+reference, and the owner's sign-off, are in `docs/reference-differences.md`.
 
 | What | Where |
 |------|-------|
@@ -48,6 +62,9 @@ documents each module's interface.
 | How to run the build with a workforce, plus per-task guidance | `docs/workforce/README.md` |
 | Illustrative code sketches (API, data file, mode interface) | `docs/workforce/examples/` |
 | What real vectors look like, measured | `docs/evidence/2026-11-13-real-vector-probe.md` |
+| The viewer on a real Atlas, two models, measured | `docs/evidence/2026-11-14-real-atlas-proof.md` |
+| Host and producer guides, with working example pages | `docs/guides/` |
+| How a release is made | `docs/release.md` |
 | devague frame and plan state (source of the two exports) | `.devague/` |
 
 Mark anything you describe that is ahead of the code as `(planned)`. Update
