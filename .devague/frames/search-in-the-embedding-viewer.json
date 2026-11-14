@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T15:10:09Z",
+  "updated": "2026-11-14T15:22:24Z",
   "claims": [
     {
       "id": "c1",
@@ -967,6 +967,15 @@
       "id": "l6",
       "code": "assumption-for-measurement",
       "what": "t3: all timings were taken at load averages of 18 to 32 and are noisy; cold first calls of the pair reports exceeded 8 ms under that load, and it stays one blocking call; no test asserts a time, only that work is split into units; the committed tests use hand-built rankings, and the check against the real ranking module was a scratch script; one interface clarification (when the closest pair is null) rests on the agent's reading of the reference.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l7",
+      "code": "control-absent",
+      "what": "t7: the module was written before its tests; the stepper returned by searchChanged is the agent's own decision and the viewer task had not been checked against it; the view was not looked at in a browser; the cost of re-fitting on every append was not measured; the full suite was not re-run by the agent after its last fix (main agent ran it after merge: all pass).",
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
