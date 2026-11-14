@@ -454,3 +454,209 @@ test("an unexpected throw during a src load is reported as tumbler-error", async
   const note = el.querySelector(".tumbler-shell-message");
   assert.strictEqual(note.textContent, "The data file could not be loaded.");
 });
+
+// ---------- search callbacks: the embed and rerank properties (task t10) ----------
+
+// An embed callback that answers in the fixture's own space, and records its calls.
+function embedFor(set, log) {
+  return (text) => {
+    log.push(text);
+    return { vector: new Float32Array(set.json.dimension).fill(0.5), model: set.json.model };
+  };
+}
+
+// Ask the viewer to embed `text`; resolves to its result. Drives frames while it waits.
+async function ask(env, el, text) {
+  const pending = el.handle.setSearches([{ text: text, via: "embed" }]);
+  for (let i = 0; i < 5; i++) {
+    env.dom.frames(2);
+    await env.settle();
+  }
+  return pending;
+}
+
+test("embed and rerank are properties: null by default, and the element has no attribute for them", () => {
+  const env = makeShellEnv();
+  const el = env.create();
+  assert.strictEqual(el.embed, null);
+  assert.strictEqual(el.rerank, null);
+  const watched = env.root.customElements.get("embeddings-tumbler").observedAttributes;
+  assert.ok(!watched.includes("embed") && !watched.includes("rerank"));
+});
+
+test("a property set before the element connects is passed as a mount option", () => {
+  const env = makeShellEnv();
+  const el = env.create();
+  const embed = () => null;
+  const rerank = () => null;
+  el.embed = embed;
+  el.rerank = rerank;
+  assert.strictEqual(env.calls.mount.length, 0);
+  env.connect(el);
+  assert.strictEqual(env.calls.mount[0][1].embed, embed);
+  assert.strictEqual(env.calls.mount[0][1].rerank, rerank);
+  assert.strictEqual(el.embed, embed);
+});
+
+test("markup is never read: embed and rerank attributes do nothing", async () => {
+  const env = makeShellEnv();
+  env.root.leaked = [];
+  const el = env.create({ embed: "leaked.push(1)", rerank: "leaked.push(2)" });
+  env.connect(el);
+  assert.strictEqual(el.embed, null);
+  assert.strictEqual(el.rerank, null);
+  assert.ok(!("embed" in env.calls.mount[0][1]) && !("rerank" in env.calls.mount[0][1]));
+  // Setting the attribute later changes nothing either, and the viewer has no embedder.
+  el.setAttribute("embed", "anything");
+  assert.strictEqual(el.embed, null);
+  assert.strictEqual(el.handle.setSearchCallbacks({}).embedder, false);
+  assert.deepStrictEqual(env.root.leaked, []);
+});
+
+test("a property set after the viewer is mounted, before src has loaded, reaches the viewer", async () => {
+  const env = makeShellEnv();
+  serve(env, "a", A);
+  const el = env.create({ src: "data/a.json" });
+  env.connect(el); // mounted; the fetches have not finished
+  assert.ok(el.handle);
+  const log = [];
+  el.embed = embedFor(A, log);
+  assert.strictEqual(el.handle.setSearchCallbacks({}).embedder, true);
+  await env.settle();
+  const result = await ask(env, el, "hello");
+  assert.strictEqual(result.ok, true, JSON.stringify(result));
+  assert.deepStrictEqual(log, ["hello"]);
+  assert.strictEqual(el.handle.info().search.active, true);
+});
+
+test("a property set after src has loaded reaches the viewer", async () => {
+  const env = makeShellEnv();
+  serve(env, "a", A);
+  const el = env.create({ src: "data/a.json" });
+  env.connect(el);
+  await env.settle();
+  const log = [];
+  el.embed = embedFor(A, log);
+  const result = await ask(env, el, "after");
+  assert.strictEqual(result.ok, true, JSON.stringify(result));
+  assert.deepStrictEqual(log, ["after"]);
+});
+
+test("rerank reaches the viewer through the handle's search callbacks", () => {
+  const env = makeShellEnv();
+  const el = env.connect(env.create());
+  const seen = [];
+  const real = el.handle.setSearchCallbacks;
+  el.handle.setSearchCallbacks = (cbs) => (seen.push(cbs), real(cbs));
+  const rerank = () => null;
+  el.rerank = rerank;
+  assert.deepStrictEqual(seen, [{ rerank: rerank }]);
+  assert.strictEqual(real({}).reranker, true);
+});
+
+test("null removes the callback; the viewer refuses embedding again", async () => {
+  const env = makeShellEnv();
+  serve(env, "a", A);
+  const el = env.create({ src: "data/a.json" });
+  el.embed = embedFor(A, []);
+  env.connect(el);
+  await env.settle();
+  assert.strictEqual(el.handle.setSearchCallbacks({}).embedder, true);
+  el.embed = null;
+  assert.strictEqual(el.embed, null);
+  assert.strictEqual(el.handle.setSearchCallbacks({}).embedder, false);
+  const result = await ask(env, el, "gone");
+  assert.strictEqual(result.code, "no-embedder");
+});
+
+test("a value that is neither a function nor null is ignored", () => {
+  const env = makeShellEnv();
+  const el = env.connect(env.create());
+  const embed = () => null;
+  el.embed = embed;
+  for (const bad of ["x", 3, {}, undefined, true]) {
+    el.embed = bad;
+    el.rerank = bad;
+  }
+  assert.strictEqual(el.embed, embed);
+  assert.strictEqual(el.rerank, null);
+  assert.strictEqual(el.handle.setSearchCallbacks({}).embedder, true);
+});
+
+test("disconnect and reconnect: the callbacks stay and the new viewer has them", () => {
+  const env = makeShellEnv();
+  const el = env.create();
+  const embed = () => null;
+  const rerank = () => null;
+  el.embed = embed;
+  el.rerank = rerank;
+  env.connect(el);
+  env.disconnect(el);
+  assert.strictEqual(el.handle, null);
+  assert.strictEqual(el.embed, embed, "the destroyed viewer does not clear the property");
+  env.connect(el);
+  assert.strictEqual(env.calls.mount[1][1].embed, embed);
+  assert.strictEqual(env.calls.mount[1][1].rerank, rerank);
+  assert.deepStrictEqual(el.handle.setSearchCallbacks({}), { embedder: true, reranker: true });
+});
+
+test("set while disconnected: kept, nothing called, used at the next mount", () => {
+  const env = makeShellEnv();
+  const el = env.connect(env.create());
+  env.disconnect(el);
+  const embed = () => null;
+  assert.doesNotThrow(() => {
+    el.embed = embed;
+    el.embed = null;
+    el.embed = embed;
+  });
+  env.connect(el);
+  assert.strictEqual(env.calls.mount[1][1].embed, embed);
+});
+
+test("a seed change remounts and the callbacks survive; a mode change keeps them", async () => {
+  const env = makeShellEnv();
+  serve(env, "a", A);
+  const el = env.create({ src: "data/a.json", mode: "tumble", seed: "1" });
+  const log = [];
+  el.embed = embedFor(A, log);
+  env.connect(el);
+  await env.settle();
+  el.setAttribute("mode", "wander");
+  assert.strictEqual(el.handle.setSearchCallbacks({}).embedder, true);
+  el.setAttribute("seed", "2");
+  assert.strictEqual(env.calls.mount.length, 2);
+  assert.strictEqual(env.calls.mount[1][1].embed, el.embed);
+  await env.settle();
+  const result = await ask(env, el, "again");
+  assert.strictEqual(result.ok, true, JSON.stringify(result));
+  assert.deepStrictEqual(log, ["again"]);
+});
+
+test("a property set on the element before the file defined it is picked up on connect", () => {
+  const env = makeShellEnv();
+  const el = env.create();
+  const embed = () => null;
+  // What a browser leaves behind: an own data property that hides the accessor.
+  Object.defineProperty(el, "embed", { value: embed, writable: true, configurable: true, enumerable: true });
+  assert.strictEqual(Object.hasOwn(el, "embed"), true);
+  env.connect(el);
+  assert.strictEqual(Object.hasOwn(el, "embed"), false, "the own property was taken off");
+  assert.strictEqual(el.embed, embed);
+  assert.strictEqual(env.calls.mount[0][1].embed, embed);
+  // Nothing set before: nothing to upgrade, connecting again changes nothing.
+  assert.doesNotThrow(() => el.connectedCallback());
+});
+
+test("without the core, setting a property is safe and kept for later", () => {
+  const env = makeShellEnv({ withCore: false });
+  const el = env.create();
+  const embed = () => null;
+  assert.doesNotThrow(() => {
+    el.embed = embed;
+    env.connect(el);
+    el.embed = null;
+    el.embed = embed;
+  });
+  assert.strictEqual(el.embed, embed);
+});

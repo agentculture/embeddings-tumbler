@@ -35,6 +35,37 @@ twice does nothing the second time. Without custom element support it does nothi
   `core-missing`, `mount-failed`, `src-refused`, `src-unreadable`, `block-unreadable`.
 - Both events bubble, so a host can listen on `document`.
 
+## Search callbacks: the `embed` and `rerank` properties
+
+```js
+el.embed = async (text) => ({ vector, model });          // or null
+el.rerank = async (query, candidates) => ({ scores, model }); // or null
+```
+
+One assignment adds search; there is no build step. The callbacks are the ones in
+`docs/search-interface.md`, "Callback contracts", and run on the host's side. They are
+**properties, never attributes**: nothing is read from markup, an `embed="..."` attribute does
+nothing, and neither name is in `observedAttributes`. A real host calls its own server inside the
+callback; the component and the core file make no request for it, and a gateway key never reaches
+the page. A working page is `docs/guides/examples/web-component-search/`.
+
+What each moment does:
+
+| When the property is set | What happens |
+|--------------------------|--------------|
+| Before the element is connected (or before this file defined the element) | Kept. At connect it goes to the core as the `embed` / `rerank` mount option. A value set on the element before the definition loaded is picked up when the element connects. |
+| After connect, before `src` has loaded | The viewer is already mounted, so it goes to `handle.setSearchCallbacks` at once. Searches wait for the data as they do without a callback. |
+| After `src` has loaded | The same: `handle.setSearchCallbacks`. Searches already shown are kept. |
+| Set to `null` | The callback is removed (`setSearchCallbacks({ embed: null })`); a call waiting on it is superseded. The viewer refuses typed-text embedding with `no-embedder` and matches words among loaded points. |
+| Set to anything else (not a function, not `null`) | Ignored, as the core ignores it; the property keeps its old value. |
+| Element disconnected | The viewer is destroyed; the properties stay on the element. Setting one now only stores it. |
+| Element reconnected | A new viewer is mounted with the stored callbacks as mount options. |
+| `seed` changes (a remount) | The stored callbacks are passed to the new viewer. Searches shown are lost with the old viewer (a replace clears them). |
+| `mode` changes | The viewer switches in place; callbacks and searches are untouched. |
+| Core file not loaded | Stored only; the element shows its plain message as before. |
+
+Reading `el.embed` or `el.rerank` gives the stored function (or `null`).
+
 ## Lifecycle
 
 - `connectedCallback` sets `display: block` through `el.style` (nothing else; no style element,
@@ -71,7 +102,8 @@ el.update(EmbeddingsTumbler.sample.generate())
 ## What the static test allows
 
 `js/test/web-component-static.test.js` scans the file. On the core object it permits `mount`,
-`update` and `destroy` and nothing else. It fails on any other member (`get`, `registerMode`,
+`update` and `destroy` and nothing else, and on the viewer handle (`this._handle`) only `setMode` and
+`setSearchCallbacks`. It fails on any other member (`get`, `registerMode`,
 `_internal`, bracket access), on any reference to `sample`, on any alias of the core object, and
 on graphics, canvas, shader, matrix, projection, typed-array, animation-frame, markup-parsing
 and style-attribute words.
