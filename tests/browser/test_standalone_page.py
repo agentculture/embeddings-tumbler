@@ -252,6 +252,7 @@ def test_sample_set_renders_with_modes_provenance_and_controls_swiftshader(sampl
 
 def test_sample_page_is_clean_and_fits_the_width_swiftshader(sample_run):
     name, r = sample_run
+    assert r["state"] == "ready", r["wait"]
     assert r["csp"] == []
     assert r["console_errors"] == []
     assert r["foreign"] == []
@@ -288,6 +289,7 @@ def test_missing_file_shows_a_plain_message_swiftshader(browser, base_url):
     assert '"no-such-set.json" could not be loaded' in r["wait"]
     assert "404" in r["wait"]
     # The browser itself logs the failed request; nothing else may reach the console.
+    assert r["console_errors"], "expected the browser's own 404 line in the console"
     assert all("404" in e for e in r["console_errors"]), r["console_errors"]
     assert not any(e.startswith("pageerror") for e in r["console_errors"])
     assert r["csp"] == [] and r["foreign"] == []

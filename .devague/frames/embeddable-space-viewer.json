@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T02:37:52Z",
+  "updated": "2026-11-14T02:58:30Z",
   "claims": [
     {
       "id": "c1",
@@ -1111,6 +1111,28 @@
       "skipped_check": "independent review before merge; real-device layout check; same-seed side-by-side (t17)",
       "refs": [
         "t11"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l19",
+      "code": "assumption-for-measurement",
+      "what": "t13: no workflow has run and actionlint is not installed, so the CI and publish workflows are validated only by static tests and by running their shell steps locally; the npm trusted-publishing path (OIDC exchange, provenance, repository-field check) is untried end to end; every local pack used npm 9.2.0 while CI will use npm 11; the release runbook's npmjs.com form field names come from memory; some packaging tests were not seen failing before their scripts existed.",
+      "skipped_check": "a real CI run; npm 11 pack; a trial trusted publish",
+      "refs": [
+        "t13"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l20",
+      "code": "assumption-for-measurement",
+      "what": "t17: several causes of the unintended differences were read from code, not confirmed by changing it (Wander label sizes and colours, Tumble framing, control sizes); point size, glow, bloom, depth of field and trail length were judged by eye on different frames because the reference's Tumble is unseeded; Firefox, Safari desktop and SwiftShader were not compared; the fonts table reuses earlier width measurements. The user's sign-off is open.",
+      "skipped_check": "same-frame pixel comparison; causes confirmed by a code change",
+      "refs": [
+        "t17"
       ],
       "origin": "llm",
       "status": "proposed"

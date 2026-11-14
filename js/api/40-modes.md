@@ -418,9 +418,17 @@ set with one point (no variance) reports a share of 0.
   384-d, 0.968 at 1024-d). Distances the reference tuned by eye (fog, Wander's
   zoom) are scaled by `radius / REFERENCE_RADIUS` measured when the mode is
   prepared, so they fit other data; appends do not change the scale.
-- `autoZoom(X, N, D, frame, centre, sample?)`: the reference's auto-framing,
-  `0.78 / rms` of the projected coordinates of the first `sample` (512)
-  points. A fixed sample, so appends past it do not move the framing.
+- `autoZoom(X, N, D, frame, centre, sample?)`: auto-framing over the first
+  `sample` (512) points' projected coordinates: `min(0.78 / rms, AUTO_FIT /
+  p98)`, where `0.78 / rms` is the reference's rule and `p98` the
+  98th-percentile 3-D radius. `AUTO_FIT = 0.88` units leaves room for the group
+  names inside the stage's shorter side (the renderer puts its edge at 1.087
+  units). An even cloud keeps the reference's framing; on the guided tour,
+  where the regions are compact blobs far apart and carry the names, the cap
+  holds (measured on the sample set over 120 s: the 98th-percentile screen
+  extent fell from up to 1.38 of the half-stage to at most 0.85). A fixed
+  sample, so appends past it do not move the framing. Zoom is a draw
+  parameter; frames are unchanged. Wander's flight uses its own fixed zoom.
 - `makeGlide`, `alignment`, `applyAlignment`, `entryFrom`, `blendDraw`,
   `startFrame`, `thousands`, `isLabelled`, `checkTime`, `stepper`: the pieces
   the three modes share, documented in the source.
@@ -557,7 +565,8 @@ units; none is a change of look by choice.
    zoom toward its target (`exp(-dt / 0.6)`) every frame, which depends on the
    frame rate. Here the centre glide is the same exponential in closed form,
    the auto-zoom is computed from the current frame each time (`0.78 / rms`
-   over the first 512 points rather than the reference's 290 named points), and
+   over the first 512 points rather than the reference's 290 named points,
+   capped by the 98th-percentile radius, see `autoZoom`), and
    mode switches blend the frame and draw parameters with a smoothstep over
    1.0 to 1.5 s instead of the reference's exponential mixes.
 8. **Distances tuned by eye are scaled to the data**: fog distances and

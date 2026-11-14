@@ -90,6 +90,21 @@ ET.viewer = (function () {
   var ZOOM_MIN = 0.2;
   var ZOOM_MAX = 12;
   var SPIN = 0.06; // rad/s of yaw while running (the reference's)
+  var BUTTON_HEIGHT = "28px"; // the reference's Pause button
+  var TOUCH_HEIGHT = "32px"; // the same buttons under 600 px wide
+  // Names over the sky: the reference strokes each name with a 4 px line of the
+  // background at 0.85 under the fill. As page text that is a ring of hard
+  // shadows: 8 at 1.5 px (slightly soft) and 8 at 2 px (half strength), which
+  // came closest to the reference's canvas stroke in Chromium (measured against
+  // it) and needs nothing beyond text-shadow, so every browser draws it.
+  var OUTLINE_RING = (function () {
+    var out = [];
+    for (var k = 0; k < 8; k++) {
+      var th = (Math.PI * 2 * k) / 8;
+      out.push([Math.cos(th), Math.sin(th)]);
+    }
+    return out;
+  })();
   var SHADOW =
     "A projection is a shadow of the space, not the space: each view shows three " +
     "linear directions out of all of them, so points that look close may be far apart " +
@@ -297,14 +312,17 @@ ET.viewer = (function () {
     var b = text(v, "button", cls, label, {
       fontFamily: "inherit",
       fontSize: "12px",
-      lineHeight: "1.2",
+      lineHeight: "1.15",
       color: "inherit",
       background: "transparent",
       border: "1px solid",
       borderRadius: "999px",
-      padding: "6px 14px",
-      minHeight: "32px",
-      minWidth: "64px",
+      // The reference's .ctl button: 6 px by 16 px padding, at least 76 px wide,
+      // 28 px tall at 12 px type. Under 600 px wide layoutForWidth raises the
+      // height to TOUCH_HEIGHT for fingers.
+      padding: "6px 16px",
+      minHeight: BUTTON_HEIGHT,
+      minWidth: "76px",
       cursor: "pointer",
       margin: "0",
     });
@@ -529,9 +547,12 @@ ET.viewer = (function () {
 
     // Readout strip: one cell per dimension of the current frame.
     var readout = make(v, "div", "tumbler-readout", { display: "flex", flexDirection: "column", gap: "6px" });
+    // The reference's strip: 22 px of cells between a 1 px line above and below
+    // (24 px in all), whatever box-sizing the host page sets.
     var strip = make(v, "canvas", "tumbler-strip", {
       width: "100%",
-      height: "18px",
+      height: "22px",
+      boxSizing: "content-box",
       display: "block",
       imageRendering: "pixelated",
       borderTop: "1px solid",
@@ -572,7 +593,7 @@ ET.viewer = (function () {
     v.zoomResetButton = pillButton(v, "tumbler-zoom-reset", "Reset zoom");
     var speedLabel = make(v, "label", "tumbler-speed", { display: "inline-flex", alignItems: "center", gap: "8px" });
     speedLabel.appendChild(text(v, "span", "", "Speed"));
-    var speed = make(v, "input", "", { width: "120px" });
+    var speed = make(v, "input", "", { width: "130px" });
     speed.type = "range";
     speed.min = "0.2";
     speed.max = "3";
@@ -803,10 +824,58 @@ ET.viewer = (function () {
     v.labelPool.forEach(function (rec) {
       rec.key = "";
     });
-    v.strokeHalo = cssRgb(st.background, 0.85);
+    v.outline = outlineShadow(st.background);
     v.stageFg = sfg;
+    // The reference's Wander names: the stop in white, its neighbours #c5cddb (the
+    // foreground three-eighths of the way to the muted colour). On a light stage the
+    // stop takes the foreground, so it stays dark ink.
+    v.stopColour = st.light ? sfg : "rgb(255, 255, 255)";
+    v.neighbourColour = cssRgb(mix(st.foreground, st.muted, 0.375));
     v.accent255 = [Math.round(t.accent[0] * 255), Math.round(t.accent[1] * 255), Math.round(t.accent[2] * 255)];
     v.needClear = true;
+  }
+
+  // The dark outline under every name, in the stage's background colour.
+  function outlineShadow(bg) {
+    var strong = cssRgb(bg, 0.85);
+    var half = cssRgb(bg, 0.5);
+    var parts = [];
+    OUTLINE_RING.forEach(function (d) {
+      parts.push(px(d[0] * 1.5) + " " + px(d[1] * 1.5) + " 0.5px " + strong);
+    });
+    OUTLINE_RING.forEach(function (d) {
+      parts.push(px(d[0] * 2) + " " + px(d[1] * 2) + " 0 " + half);
+    });
+    return parts.join(", ");
+  }
+  function px(x) {
+    var r = Math.round(x * 100) / 100;
+    return (r === 0 ? 0 : r) + "px";
+  }
+
+  // A group's colour for names, the ring and the spokes on a dark stage: the
+  // reference draws them at 72% lightness where the points are at 62%, so the
+  // lightness is raised by the same share of the way to white (hue and
+  // saturation kept). Exact for the reference's hues; the same lift for a host's.
+  function nameTint(c) {
+    var r = c[0];
+    var g = c[1];
+    var b = c[2];
+    var hi = Math.max(r, g, b);
+    var lo = Math.min(r, g, b);
+    var l = (hi + lo) / 2;
+    var h = 0;
+    var s = 0;
+    if (hi - lo > 1e-9) {
+      var d = hi - lo;
+      s = d / (1 - Math.abs(2 * l - 1));
+      if (hi === r) h = 60 * (((g - b) / d) % 6);
+      else if (hi === g) h = 60 * ((b - r) / d + 2);
+      else h = 60 * ((r - g) / d + 4);
+      if (h < 0) h += 360;
+    }
+    var l2 = l + (1 - l) * (0.1 / 0.38);
+    return hsl(h, clamp(s, 0, 1), clamp(l2, 0, 1));
   }
 
   function paintModeButtons(v) {
@@ -1082,7 +1151,7 @@ ET.viewer = (function () {
     // nothing to describe and are hidden.
     v.empty.style.display = set || v.fatalMessage ? "none" : "";
     v.provenance.style.display = set ? "" : "none";
-    v.readout.style.display = set && v.options.readout ? "" : "none";
+    v.readout.style.display = set && v.options.readout ? "flex" : "none";
     if (!set) {
       v.canvas.setAttribute("aria-label", "Animated 3-D projection of an embedding space (no data yet)");
       v.mastLine.textContent = "";
@@ -1554,6 +1623,8 @@ ET.viewer = (function () {
     });
     v.provList.style.gridTemplateColumns = width < 520 ? "minmax(0, 1fr)" : "max-content minmax(0, 1fr)";
     v.panel.style.padding = narrow ? "6px 12px 14px" : "6px 16px 16px";
+    v.playButton.style.minHeight = narrow ? TOUCH_HEIGHT : BUTTON_HEIGHT;
+    v.zoomResetButton.style.minHeight = narrow ? TOUCH_HEIGHT : BUTTON_HEIGHT;
   }
 
   // ---------- the loop ----------
@@ -1833,11 +1904,11 @@ ET.viewer = (function () {
       setStyles(rec.el, {
         fontFamily: big ? t.fontDisplay : t.fontData,
         fontStyle: big ? "italic" : "normal",
-        fontSize: big ? "22px" : style.kind === "hover" ? "12px" : "11px",
+        fontSize: big ? "26px" : style.kind === "hover" ? "12px" : "11px",
         letterSpacing: style.kind === "group" ? "0.06em" : "0",
         textTransform: style.kind === "group" ? "uppercase" : "none",
         color: style.colour,
-        textShadow: "0 0 4px " + v.strokeHalo + ", 0 0 2px " + v.strokeHalo,
+        textShadow: v.outline,
       });
       rec.key = key;
     }
@@ -1911,7 +1982,7 @@ ET.viewer = (function () {
         if (!cn[gi]) continue;
         // Lighter than the points on a dark host (the reference's 72% lightness),
         // darker on a light one so the names stay readable.
-        var col = cssRgb(v.theme.stage.light ? mix(groupColour(v, gi), [0, 0, 0], 0.45) : mix(groupColour(v, gi), [1, 1, 1], 0.3));
+        var col = cssRgb(v.theme.stage.light ? mix(groupColour(v, gi), [0, 0, 0], 0.45) : nameTint(groupColour(v, gi)));
         used = label(v, used, shorten(v.groupNames[gi], 32), cx[gi] / cn[gi] / dpr, cy[gi] / cn[gi] / dpr - 14, {
           kind: "group",
           colour: col,
@@ -1954,7 +2025,7 @@ ET.viewer = (function () {
         if (ctx) {
           ctx.globalAlpha = 1;
           ctx.lineWidth = 1.5 * dpr;
-          ctx.strokeStyle = fg;
+          ctx.strokeStyle = v.stopColour;
           ctx.beginPath();
           ctx.arc(v.sx[best], v.sy[best], 8 * dpr, 0, TAU);
           ctx.stroke();
@@ -1965,7 +2036,7 @@ ET.viewer = (function () {
         var str = labelText(v, bi) + (grp ? " · " + shorten(grp, 24) : "");
         used = label(v, used, str, v.sx[best] / dpr + (right ? -14 : 14), v.sy[best] / dpr, {
           kind: "hover",
-          colour: fg,
+          colour: v.stopColour,
           alpha: 1,
           align: right ? "right" : "left",
         });
@@ -1981,7 +2052,8 @@ ET.viewer = (function () {
     var p = project(v, i, s, ds, v.tmp3);
     var px = p.x;
     var py = p.y;
-    var col = cssRgb(groupColour(v, groupIndexOf(v, v.set.points[i].group)));
+    var gc = groupColour(v, groupIndexOf(v, v.set.points[i].group));
+    var col = cssRgb(v.theme.stage.light ? gc : nameTint(gc));
     for (var k = 0; k < neighbours.length; k++) {
       var j = neighbours[k];
       if (!(j >= 0) || j >= v.set.count) continue;
@@ -1999,7 +2071,7 @@ ET.viewer = (function () {
       if (v.showLabels) {
         used = label(v, used, labelText(v, j), q.x / dpr + 8, q.y / dpr + 4, {
           kind: "neighbour",
-          colour: fg,
+          colour: v.neighbourColour,
           alpha: alpha * 0.85,
           align: "left",
         });
@@ -2017,7 +2089,7 @@ ET.viewer = (function () {
     if (v.showLabels) {
       used = label(v, used, labelText(v, i), px / dpr + 18, py / dpr - 12, {
         kind: "stop",
-        colour: fg,
+        colour: v.stopColour,
         alpha: alpha,
         align: "left",
       });

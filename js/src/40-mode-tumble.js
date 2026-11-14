@@ -643,7 +643,7 @@
   M.register({
     id: "tumble",
     title: "Tumble",
-    summary: "The window turns through the strongest directions of the space on a guided tour.",
+    summary: "The window turns through the strongest directions",
     create: create,
   });
 })();
