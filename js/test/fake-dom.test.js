@@ -47,11 +47,8 @@ test("before(), after() and replaceWith() place nodes and turn strings into text
   assert.equal(a.nextSibling, b);
   assert.equal(b.previousSibling, a);
   assert.equal(b.nextElementSibling, c);
-<<<<<<< HEAD
   assert.equal(c.previousElementSibling, b, "text nodes are skipped");
   assert.equal(a.previousElementSibling, null);
-=======
->>>>>>> agent/sonar-B3
 });
 
 test("append(), prepend() and replaceChildren() keep order and move existing nodes", () => {
@@ -159,7 +156,6 @@ test("matches(), closest() and #id selectors", () => {
   assert.equal(parent.querySelector("#c").id, "c");
 });
 
-<<<<<<< HEAD
 test("pointer capture is tracked per pointer id", () => {
   const { a } = tree();
   a.setPointerCapture(3);
@@ -170,8 +166,6 @@ test("pointer capture is tracked per pointer id", () => {
   assert.equal(a.hasPointerCapture(3), false);
 });
 
-=======
->>>>>>> agent/sonar-B3
 test("guard rails still hold", () => {
   const { a } = tree();
   assert.throws(() => {
