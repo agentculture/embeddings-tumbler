@@ -178,9 +178,16 @@
   var fpsT = prev;
   var fpsN = 0;
   var hud = 1;
+  // Diagnostics for live testing: the longest gap between frames and the most
+  // script time spent in one frame during the last second, and since the mode began.
+  var gapSec = 0, jsSec = 0, gapMode = 0, jsMode = 0, diagMode = null, skip = 2;
   function tick(now) {
+    var tickStart = performance.now();
+    var gap = now - prev;
     var dt = Math.min(0.05, Math.max(0.001, (now - prev) / 1000));
     prev = now;
+    if (current.id !== diagMode) { diagMode = current.id; gapMode = 0; jsMode = 0; skip = 2; }
+    if (skip > 0) skip--; else { if (gap > gapSec) gapSec = gap; if (gap > gapMode) gapMode = gap; }
     var c = current;
     if (!c.prep.done) {
       c.prep.step(8);
@@ -220,11 +227,21 @@
     if (now - fpsT >= 1000) {
       stats.fps = (fpsN * 1000) / (now - fpsT);
       stats.fpsByMode[c.id] = Math.round(stats.fps * 10) / 10;
-      fpsEl.textContent = stats.fps.toFixed(1) + " fps";
+      var pm = stats.prepMs[c.id];
+      fpsEl.textContent =
+        stats.fps.toFixed(1) + " fps\n" +
+        "gap " + gapSec.toFixed(0) + " / " + gapMode.toFixed(0) + " ms\n" +
+        "script " + jsSec.toFixed(1) + " / " + jsMode.toFixed(1) + " ms\n" +
+        "prep " + (pm === undefined ? "..." : pm + " ms");
+      stats.gapMode = gapMode; stats.jsMode = jsMode;
+      gapSec = 0; jsSec = 0;
       if (CHECK) stats.litByMode[c.id] = litPixels();
       fpsT = now;
       fpsN = 0;
     }
+    var spent = performance.now() - tickStart;
+    if (spent > jsSec) jsSec = spent;
+    if (spent > jsMode) jsMode = spent;
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
