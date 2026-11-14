@@ -2,7 +2,7 @@
   "plan_slug": "embeddable-space-viewer",
   "schema_version": 2,
   "created": "2026-11-13T19:07:38Z",
-  "updated": "2026-11-14T05:50:10Z",
+  "updated": "2026-11-14T06:11:24Z",
   "deviations": [
     {
       "id": "d1",
@@ -58,6 +58,20 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "Lattice draws hidden directions from the data's 8 strongest principal directions instead of the full space (mode option hidden: 'full' keeps the reference's rule); the light-background default becomes 'soft'",
+      "task_ref": "t7",
+      "reason": "t16 measured Lattice at 1.126 group separation on real vectors, equal to a random frame; user said 'build' on 2026-11-14, and at sign-off accepted only the soft light style",
+      "affects": [
+        "t8",
+        "t17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 5
     }
   ],
   "evidence": [],

@@ -19,6 +19,6 @@ button {
 /* A light page: tell the viewer so, and pick how the picture is drawn on it. */
 embeddings-tumbler {
   --tumbler-background: #f6f3ec;
-  --tumbler-light-style: ink;
+  --tumbler-light-style: soft;
   --tumbler-stage-height: 420px;
 }

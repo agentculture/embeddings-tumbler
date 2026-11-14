@@ -93,7 +93,9 @@ test("lattice: frames do not depend on how far the true-neighbour work has got",
   const lazy = ET.modes.create("lattice");
   lazy.enter(set, { seed: 4 });
   const prep = lazy.prepare();
-  prep.step(0); // one unit only: the shared statistics; neighbours not started
+  // Only the required part: the statistics and the fit of the strongest directions;
+  // the neighbour work has not started.
+  while (!lazy.isReady()) prep.step(0);
   assert.ok(lazy.isReady());
   assert.strictEqual(prep.done, false);
   const a = F.framesAt(pumped, TIMES);

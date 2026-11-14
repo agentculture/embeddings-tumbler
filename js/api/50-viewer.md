@@ -67,7 +67,7 @@ All optional.
 | `masthead` | `true` | `false` hides the masthead over the stage (the count line, and the title if given). |
 | `title` | `""` | A title drawn over the stage in the masthead (text, never markup). Empty: no title line. |
 | `provenanceOpen` | `true` | The provenance block is a `<details>`; `false` starts it collapsed (its summary line still names source, model, dimension, items, seed, synthetic and the shadow sentence). The block cannot be removed. |
-| `lightStyle` | `null` | How the picture is drawn when the background is light: `"panel"`, `"ink"` or `"soft"` (see "Light backgrounds"). `null`: the `--tumbler-light-style` property, else `"panel"`. |
+| `lightStyle` | `null` | How the picture is drawn when the background is light: `"panel"`, `"ink"` or `"soft"` (see "Light backgrounds"). `null`: the `--tumbler-light-style` property, else `"soft"`. |
 | `modeOptions` | `null` | Per-mode options passed to `ET.modes.create`, for example `{ tumble: { refitTransition: 6 } }` (see `js/api/40-modes.md`). The viewer adds none of its own. |
 | `maxPixelRatio` | `2` | Cap on `devicePixelRatio` for the drawing buffer (the reference's). |
 | `preserveDrawingBuffer` | `false` | Keep the WebGL drawing buffer so the host (or a test) can read pixels or take a screenshot. Costs some speed. |
@@ -342,7 +342,7 @@ the viewer's root at mount, on every `update`, and on `refreshTheme()`.
 | `--tumbler-font` | `system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif` | same | body text |
 | `--tumbler-font-data` | `ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace` | same | status, labels, controls, provenance |
 | `--tumbler-font-display` | `"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif` | same | title, mode names, Wander's stop name |
-| `--tumbler-light-style` | `panel` | same | `panel`, `ink` or `soft`: how a light background is drawn (below); ignored on a dark background |
+| `--tumbler-light-style` | `soft` | same | `panel`, `ink` or `soft`: how a light background is drawn (below); ignored on a dark background |
 | `--tumbler-stage-height` | `clamp(300px, 62vh, 860px)` | same | height of the stage (any CSS length) |
 
 - Colours accept hex, `rgb()`/`rgba()`, `hsl()`/`hsla()`, and anything else the
@@ -357,7 +357,7 @@ the viewer's root at mount, on every `update`, and on `refreshTheme()`.
   renderer draws light on black (glow, bloom), which would wash out on a light
   page. Three treatments; a host picks one with `--tumbler-light-style` (or the
   `lightStyle` option):
-  - `panel` (**the default**): the stage keeps the dark night sky and the
+  - `panel`: the stage keeps the dark night sky and the
     reference's light-on-dark picture, screened over it; everything outside
     the stage (mode switch, readout, controls, provenance) follows the light
     host colours. Text on the stage (status, labels, messages) uses the dark
@@ -368,15 +368,14 @@ the viewer's root at mount, on every `update`, and on `refreshTheme()`.
     `filter: invert(1)` and `mix-blend-mode: multiply`, so the additive image
     comes back as coloured ink on the light sky; gain 0.7 and bloom 0.45 keep
     dense cores coloured instead of burning to black. Group names are darkened.
-  - `soft`: `ink` laid on at 70% canvas opacity with gain 0.55 and bloom 0.3:
+  - `soft` (**the default**): `ink` laid on at 70% canvas opacity with gain 0.55 and bloom 0.3:
     lighter, hues kept.
   Defaults for unset colours switch to the light column above. On a dark
   background the canvas uses `mix-blend-mode: screen` over the sky, exactly as
   before. The renderer's own `background` stays black in every case.
-  Why `panel` is the default: it is the reference's look with its glow and
-  colours intact, which is what the sign-off (t17) compares against. The ink
-  styles keep each group's hue but lose the glow, and dense cores read as dark
-  saturated colour.
+  Why `soft` is the default: at the sign-off of the reference comparison
+  (2026-11-14) the owner saw all three and accepted `soft` only. `panel` and
+  `ink` remain as options a host can choose; they are not recommended.
 - The stage gets `isolation: isolate`, so the blending never involves host
   content behind the element.
 

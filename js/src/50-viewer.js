@@ -58,7 +58,7 @@ ET.viewer = (function () {
   // option): "panel" keeps a dark night-sky stage inside the light panel; "ink" draws
   // each group as saturated coloured ink on the light sky; "soft" is ink, lighter.
   var LIGHT_STYLES = ["panel", "ink", "soft"];
-  var DEFAULT_LIGHT_STYLE = "panel";
+  var DEFAULT_LIGHT_STYLE = "soft"; // the owner's choice at sign-off (2026-11-14)
 
   var DEFAULT_OPTIONS = {
     mode: "tumble",

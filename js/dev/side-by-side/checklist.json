@@ -67,6 +67,10 @@
      "visible": "no"
     },
     {
+     "title": "Hidden directions come from the strongest directions",
+     "visible": "yes"
+    },
+    {
      "title": "A fresh Lattice starts from a seeded frame",
      "visible": "no"
     },

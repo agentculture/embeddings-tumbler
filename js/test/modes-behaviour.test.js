@@ -348,3 +348,89 @@ test("draw parameters port the reference's feel", () => {
   assert.ok(w.zoom > 2 && w.zoom < 3.5, "Wander's fixed zoom, scaled to the data");
   assert.ok(t.zoom > 0 && isFinite(t.zoom));
 });
+
+// ---------- Lattice's hidden directions (found on a real Atlas, plan task t16) ----------
+
+// A set built like real vectors: groups that barely separate in the full space.
+function plantedSet(ET, D) {
+  const { plantedGroups } = require("./helpers/math-fixtures.js");
+  const f = plantedGroups(D);
+  const points = f.groups.map((g, i) => ({ id: "p" + i, label: "", group: g }));
+  const res = ET.contract.validate(
+    { schema_version: 1, kind: "embeddings-tumbler/data", op: "replace", model: "test/planted", dimension: D,
+      count: f.N, text_included: false, provenance: { source: "test", producer: "node test", synthetic: true, seed: 7, limitations: [], uncertain: [] },
+      reduction: { kind: "none", source_dimension: D, directions_kept: D, variance_dropped: 0 },
+      vectors: f.X.buffer.slice(0), points },
+    null
+  );
+  assert.ok(res.ok, res.message);
+  return { set: res.set, groups: f.groups };
+}
+
+function meanSeparation(ET, inst, set, groups, from, to) {
+  const m = ET.math;
+  const Y = m.centre(set.vectors, set.count, set.dimension).data;
+  let sum = 0;
+  let n = 0;
+  for (let t = from; t <= to; t += 0.5) {
+    sum += m.frameSeparation(Y, set.count, set.dimension, inst.stateAt(t).frame, groups);
+    n++;
+  }
+  return sum / n;
+}
+
+test("Lattice keeps showing groups after every axis has been swapped; full-space swaps do not", () => {
+  const ET = F.freshET();
+  const { set, groups } = plantedSet(ET, 1024);
+  const strongest = F.ready(ET, "lattice", set, { seed: 5 });
+  const full = F.ready(ET, "lattice", set, { seed: 5 }, { hidden: "full" });
+  // From 12 s on (period 3.4 s) all three starting axes have been traded away.
+  const a = meanSeparation(ET, strongest, set, groups, 12, 72);
+  const b = meanSeparation(ET, full, set, groups, 12, 72);
+  assert.ok(b < 1.2, `full-space hidden directions: ${b}`);
+  assert.ok(a >= 1.3, `strongest directions: ${a}`);
+  assert.ok(a - b >= 0.2, `strongest ${a} vs full ${b}`);
+  assert.strictEqual(strongest.describe().hidden, "strongest");
+  assert.strictEqual(strongest.describe().subspace, 8);
+  assert.ok(strongest.describe().varianceShare > 0 && strongest.describe().varianceShare <= 1);
+  assert.strictEqual(full.describe().hidden, "full");
+  assert.strictEqual(full.describe().varianceShare, null);
+});
+
+test("Lattice with strongest directions: frames stay orthonormal, in the fitted span, and deterministic", () => {
+  const ET = F.freshET();
+  const { set } = plantedSet(ET, 96);
+  const a = F.ready(ET, "lattice", set, { seed: 9 });
+  const b = F.ready(ET, "lattice", set, { seed: 9 });
+  const D = set.dimension;
+  const Y = ET.math.centre(set.vectors, set.count, D).data;
+  const basis = ET.math.guidedTour(Y, set.count, D, { seed: 9, subspace: 8 }).basis;
+  for (const t of [0, 1.7, 12, 13.3, 40, 200.5]) {
+    const fa = a.stateAt(t).frame;
+    assert.ok(F.frameError(fa, D) < 1e-5, `orthonormal at ${t}`);
+    assert.ok(F.bytesEqual(fa, b.stateAt(t).frame), `deterministic at ${t}`);
+    if (t >= 12) {
+      // Every axis lies (almost) inside the span of the 8 fitted directions. The start
+      // frame is a random one outside that span, and each hidden direction is made
+      // orthogonal to the axes still shown, so the first few carry a small part from
+      // outside; it is gone once those axes have been traded away again.
+      for (let r = 0; r < 3; r++) {
+        let inside = 0;
+        for (let k = 0; k < 8; k++) {
+          let dot = 0;
+          for (let d = 0; d < D; d++) dot += fa[r * D + d] * basis[k * D + d];
+          inside += dot * dot;
+        }
+        assert.ok(inside > (t >= 40 ? 1 - 1e-3 : 0.95) && inside < 1 + 1e-4, `axis ${r} at ${t}: ${inside}`);
+      }
+    }
+  }
+});
+
+test("Lattice: a set too small for a fit (dimension 4 has room; one point does not) still runs", () => {
+  const ET = F.freshET();
+  const tiny = F.tinyDimensionSet(ET, 4, 12);
+  const inst = F.ready(ET, "lattice", tiny, { seed: 2 });
+  assert.ok(inst.isReady());
+  assert.ok(F.frameError(inst.stateAt(20).frame, 4) < 1e-5);
+});

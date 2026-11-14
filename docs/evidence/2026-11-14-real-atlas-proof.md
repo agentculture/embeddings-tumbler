@@ -18,8 +18,8 @@ was changed because of it. A missed target is recorded as missed.
 
 Three things were found that the sample set had hidden:
 
-1. **Lattice shows no grouping on real vectors** (1.126, the same as a random
-   frame). Not changed. A decision for the owner; see "Findings".
+1. **Lattice showed no grouping on real vectors** (1.126, the same as a random
+   frame). Fixed afterwards with the owner's approval: 1.472. See "Findings".
 2. **A large real set burned out to a white ball.** Fixed in this task.
 3. **The first producer wrote no groups**, so a real view was one colour and
    carried no group names. Fixed in `embeddings-cli` (`--group-by`).
@@ -242,7 +242,7 @@ longer load (13.7 s to ready) are not a finding about the model.
 
 ## Findings
 
-### 1. Lattice shows no grouping on real vectors (open)
+### 1. Lattice showed no grouping on real vectors (fixed)
 
 Lattice swaps one visible axis at a time for a hidden direction drawn from the
 full space, as the reference does. On real 1024-d vectors a direction drawn
@@ -255,8 +255,22 @@ it is the points that stop showing structure.
 This is the same thing the probe found for Tumble, which is why Tumble became
 a guided tour. The mathematics module already supports the remedy
 (`makeSwapTour` takes a `basis`, so hidden directions can be drawn from the
-strongest directions). It was **not** applied here: the plan ports Lattice from
-the reference, and changing what the mode shows is the owner's decision.
+strongest directions). It was not applied during the run: the plan ports
+Lattice from the reference, and changing what the mode shows is the owner's
+decision.
+
+The owner approved the change on 2026-11-14 (deviation `d5`). Lattice now draws
+each hidden direction inside the span of the 8 strongest directions. Measured
+the same way, on the same files:
+
+| File | Lattice before | Lattice after | Tumble | Random frames |
+|------|----------------|---------------|--------|---------------|
+| Qwen3, 311 texts | 1.126 | 1.472 | 1.519 | 1.114 |
+| EmbeddingGemma 2, 311 texts | 1.135 | 1.567 | 1.634 | 1.127 |
+| Qwen3, 10,000 texts | not measured | 1.277 | 1.286 | 1.089 |
+
+The tables above this section show the "before" numbers, as measured during
+the run.
 
 ### 2. A large real set burned out to a white ball (fixed)
 

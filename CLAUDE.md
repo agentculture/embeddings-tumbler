@@ -14,7 +14,8 @@ Three modes ship first, and a mode is a separable unit so more can be added:
 
 - **Tumble** — the frame drifts through the space on a guided tour.
 - **Lattice** — points are wired to their true nearest neighbours (measured in
-  the full space) and one visible axis at a time is swapped for a hidden one.
+  the full space) and one visible axis at a time is swapped for a hidden one,
+  drawn from the data's strongest directions.
 - **Wander** — the camera flies from point to neighbouring point and re-fits
   its axes to each neighbourhood.
 

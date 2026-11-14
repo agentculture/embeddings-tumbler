@@ -191,8 +191,9 @@ append (tested for all three: frame bit-identical, centre within 1e-7).
   on the share is fresh. The viewer decides when to refit (for example after a quiet period or
   when `pointsSinceFit` passes a share of the set). This is the cheapest honest
   behaviour: an append costs `O(k * D)` here, a refit costs a full fit.
-- **Lattice** keeps its swap schedule: no jump; the centre glides to the new
-  mean. If the set had fewer than `neighbourLimit` points, new points fall
+- **Lattice** keeps its swap schedule and the directions fitted when it was
+  entered (they are not fitted again on an append): no jump; the centre glides
+  to the new mean. If the set had fewer than `neighbourLimit` points, new points fall
   inside the limit, so neighbours are measured again (returned stepper); the
   old wires stay drawn until the new list is ready (a new `version`), which is
   then shown at full strength. Otherwise nothing is re-measured.
@@ -324,8 +325,25 @@ is 1.03 to 1.25, and over seeds 1 to 8 as well it is at most 1.31 (measured
 One visible axis at a time turns a quarter turn into a hidden direction, using
 the reference's eased angle: `ET.math.makeSwapTour(frame0, D, { seed, period })`
 where `frame0` is the entry frame (so there is no jump) or a seeded random frame.
-The axis swapping in cycle `c` is `c mod 3`. Hidden directions come from the
-full space, as in the reference.
+The axis swapping in cycle `c` is `c mod 3`.
+
+**Hidden directions come from the strongest directions.** By default
+(`hidden: "strongest"`) each hidden direction is drawn inside the span of the
+data's `subspace` (8) strongest principal directions, orthogonal to the axes
+still shown: the tour is made with `basis` set to the basis of
+`ET.math.makeGuidedTour` on the centred vectors (fitted on at most `fitRows`
+rows, as Tumble does). The fit is a required part of the preparation, so no
+frame is answered before it and the frames depend on data, seed and time only.
+`describe()` reports `hidden`, `subspace` and the span's `varianceShare`. With
+`hidden: "full"`, with fewer than 4 usable directions, or with a single point,
+hidden directions come from the full space, as in the reference, and
+`varianceShare` is `null`. Why: in real vectors a direction drawn from the full
+space holds almost no variance, and after three swaps the picture was a random
+frame (group separation 1.126 against a random baseline of 1.114 on a real
+1024-d set, 1.472 with this rule; `docs/evidence/2026-11-14-real-atlas-proof.md`).
+The first few hidden directions can carry a small part from outside the span
+when the entry frame lies outside it (they are made orthogonal to the axes
+still shown); it is gone once those axes have been traded away.
 
 Wires: each of the first `neighbourLimit` points is wired to its
 `wireNeighbours` true nearest neighbours **in the full space** among those

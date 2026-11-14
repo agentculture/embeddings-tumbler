@@ -21,6 +21,14 @@
     wireFade: 1.2, // seconds for the wires to fade in once measured
     centreTau: 0.7, // seconds: the camera glides to the data's mean
     zoomSample: 512, // points used for auto-framing
+    // Where hidden directions come from. "strongest": inside the span of the data's
+    // `subspace` strongest principal directions, so every picture keeps real spread
+    // (in real vectors a direction drawn from the full space holds almost none, and
+    // after three swaps the picture would be a random one). "full": anywhere in the
+    // space, as the reference does.
+    hidden: "strongest",
+    subspace: 8,
+    fitRows: 4096, // fit the directions on at most this many rows (as Tumble does)
   };
 
   function create(options) {
@@ -50,6 +58,9 @@
     var st = null;
     var glide = null;
     var swap = null;
+    var guided = false; // the swap tour draws from the fitted directions
+    var fitShare = null; // share of variance in those directions
+    var epoch = 0; // bumped by enter and leave: work queued for an earlier entry does nothing
     var hold = null;
     var knn = null; // the stepper in progress (or finished)
     var version = 0;
@@ -76,7 +87,12 @@
       pendingWires = null;
       self.time = 0;
       hold = entry ? entry.frame : M.startFrame(D, seed);
+      // Until the directions are fitted (or when hidden is "full") the schedule draws
+      // from the full space; no frame is answered from it before the mode is ready.
       swap = ET.math.makeSwapTour(hold, D, { seed: seed, period: opt.period });
+      guided = false;
+      fitShare = null;
+      epoch++;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
     }
 
@@ -94,6 +110,66 @@
           return true;
         },
       };
+    }
+
+    // Does this set get hidden directions from its strongest directions?
+    function wantsGuided() {
+      return opt.hidden !== "full" && Math.min(opt.subspace, D) >= 4 && set.count > 1;
+    }
+
+    // The fit, in small units: centring, then the strongest directions (the same
+    // fit Tumble uses, ET.math.makeGuidedTour, for its basis only), then the swap
+    // tour over them. Required: no frame is answered before it is done, so the
+    // frames depend on data, seed and time only.
+    function fitTasks() {
+      var mine = epoch;
+      var fitSet = set;
+      var cen = null;
+      var tourSt = null;
+      return [
+        {
+          required: true,
+          weight: 1,
+          progress: function () {
+            return cen ? cen.progress : 0;
+          },
+          run: function () {
+            if (mine !== epoch) return true;
+            if (!cen) cen = ET.math.makeCentre(fitSet.vectors, fitSet.count, D);
+            return cen.step(0);
+          },
+        },
+        {
+          required: true,
+          weight: 6,
+          progress: function () {
+            return tourSt ? tourSt.progress : 0;
+          },
+          run: function () {
+            if (mine !== epoch) return true;
+            if (!tourSt) {
+              tourSt = ET.math.makeGuidedTour(cen.result.data, fitSet.count, D, {
+                seed: seed,
+                subspace: Math.min(opt.subspace, D),
+                sampleRows: fitSet.count > opt.fitRows ? opt.fitRows : undefined,
+              });
+            }
+            if (!tourSt.step(0)) return false;
+            var tour = tourSt.result;
+            cen = null; // the centred copy is not kept
+            tourSt = null;
+            swap = ET.math.makeSwapTour(hold, D, {
+              seed: seed,
+              period: opt.period,
+              basis: tour.basis,
+              basisRows: tour.subspace,
+            });
+            guided = true;
+            fitShare = tour.varianceShare;
+            return true;
+          },
+        },
+      ];
     }
 
     // Neighbour measurement over the current set, then the wire list.
@@ -164,11 +240,14 @@
           },
         ]);
       }
-      return M.stepper([statsTask(), knnTask()]);
+      var tasks = [statsTask()];
+      if (wantsGuided()) tasks = tasks.concat(fitTasks());
+      tasks.push(knnTask());
+      return M.stepper(tasks);
     }
 
     function isReady() {
-      return empty ? emptyReady : glide !== null;
+      return empty ? emptyReady : glide !== null && (guided || !wantsGuided());
     }
 
     function lastT() {
@@ -280,6 +359,8 @@
       return {
         id: "lattice",
         projection: "linear: an orthonormal 3-frame; one axis at a time turns a quarter turn into a hidden direction",
+        hidden: guided ? "strongest" : "full",
+        subspace: guided ? Math.min(opt.subspace, D) : null,
         seed: seed,
         period: opt.period,
         neighbourLimit: opt.neighbourLimit,
@@ -290,11 +371,12 @@
         wiresReplacedAt: lists.length > 1 ? last.T : null,
         wiresPending: pendingWires !== null,
         empty: empty,
-        varianceShare: null,
+        varianceShare: fitShare,
       };
     }
 
     function leave() {
+      epoch++;
       knn = null;
       lists = [];
       pendingWires = null;

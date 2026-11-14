@@ -153,6 +153,13 @@ not done; see "Not yet compared or not yet decided".
 - **Why:** reproducibility.
 - **Visible on the sample set:** no.
 
+### Hidden directions come from the strongest directions
+
+- **Reference:** each hidden direction is drawn from the whole space.
+- **Build:** each hidden direction is drawn inside the span of the data's 8 strongest principal directions (the same fit Tumble's tour uses), orthogonal to the axes still shown. The mode option `hidden: "full"` gives the reference's rule.
+- **Why:** found on real vectors (`docs/evidence/2026-11-14-real-atlas-proof.md`). In a real 768-d or 1024-d set a direction drawn from the whole space holds about a thousandth of the variance, so after three swaps the picture was a random one: group separation 1.126 against a random baseline of 1.114. With this rule it is 1.472 on the same file. The reference's synthetic regions are tight enough to survive random directions; real vectors are not. Approved by the owner on 2026-11-14 (deviation `d5`).
+- **Visible on the sample set:** yes. After the first swaps the regions stay apart as compact groups, as in Tumble, instead of drifting through looser random views. Lattice also waits for the fit before its first frame.
+
 ### A fresh Lattice starts from a seeded frame
 
 - **Reference:** a random frame when nothing came before.
@@ -503,9 +510,10 @@ Checked in the screenshots or measured on 2026-11-14; none of these differ.
 
 ## Not yet compared or not yet decided
 
-- **The three light-background treatments** (`panel`, `ink`, `soft`) have not been
-  seen by the user. The default is `panel`. They do not appear on the standalone
-  page.
+- **The three light-background treatments** (`panel`, `ink`, `soft`) were seen
+  by the user, who accepted `soft` and not the other two (2026-11-14). The
+  default is now `soft`; `panel` and `ink` remain as options. They do not appear
+  on the standalone page.
 - **No frame-for-frame comparison is possible.** The reference's Tumble is
   unseeded and its Wander route is random, so the two pages never show the same
   frame. Point size, glow, bloom, depth of field and trail length were judged by
@@ -532,17 +540,16 @@ Checked in the screenshots or measured on 2026-11-14; none of these differ.
 
 ## Sign-off
 
-The user's sign-off of this comparison is **not yet recorded**. This document
-and the side-by-side page are prepared for it; they do not stand in for it.
+The user's sign-off of this comparison is recorded below, in the user's own
+words. It was given after the user had tried the build on their own devices and
+on real vectors, and with two changes asked for in the same message and made
+since: the light-background default is `soft`, and Lattice draws its hidden
+directions from the strongest directions.
 
-When the user signs off, whoever records it adds one line of exactly this form
-below, with the user's own words after the colon, and rewrites the first
-paragraph of this section to say so:
+The agreed form of the line is:
 
 ```text
 Signed off by the user on YYYY-MM-DD: <the user's words>
 ```
 
-Date:
-
-The user's words:
+Signed off by the user on 2026-11-14: confirmed, light -> soft ink is ok, the two others not.

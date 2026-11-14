@@ -468,7 +468,7 @@ button {
 /* A light page: tell the viewer so, and pick how the picture is drawn on it. */
 embeddings-tumbler {
   --tumbler-background: #f6f3ec;
-  --tumbler-light-style: ink;
+  --tumbler-light-style: soft;
   --tumbler-stage-height: 420px;
 }
 ```
@@ -606,23 +606,25 @@ which would wash out on a light page. When `--tumbler-background` is light
 above, and you choose how the picture is drawn with `--tumbler-light-style` (or
 the `lightStyle` option):
 
-- `panel` (the default): the picture keeps its dark night sky as a panel on your
+- `panel`: the picture keeps its dark night sky as a panel on your
   light page, with all its glow and colour; the controls and provenance around
   it follow your light colours.
 - `ink`: the picture sits on a light sky and each group is drawn as saturated ink
   of its own colour. The glow is gone, and dense cores read as dark saturated
   colour.
-- `soft`: `ink` laid on more lightly, with the hues kept.
+- `soft` (the default): `ink` laid on more lightly, with the hues kept. This is
+  the one treatment the project's owner accepted; the other two remain
+  available but are not recommended.
 
 <!-- file: examples/snippets/theme-light.css -->
 
 ```css
 /* A light page. The viewer notices the light background and switches to its light defaults.
-   --tumbler-light-style picks how the picture is drawn on it: panel (the default: a dark
-   panel for the picture), ink (coloured ink on the light page) or soft (a lighter ink). */
+   --tumbler-light-style picks how the picture is drawn on it: soft (the default: light
+   coloured ink), ink (stronger coloured ink) or panel (a dark panel for the picture). */
 .space {
   --tumbler-background: #fbfaf6;
-  --tumbler-light-style: ink;
+  --tumbler-light-style: soft;
 }
 ```
 
