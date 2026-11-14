@@ -9661,6 +9661,12 @@ ET.viewer = (function () {
     maxPixelRatio: 2,
     preserveDrawingBuffer: false,
     prepareBudgetMs: 8,
+    // Keep the slow spin running while a mode prepares, so the view never looks frozen
+    // (owner's phone report, 2026-11-14). false: hold the picture still until ready, as 0.11.6.
+    spinWhilePreparing: true,
+    // Lower the drawing-buffer ratio in steps (never below 1) when the frame rate stays
+    // under ADAPT_FPS while nothing prepares. false: always draw at the capped device ratio.
+    adaptivePixelRatio: true,
     refitQuietSeconds: 2,
     refitShare: 0.01,
     onError: null,
@@ -9685,6 +9691,21 @@ ET.viewer = (function () {
   var ZOOM_MIN = 0.2;
   var ZOOM_MAX = 12;
   var SPIN = 0.06; // rad/s of yaw while running (the reference's)
+  // Heavy work's budget per frame (see "Heavy work" in js/api/50-viewer.md): a share of the
+  // measured frame interval, between prepareBudgetMs and BUDGET_CEILING times it; cut to half
+  // of prepareBudgetMs for one frame only when the viewer's own script (drawing excluded)
+  // overran: more than OVERRUN_FLOOR_MS, and more than OVERRUN_MS past the budget it had.
+  var WORK_SHARE = 1 / 3;
+  var BUDGET_CEILING = 3;
+  var OVERRUN_FLOOR_MS = 16;
+  var OVERRUN_MS = 8;
+  var PAUSED_BUDGET_MS = 40; // a paused view has no motion to keep smooth
+  var INTERVAL_GAP_MS = 250; // a longer gap between frames is a pause, not a frame interval
+  // Drawing-buffer ratio steps (adaptivePixelRatio): ADAPT_SECONDS measured seconds in a row
+  // under ADAPT_FPS, while running and not preparing, lower it by ADAPT_STEP (never below 1).
+  var ADAPT_FPS = 30;
+  var ADAPT_SECONDS = 2;
+  var ADAPT_STEP = 0.5;
   // The most wire light per pixel, where the wires' light lands, before the wires are
   // scaled down (the renderer's draw key wireLoad; see "Crowded wires" in js/api/50-viewer.md).
   var WIRE_LOAD = 8;
@@ -10869,6 +10890,7 @@ ET.viewer = (function () {
       inst: inst,
       jobs: [prep],
       clock: 0,
+      seeked: false, // seek() was called: hold the spin until ready (spinWhilePreparing)
       wiresVersion: -1,
       refit: null,
       readyAt: null,
@@ -11268,6 +11290,7 @@ ET.viewer = (function () {
     w = w > 0 ? w : v.stage.clientWidth || 300;
     h = h > 0 ? h : v.stage.clientHeight || 150;
     var dpr = Math.min(Number(v.options.maxPixelRatio) || 2, v.win?.devicePixelRatio || 1);
+    if (v.dprCap !== null) dpr = Math.max(1, Math.min(dpr, v.dprCap));
     v.dpr = dpr;
     v.cssW = w;
     v.cssH = h;
@@ -11365,6 +11388,7 @@ ET.viewer = (function () {
       return; // no frame work while hidden or off screen; resume() reschedules
     }
     var start = now(v);
+    noteInterval(v, t);
     var dt = v.prev === null ? 1 / 60 : clamp((t - v.prev) / 1000, 0.001, 0.05);
     // After a long frame of the viewer's own work (a fit), count the gap as lost time,
     // not motion, so the picture does not leap ahead by a whole clamped step.
@@ -11387,6 +11411,7 @@ ET.viewer = (function () {
     }
     var spent = now(v) - start;
     v.lastSpent = spent;
+    v.lastScript = Math.max(0, spent - v.drawSpent);
     if (spent > v.timing.longestFrameMs) v.timing.longestFrameMs = spent;
     v.frames++;
     if (v.timing.firstFrameMs === null) v.timing.firstFrameMs = now(v) - v.timing.mountAt;
@@ -11396,19 +11421,54 @@ ET.viewer = (function () {
       v.fps = (v.fpsFrames * 1000) / (t - v.fpsAt);
       v.fpsAt = t;
       v.fpsFrames = 0;
+      adaptPixelRatio(v);
     }
     if (!v.broken && needsMore(v)) schedule(v);
   }
 
-  // Preparation and refit work run in small units (a few milliseconds each) inside a
-  // per-frame budget: prepareBudgetMs (8), halved after a frame that ran long, so the
-  // page keeps its frame rate while a mode prepares or refits.
-  function pump(v, m, start) {
-    var budget = Math.max(1, Number(v.options.prepareBudgetMs) || 8);
-    if (v.lastSpent > 16) budget = Math.max(1, budget / 2);
+  // The interval between animation frames (rAF timestamps), smoothed. It is measured only
+  // between frames that ran back to back: the first frame after a pause, a resume or a
+  // return from hidden starts afresh, and so does the frames-per-second window.
+  function noteInterval(v, t) {
+    var gap = v.rafAt === null ? Infinity : t - v.rafAt;
+    v.rafAt = t;
+    if (v.prev === null || gap > INTERVAL_GAP_MS) {
+      v.fpsAt = null;
+      v.fpsFrames = 0;
+      return;
+    }
+    if (gap > 0) v.interval = v.interval > 0 ? v.interval * 0.75 + gap * 0.25 : gap;
+  }
+
+  // The budget for this frame's heavy work. Where the time between frames went decides it:
+  // on a device whose frames are long because drawing is slow (the GPU, the compositor),
+  // the work may take up to WORK_SHARE of the frame interval, so it keeps making progress
+  // at any frame rate; it is cut only when the viewer's own script (drawing excluded) ran
+  // well past what it was given, which is the case a long frame used to stand for.
+  function frameBudget(v) {
+    var base = Math.max(1, Number(v.options.prepareBudgetMs) || 8);
+    var budget = clamp(v.interval * WORK_SHARE, base, base * BUDGET_CEILING);
+    if (v.lastScript > Math.max(OVERRUN_FLOOR_MS, v.lastBudget + OVERRUN_MS)) budget = Math.max(1, base / 2);
     // A paused view has no motion to keep smooth, so it may spend longer per frame on
     // getting ready (it still answers input every frame).
-    if (!v.running) budget = Math.max(budget, 40);
+    if (!v.running) budget = Math.max(budget, PAUSED_BUDGET_MS);
+    v.lastBudget = budget;
+    return budget;
+  }
+
+  // Preparation and refit work run in small units (a few milliseconds each) inside the
+  // frame's budget (frameBudget), so the page keeps its frame rate while a mode prepares
+  // or refits, and the work keeps going on a device that draws slowly.
+  function pump(v, m, start) {
+    var budget = frameBudget(v);
+    v.timing.budgetMs = budget;
+    pumpJobs(v, m, start, budget);
+    if (m.refit && v.running && now(v) - start < budget) pumpRefit(v, m, start, budget);
+    pumpSearch(v, start, budget);
+    v.timing.workMs = now(v) - start;
+  }
+
+  function pumpJobs(v, m, start, budget) {
     while (m.jobs.length) {
       var job = m.jobs[0];
       var left = budget - (now(v) - start);
@@ -11417,8 +11477,6 @@ ET.viewer = (function () {
       if (job.done) m.jobs.shift();
       else break;
     }
-    if (m.refit && v.running && now(v) - start < budget) pumpRefit(v, m, start, budget);
-    pumpSearch(v, start, budget);
   }
 
   // One step of a running refit inside what is left of the frame's budget.
@@ -11472,6 +11530,7 @@ ET.viewer = (function () {
     pump(v, m, start);
     var ready = m.inst.isReady();
     if (ready) advanceReady(v, m, dt);
+    else spinWhilePreparing(v, m, dt);
     var s = m.inst.stateAt(ready ? m.clock : 0);
     if (r && s.wires && s.wires.version !== m.wiresVersion) {
       r.setWires(s.wires.pairs, s.wires.lengths);
@@ -11481,7 +11540,12 @@ ET.viewer = (function () {
     easeFilter(v, dt);
     v.search.hideUnlit = hidesUnlit(v);
     var ds = drawState(v, s, dt);
-    if (r && v.rendering) r.draw(ds);
+    v.drawSpent = 0;
+    if (r && v.rendering) {
+      var d0 = now(v);
+      r.draw(ds);
+      v.drawSpent = now(v) - d0;
+    }
     v.needClear = false;
     v.last = s;
     v.lastDraw = ds;
@@ -11522,6 +11586,36 @@ ET.viewer = (function () {
     }
     if (typeof m.inst.mark === "function") m.inst.mark(m.clock);
     considerRefit(v, m);
+  }
+
+  // While a mode prepares, the mode clock waits for ready (frames for a given mode time do
+  // not depend on how fast the preparation ran) but the slow spin keeps turning the frame
+  // the mode holds, so the view never stands still. It runs on the same rule as the spin
+  // after ready (running, not dragging) and stops after a seek(), which asks for an exact
+  // frame: a seek before ready shows the frame at that time once the mode is ready.
+  function spinWhilePreparing(v, m, dt) {
+    if (!v.options.spinWhilePreparing || m.seeked || !v.running || v.drag.active) return;
+    v.spin += dt * v.speed * spinFactor(m);
+  }
+
+  // A mode is preparing while it is not ready, has queued work, or refits.
+  function preparingOf(m) {
+    return !!(m && (!readyOf(m) || m.jobs.length || m.refit));
+  }
+
+  // Once a second (with the frames-per-second figure): after ADAPT_SECONDS measured seconds
+  // in a row under ADAPT_FPS, while the view moves, draws and prepares nothing, draw at a
+  // lower ratio (ADAPT_STEP less, never below 1). It is never raised again in this mount.
+  function adaptPixelRatio(v) {
+    if (!v.options.adaptivePixelRatio || !v.running || !v.rendering || preparingOf(v.mode) || v.fps >= ADAPT_FPS) {
+      v.slowSeconds = 0;
+      return;
+    }
+    v.slowSeconds++;
+    if (v.slowSeconds < ADAPT_SECONDS || v.dpr <= 1) return;
+    v.slowSeconds = 0;
+    v.dprCap = Math.max(1, v.dpr - ADAPT_STEP);
+    measure(v);
   }
 
   // A mode may ask for its own spin with a `spin` member (rad/s, finite, 0 or more; Focus
@@ -13484,8 +13578,17 @@ ET.viewer = (function () {
         lastAppendMs: null,
         refits: 0,
         lastRefit: null,
+        budgetMs: null,
+        workMs: 0,
       },
       lastSpent: 0,
+      lastScript: 0, // the last frame's script time, drawing excluded (ms)
+      lastBudget: 0,
+      drawSpent: 0,
+      interval: 0, // smoothed time between animation frames (ms)
+      rafAt: null,
+      dprCap: null, // the lowered drawing-buffer ratio (adaptivePixelRatio), or null
+      slowSeconds: 0,
       lostTime: false,
       paintKey: null,
       themeKey: null,
@@ -13567,7 +13670,7 @@ ET.viewer = (function () {
       speed: v.speed,
       zoom: v.userZoom,
       ready: readyOf(m),
-      preparing: !!(m && (!readyOf(m) || m.jobs.length || m.refit)),
+      preparing: preparingOf(m),
       broken: v.broken,
       count: v.set ? v.set.count : 0,
       dimension: v.set ? v.set.dimension : 0,
@@ -13576,6 +13679,8 @@ ET.viewer = (function () {
       animating: !!v.raf,
       frames: v.frames,
       fps: v.fps,
+      pixelRatio: v.dpr,
+      pixelRatioLowered: v.dprCap !== null,
       status: v.statusText,
       message: v.fatalMessage || v.noticeMessage || null,
       timing: {
@@ -13585,6 +13690,11 @@ ET.viewer = (function () {
         lastAppendMs: v.timing.lastAppendMs,
         refits: v.timing.refits,
         lastRefit: v.timing.lastRefit ? { ...v.timing.lastRefit } : null,
+        budgetMs: v.timing.budgetMs,
+        workMs: v.timing.workMs,
+        scriptMs: v.lastScript,
+        drawMs: v.drawSpent,
+        intervalMs: v.interval,
       },
       search: searchInfo(v),
     };
@@ -13623,7 +13733,10 @@ ET.viewer = (function () {
       seek: function (t) {
         var x = Number(t);
         if (!Number.isFinite(x) || x < 0) x = 0;
-        if (v.mode) v.mode.clock = x;
+        if (v.mode) {
+          v.mode.clock = x;
+          v.mode.seeked = true; // an exact frame is asked for: no spin while it prepares
+        }
         v.spin = x * spinFactor(v.mode);
         v.needClear = true;
         invalidate(v);
