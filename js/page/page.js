@@ -245,7 +245,7 @@
     } catch (err) {
       answer = null;
     }
-    if (!res.ok || !answer || answer.ok !== true) throw new Error(refusalText(answer));
+    if (!res.ok || answer?.ok !== true) throw new Error(refusalText(answer));
     return answer;
   }
 
@@ -295,7 +295,8 @@
       const described = await callRoute(address, { op: "describe" }, controller?.signal);
       if (typeof described.embed?.model !== "string" || described.embed.model === "") return {};
       return helperCallbacks(address, described);
-    } catch (err) {
+    } catch {
+      // No helper: the route is missing, unreachable or answered something else.
       return {};
     } finally {
       window.clearTimeout(timer);

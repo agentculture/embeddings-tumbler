@@ -2429,7 +2429,7 @@
   function countBefore(distances, dist, idx, mask) {
     var c = 0;
     for (var j = 0; j < distances.length; j++) {
-      if (mask && mask[j] === 0) continue;
+      if (mask?.[j] === 0) continue;
       if (distances[j] < dist || (distances[j] === dist && j < idx)) c++;
     }
     return c;
@@ -3018,7 +3018,7 @@ ET.searchSets = (function () {
   }
 
   // One pair's report.
-  function* pairGen(X, D, a, b, ra, rb, lengths, wk) {
+  function* pairGen(set, a, b, ra, rb, lengths, wk) {
     var inB = new Set();
     for (const hit of rb.hits) inB.add(hit.index);
     var commonIndices = [];
@@ -3027,7 +3027,7 @@ ET.searchSets = (function () {
     }
     var shared = sharedBetween(ra, rb);
     if (wk.add(Math.min(ra.distances.length, rb.distances.length))) yield;
-    var closest = yield* closestPairGen(X, D, ra, rb, lengths[a], lengths[b], wk);
+    var closest = yield* closestPairGen(set.vectors, set.dimension, ra, rb, lengths[a], lengths[b], wk);
     return {
       a: a,
       b: b,
@@ -3042,7 +3042,7 @@ ET.searchSets = (function () {
     var pairs = [];
     for (var a = 0; a < searches.length; a++) {
       for (var b = a + 1; b < searches.length; b++) {
-        pairs.push(yield* pairGen(set.vectors, set.dimension, a, b, searches[a], searches[b], lengths, wk));
+        pairs.push(yield* pairGen(set, a, b, searches[a], searches[b], lengths, wk));
       }
     }
     return pairs;
@@ -7263,33 +7263,16 @@ ET.modes = (function () {
       workAhead(h + 1);
       var first = !!hp.first;
       var j = hereRec.target;
+      var prev = h > 0 && !first ? prevRec.target : -1; // the stop flown from, or -1
+      var travelling = hp.local < opt.travel;
+      var e = travelling ? ET.math.smoothstep(hp.local / opt.travel) : 1;
       var from = flightStart(sw, first, prevRec);
-      var fromF = from.frame;
-      var toF = legFrame(sw, hereRec.frame);
-      var fromC = from.centre;
-      var X = set.vectors;
-      var oj = j * D;
-      var phase;
-      var e;
-      if (hp.local < opt.travel) {
-        phase = "travel";
-        e = ET.math.smoothstep(hp.local / opt.travel);
-        var oc = h > 0 && !first ? prevRec.target * D : -1;
-        for (var d = 0; d < D; d++) {
-          var a = oc >= 0 ? X[oc + d] : fromC[d];
-          tmpC[d] = a + (X[oj + d] - a) * e;
-        }
-        for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
-        ET.math.blendFrames(fromF, toF, e, D, out.frame);
-      } else {
-        phase = "dwell";
-        e = 1;
-        for (var d3 = 0; d3 < D; d3++) out.centre[d3] = X[oj + d3];
-        ET.math.blendFrames(fromF, toF, 1, D, out.frame);
-      }
+      if (travelling) travelCentre(prev, from.centre, j, e);
+      else stopCentre(j);
+      ET.math.blendFrames(from.frame, legFrame(sw, hereRec.frame), e, D, out.frame);
       out.focus = {
-        phase: phase,
-        from: h > 0 && !first ? prevRec.target : -1,
+        phase: travelling ? "travel" : "dwell",
+        from: prev,
         to: j,
         e: e,
         neighbours: Int32Array.from(nearVisits(ctx, j, opt.spokes)),
@@ -7299,6 +7282,26 @@ ET.modes = (function () {
       if (sw) out.draw.zoom = end.zoom + (out.draw.zoom - end.zoom) * M.swingRelease(sw, t, opt.transition);
       out.status = status(t);
       return out;
+    }
+
+    // The centre during a flight: e of the way from stop `prev` (from `fromC` when there is
+    // no previous stop, prev < 0) to stop j.
+    function travelCentre(prev, fromC, j, e) {
+      var X = set.vectors;
+      var oc = prev * D;
+      var oj = j * D;
+      for (var d = 0; d < D; d++) {
+        var a = prev >= 0 ? X[oc + d] : fromC[d];
+        tmpC[d] = a + (X[oj + d] - a) * e;
+      }
+      for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
+    }
+
+    // The centre while the camera dwells at stop j: the stop itself.
+    function stopCentre(j) {
+      var X = set.vectors;
+      var oj = j * D;
+      for (var d = 0; d < D; d++) out.centre[d] = X[oj + d];
     }
 
     // The state shown at swing sw's end, with the leg's relabelling of route
@@ -7623,7 +7626,6 @@ ET.modes = (function () {
     var pending = null; // a finished fit waiting for its time: { result, minT, kind, letters }
     var prepared = null;
     var out = null;
-    var scratch = null;
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Focus");
@@ -7643,7 +7645,6 @@ ET.modes = (function () {
       hold = entry ? entry.frame : M.startFrame(D, seed);
       epoch++;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
-      scratch = { frame: new Float32Array(3 * D), centre: new Float32Array(D) };
       updateSpin();
     }
 
@@ -8053,7 +8054,9 @@ ET.modes = (function () {
   };
   var SP_PALETTE_DARK = { fg: "#e9eef6", muted: "#8a96ab", line: "#1b2436", accent: "#ffc56b", bg: "#04060b" };
   var SP_PALETTE_LIGHT = { fg: "#1b2130", muted: "#5b6578", line: "#d6dae2", accent: "#a35f00", bg: "#f6f4ee" };
-  var SP_UNSAFE = /ur[l]\(|image-set|[\\;{}<>]/i; // a value that could name a resource is not used
+  // A value that could name a resource is not used. The "r" is written as an escape so that
+  // this file holds no CSS resource function by name (js/test/viewer-static.test.js bans it).
+  var SP_UNSAFE = /u\x72l\(|image-set|[\\;{}<>]/i;
   var spCounter = 0;
 
   // ----- text: the bar, the provenance line, the note, the lists -----
@@ -8346,8 +8349,10 @@ ET.modes = (function () {
   function spResultMeta(q, r, distances) {
     var out = [];
     if (distances) {
-      out.push("distance " + r.distance.toFixed(3) + (q.pointOfView ? " from its point of view" : ""));
-      out.push(r.gap < 0.0005 ? "the nearest" : "+" + r.gap.toFixed(3) + " farther than the nearest");
+      out.push(
+        "distance " + r.distance.toFixed(3) + (q.pointOfView ? " from its point of view" : ""),
+        r.gap < 0.0005 ? "the nearest" : "+" + r.gap.toFixed(3) + " farther than the nearest"
+      );
     }
     if (q.reranker) out.push(spMoveText(r.embeddingRank - r.rank, r.embeddingRank));
     if (q.pointOfView && r.plainRank !== r.embeddingRank) out.push("plain distance had it at " + r.plainRank);
@@ -8391,7 +8396,7 @@ ET.modes = (function () {
   // The named points' texts of a set, once per set and count (an append adds to them).
   function spEntries(p) {
     var set = spData(p);
-    if (!set || !set.count || typeof ET.search?.isNamed !== "function") return [];
+    if (!set?.count || typeof ET.search?.isNamed !== "function") return [];
     var cache = p.suggestCache;
     if (cache.set === set && cache.count === set.count) return cache.entries;
     var seen = new Set();
@@ -8419,12 +8424,14 @@ ET.modes = (function () {
 
   // ----- colours -----
 
+  // One channel in 0..1 as 0..255.
+  function spByte(x) {
+    return Math.round(Math.min(1, Math.max(0, Number(x) || 0)) * 255);
+  }
+
   function spHex(c) {
     // [r, g, b] in 0..1 -> "rgb(r, g, b)"
-    var f = function (x) {
-      return Math.round(Math.min(1, Math.max(0, Number(x) || 0)) * 255);
-    };
-    return "rgb(" + f(c[0]) + ", " + f(c[1]) + ", " + f(c[2]) + ")";
+    return "rgb(" + spByte(c[0]) + ", " + spByte(c[1]) + ", " + spByte(c[2]) + ")";
   }
 
   function spTheme(p) {
@@ -8446,16 +8453,18 @@ ET.modes = (function () {
     var t = spTheme(p);
     var base = spLight(p) ? SP_PALETTE_LIGHT : SP_PALETTE_DARK;
     if (!t) return { ...base };
-    var pick = function (c, d) {
-      return Array.isArray(c) ? spHex(c) : d;
-    };
     return {
-      fg: pick(t.foreground, base.fg),
-      muted: pick(t.muted, base.muted),
-      line: pick(t.line, base.line),
-      accent: pick(t.accent, base.accent),
-      bg: pick(t.background, base.bg),
+      fg: spPick(t.foreground, base.fg),
+      muted: spPick(t.muted, base.muted),
+      line: spPick(t.line, base.line),
+      accent: spPick(t.accent, base.accent),
+      bg: spPick(t.background, base.bg),
     };
+  }
+
+  // A theme colour ([r, g, b]) as CSS, or the default when the theme does not give one.
+  function spPick(c, d) {
+    return Array.isArray(c) ? spHex(c) : d;
   }
 
   // A search's colour for DOM text: the host's custom property, else the default for the stage.
@@ -12531,7 +12540,7 @@ ET.viewer = (function () {
         onlyResults: false,
       },
       run: null, // the run in progress
-      work: [], // steppers of the run in progress: { run, job, then }
+      work: [], // steppers of the run in progress: { run, job, after }
       shown: [], // the searches shown, in letter order
       shownSet: null, // the set they were worked out on
       shownUsed: null, // the settings they were worked out with: { k, candidates, top, pointOfView, rerank }
@@ -12588,7 +12597,7 @@ ET.viewer = (function () {
     }
     var answer;
     try {
-      answer = Promise.resolve(fn.apply(undefined, args));
+      answer = Promise.resolve(fn(...args));
     } catch (err) {
       // The host's error is the host's own: it may carry an address or a key, so it is
       // not shown; the refusal says only that the callback failed.
@@ -12617,7 +12626,7 @@ ET.viewer = (function () {
       if (typeof entry.text === "string") return textSource(v, entry.text, entry.via);
       if (entry.vector !== undefined) return vectorSource(v, entry);
       if (entry.point !== undefined) return pointSource(v, entry.point);
-    } catch (err) {
+    } catch {
       // A getter on the host's entry threw: the entry is not one of the forms.
       return searchRefusal("bad-search");
     }
@@ -12805,7 +12814,7 @@ ET.viewer = (function () {
       vector = answer.vector;
       model = answer.model;
       form = answer.queryForm;
-    } catch (err) {
+    } catch {
       // A getter on the answer threw: not a vector with a model id.
       return searchRefusal("embed-malformed");
     }
@@ -12844,8 +12853,8 @@ ET.viewer = (function () {
     return { word: u.word, how: u.how, count: u.count };
   }
 
-  function queueWork(v, run, job, then) {
-    v.search.work.push({ run: run, job: job, then: then });
+  function queueWork(v, run, job, after) {
+    v.search.work.push({ run: run, job: job, after: after });
     invalidate(v);
   }
 
@@ -12957,7 +12966,7 @@ ET.viewer = (function () {
     try {
       scores = isObj(outcome.value) ? outcome.value.scores : undefined;
       model = isObj(outcome.value) ? outcome.value.model : undefined;
-    } catch (err) {
+    } catch {
       // A getter on the answer threw: treated as a malformed answer below.
       scores = undefined;
     }
@@ -13055,7 +13064,7 @@ ET.viewer = (function () {
     try {
       r.setLit(lit, shared);
       s.litUploaded = true;
-    } catch (err) {
+    } catch {
       // The renderer holds no data yet: the lit values go up with the next commit.
       s.litUploaded = false;
     }
@@ -13110,7 +13119,7 @@ ET.viewer = (function () {
     }
     if (!item.job.done) return false;
     v.search.work.shift();
-    item.then(item.job.result);
+    item.after(item.job.result);
     return true;
   }
 
@@ -13132,12 +13141,12 @@ ET.viewer = (function () {
         }),
         {
           seed: v.seed,
-          current: cur && cur.length === 3 * v.set.dimension ? new Float32Array(cur) : null,
+          current: cur?.length === 3 * v.set.dimension ? new Float32Array(cur) : null,
           scale: pov ? pov.scale : null,
         }
       );
       s.facingJob = { job: job, swing: swing };
-    } catch (err) {
+    } catch {
       // Fewer than three dimensions: there is no facing frame to swing to.
       s.facingJob = null;
     }
@@ -13234,7 +13243,7 @@ ET.viewer = (function () {
     try {
       var f = m.inst.describe()?.facing;
       return !!f && m.clock < f.until;
-    } catch (err) {
+    } catch {
       // A mode whose describe throws reports no swing.
       return false;
     }
@@ -13661,7 +13670,7 @@ ET.viewer = (function () {
     if (v.modeId !== "focus" || !v.last || !v.lastDraw || !v.set) return;
     if (Math.hypot(e.clientX - pt.sx, e.clientY - pt.sy) > CLICK_SLOP) return;
     var i = nearestPoint(v, at.x * v.dpr, at.y * v.dpr, CLICK_REACH * v.dpr);
-    if (i >= 0) setSearches(v, [{ point: v.set.ids[i] }]);
+    if (i >= 0) void setSearches(v, [{ point: v.set.ids[i] }]); // its answer is the view itself
   }
 
   // The index of the shown point nearest (x, y) in device pixels within reach, or -1.

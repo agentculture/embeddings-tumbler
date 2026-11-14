@@ -24,6 +24,8 @@ Output: a JSONL file. Line 1 is the header record (``"record": "header"``: the l
 its revision id, the retrieval date, the licence, the text cap, the groups and what was
 skipped); every later line is one article (``"record": "item"``).
 
+``--out`` and ``--cache`` must be inside the current folder or inside this repository.
+
 Licence: the titles and texts are Wikipedia's, under CC BY-SA 4.0; see ``NOTICE``.
 
 Politeness: the MediaWiki API over HTTPS with a generic User-Agent that names this
@@ -80,10 +82,13 @@ _HEADING = re.compile(r"^==([^=].*?)==\s*$")
 _BULLET = re.compile(r"^[*#]")
 _LINK = re.compile(r"\[\[([^\]|#]+)")
 _ADDRESS = re.compile(r"\b[A-Za-z][A-Za-z0-9+.\-]*://\S*|\bwww\.\S+|//+", re.ASCII)
-_EMPTY_BRACKETS = re.compile(r"\(\s*[;,]?\s*\)|\[\s*\]")
-_SPACE_BEFORE_PUNCT = re.compile(r"\s+([,.;:!?)])")
 _OPEN_PAREN_PUNCT = re.compile(r"\(\s*[;,]?\s*")
-_CLOSE_PAREN_SPACE = re.compile(r"\s+\)")
+# The three below are applied by ``clean_text`` only, to text whose every run of white space
+# is already one space, so each names a single space where it once named a run: the same
+# matches on that text, and nothing for the expression to try twice.
+_EMPTY_BRACKETS = re.compile(r"\( ?[;,]? ?\)|\[ ?\]")
+_SPACE_BEFORE_PUNCT = re.compile(r" ([,.;:!?)])")
+_CLOSE_PAREN_SPACE = " )"
 #: A possible sentence end: a stop, any closing quotes or brackets, space, then a capital
 #: letter or an opening quote or bracket. A digit does not start a sentence here.
 _SENTENCE_END = re.compile(r"[.!?][\"')\]]*\s+(?=[A-Z\"'(\[])")
@@ -146,7 +151,7 @@ def clean_text(text: str) -> str:
     text = _ADDRESS.sub(" ", text)
     text = " ".join(text.split())
     text = _OPEN_PAREN_PUNCT.sub("(", text)
-    text = _CLOSE_PAREN_SPACE.sub(")", text)
+    text = text.replace(_CLOSE_PAREN_SPACE, ")")
     text = _EMPTY_BRACKETS.sub(" ", text)
     text = " ".join(text.split())
     return _SPACE_BEFORE_PUNCT.sub(r"\1", text).strip()
@@ -253,6 +258,21 @@ class Fetcher:
         with self.opener(request, timeout=TIMEOUT) as response:  # nosec B310 (checked scheme)
             return json.loads(response.read().decode("utf-8"))
 
+    def _attempt(self, url: str) -> dict | None:
+        """One request: the answer, or None when the request is worth making again."""
+        try:
+            answer = self._once(url)
+        except urllib.error.HTTPError as err:
+            if err.code != 429 and err.code < 500:
+                raise FetchError(f"the API answered {err.code}") from None
+            return None
+        except (OSError, ValueError):
+            # No connection, a time-out or an answer that is not JSON: tried again.
+            return None
+        if isinstance(answer, dict) and "error" not in answer:
+            return answer
+        return None
+
     def get(self, params: dict[str, str]) -> dict:
         """The API's answer to ``params`` (``format=json&formatversion=2`` are added)."""
         params = {**params, "format": "json", "formatversion": "2"}
@@ -262,18 +282,11 @@ class Fetcher:
         url = self.api + "?" + urllib.parse.urlencode(sorted(params.items()))
         wait = self.backoff
         for attempt in range(self.retries + 1):
-            try:
-                answer = self._once(url)
-            except urllib.error.HTTPError as err:
-                if err.code != 429 and err.code < 500:
-                    raise FetchError(f"the API answered {err.code}") from None
-            except (urllib.error.URLError, OSError, ValueError):
-                pass
-            else:
-                if isinstance(answer, dict) and "error" not in answer:
-                    self.cache.mkdir(parents=True, exist_ok=True)
-                    cached.write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
-                    return answer
+            answer = self._attempt(url)
+            if answer is not None:
+                self.cache.mkdir(parents=True, exist_ok=True)
+                cached.write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
+                return answer
             if attempt < self.retries:
                 self.sleep(wait)
                 wait *= 2
@@ -457,6 +470,38 @@ def read_corpus(path: Path) -> tuple[dict, list[dict]]:
     return lines[0], lines[1:]
 
 
+def _confined(base_dir: str, value: str, folder_ok: bool = False) -> str:
+    """The real path of ``value`` taken under ``base_dir``; ValueError unless it is inside.
+
+    SonarSource's documented path-traversal check: both paths through ``os.path.realpath``,
+    then a plain ``startswith(base + os.sep)``. With ``folder_ok`` the base folder itself is
+    accepted too.
+    """
+    base = os.path.realpath(base_dir)
+    full = os.path.realpath(os.path.join(base, value))
+    if full.startswith(base + os.sep) or (folder_ok and full == base):
+        return full
+    raise ValueError(f"{value} is outside {base}")
+
+
+def allowed_path(value: str, what: str, folder_ok: bool = False) -> str:
+    """The real path of a path argument: inside the current folder, or inside the repository.
+
+    A relative ``value`` is taken from the current folder. Anything else is refused, so a
+    mistyped or generated argument cannot make the script read or write elsewhere.
+    """
+    try:
+        return _confined(os.getcwd(), value, folder_ok)
+    except ValueError:
+        pass
+    try:
+        return _confined(str(ROOT), os.path.abspath(value), folder_ok)
+    except ValueError:
+        raise ValueError(
+            f"{what} must be inside the current folder or the repository: {value}"
+        ) from None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="the corpus file")
@@ -470,15 +515,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     retrieved = args.retrieved or datetime.datetime.now(datetime.UTC).date().isoformat()
     try:
-        fetcher = Fetcher(args.api, args.cache, interval=args.interval)
+        out = allowed_path(str(args.out), "--out")
+        cache = allowed_path(str(args.cache), "--cache", folder_ok=True)
+        fetcher = Fetcher(args.api, Path(cache), interval=args.interval)
         text = build(fetcher, retrieved, args.revision)
     except (FetchError, ValueError, KeyError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = args.out.with_name(args.out.name + f".tmp-{os.getpid()}")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, args.out)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    tmp = out + f".tmp-{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, out)
     header = json.loads(text.split("\n", 1)[0])
     print(
         f"wrote {args.out}: {header['count']} items in {len(header['groups'])} groups "

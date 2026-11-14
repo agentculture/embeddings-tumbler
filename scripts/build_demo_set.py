@@ -20,6 +20,10 @@ read from the environment only; it is sent in one request header and never print
 logged or written. Start the script under ``grant run --inject`` so the key exists only
 in its environment.
 
+``--corpus`` and ``--out-dir`` must be inside the current folder or inside this
+repository, and each file is written inside ``--out-dir`` itself (a link that leads out of
+it is refused).
+
 Refused, with nothing written: a batch whose answer names another model than the first
 batch's, a vector whose length differs from the first one's, an answer with the wrong
 number of vectors, and a vector with a value that is not a finite number.
@@ -86,6 +90,38 @@ def read_corpus(path: Path) -> tuple[dict, list[dict]]:
             if not isinstance(item.get(key), str) or not item[key]:
                 raise BuildError(f"a corpus item has no {key}: {item.get('id')!r}")
     return records[0], items
+
+
+def _confined(base_dir: str, value: str, folder_ok: bool = False) -> str:
+    """The real path of ``value`` taken under ``base_dir``; ValueError unless it is inside.
+
+    SonarSource's documented path-traversal check: both paths through ``os.path.realpath``,
+    then a plain ``startswith(base + os.sep)``. With ``folder_ok`` the base folder itself is
+    accepted too.
+    """
+    base = os.path.realpath(base_dir)
+    full = os.path.realpath(os.path.join(base, value))
+    if full.startswith(base + os.sep) or (folder_ok and full == base):
+        return full
+    raise ValueError(f"{value} is outside {base}")
+
+
+def allowed_path(value: str, what: str, folder_ok: bool = False) -> str:
+    """The real path of a path argument: inside the current folder, or inside the repository.
+
+    A relative ``value`` is taken from the current folder. Anything else is refused, so a
+    mistyped or generated argument cannot make the script read or write elsewhere.
+    """
+    try:
+        return _confined(os.getcwd(), value, folder_ok)
+    except ValueError:
+        pass
+    try:
+        return _confined(str(ROOT), os.path.abspath(value), folder_ok)
+    except ValueError:
+        raise BuildError(
+            f"{what} must be inside the current folder or the repository: {value}"
+        ) from None
 
 
 # --------------------------------------------------------------------------- embedding
@@ -301,14 +337,20 @@ def block_bytes(vectors: list[list[float]]) -> bytes:
     return b"".join(struct.pack(f"<{len(v)}f", *v) for v in vectors)
 
 
-def _write(path: Path, data: bytes) -> None:
-    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    tmp.write_bytes(data)
+def _write(folder: str, name: str, data: bytes) -> None:
+    """Write ``name`` in ``folder`` through a temporary file beside it, never outside it."""
+    try:
+        path = _confined(folder, name)
+        tmp = _confined(folder, f".{name}.tmp-{os.getpid()}")
+    except ValueError as err:
+        raise BuildError(f"{err}; nothing was written there") from None
+    with open(tmp, "wb") as fh:
+        fh.write(data)
     os.replace(tmp, path)
 
 
 def build(args: argparse.Namespace, environ: Mapping[str, str]) -> tuple[dict, bytes]:
-    header, items = read_corpus(args.corpus)
+    header, items = read_corpus(Path(allowed_path(str(args.corpus), "--corpus")))
     if args.limit is not None:
         items = items[: args.limit]
     if args.stand_in:
@@ -352,6 +394,7 @@ def main(argv: list[str] | None = None, environ: Mapping[str, str] | None = None
     args = _parser().parse_args(argv)
     try:
         _check_args(args)
+        out_dir = allowed_path(str(args.out_dir), "--out-dir", folder_ok=True)
         records, block = build(args, os.environ if environ is None else environ)
     except BuildError as err:
         print(f"error: {err}", file=sys.stderr)
@@ -368,9 +411,13 @@ def main(argv: list[str] | None = None, environ: Mapping[str, str] | None = None
     if not args.apply:
         print(f"would write {summary} to {args.out_dir}; re-run with --apply to write")
         return 0
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    _write(args.out_dir / (args.name + ".f32"), block)
-    _write(args.out_dir / (args.name + ".json"), text)
+    os.makedirs(out_dir, exist_ok=True)
+    try:
+        _write(out_dir, args.name + ".f32", block)
+        _write(out_dir, args.name + ".json", text)
+    except BuildError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
     print(f"wrote {summary} to {args.out_dir}")
     return 0
 

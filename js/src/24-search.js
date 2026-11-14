@@ -289,7 +289,7 @@
   function countBefore(distances, dist, idx, mask) {
     var c = 0;
     for (var j = 0; j < distances.length; j++) {
-      if (mask && mask[j] === 0) continue;
+      if (mask?.[j] === 0) continue;
       if (distances[j] < dist || (distances[j] === dist && j < idx)) c++;
     }
     return c;

@@ -520,7 +520,8 @@ class EmbedRoute:
             # The body did not arrive in time: drop the connection without an answer.
             _log(handler, state, "dropped")
             return
-        except Exception:  # noqa: BLE001 - its text could carry the key, address or query
+        except Exception:  # noqa: BLE001
+            # Its text could carry the key, the address or the query: none of it is sent.
             refusal = Refusal("gateway-failed", _failed_message(state["op"]))
             payload = {"ok": False, "code": refusal.code, "message": refusal.message}
             status = refusal.status

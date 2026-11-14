@@ -115,7 +115,6 @@
     var pending = null; // a finished fit waiting for its time: { result, minT, kind, letters }
     var prepared = null;
     var out = null;
-    var scratch = null;
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Focus");
@@ -135,7 +134,6 @@
       hold = entry ? entry.frame : M.startFrame(D, seed);
       epoch++;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
-      scratch = { frame: new Float32Array(3 * D), centre: new Float32Array(D) };
       updateSpin();
     }
 
