@@ -1636,6 +1636,35 @@
     return out;
   }
 
+  // Appends write into spare capacity instead of copying the base's vectors.
+  // A set's `vectors` is a Float32Array view of exactly count * dimension
+  // values over a buffer that may be longer. `head` maps a buffer to the end
+  // (in values) of the newest view over it. An append onto the set whose view
+  // ends at the head writes its rows just after it and returns a longer view
+  // over the same buffer: the older, shorter view is untouched, so the older
+  // set stays valid. An append onto any other set (a fork, or a set that never
+  // had spare room) copies into a new buffer of twice the needed length, so
+  // the cost of appends is proportional to the points added, amortised.
+  var head = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function appendValues(baseValues, values) {
+    var n0 = baseValues.length;
+    var n1 = n0 + values.length;
+    var buf = baseValues.buffer;
+    var off = baseValues.byteOffset / 4;
+    if (head && head.get(buf) === off + n0 && off + n1 <= buf.byteLength / 4) {
+      var grown = new Float32Array(buf, baseValues.byteOffset, n1);
+      grown.set(values, n0);
+      head.set(buf, off + n1);
+      return grown;
+    }
+    var fresh = new Float32Array(Math.max(2 * n1, 64));
+    fresh.set(baseValues, 0);
+    fresh.set(values, n0);
+    if (head) head.set(fresh.buffer, n1);
+    return fresh.subarray(0, n1);
+  }
+
   function copyPoints(pts) {
     var out = [];
     for (var i = 0; i < pts.length; i++) {
@@ -1703,9 +1732,7 @@
       for (var n = 0; n < points.length; n++) {
         if (has(held, points[n].id)) return refuse("id-exists", { id: points[n].id }, base);
       }
-      var merged = new Float32Array(base.vectors.length + values.length);
-      merged.set(base.vectors, 0);
-      merged.set(values, base.vectors.length);
+      var merged = appendValues(base.vectors, values);
       var allPoints = base.points.concat(points);
       return {
         ok: true,
@@ -3338,7 +3365,10 @@ ET.modes = (function () {
   var DEFAULTS = {
     subspace: 8, // directions the tour moves through
     speed: 0.42, // rad/s, the reference's rate
-    transition: 1.5, // seconds to blend in from the previous view
+    transition: 1.5, // seconds to blend in from the previous view (mode entry only)
+    refitTransition: "auto", // seconds to turn onto a refitted tour; "auto" picks it from the turn's size
+    refitTransitionMin: 1.5, // "auto" never turns faster than this many seconds
+    refitTransitionMax: 12, // nor slower than this many
     fitRows: 4096, // fit the directions on at most this many rows (shares stay exact)
     centreTau: 0.7, // seconds: the camera glides to the data's mean (the reference's)
     zoomSample: 512, // points used for auto-framing
@@ -3515,14 +3545,20 @@ ET.modes = (function () {
       return i;
     }
 
-    function frameAt(t, res) {
+    // The frame before the entry blend: the active tour, turned onto from the
+    // previous one during a refit's blend.
+    function innerFrame(t, res) {
       var i = activeIndex(t);
       var cur = tours[i];
       tourFrame(cur, t, res);
-      if (i > 0 && t - cur.t0 < opt.transition) {
-        var prev = tourFrame(tours[i - 1], t, new Float32Array(3 * D));
-        ET.math.blendFrames(prev, res, ET.math.smoothstep((t - cur.t0) / opt.transition), D, res);
+      if (cur.blend && t - cur.t0 < cur.blend.duration) {
+        applyRefitBlend(cur.blend, 1 - refitEase((t - cur.t0) / cur.blend.duration), res, D);
       }
+      return res;
+    }
+
+    function frameAt(t, res) {
+      innerFrame(t, res);
       if (entry && t < opt.transition) {
         ET.math.blendFrames(entry.frame, res, ET.math.smoothstep(t / opt.transition), D, res);
       }
@@ -3537,12 +3573,31 @@ ET.modes = (function () {
     // so the past already fixed is never rewritten.
     function fixSwitch(T) {
       var t0 = Math.max(T, lastSwitch());
-      var al = M.alignment(pending.tour.frameAt(t0), frameAt(t0, new Float32Array(3 * D)), D);
-      tours.push({ tour: pending.tour, al: al, t0: t0, share: pending.tour.varianceShare, count: pending.count });
+      var shown = innerFrame(t0, new Float32Array(3 * D));
+      var al = M.alignment(pending.tour.frameAt(t0), shown, D);
+      var next = { tour: pending.tour, al: al, t0: t0, share: pending.tour.varianceShare, count: pending.count, blend: null };
+      var start = tourFrame(next, t0, new Float32Array(3 * D));
+      next.blend = makeRefitBlend(shown, start, D);
+      next.blend.duration = refitDuration(next.blend, pending.tour, t0);
+      tours.push(next);
       self.varianceShare = pending.tour.varianceShare;
       pending = null;
       refitRunning = false;
       requestedAt = null;
+    }
+
+    // How long the turn onto a refitted tour takes. With "auto": long enough
+    // that the turn adds at most REFIT_EXTRA times the tour's own mean rate of
+    // change at its fastest (so the frame never changes much faster than in
+    // normal running), within [refitTransitionMin, refitTransitionMax].
+    // A pure function of the two tours and the switch time.
+    function refitDuration(bl, tour, t0) {
+      if (typeof opt.refitTransition === "number" && opt.refitTransition > 0) return opt.refitTransition;
+      var lo = opt.refitTransitionMin;
+      var hi = Math.max(lo, opt.refitTransitionMax);
+      var v = tourRate(tour, t0);
+      var need = v > 0 ? (REFIT_PEAK * bl.rate) / (REFIT_EXTRA * v) : hi;
+      return need < lo ? lo : need > hi ? hi : need;
     }
 
     function drawFor(frame, centre, t) {
@@ -3652,6 +3707,7 @@ ET.modes = (function () {
         fittedRows: last && last.tour.pca ? last.tour.pca.sampledRows : 0,
         method: last && last.tour.pca ? last.tour.pca.method : null,
         refitAt: last && last.t0 > -Infinity ? last.t0 : null,
+        refitTransition: last && last.blend ? last.blend.duration : null,
         refitPending: refitRunning,
         empty: empty,
       };
@@ -3666,6 +3722,273 @@ ET.modes = (function () {
     }
 
     return self;
+  }
+
+  // ----- the turn onto a refitted tour ---------------------------------------
+  //
+  // At the switch time T the frame shown is A (three orthonormal rows) and the
+  // new tour starts at B. The turn is a fixed rotation Q of the whole space
+  // with Q B = A, made of a rotation inside B's span (3 x 3, Z) and rotations
+  // in mutually orthogonal planes taking B's principal vectors to A's (the
+  // shortest turn between the two spans). During the blend the frame is
+  // Q(s) applied to the new tour's moving frame, with s going from 1 to 0
+  // along refitEase: the tour moves at its own rate (a rotation does not change
+  // it) and the turn adds a rate that the duration keeps small. Q(s) is a
+  // rotation for every s, so the frame stays orthonormal and never folds.
+
+  var REFIT_RAMP = 0.25; // refitEase speeds up over the first quarter and slows down over the last
+  var REFIT_PEAK = 1 / (1 - REFIT_RAMP); // refitEase's largest slope
+  var REFIT_EXTRA = 0.5; // the turn adds at most this share of the tour's mean rate
+
+  // Progress 0..1 with an even rate in the middle and smooth ends.
+  function refitEase(u) {
+    var x = u <= 0 ? 0 : u >= 1 ? 1 : u;
+    var a = REFIT_RAMP;
+    if (x > 1 - a) return 1 - refitEase(1 - x);
+    if (x < a) {
+      var y = x / a;
+      return REFIT_PEAK * a * (y * y * y - (y * y * y * y) / 2);
+    }
+    return REFIT_PEAK * (a / 2 + x - a);
+  }
+
+  function dotRows(P, i, Q, j, D) {
+    var s = 0;
+    for (var d = 0; d < D; d++) s += P[i * D + d] * Q[j * D + d];
+    return s;
+  }
+
+  function makeRefitBlend(A, B, D) {
+    // M = A B^T (3 x 3) = U S V^T by the eigenvectors of M^T M.
+    var Mt = new Float64Array(9);
+    for (var i = 0; i < 3; i++) for (var j = 0; j < 3; j++) Mt[i * 3 + j] = dotRows(A, i, B, j, D);
+    var MtM = new Float64Array(9);
+    for (var a = 0; a < 3; a++) {
+      for (var b = 0; b < 3; b++) {
+        var s0 = 0;
+        for (var k = 0; k < 3; k++) s0 += Mt[k * 3 + a] * Mt[k * 3 + b];
+        MtM[a * 3 + b] = s0;
+      }
+    }
+    var V = ET.math.symmetricEigen(MtM, 3).vectors; // row j: v_j
+    var U = new Float64Array(9); // row j: u_j
+    for (var jj = 0; jj < 2; jj++) {
+      var n = 0;
+      for (var r = 0; r < 3; r++) {
+        var x = 0;
+        for (var c = 0; c < 3; c++) x += Mt[r * 3 + c] * V[jj * 3 + c];
+        U[jj * 3 + r] = x;
+      }
+      if (jj === 1) {
+        var dp = U[3] * U[0] + U[4] * U[1] + U[5] * U[2];
+        for (var r1 = 0; r1 < 3; r1++) U[3 + r1] -= dp * U[r1];
+      }
+      for (var r2 = 0; r2 < 3; r2++) n += U[jj * 3 + r2] * U[jj * 3 + r2];
+      if (n > 1e-18) {
+        n = Math.sqrt(n);
+        for (var r3 = 0; r3 < 3; r3++) U[jj * 3 + r3] /= n;
+      } else {
+        // M has (almost) no part here: any unit vector orthogonal to the earlier ones
+        var best = 0;
+        var bestCover = Infinity;
+        for (var e = 0; e < 3; e++) {
+          var cover = jj === 0 ? 0 : Math.abs(U[e]);
+          if (cover < bestCover) {
+            bestCover = cover;
+            best = e;
+          }
+        }
+        for (var r4 = 0; r4 < 3; r4++) U[jj * 3 + r4] = r4 === best ? 1 : 0;
+        if (jj === 1) {
+          var dp2 = U[3] * U[0] + U[4] * U[1] + U[5] * U[2];
+          var n2 = 0;
+          for (var r5 = 0; r5 < 3; r5++) {
+            U[3 + r5] -= dp2 * U[r5];
+            n2 += U[3 + r5] * U[3 + r5];
+          }
+          n2 = Math.sqrt(n2);
+          for (var r6 = 0; r6 < 3; r6++) U[3 + r6] /= n2;
+        }
+      }
+    }
+    // u_2 completes U so that Z = V^T U is a rotation (det +1).
+    var detV =
+      V[0] * (V[4] * V[8] - V[5] * V[7]) - V[1] * (V[3] * V[8] - V[5] * V[6]) + V[2] * (V[3] * V[7] - V[4] * V[6]);
+    var sg = detV < 0 ? -1 : 1;
+    U[6] = sg * (U[1] * U[5] - U[2] * U[4]);
+    U[7] = sg * (U[2] * U[3] - U[0] * U[5]);
+    U[8] = sg * (U[0] * U[4] - U[1] * U[3]);
+    // Principal vectors B'_j = sum_k v_j[k] B_k and A'_j = sum_k u_j[k] A_k.
+    var Bp = new Float64Array(3 * D);
+    var Ap = new Float64Array(3 * D);
+    for (var j2 = 0; j2 < 3; j2++) {
+      for (var k2 = 0; k2 < 3; k2++) {
+        var wv = V[j2 * 3 + k2];
+        var wu = U[j2 * 3 + k2];
+        for (var d = 0; d < D; d++) {
+          Bp[j2 * D + d] += wv * B[k2 * D + d];
+          Ap[j2 * D + d] += wu * A[k2 * D + d];
+        }
+      }
+    }
+    // Plane j turns B'_j toward T_j by theta_j, ending at A'_j.
+    var Tp = new Float64Array(3 * D);
+    var theta = new Float64Array(3);
+    for (var j3 = 0; j3 < 3; j3++) {
+      var cth = dotRows(Ap, j3, Bp, j3, D);
+      var nn = 0;
+      for (var d2 = 0; d2 < D; d2++) {
+        var tv = Ap[j3 * D + d2] - cth * Bp[j3 * D + d2];
+        Tp[j3 * D + d2] = tv;
+        nn += tv * tv;
+      }
+      nn = Math.sqrt(nn);
+      if (nn > 1e-12) {
+        for (var d3 = 0; d3 < D; d3++) Tp[j3 * D + d3] /= nn;
+        theta[j3] = Math.atan2(nn, cth);
+      } else {
+        for (var d4 = 0; d4 < D; d4++) Tp[j3 * D + d4] = 0;
+        theta[j3] = 0;
+      }
+    }
+    // Z = V^T U: Z[i][j] = v_i . u_j, as an axis and angle (Z = exp(phi K)).
+    var Z = new Float64Array(9);
+    for (var zi = 0; zi < 3; zi++) {
+      for (var zj = 0; zj < 3; zj++) {
+        Z[zi * 3 + zj] = V[zi * 3] * U[zj * 3] + V[zi * 3 + 1] * U[zj * 3 + 1] + V[zi * 3 + 2] * U[zj * 3 + 2];
+      }
+    }
+    var cphi = (Z[0] + Z[4] + Z[8] - 1) / 2;
+    var phi = Math.acos(cphi > 1 ? 1 : cphi < -1 ? -1 : cphi);
+    var K = new Float64Array(9);
+    var sphi = Math.sin(phi);
+    var axis = null;
+    if (phi > 1e-12 && sphi > 1e-6) {
+      axis = [(Z[7] - Z[5]) / (2 * sphi), (Z[2] - Z[6]) / (2 * sphi), (Z[3] - Z[1]) / (2 * sphi)];
+    } else if (phi > 1e-12) {
+      // a half turn: Z + I = 2 n n^T
+      var bi = 0;
+      for (var q = 1; q < 3; q++) if (Z[q * 4] > Z[bi * 4]) bi = q;
+      var len = Math.sqrt(Math.max((Z[bi * 4] + 1) / 2, 1e-300));
+      axis = [0, 0, 0];
+      for (var q2 = 0; q2 < 3; q2++) axis[q2] = (Z[q2 * 3 + bi] + (q2 === bi ? 1 : 0)) / (4 * len);
+    }
+    if (axis) {
+      K[1] = -axis[2];
+      K[2] = axis[1];
+      K[3] = axis[2];
+      K[5] = -axis[0];
+      K[6] = -axis[1];
+      K[7] = axis[0];
+    } else {
+      phi = 0;
+    }
+    var bl = { Bp: Bp, Tp: Tp, theta: theta, K: K, phi: phi, duration: 0, rate: 0 };
+    bl.rate = blendRate(bl, B, D);
+    return bl;
+  }
+
+  // Q(s) applied to the rows of F, in place, then re-orthonormalised.
+  function applyRefitBlend(bl, s, F, D) {
+    var x = new Float64Array(3 * D);
+    for (var i = 0; i < 3 * D; i++) x[i] = F[i];
+    rotateRows(bl, s, x, D);
+    ET.math.orthonormalize(x, 3, D);
+    for (var i2 = 0; i2 < 3 * D; i2++) F[i2] = x[i2];
+    return ET.math.orthonormalize(F, 3, D);
+  }
+
+  function rotateRows(bl, s, x, D) {
+    if (s === 0) return x;
+    var K = bl.K;
+    var sn = Math.sin(s * bl.phi);
+    var cm = 1 - Math.cos(s * bl.phi);
+    var Z = new Float64Array(9);
+    for (var a = 0; a < 3; a++) {
+      for (var b = 0; b < 3; b++) {
+        var k2 = K[a * 3] * K[b] + K[a * 3 + 1] * K[3 + b] + K[a * 3 + 2] * K[6 + b];
+        Z[a * 3 + b] = (a === b ? 1 : 0) + sn * K[a * 3 + b] + cm * k2;
+      }
+    }
+    var Bp = bl.Bp;
+    var Tp = bl.Tp;
+    for (var r = 0; r < 3; r++) {
+      var o = r * D;
+      var c0 = 0;
+      var c1 = 0;
+      var c2 = 0;
+      for (var d = 0; d < D; d++) {
+        c0 += x[o + d] * Bp[d];
+        c1 += x[o + d] * Bp[D + d];
+        c2 += x[o + d] * Bp[2 * D + d];
+      }
+      var e0 = c0 * Z[0] + c1 * Z[3] + c2 * Z[6] - c0;
+      var e1 = c0 * Z[1] + c1 * Z[4] + c2 * Z[7] - c1;
+      var e2 = c0 * Z[2] + c1 * Z[5] + c2 * Z[8] - c2;
+      for (var d2 = 0; d2 < D; d2++) x[o + d2] += e0 * Bp[d2] + e1 * Bp[D + d2] + e2 * Bp[2 * D + d2];
+      for (var j = 0; j < 3; j++) {
+        var th = s * bl.theta[j];
+        if (th === 0) continue;
+        var oj = j * D;
+        var p = 0;
+        var q = 0;
+        for (var d3 = 0; d3 < D; d3++) {
+          p += x[o + d3] * Bp[oj + d3];
+          q += x[o + d3] * Tp[oj + d3];
+        }
+        var cs = Math.cos(th) - 1;
+        var si = Math.sin(th);
+        var wb = p * cs - q * si;
+        var wt = p * si + q * cs;
+        for (var d4 = 0; d4 < D; d4++) x[o + d4] += wb * Bp[oj + d4] + wt * Tp[oj + d4];
+      }
+    }
+    return x;
+  }
+
+  // How fast the turn moves the frame per unit of s (Frobenius norm of the
+  // change, largest over s), measured on the new tour's starting frame B.
+  function blendRate(bl, B, D) {
+    var h = 1e-4;
+    var worst = 0;
+    var x0 = new Float64Array(3 * D);
+    var x1 = new Float64Array(3 * D);
+    for (var k = 0; k <= 8; k++) {
+      var s0 = Math.max(0, k / 8 - h);
+      var s1 = Math.min(1, k / 8 + h);
+      for (var i = 0; i < 3 * D; i++) {
+        x0[i] = B[i];
+        x1[i] = B[i];
+      }
+      rotateRows(bl, s0, x0, D);
+      rotateRows(bl, s1, x1, D);
+      var n = 0;
+      for (var i2 = 0; i2 < 3 * D; i2++) n += (x1[i2] - x0[i2]) * (x1[i2] - x0[i2]);
+      var rate = Math.sqrt(n) / (s1 - s0);
+      if (rate > worst) worst = rate;
+    }
+    return worst;
+  }
+
+  // The tour's mean rate of change (Frobenius norm per second of mode time)
+  // over the 12 s from t0, sampled every half second. The frame is the
+  // coefficients times an orthonormal basis, so the coefficients' rate is the
+  // frame's.
+  function tourRate(tour, t0) {
+    var h = 1e-3;
+    var m = tour.subspace;
+    var a = new Float64Array(3 * m);
+    var b = new Float64Array(3 * m);
+    var sum = 0;
+    for (var k = 0; k < 24; k++) {
+      var t = t0 + k * 0.5;
+      tour.coefficientsAt(t, a);
+      tour.coefficientsAt(t + h, b);
+      var n = 0;
+      for (var i = 0; i < 3 * m; i++) n += (b[i] - a[i]) * (b[i] - a[i]);
+      sum += Math.sqrt(n) / h;
+    }
+    return sum / 24;
   }
 
   M.register({

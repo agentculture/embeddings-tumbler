@@ -52,8 +52,12 @@ neither numbers nor strings.
   A translation: pairwise distances are unchanged. Cost `O(N * D)`; 31 to 55 ms
   at 10,000 x 1024 in node.
 - `totalVariance(Y, N, D) -> number`: mean squared row length of centred data.
+- `makeCentre(X, N, D, { inPlace }?) -> stepper` whose `result` is `centre()`'s
+  result, bit for bit (see "Sliced work" below).
 - `varianceShare(Y, N, D, dirs, rows) -> number in [0, 1]`: share of the total
-  variance held by the span of `rows` orthonormal directions. Exact. Use it with
+  variance held by the span of `rows` orthonormal directions. Exact, then
+  clamped to `[0, 1]` (rounding can otherwise give 1.00000001 on sets of a few
+  points whose span holds all the variance). Use it with
   a frame (`rows = 3`) to report what the current view holds. `rows` must be an
   integer in `1..D` and `dirs.length` must equal `rows * D`, otherwise
   `TypeError`. Returns `0` (not `NaN`) when the data has no variance.
@@ -112,13 +116,62 @@ neither numbers nor strings.
 - The variances and shares are always recomputed exactly along the returned
   directions, so the reported share is honest even if iteration stopped early.
 
+- `shares` and `share` are clamped to `[0, 1]`.
+
 Measured in node 24 on the development machine (shared with other jobs, so
 the spread is wide), 10,000 x 1024 synthetic data with a decaying spectrum:
 `k = 8` took 1.8 to 3.0 s (11 iterations), `k = 3` 0.65 to 1.1 s, and `k = 8`
 with `sampleRows: 2000` 0.42 s (share 0.3521 against 0.3552 unsampled). 311 x
-1024 (probe size) took 0.08 to 0.16 s. It runs in one
-call; a host that cannot block the page that long should pass `sampleRows` or
-call it off the main thread.
+1024 (probe size) took 0.08 to 0.16 s. `principalDirections` runs in one call;
+on a page use `makePrincipalDirections` (or `makeGuidedTour`) and pump it a few
+milliseconds per frame.
+
+`makePrincipalDirections(Y, N, D, k, opts?) -> stepper`: the same fit, sliced.
+Its `result` is `principalDirections`'s result with identical bytes, whatever
+budgets drove it (tested at budgets of 0, 0.1 ms, 4 ms and unlimited on every
+path: covariance, sampled, Gram exact, Gram iterative, degenerate). Arguments
+are checked when it is made, with the same errors.
+
+## Sliced work
+
+`makeCentre`, `makePrincipalDirections`, `makeGuidedTour` and `makeLocalFrame`
+return a stepper:
+
+```js
+{
+  step(budgetMs?) -> done,   // run units until budgetMs ms have passed (always at
+                             // least one, so step(0) runs exactly one); step() runs to the end
+  done: boolean,
+  progress: number,          // 0..1, an estimate from the work done; 1 when done
+  result: null | ...,        // the blocking call's return value once done
+}
+```
+
+The computation is written once (generator functions that pause between small
+pieces of work) and the blocking functions run the same code without pausing,
+so a stepper's result equals the blocking call's bit for bit. A unit ends after
+about 2^20 multiply-adds, or earlier once 1 ms has passed (memory-bound loops
+and code the engine has not optimised yet are slower per multiply-add); the
+clock decides only where a unit ends, never what is computed. After `done`,
+`step` returns `true` and does nothing.
+
+Largest single unit, node 24 on the development machine (AMD Ryzen with Radeon
+760M, shared with other jobs), built-in sample set centred, `makeGuidedTour`
+with `subspace: 8`, `step(0)` until done:
+
+| Set | `sampleRows` | Blocking `guidedTour` | Units | Largest unit |
+|-----|--------------|-----------------------|-------|--------------|
+| 12,288 x 384 | 4,096 | 213 ms | 299 | 2.1 ms |
+| 12,288 x 384 | none | 402 ms | 743 | 1.4 ms |
+| 12,288 x 1024 | 4,096 | 428 ms | 770 | 1.5 ms |
+| 12,288 x 1024 | none | 1,037 ms | 2,046 | 2.4 ms |
+| 10,500 x 1024 | 4,096 | 412 ms | 753 | 1.6 ms |
+| 10,500 x 1024 | none | 890 ms | 1,746 | 1.4 ms |
+
+Total time is the blocking call's give or take noise (the pauses cost nothing
+measurable). Note for tests: in a `node:vm` context (`loadSources`) `Math`
+calls are much slower than in the assembled file and `performance` is absent
+(the clock falls back to `Date.now`), so measure with the assembled file.
 
 ## The guided tour (Tumble)
 
@@ -129,6 +182,10 @@ call it off the main thread.
   `principalDirections` result with at least `subspace` rows, to reuse), and
   `sampleRows`, `maxIterations`, `tolerance`, `oversample`, which are passed to
   `principalDirections` unchanged (and validated there).
+- `makeGuidedTour(Y, N, D, opts?) -> stepper` whose `result` is the tour
+  `guidedTour` returns, bit for bit (same frames at every time). With a usable
+  `pca` given it finishes in one unit. The tour's `varianceShare` is clamped to
+  `[0, 1]`.
 - `makeTour(basis, m, D, opts?) -> tour`: the same tour over any orthonormal
   `basis` of `m >= 3` rows. `opts`: `seed`, `speed`.
 
@@ -218,6 +275,9 @@ in total; one 16-row step 12 to 20 ms.
   `RangeError`. Computed from
   their Gram matrix by exact Jacobi. Deterministic; orthonormal even if the
   neighbourhood has rank below three. Cost `O(M^2 * D + M^3)` for `M` ids.
+  `makeLocalFrame(X, N, D, ids, out?) -> stepper` gives the same frame in
+  small units (a first call on a page runs in code the engine has not
+  optimised yet: about 15 ms in one piece at `M = 25`, `D = 1024`).
 - `alignTo(target, ref, D) -> frame`: reorder and flip target's axes so that the
   flight from `ref` twists as little as possible (ported; ties go to a fixed
   permutation order).

@@ -117,9 +117,11 @@ test("Tumble on append: no jump, the share is marked stale, refit crossfades to 
   const c = ET.math.centre(bigger.vectors, bigger.count, D);
   const fresh = ET.math.guidedTour(c.data, bigger.count, D, { seed: 3 });
   assert.strictEqual(d2.varianceShare, fresh.varianceShare);
-  // after the crossfade the frame is the new tour's (up to axis order and sign)
-  const late = inst.stateAt(tr + 5).frame;
-  assert.ok(sameSpan(late, fresh.frameAt(tr + 5), D, 1e-4));
+  // after the turn (its length is chosen from its size: describe().refitTransition)
+  // the frame is the new tour's (up to axis order and sign)
+  const after2 = tr + d2.refitTransition + 0.5;
+  const late = inst.stateAt(after2).frame;
+  assert.ok(sameSpan(late, fresh.frameAt(after2), D, 1e-4));
 });
 
 // ---------------------------------------------------------------- Lattice

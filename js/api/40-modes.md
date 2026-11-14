@@ -105,16 +105,19 @@ What is ready when (measured below):
 
 | Mode | Required before frames | Extra work (drawn when it arrives) |
 |------|------------------------|------------------------------------|
-| Tumble | mean and spread (one unit), centring (one unit), principal directions and tour (one unit) | none |
-| Lattice | mean and spread (one unit) | true neighbours, `sliceRows` (16) query rows per unit; then the wire list |
-| Wander | mean, spread, the visit list and the neighbour pool (one unit) | none: each stop's neighbours and local frame are computed when the route reaches it (one pool scan, `O(pool * D)`, about once per 4.8 s) |
+| Tumble | mean and spread, centring (`ET.math.makeCentre`), principal directions and tour (`ET.math.makeGuidedTour`) | none |
+| Lattice | mean and spread | true neighbours, query rows one at a time until about 1 ms has passed (at most `sliceRows`, 16, per unit); then the wire list |
+| Wander | mean and spread, the visit list and the neighbour pool (one unit, `O(N)`), the first stop (its neighbour scan in pieces, then its local frame via `ET.math.makeLocalFrame`) | none at preparation; each later stop is computed ahead of need in the same small pieces, one piece per `stateAt`, during the hop before it |
 
-Tumble's principal-directions unit is one indivisible call into
-`ET.math.guidedTour`. It is bounded by fitting on at most `fitRows` (4,096)
-rows taken at an even stride when the set is larger (the variance shares are
-still exact over all rows). It is the one unit that can take hundreds of
-milliseconds (table below); a host that cannot block that long should run it
-off the main thread (not built).
+Every unit is small: the mean and spread are added about 2^19 values per unit
+(`ET.modes.statsJob`), and Tumble's fit runs one `ET.math` stepper unit per
+unit (about 2^20 multiply-adds, or less once 1 ms has passed). No unit takes
+more than a few milliseconds (measured below), so the viewer's per-frame
+budget holds. The fit still uses at most `fitRows` (4,096) rows taken at an
+even stride when the set is larger (the variance shares are exact over all
+rows). The frames are bit-identical to a blocking preparation, whatever the
+budgets (tested: `js/test/modes-refit.test.js` pumps Tumble's preparation in
+budgets of 0 and 0.01 ms and compares 10 s of frames with a blocking instance).
 
 ### Reproducibility
 
@@ -171,8 +174,9 @@ append (tested for all three: frame bit-identical, centre within 1e-7).
   `pointsSinceFit` counts the appended points, and the status line says
   "before N new points". `refit(t?)` returns a stepper that fits the directions
   again on the current set; at the switch time T (see "Events") it switches to
-  the new tour, aligned to the current axes (order and sign) and blended in over
-  `transition` (1.5 s), and from then on the share is fresh. The viewer decides when to refit (for example after a quiet period or
+  the new tour, aligned to the current axes (order and sign), turning onto it
+  over `describe().refitTransition` seconds (see "Tumble" below), and from then
+  on the share is fresh. The viewer decides when to refit (for example after a quiet period or
   when `pointsSinceFit` passes a share of the set). This is the cheapest honest
   behaviour: an append costs `O(k * D)` here, a refit costs a full fit.
 - **Lattice** keeps its swap schedule: no jump; the centre glides to the new
@@ -218,11 +222,47 @@ the tour's axes are relabelled once (order and sign, `ET.modes.alignment`) to
 match the entry frame, and the frame blends from the entry frame into the tour
 over `transition` seconds.
 
+**Refit turn.** At a refit's switch time T the frame shown is A and the new
+tour (aligned in axis order and sign) starts at B. Tumble turns from A onto
+the new tour with a fixed rotation Q of the whole space with Q B = A: a
+rotation inside B's span and rotations in mutually orthogonal planes taking
+B's principal vectors to A's (the shortest turn between the two spans). During
+the turn the frame is Q(s) applied to the new tour's moving frame, s going from
+1 to 0 with an even rate in the middle and smooth ends (speeding up over the
+first quarter, slowing down over the last). A rotation does not change the
+tour's own rate, and Q(s) is a rotation for every s, so the frame stays
+orthonormal and never folds. With `refitTransition: "auto"` the turn's length
+is chosen so that the turn adds at most half the tour's mean rate of change
+(Frobenius norm per second, the mean over 12 s from T): `max(refitTransitionMin,
+min(refitTransitionMax, 1.33 x turn rate / (0.5 x tour rate)))`. It is a pure
+function of the two tours and T, so frames stay a pure function of data
+history, seed, entry view, event times and t. The entry `transition` is not
+used for refits.
+
+Measured, the largest per-frame change of the frame (Frobenius norm) during
+the turn against the largest in the same length of normal running just before
+T, sampled at mode-time steps of `speed / 60` (the viewer's speed 1 and 3 give
+the same ratios), refit at T = 6 after appending 400 points from the same
+distribution or 1,500 points forming a new cluster three radii from the mean:
+
+| Set | Same distribution | New cluster |
+|-----|-------------------|-------------|
+| 12,288 x 384 | 1.15 (turn 9.1 s) | 1.33 (10.1 s) |
+| 12,288 x 1024 | 1.19 (6.0 s) | 1.00 (8.9 s) |
+| 4,000 x 1024 | 1.15 (1.5 s) | 1.25 (9.9 s) |
+
+The largest change of any single frame entry, the other measure, was at most
+1.48 in the same runs. Tested at 48-d and 128-d for both kinds and both speeds
+(`js/test/modes-refit.test.js`, bound 1.5).
+
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `subspace` | 8 | directions the tour moves through (at least 3) |
 | `speed` | 0.42 | rad/s, the reference's rate |
-| `transition` | 1.5 | seconds to blend in from the entry view |
+| `transition` | 1.5 | seconds to blend in from the entry view (mode entry only) |
+| `refitTransition` | `"auto"` | seconds to turn onto a refitted tour; `"auto"` chooses it from the size of the turn (above); a positive number fixes it |
+| `refitTransitionMin` | 1.5 | `"auto"` never turns in less than this many seconds |
+| `refitTransitionMax` | 12 | nor in more than this many |
 | `fitRows` | 4096 | fit on at most this many rows (`sampleRows`); shares stay exact |
 | `centreTau` | 0.7 | seconds, the centre's glide to the mean (the reference's) |
 | `zoomSample` | 512 | points used for auto-framing |
@@ -237,7 +277,9 @@ over `transition` seconds.
   strongest directions in 384-d … 33%`.
 - `describe()`: `{ id, projection, seed, subspace, speed, varianceShare,
   varianceShareStale, pointsSinceFit, fittedRows, method, refitAt,
-  refitPending, empty }`.
+  refitTransition, refitPending, empty }`. `refitTransition` is the length in
+  seconds of the latest refit's turn (from `refitAt`), or `null` before any
+  refit.
 - `refit(t?) -> stepper` (Tumble only); `mark(t)`.
 - Draw: `zoom` auto (below), `wires 0`, `dim 1`, `trails 0.17`, `fog 0`,
   `twinkle 0.18`, `depthOfField 1.1` (the reference's defaults).
@@ -252,7 +294,8 @@ full space, as in the reference.
 
 Wires: each of the first `neighbourLimit` points is wired to its
 `wireNeighbours` true nearest neighbours **in the full space** among those
-points (`ET.math.makeKnn`, exact, run `sliceRows` rows per unit), deduplicated,
+points (`ET.math.makeKnn`, exact, run one row at a time until about 1 ms has
+passed, at most `sliceRows` rows per unit), deduplicated,
 with their true lengths. As in the reference, points with no group get no wires
 of their own when any point in the limit has a group (the unstructured halo
 stays unwired); they can still be another point's neighbour. When the set has
@@ -263,7 +306,7 @@ no groups at all, every point gets wires.
 | `period` | 3.4 | seconds per swap (the reference's) |
 | `neighbourLimit` | 1000 | only the first this-many points get neighbours (the reference's) |
 | `wireNeighbours` | 3 | wires per point (the reference's) |
-| `sliceRows` | 16 | query rows per unit of neighbour work (the reference's) |
+| `sliceRows` | 16 | at most this many query rows per unit of neighbour work (the reference's); a unit also stops after its first row once 1 ms has passed |
 | `transition` | 1.2 | seconds to blend draw parameters in |
 | `wireFade` | 1.2 | seconds for the wires to fade in once measured |
 | `centreTau` | 0.7 | seconds, the centre's glide to the mean |
@@ -365,6 +408,10 @@ set with one point (no variance) reports a share of 0.
   points appended. A cheap guard (`isPrefix`: same dimension, no fewer points,
   the first and last rows of `previous` equal in both) is checked; when it
   fails, `previous` is ignored and the stats are recomputed in full (tested).
+- `statsJob(set) -> { run() -> done, progress(), result }`: the same
+  statistics as `stats(set)` (the same object, cached, bit-identical values),
+  added about 2^19 values per `run()`, for a stepper task. A set already cached
+  finishes in one call. `now()`: the clock the steppers use.
 - `requireDimension(set, min, title)`, `holdState(...)`, `changed(work,
   restart)`, `EMPTY_STATUS`: shared by the three modes for the rules above.
 - `REFERENCE_RADIUS = 0.963`: the sample set's radius (measured: 0.963 at
@@ -423,18 +470,27 @@ function frame(dt) {                       // once per animation frame
 ## Measured
 
 Node 24 on the development machine (AMD Ryzen with Radeon 760M, shared with
-other jobs), built-in sample set, 12,288 points, each mode on a freshly
-validated set (no cache), `prepare().step(8)` until done, two runs:
+other jobs), the assembled file, built-in sample set, 12,288 points, each mode
+on a freshly validated set in a fresh load of the file (cold code, no cache),
+`prepare().step(0)` until done (one unit per call), two runs. Before is the
+code before the sliced fit (task "perf"):
 
-| Mode | 384-d ready | 384-d all | 1024-d ready | 1024-d all | `stateAt` mean (384 / 1024) |
-|------|-------------|-----------|--------------|------------|-----------------------------|
-| Tumble | 219 to 223 ms (longest unit 187 to 194 ms) | same | 535 to 598 ms (longest unit 456 to 525 ms) | same | 0.36 / 0.94 ms |
-| Lattice | 13 to 14 ms | 146 to 149 ms in 16 slices of at most 14 ms | 33 to 35 ms | 338 to 341 ms in 32 slices of at most 35 ms | 0.34 / 0.87 ms |
-| Wander | 13 to 16 ms | same | 33 to 34 ms | same | 0.04 / 0.08 ms; a frame that computes a new stop: up to 6.8 / 13.6 ms |
+| Mode | Set | Longest unit before | Longest unit now | Units now | Ready now |
+|------|-----|---------------------|------------------|-----------|-----------|
+| Tumble | 384-d | 196 to 199 ms | 3.9 to 5.7 ms | 321 to 325 | 224 to 234 ms |
+| Tumble | 1024-d | 474 to 481 ms | 3.4 to 4.3 ms | 850 | 540 ms |
+| Tumble refit | 1024-d | 999 to 1,007 ms | 2.0 to 5.1 ms | 811 to 815 | |
+| Lattice | 384-d | 12.3 to 12.4 ms | 3.0 to 4.9 ms | 132 to 134 | 16 to 17 ms |
+| Lattice | 1024-d | 33 to 36 ms | 2.6 to 4.0 ms | 259 to 260 | 37 ms |
+| Wander | 384-d | 13.2 to 14.6 ms | 3.0 to 4.5 ms | 20 | 27 to 32 ms |
+| Wander | 1024-d | 33 to 35 ms | 4.2 to 4.8 ms | 41 to 45 | 53 to 56 ms |
 
-The first unit of each mode (mean and spread, `O(N * D)`) is the 13 to 35 ms;
-switching modes on the same set reuses it (cached per set). Tumble's fit is on
-4,096 rows at this size (shares exact over all 12,288).
+Most units take about 0.5 ms; the few of 3 to 6 ms are first runs of code the
+engine has not optimised yet and garbage collections, which no slicing
+removes. Wander's longest `stateAt` over 20 s (a frame that used to compute a
+new stop) went from 13 to 20 ms to 2.0 to 2.4 ms. Total preparation time is
+unchanged. Switching modes on the same set reuses the mean and spread (cached
+per set).
 
 Browser, the development demo (`js/dev/modes-demo/`), 960 x 600, six seconds per
 mode, headless Chromium:
@@ -449,6 +505,17 @@ mode, headless Chromium:
 On the GPU every mode held the display's 60 fps (the frame rate is capped by
 the display, so the headroom is not measured). SwiftShader numbers are
 dominated by software rendering, not by the modes.
+
+Load of the same demo after the sliced fit, fresh page per mode, AMD Radeon 760M
+(ANGLE, Vulkan), `prep.step(8)` per frame, read after the preparation plus 4 s:
+the most script time in one frame, before (old code) and now: Tumble 198 / 9.7
+ms (384-d) and 502 / 9.2 ms (1024-d); Lattice 13.6 / 10.4 and 22 / 11.3 ms;
+Wander 19.8 / 8.8 and 30.8 / 9.8 ms. The longest gap between frames went from
+200 and 500 ms (Tumble) to 16.8 ms (one 33 ms gap in one run), 60 fps
+throughout. With 8 ms of preparation per frame Tumble is ready after 0.47 s
+(384-d) and 1.1 s (1024-d) instead of blocking for 0.2 and 0.56 s; a viewer
+that wants it sooner can give preparation more of the frame (about 10 ms still
+leaves room for drawing at 60 fps on this machine), and a slow device less.
 
 ## Differences from the reference
 
