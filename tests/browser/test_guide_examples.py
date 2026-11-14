@@ -10,25 +10,26 @@ The web-component form needs ``web-component.js`` and the standalone form needs 
 ``page.css`` and ``page.js`` among the shipped files. While a shipped file is absent the test for
 that form is skipped with a reason, and it runs as soon as the file is shipped.
 
-Skips, never fails, when Playwright, a matching Chromium build or WebGL 2 is not available.
+Uses the shared harness (``tests/browser/harness.py``): one browser per session, SwiftShader
+(software) unless ``TUMBLER_BROWSER_RENDERER=gpu``, the renderer in every test id. Skips when
+Playwright, a matching Chromium build or WebGL 2 is not available, and fails instead under
+``TUMBLER_REQUIRE_BROWSER=1``.
 """
 
 from __future__ import annotations
 
-import functools
-import http.server
 import shutil
 import subprocess
 import sys
-import threading
 from pathlib import Path
 
 import pytest
 
+from tests.browser import harness
+
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = ROOT / "docs" / "guides" / "examples"
 STATIC = ROOT / "embeddings_tumbler" / "static"
-SWIFTSHADER_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
 POLICY = "default-src 'self'"
 
 NEEDS = {
@@ -37,10 +38,9 @@ NEEDS = {
     "standalone": ["embeddings-tumbler.js", "index.html", "page.css", "page.js"],
 }
 
+# Violations are recorded by the harness (a binding, from the first script on); this init
+# script only keeps the drawing buffer so the pixels can be read back.
 INIT = """
-window.__violations = [];
-document.addEventListener("securitypolicyviolation", (e) =>
-  window.__violations.push(e.violatedDirective + " " + (e.blockedURI || "")));
 const orig = HTMLCanvasElement.prototype.getContext;
 HTMLCanvasElement.prototype.getContext = function (type, opts) {
   if (type === "webgl2") opts = Object.assign({}, opts, { preserveDrawingBuffer: true });
@@ -61,24 +61,8 @@ LIT = """() => {
 }"""
 
 
-class _PolicyHandler(http.server.SimpleHTTPRequestHandler):
-    def end_headers(self):
-        self.send_header("Content-Security-Policy", POLICY)
-        super().end_headers()
-
-    def log_message(self, format, *args):  # noqa: A002 - signature fixed by the base class
-        pass
-
-
-def _serve(folder: Path):
-    handler = functools.partial(_PolicyHandler, directory=str(folder))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server
-
-
-@pytest.fixture(params=["script", "web-component", "standalone"])
-def site(request, tmp_path):
+@pytest.fixture
+def example_site(request, tmp_path):
     form = request.param
     missing = [n for n in NEEDS[form] if not (STATIC / n).is_file()]
     if missing:
@@ -91,73 +75,29 @@ def site(request, tmp_path):
         capture_output=True, text=True, check=False,
     )  # fmt: skip
     assert done.returncode == 0, done.stderr
-    server = _serve(folder)
-    try:
-        yield form, f"http://127.0.0.1:{server.server_address[1]}"
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def _browser():
-    sync_api = pytest.importorskip(
-        "playwright.sync_api", reason="Playwright is not installed; run `uv sync`"
-    )
-    pw = sync_api.sync_playwright().start()
-    exe = Path(pw.chromium.executable_path)
-    if not exe.exists():
-        pw.stop()
-        pytest.skip(f"no Chromium build for this Playwright version at {exe}")
-    try:
-        browser = pw.chromium.launch(args=SWIFTSHADER_ARGS)
-    except Exception as exc:  # any launch failure means no usable browser here
-        pw.stop()
-        pytest.skip(f"Chromium could not be launched: {exc}")
-    return pw, browser
+    with harness.Server(folder, csp=POLICY) as server:
+        yield form, server.origin
 
 
 @pytest.fixture
-def opened(site):
-    form, base = site
-    pw, browser = _browser()
-    page = browser.new_page(viewport={"width": 1100, "height": 900})
-    errors: list[str] = []
-    requests: list[str] = []
-    page.add_init_script(INIT)
-    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-    page.on("pageerror", lambda exc: errors.append(f"pageerror: {exc}"))
-    page.on("request", lambda req: requests.append(req.url))
+def opened(example_site, browser):
+    form, base = example_site
+    tab = harness.Tab(browser, viewport=(1100, 900))
+    tab.context.add_init_script(INIT)
     try:
-        yield form, base, page, errors, requests
+        yield form, base, tab.page, tab
     finally:
-        browser.close()
-        pw.stop()
+        tab.close()
 
 
 def _wait(page, probe, ms=30000):
-    """Poll a JS function (the page's CSP forbids wait_for_function's string form)."""
-    for _ in range(ms // 100):
-        value = page.evaluate(probe)
-        if value:
-            return value
-        page.wait_for_timeout(100)
-    return page.evaluate(probe)
+    """Poll a JS function until it returns something truthy (harness.wait_for)."""
+    return harness.wait_for(page, probe, timeout=ms / 1000)
 
 
 def _wait_text(page, selector, needle, ms=30000):
-    """Poll until the element's text contains ``needle``; return the last text seen.
-
-    ``_wait`` returns the first truthy value, so it cannot wait for a note that
-    already holds older text to change.
-    """
-    probe = _text(page, selector)
-    text = page.evaluate(probe)
-    for _ in range(ms // 100):
-        if needle in text:
-            break
-        page.wait_for_timeout(100)
-        text = page.evaluate(probe)
-    return text
+    """Wait until the element's text contains ``needle``; return the text (harness)."""
+    return harness.wait_for_text(page, selector, needle, timeout=ms / 1000)
 
 
 def _text(page, selector):
@@ -165,19 +105,18 @@ def _text(page, selector):
 
 
 def _lit(page) -> int:
-    n = _wait(page, LIT.replace("return n;", "return n > 50 ? n : 0;"), 20000)
-    return n
+    return harness.wait_for(page, LIT, lambda n: n > 50, timeout=20, what="lit pixels")
 
 
 def _skip_without_webgl(page):
     if page.evaluate("() => !document.createElement('canvas').getContext('webgl2')"):
-        pytest.skip("WebGL 2 unavailable in headless Chromium")
+        harness.unavailable("WebGL 2 unavailable in headless Chromium")
 
 
-def _clean(base, errors, requests, page):
-    assert errors == []
-    assert page.evaluate("() => window.__violations") == []
-    assert [u for u in requests if not u.startswith(base)] == []
+def _clean(base, tab):
+    assert tab.console_errors() == []
+    assert tab.csp == []
+    assert tab.foreign_requests(base) == []
 
 
 def _open(page, base, path):
@@ -185,10 +124,9 @@ def _open(page, base, path):
     _skip_without_webgl(page)
 
 
-def test_script_form_page_draws_appends_and_destroys_swiftshader(opened):
-    form, base, page, errors, requests = opened
-    if form != "script":
-        pytest.skip("not this form")
+@pytest.mark.parametrize("example_site", ["script"], indirect=True)
+def test_script_form_page_draws_appends_and_destroys(opened):
+    form, base, page, tab = opened
     _open(page, base, "/example.html")
     assert "Showing 320 points." in _wait_text(
         page, "#note", "Showing 320 points."
@@ -206,13 +144,12 @@ def test_script_form_page_draws_appends_and_destroys_swiftshader(opened):
         page, "#note", "Showing 320 points."
     ), "remount failed"
     assert _lit(page) > 50
-    _clean(base, errors, requests, page)
+    _clean(base, tab)
 
 
-def test_web_component_form_page_draws_appends_and_releases_swiftshader(opened):
-    form, base, page, errors, requests = opened
-    if form != "web-component":
-        pytest.skip("not this form")
+@pytest.mark.parametrize("example_site", ["web-component"], indirect=True)
+def test_web_component_form_page_draws_appends_and_releases(opened):
+    form, base, page, tab = opened
     _open(page, base, "/example.html")
     assert "Showing 320 points." in _wait_text(
         page, "#note", "Showing 320 points."
@@ -227,21 +164,20 @@ def test_web_component_form_page_draws_appends_and_releases_swiftshader(opened):
                    return new Promise((ok) => setTimeout(
                      () => ok(window.EmbeddingsTumbler.get(el) === null), 200)); }""")
     assert released is True
-    _clean(base, errors, requests, page)
+    _clean(base, tab)
 
 
-def test_standalone_form_page_shows_the_named_file_swiftshader(opened):
-    form, base, page, errors, requests = opened
-    if form != "standalone":
-        pytest.skip("not this form")
+@pytest.mark.parametrize("example_site", ["standalone"], indirect=True)
+def test_standalone_form_page_shows_the_named_file(opened):
+    form, base, page, tab = opened
     _open(page, base, "/index.html?data=space.json")
     probe = "() => (document.querySelector('.tumbler') || {innerText: ''}).innerText"
     text = _wait(page, "() => { const t = " + probe[6:] + "; return t.includes('320') && t; }")
     assert "synthetic/cold-test" in text and "320" in text
     assert _lit(page) > 50, "the picture is blank"
-    _clean(base, errors, requests, page)
+    _clean(base, tab)
     # A data address on another origin is refused and never requested.
     other = "http://127.0.0.1:9/elsewhere.json"
     page.goto(base + "/index.html?data=" + other)
     page.wait_for_timeout(1500)
-    assert not any(u.startswith("http://127.0.0.1:9") for u in requests)
+    assert not any(r["url"].startswith("http://127.0.0.1:9") for r in tab.requests)

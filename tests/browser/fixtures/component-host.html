@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>harness fixture: web component form</title>
+<link rel="stylesheet" href="host.css">
+</head>
+<body>
+<p>Canonical host fixture 2 (tests/browser/README.md): a page that uses only the element. The harness serves it with a Content-Security-Policy header.</p>
+<embeddings-tumbler id="wc" src="twin-blobs.json" seed="5"></embeddings-tumbler>
+<p class="after">Host content after the viewer.</p>
+<script src="instrument.js"></script>
+<script src="fixture-data.js"></script>
+<script src="component-host.js"></script>
+<script src="embeddings-tumbler.js"></script>
+<script src="web-component.js"></script>
+</body>
+</html>

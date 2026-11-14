@@ -1,0 +1,4 @@
+/* Host page styles for the harness fixture pages. Served from the page's own origin. */
+body { margin: 0; padding: 16px; background: #10131a; color: #e9eef6; font: 15px system-ui, sans-serif; }
+.space, embeddings-tumbler { --tumbler-stage-height: 360px; display: block; max-width: 1040px; }
+.after { color: #8a96ab; }

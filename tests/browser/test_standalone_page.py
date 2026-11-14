@@ -16,37 +16,26 @@ control); zero console errors (bar the missing file's own
 404), zero CSP violations, zero requests to any other origin; no horizontal
 overflow at 390 px wide.
 
-Rendering runs on **SwiftShader** (``--use-angle=swiftshader``) so the result does
-not depend on the machine's GPU. The test skips, never fails, when Playwright, a
-matching Chromium build, or WebGL 2 is not available.
+Uses the shared harness (``tests/browser/harness.py``): one browser per session, SwiftShader
+(software) unless ``TUMBLER_BROWSER_RENDERER=gpu``, the renderer in every test id. Skips when
+Playwright, a matching Chromium build, or WebGL 2 is not available, and fails instead under
+``TUMBLER_REQUIRE_BROWSER=1``.
 """
 
 from __future__ import annotations
 
-import functools
-import http.server
 import shutil
-import struct
-import threading
-import zlib
 from pathlib import Path
 
 import pytest
 
 from embeddings_tumbler.cli import main
+from tests.browser import harness
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "contract"
-SWIFTSHADER_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
 VIEWPORTS = {"desktop": (1280, 800), "phone": (390, 844)}
 FOREIGN = "http://foreign.invalid/data/set.json"
-
-# Records CSP violations from the first script on, before the page's own scripts.
-CSP_LISTENER = (
-    "window.__csp = [];"
-    "document.addEventListener('securitypolicyviolation', function (e) {"
-    "  window.__csp.push(e.violatedDirective + ' ' + e.blockedURI); });"
-)
 
 PROBE = """() => {
   const el = document.getElementById('space');
@@ -76,60 +65,10 @@ PROBE = """() => {
       lattice: visible('.explain[data-for="lattice"]'),
       wander: visible('.explain[data-for="wander"]') },
     noteText: (document.querySelector('.explain[data-for="tumble"]') || {}).textContent || '',
-    csp: window.__csp || null,
     scrollWidth: document.documentElement.scrollWidth,
     clientWidth: document.documentElement.clientWidth,
   };
 }"""
-
-
-def _lit_pixels(png: bytes, threshold: int = 150) -> int:
-    """Count pixels brighter than ``threshold`` (sum of R, G, B) in an 8-bit PNG.
-
-    The night sky itself peaks at 79 (``#0b1430``), so 150 counts drawn points only.
-
-    A small stdlib decoder (no Pillow in the dev dependencies): Playwright's
-    screenshots are 8-bit RGB or RGBA, non-interlaced.
-    """
-    assert png[:8] == b"\x89PNG\r\n\x1a\n"
-    pos, idat, width, height, channels = 8, b"", 0, 0, 0
-    while pos < len(png):
-        length, kind = struct.unpack(">I4s", png[pos : pos + 8])
-        chunk = png[pos + 8 : pos + 8 + length]
-        if kind == b"IHDR":
-            width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", chunk)
-            assert depth == 8 and interlace == 0 and colour in (2, 6)
-            channels = 3 if colour == 2 else 4
-        elif kind == b"IDAT":
-            idat += chunk
-        pos += 12 + length
-    raw = zlib.decompress(idat)
-    stride = width * channels
-    prev = bytearray(stride)
-    lit = 0
-    for y in range(height):
-        base = y * (stride + 1)
-        ftype, line = raw[base], bytearray(raw[base + 1 : base + 1 + stride])
-        for i in range(stride):
-            a = line[i - channels] if i >= channels else 0
-            b = prev[i]
-            c = prev[i - channels] if i >= channels else 0
-            if ftype == 1:
-                line[i] = (line[i] + a) & 255
-            elif ftype == 2:
-                line[i] = (line[i] + b) & 255
-            elif ftype == 3:
-                line[i] = (line[i] + (a + b) // 2) & 255
-            elif ftype == 4:
-                p = a + b - c
-                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-                pred = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
-                line[i] = (line[i] + pred) & 255
-        for x in range(0, stride, channels):
-            if line[x] + line[x + 1] + line[x + 2] > threshold:
-                lit += 1
-        prev = line
-    return lit
 
 
 HIDE_TEXT = """() => {
@@ -138,11 +77,6 @@ HIDE_TEXT = """() => {
     for (const n of document.querySelectorAll(sel)) n.style.visibility = 'hidden';
   }
 }"""
-
-
-class _QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, format, *args):  # noqa: A002 - signature fixed by the base class
-        pass
 
 
 @pytest.fixture(scope="module")
@@ -158,69 +92,45 @@ def host_folder(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def base_url(host_folder):
-    handler = functools.partial(_QuietHandler, directory=str(host_folder))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-@pytest.fixture(scope="module")
-def browser():
-    sync_api = pytest.importorskip(
-        "playwright.sync_api", reason="Playwright is not installed; run `uv sync`"
-    )
-    with sync_api.sync_playwright() as pw:
-        exe = Path(pw.chromium.executable_path)
-        if not exe.exists():
-            pytest.skip(f"no Chromium build for this Playwright version at {exe}")
-        try:
-            b = pw.chromium.launch(args=SWIFTSHADER_ARGS)
-        except Exception as exc:  # any launch failure means no usable browser here
-            pytest.skip(f"Chromium could not be launched: {exc}")
-        try:
-            yield b
-        finally:
-            b.close()
+    with harness.Server(host_folder) as server:
+        yield server.origin
 
 
 def _open(browser, base_url, query="", viewport=VIEWPORTS["desktop"], settle=lambda r: True):
-    page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
-    errors: list[str] = []
-    requests: list[str] = []
-    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-    page.on("pageerror", lambda exc: errors.append(f"pageerror: {exc}"))
-    page.on("request", lambda req: requests.append(req.url))
-    page.add_init_script(CSP_LISTENER)
+    tab = harness.Tab(browser, viewport=viewport)
+    page = tab.page
     try:
         page.goto(base_url + "/index.html" + query)
-        result = None
-        for _ in range(600):
-            result = page.evaluate(PROBE)
-            if result["state"] in ("error", "refused") or (
-                result["state"] == "ready" and settle(result)
-            ):
-                break
-            page.wait_for_timeout(100)
+        try:
+            tab.wait_for(
+                PROBE,
+                lambda r: r["state"] in ("error", "refused")
+                or (r["state"] == "ready" and settle(r)),
+                timeout=60,
+                what="the page to settle",
+            )
+        except AssertionError:
+            # As before the harness: a page that has not settled after 60 s is still measured,
+            # and the tests' own assertions decide (on a heavily loaded CPU the sample's Tumble
+            # fit can take longer than that on SwiftShader, while the page is already drawn).
+            pass
         page.wait_for_timeout(300)
         result = page.evaluate(PROBE)
+        # The harness records CSP violations from the first script on, through a binding.
+        result["csp"] = list(tab.csp)
         # Lit points only: hide the text drawn over the sky (after the CSP record
         # is taken; CSSOM writes are not inline style and need no policy).
         page.evaluate(HIDE_TEXT)
         canvas = page.query_selector("#space canvas.tumbler-canvas")
-        result["lit"] = _lit_pixels(canvas.screenshot()) if canvas else None
+        result["lit"] = harness.lit_pixels(canvas.screenshot()) if canvas else None
     finally:
-        page.close()
+        tab.close()
     info = result.get("info") or {}
     if result["state"] == "ready" and info.get("rendering") is False:
-        pytest.skip(f"WebGL 2 unavailable in headless Chromium: {info.get('message')}")
-    result["console_errors"] = errors
-    result["requests"] = requests
-    result["foreign"] = [u for u in requests if not u.startswith(base_url)]
+        harness.unavailable(f"WebGL 2 unavailable in headless Chromium: {info.get('message')}")
+    result["console_errors"] = tab.console_errors()
+    result["requests"] = [r["url"] for r in tab.requests]
+    result["foreign"] = [r["url"] for r in tab.foreign_requests(base_url)]
     return result
 
 
@@ -234,7 +144,7 @@ def sample_run(request, browser, base_url):
     return request.param, _open(browser, base_url, "", VIEWPORTS[request.param], _drawn)
 
 
-def test_sample_set_renders_with_modes_provenance_and_controls_swiftshader(sample_run):
+def test_sample_set_renders_with_modes_provenance_and_controls(sample_run):
     _, r = sample_run
     assert r["state"] == "ready", r["wait"]
     assert r["info"]["model"] == "synthetic/reference-sample"
@@ -250,7 +160,7 @@ def test_sample_set_renders_with_modes_provenance_and_controls_swiftshader(sampl
     assert f"with {r['info']['dimension']} dimensions" in r["noteText"]
 
 
-def test_sample_page_is_clean_and_fits_the_width_swiftshader(sample_run):
+def test_sample_page_is_clean_and_fits_the_width(sample_run):
     name, r = sample_run
     assert r["csp"] == []
     assert r["console_errors"] == []
@@ -258,7 +168,7 @@ def test_sample_page_is_clean_and_fits_the_width_swiftshader(sample_run):
     assert r["scrollWidth"] <= r["clientWidth"], f"horizontal overflow at {name}"
 
 
-def test_data_file_shows_its_model_and_count_swiftshader(browser, base_url):
+def test_data_file_shows_its_model_and_count(browser, base_url):
     r = _open(browser, base_url, "?data=valid-384.json&mode=lattice&seed=7", settle=_drawn)
     assert r["state"] == "ready", r["wait"]
     assert r["info"]["model"] == "fixture/model-a"
@@ -272,7 +182,7 @@ def test_data_file_shows_its_model_and_count_swiftshader(browser, base_url):
     assert r["csp"] == [] and r["console_errors"] == [] and r["foreign"] == []
 
 
-def test_data_on_another_origin_is_refused_without_a_request_swiftshader(browser, base_url):
+def test_data_on_another_origin_is_refused_without_a_request(browser, base_url):
     r = _open(browser, base_url, "?data=" + FOREIGN)
     assert r["state"] == "error"
     assert "another origin" in r["wait"]
@@ -281,7 +191,7 @@ def test_data_on_another_origin_is_refused_without_a_request_swiftshader(browser
     assert r["csp"] == [] and r["console_errors"] == []
 
 
-def test_missing_file_shows_a_plain_message_swiftshader(browser, base_url):
+def test_missing_file_shows_a_plain_message(browser, base_url):
     r = _open(browser, base_url, "?data=no-such-set.json")
     assert r["state"] == "error"
     assert r["waitShown"]
@@ -293,7 +203,7 @@ def test_missing_file_shows_a_plain_message_swiftshader(browser, base_url):
     assert r["csp"] == [] and r["foreign"] == []
 
 
-def test_a_refused_set_shows_the_viewers_message_and_no_points_swiftshader(browser, base_url):
+def test_a_refused_set_shows_the_viewers_message_and_no_points(browser, base_url):
     # Also the negative control for the lit-pixel count above: an empty sky counts ~0.
     r = _open(browser, base_url, "?data=bumped-version.json")
     assert r["state"] == "refused"

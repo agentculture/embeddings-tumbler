@@ -15,89 +15,55 @@ overflow); each mode draws lit pixels; the append keeps the frame and grows the
 count; the markup is literal text; the invalid set shows a message and returns a
 refusal; destroy empties the element and stops the loop.
 
-Rendering runs on **SwiftShader** (``--use-angle=swiftshader``) so the result does
-not depend on the machine's GPU. The test skips, never fails, when Playwright, a
-matching Chromium build, or WebGL 2 is not available.
+Uses the shared harness (``tests/browser/harness.py``): one browser per session, SwiftShader
+(software) unless ``TUMBLER_BROWSER_RENDERER=gpu``, the renderer in every test id. Skips when
+Playwright, a matching Chromium build, or WebGL 2 is not available, and fails instead under
+``TUMBLER_REQUIRE_BROWSER=1``.
 """
 
 from __future__ import annotations
 
-import functools
-import http.server
-import threading
-from pathlib import Path
-
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.browser import harness
+
 PAGE = "/tests/browser/viewer_host.html"
-SWIFTSHADER_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
 VIEWPORTS = {"desktop": (1100, 900), "phone": (390, 844)}
-
-
-class _QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, format, *args):  # noqa: A002 - signature fixed by the base class
-        pass
 
 
 @pytest.fixture(scope="module")
 def loopback_server():
-    handler = functools.partial(_QuietHandler, directory=str(ROOT))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    with harness.Server(harness.ROOT) as server:
+        yield server.origin
+
+
+def _run(browser, base_url: str, viewport: tuple[int, int], query: str) -> dict:
+    tab = harness.Tab(browser, viewport=viewport)
     try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
+        tab.goto(base_url + PAGE + query)
+        result = tab.wait_for(
+            "() => window.__viewerResult",
+            lambda r: bool(r and r.get("done")),
+            timeout=90,
+            what="the page to finish",
+        )
     finally:
-        server.shutdown()
-        server.server_close()
-
-
-def _run(base_url: str, viewport: tuple[int, int], query: str) -> dict:
-    sync_api = pytest.importorskip(
-        "playwright.sync_api", reason="Playwright is not installed; run `uv sync`"
-    )
-    with sync_api.sync_playwright() as pw:
-        exe = Path(pw.chromium.executable_path)
-        if not exe.exists():
-            pytest.skip(f"no Chromium build for this Playwright version at {exe}")
-        try:
-            browser = pw.chromium.launch(args=SWIFTSHADER_ARGS)
-        except Exception as exc:  # any launch failure means no usable browser here
-            pytest.skip(f"Chromium could not be launched: {exc}")
-        try:
-            page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
-            errors: list[str] = []
-            requests: list[str] = []
-            page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-            page.on("pageerror", lambda exc: errors.append(f"pageerror: {exc}"))
-            page.on("request", lambda req: requests.append(req.url))
-            page.goto(base_url + PAGE + query)
-            # The page's CSP blocks wait_for_function's string evaluation; poll instead.
-            result = None
-            for _ in range(900):
-                result = page.evaluate("() => window.__viewerResult")
-                if result and result.get("done"):
-                    break
-                page.wait_for_timeout(100)
-            assert result and result.get("done"), "the page never finished"
-        finally:
-            browser.close()
+        tab.close()
     if result.get("unavailable") and "WebGL" in result["unavailable"]:
-        pytest.skip(f"WebGL 2 unavailable in headless Chromium: {result['unavailable']}")
-    result["console_errors"] = errors
-    result["requests"] = requests
-    result["foreign"] = [u for u in requests if not u.startswith(base_url)]
+        harness.unavailable(f"WebGL 2 unavailable in headless Chromium: {result['unavailable']}")
+    result["console_errors"] = tab.console_errors()
+    result["requests"] = [r["url"] for r in tab.requests]
+    result["foreign"] = [r["url"] for r in tab.foreign_requests(base_url)]
     return result
 
 
 @pytest.fixture(scope="module", params=list(VIEWPORTS))
-def run(request, loopback_server):
+def run(request, browser, loopback_server):
     query = "?d=384&n=2000&hold=1500"
-    return request.param, _run(loopback_server, VIEWPORTS[request.param], query)
+    return request.param, _run(browser, loopback_server, VIEWPORTS[request.param], query)
 
 
-def test_no_csp_violation_console_error_or_foreign_request_swiftshader(run):
+def test_no_csp_violation_console_error_or_foreign_request(run):
     _, r = run
     assert r["fatal"] is None, r["fatal"]
     assert r["violations"] == []
@@ -106,14 +72,14 @@ def test_no_csp_violation_console_error_or_foreign_request_swiftshader(run):
     assert not any("evil-probe" in u for u in r["requests"]), "markup was parsed into an element"
 
 
-def test_mount_stays_inside_the_element_swiftshader(run):
+def test_mount_stays_inside_the_element(run):
     s = run[1]["steps"]
     assert s["childrenAfterMount"] == 1
     assert s["headStyles"] == 0
     assert s["update"]["ok"] is True and s["update"]["count"] == 2000
 
 
-def test_layout_holds_at_this_width_swiftshader(run):
+def test_layout_holds_at_this_width(run):
     name, r = run
     lay = r["steps"]["layout"]
     el_w = lay["element"]["width"]
@@ -134,7 +100,7 @@ def test_layout_holds_at_this_width_swiftshader(run):
     assert lay["blend"] == "screen"
 
 
-def test_each_mode_draws_lit_frames_swiftshader(run):
+def test_each_mode_draws_lit_frames(run):
     modes = run[1]["steps"]["modes"]
     for mode in ("tumble", "lattice", "wander"):
         assert modes[mode]["mode"] == mode
@@ -143,7 +109,7 @@ def test_each_mode_draws_lit_frames_swiftshader(run):
     assert "hidden direction" in modes["lattice"]["status"]
 
 
-def test_provenance_is_shown_swiftshader(run):
+def test_provenance_is_shown(run):
     t = run[1]["steps"]["provenanceText"]
     for want in (
         "synthetic/reference-sample",
@@ -155,7 +121,7 @@ def test_provenance_is_shown_swiftshader(run):
         assert want in t, want
 
 
-def test_append_keeps_the_camera_and_adds_points_swiftshader(run):
+def test_append_keeps_the_camera_and_adds_points(run):
     a = run[1]["steps"]["append"]
     assert a["result"]["ok"] is True and a["result"]["added"] == 200
     assert a["count"] == 2200
@@ -163,21 +129,21 @@ def test_append_keeps_the_camera_and_adds_points_swiftshader(run):
     assert a["lit"] > 50
 
 
-def test_markup_labels_are_literal_text_swiftshader(run):
+def test_markup_labels_are_literal_text(run):
     m = run[1]["steps"]["markup"]
     assert m["result"]["ok"] is True
     assert m["groupShownLiterally"] is True
     assert m["imgElements"] == 0 and m["bElements"] == 0
 
 
-def test_invalid_data_shows_a_message_swiftshader(run):
+def test_invalid_data_shows_a_message(run):
     inv = run[1]["steps"]["invalid"]
     assert inv["result"]["ok"] is False and inv["result"]["code"] == "wrong-kind"
     assert inv["noticeVisible"] is True
     assert "embeddings-tumbler/data" in inv["noticeText"]
 
 
-def test_destroy_empties_the_element_and_stops_swiftshader(run):
+def test_destroy_empties_the_element_and_stops(run):
     s = run[1]["steps"]
     assert s["destroyed"] is True
     assert s["childrenAfterDestroy"] == 0
