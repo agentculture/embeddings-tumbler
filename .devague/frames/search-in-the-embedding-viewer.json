@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T18:58:04Z",
+  "updated": "2026-11-14T21:05:07Z",
   "claims": [
     {
       "id": "c1",
@@ -1115,6 +1115,17 @@
       "skipped_check": "",
       "refs": [
         "tests/browser/test_search_look.py"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l18",
+      "code": "n-below-claim",
+      "what": "t14: frame rate with four searches on software rendering is 11.6 to 16.3 frames per second against the 30 target (a miss, recorded); the corpus is a rebuild, not the earlier proof's; the reranker, a query prefix and the first-lit frame's pixels were not measured on real data.",
+      "skipped_check": "",
+      "refs": [
+        "docs/evidence/2026-11-14-real-search-proof.md"
       ],
       "origin": "llm",
       "status": "proposed"
