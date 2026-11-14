@@ -303,6 +303,16 @@ test("setWires leaves the lit values alone", () => {
 
 // ---------- appends ----------
 
+test("an append the texture limit cannot hold is refused and leaves the points as they were", () => {
+  const m = withData(8, 16, { maxTextureSize: 16 }); // 4 points per row, at most 64 points
+  const res = m.r.appendData(data(200, 16));
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.reason, "too-many-points");
+  assert.strictEqual(m.r.status().count, 8, "the refused append changed nothing");
+  assert.strictEqual(m.r.appendData(data(1, 16)).ok, true, "and a fitting append still works");
+  assert.strictEqual(m.r.status().count, 9);
+});
+
 test("an append inside capacity keeps the lit values and sends 0 for the new points only", () => {
   const m = withData(4, D);
   m.r.appendData(data(1, D)); // capacity 8, count 5

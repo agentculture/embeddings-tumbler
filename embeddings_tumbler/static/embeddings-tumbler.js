@@ -2216,7 +2216,7 @@
   }
 
   function allNumbers(v) {
-    for (var i = 0; i < v.length; i++) if (typeof v[i] !== "number") return false;
+    for (const x of v) if (typeof x !== "number") return false;
     return true;
   }
 
@@ -2226,7 +2226,7 @@
   }
 
   function isAllZero(v) {
-    for (var i = 0; i < v.length; i++) if (v[i] !== 0) return false;
+    for (const x of v) if (x !== 0) return false;
     return true;
   }
 
@@ -2380,8 +2380,9 @@
   Pool.prototype.offer = function (i, d) {
     var j;
     if (this.n === this.cap) {
-      if (!(d < this.dist[this.cap - 1])) return;
-      j = this.cap - 1;
+      // Not "!(d < worst)": a NaN distance must still be turned away.
+      if (d < this.dist[this.cap - 1]) j = this.cap - 1;
+      else return;
     } else {
       j = this.n++;
     }
@@ -2440,8 +2441,8 @@
     }
     var hits = pooled.slice(0, k);
     var near = hits.length ? hits[0].distance : null;
-    var radius = hits.length ? hits[hits.length - 1].distance : null;
-    for (var h = 0; h < hits.length; h++) hits[h].gap = hits[h].distance - near;
+    var radius = hits.length ? hits.at(-1).distance : null;
+    for (const hit of hits) hit.gap = hit.distance - near;
     return {
       measure: MEASURE,
       k: k,
@@ -2456,46 +2457,61 @@
     };
   }
 
+  // What the scan needs besides the vectors: the query as doubles with its
+  // length, and (with a scale) the squared scale, the scaled query and its length.
+  function scanSetup(q32, scale, D) {
+    var q = Float64Array.from(q32);
+    var setup = { q: q, qn: Math.sqrt(sumSquares(q, null)), s2: null, qs2: null, qnS: 0 };
+    if (scale) {
+      var s2 = squares(scale);
+      var qs2 = new Float64Array(D);
+      for (var e = 0; e < D; e++) qs2[e] = q[e] * s2[e];
+      setup.s2 = s2;
+      setup.qs2 = qs2;
+      setup.qnS = Math.sqrt(sumSquares(q, s2));
+    }
+    return setup;
+  }
+
+  // One row's distance (and, when scaled, its plain distance as well).
+  function scanRow(V, i, D, setup, acc, distances, plainDistances) {
+    if (plainDistances) {
+      rowScaled(V, i * D, D, setup.q, setup.s2, setup.qs2, acc);
+      plainDistances[i] = cosineDistance(acc.dot, acc.nn, setup.qn);
+      distances[i] = cosineDistance(acc.dotS, acc.nnS, setup.qnS);
+    } else {
+      rowPlain(V, i * D, D, setup.q, acc);
+      distances[i] = cosineDistance(acc.dot, acc.nn, setup.qn);
+    }
+  }
+
+  // The plain rank of each pooled point (a scaled search only).
+  function* pooledPlainRanks(pool, plainDistances, N, wk) {
+    var plainRanks = new Int32Array(pool.n);
+    for (var r = 0; r < pool.n; r++) {
+      var pi = pool.idx[r];
+      plainRanks[r] = 1 + countBefore(plainDistances, plainDistances[pi], pi);
+      if (wk.add(N)) yield;
+    }
+    return plainRanks;
+  }
+
   function* scanGen(set, q32, scale, k, wk) {
     var N = set.count;
     var D = set.dimension;
     var V = set.vectors;
     var scaled = !!scale;
-    var q = Float64Array.from(q32);
-    var qn = Math.sqrt(sumSquares(q, null));
-    var s2 = scaled ? squares(scale) : null;
-    var qs2 = null;
-    var qnS = 0;
-    if (scaled) {
-      qs2 = new Float64Array(D);
-      for (var e = 0; e < D; e++) qs2[e] = q[e] * s2[e];
-      qnS = Math.sqrt(sumSquares(q, s2));
-    }
+    var setup = scanSetup(q32, scale, D);
     var pool = new Pool(Math.min(POOL_FACTOR * k, N));
     var distances = new Float64Array(N);
     var plainDistances = scaled ? new Float64Array(N) : null;
     var acc = { dot: 0, nn: 0, dotS: 0, nnS: 0 };
     for (var i = 0; i < N; i++) {
-      if (scaled) {
-        rowScaled(V, i * D, D, q, s2, qs2, acc);
-        plainDistances[i] = cosineDistance(acc.dot, acc.nn, qn);
-        distances[i] = cosineDistance(acc.dotS, acc.nnS, qnS);
-      } else {
-        rowPlain(V, i * D, D, q, acc);
-        distances[i] = cosineDistance(acc.dot, acc.nn, qn);
-      }
+      scanRow(V, i, D, setup, acc, distances, plainDistances);
       pool.offer(i, distances[i]);
       if (wk.add(scaled ? 4 * D : 2 * D)) yield;
     }
-    var plainRanks = null;
-    if (scaled) {
-      plainRanks = new Int32Array(pool.n);
-      for (var r = 0; r < pool.n; r++) {
-        var pi = pool.idx[r];
-        plainRanks[r] = 1 + countBefore(plainDistances, plainDistances[pi], pi);
-        if (wk.add(N)) yield;
-      }
-    }
+    var plainRanks = scaled ? yield* pooledPlainRanks(pool, plainDistances, N, wk) : null;
     return buildRanking(set, k, scaled, pool, distances, plainDistances, plainRanks);
   }
 
@@ -2519,8 +2535,8 @@
 
   function scoresOk(ranking, scores) {
     if (!isNumericArray(scores) || scores.length !== ranking.pool.length) return false;
-    for (var i = 0; i < scores.length; i++) {
-      if (typeof scores[i] !== "number" || !Number.isFinite(scores[i])) return false;
+    for (const score of scores) {
+      if (typeof score !== "number" || !Number.isFinite(score)) return false;
     }
     return true;
   }
@@ -2536,7 +2552,7 @@
     var take = Math.min(ranking.k, order.length);
     var hits = [];
     for (var r = 0; r < take; r++) {
-      var hit = Object.assign({}, ranking.pool[order[r]]);
+      var hit = { ...ranking.pool[order[r]] };
       hit.rank = r + 1;
       hit.moved = hit.embeddingRank - hit.rank;
       hit.score = scores[order[r]];
@@ -2544,11 +2560,11 @@
     }
     var near = null;
     var radius = null;
-    for (var h = 0; h < hits.length; h++) {
-      if (near === null || hits[h].distance < near) near = hits[h].distance;
-      if (radius === null || hits[h].distance > radius) radius = hits[h].distance;
+    for (const picked of hits) {
+      if (near === null || picked.distance < near) near = picked.distance;
+      if (radius === null || picked.distance > radius) radius = picked.distance;
     }
-    for (var g = 0; g < hits.length; g++) hits[g].gap = hits[g].distance - near;
+    for (const picked of hits) picked.gap = picked.distance - near;
     return { ok: true, hits: hits, near: near, radius: radius };
   }
 
@@ -2586,7 +2602,7 @@
   function addTo(map, key, i) {
     var list = map.get(key);
     if (!list) map.set(key, [i]);
-    else if (list[list.length - 1] !== i) list.push(i);
+    else if (list.at(-1) !== i) list.push(i);
   }
 
   function indexPoint(set, i, words, phrases) {
@@ -2600,7 +2616,7 @@
       var list = tokens(fields[f]);
       if (list.length === 0) continue;
       addTo(phrases, list.join(" "), i);
-      for (var w = 0; w < list.length; w++) addTo(words, list[w], i);
+      for (const word of list) addTo(words, word, i);
     }
     return cost;
   }
@@ -2624,7 +2640,7 @@
   function prefixPoints(index, word) {
     var seen = new Set();
     index.words.forEach(function (list, key) {
-      if (key.startsWith(word)) for (var j = 0; j < list.length; j++) seen.add(list[j]);
+      if (key.startsWith(word)) for (const point of list) seen.add(point);
     });
     return Array.from(seen).sort(function (a, b) {
       return a - b;
@@ -2635,15 +2651,15 @@
   function resolveWords(index, words) {
     var used = [];
     var unmatched = [];
-    for (var w = 0; w < words.length; w++) {
-      var points = index.words.get(words[w]);
+    for (const word of words) {
+      var points = index.words.get(word);
       var how = "exact";
-      if (!points && Array.from(words[w]).length >= PREFIX_MIN) {
-        points = prefixPoints(index, words[w]);
+      if (!points && Array.from(word).length >= PREFIX_MIN) {
+        points = prefixPoints(index, word);
         how = "prefix";
       }
-      if (points && points.length > 0) used.push({ word: words[w], how: how, points: points });
-      else unmatched.push(words[w]);
+      if (points && points.length > 0) used.push({ word: word, how: how, points: points });
+      else unmatched.push(word);
     }
     return { used: used, unmatched: unmatched };
   }
@@ -2653,8 +2669,8 @@
     var D = set.dimension;
     var V = set.vectors;
     var sum = new Float64Array(D);
-    for (var p = 0; p < points.length; p++) {
-      var o = points[p] * D;
+    for (const point of points) {
+      var o = point * D;
       for (var d = 0; d < D; d++) sum[d] += V[o + d];
       if (wk.add(D)) yield;
     }
@@ -2686,8 +2702,8 @@
     }
     if (picked.used.length === 0) return wordFailure("words-none", words, picked.unmatched);
     var total = new Float64Array(set.dimension);
-    for (var u = 0; u < picked.used.length; u++) {
-      yield* addMean(set, picked.used[u].points, 1 / picked.used.length, total, wk);
+    for (const match of picked.used) {
+      yield* addMean(set, match.points, 1 / picked.used.length, total, wk);
     }
     var vector = Float32Array.from(total);
     if (isAllZero(vector)) return wordFailure("query-zero", words, picked.unmatched);
@@ -2820,8 +2836,8 @@ ET.searchSets = (function () {
   }
 
   function lightNamed(ranking, count, out) {
-    for (var h = 0; h < ranking.hits.length; h++) {
-      var at = ranking.hits[h].index;
+    for (const hit of ranking.hits) {
+      var at = hit.index;
       if (at < count) out.lit[at] = 1;
     }
   }
@@ -2860,7 +2876,7 @@ ET.searchSets = (function () {
       litCount: 0,
       sharedCount: 0,
     };
-    for (var s = 0; s < searches.length; s++) out.insideCounts.push(lightSearch(searches[s], count, how, out));
+    for (const search of searches) out.insideCounts.push(lightSearch(search, count, how, out));
     for (var i = 0; i < count; i++) {
       if (out.lit[i] > LIT_THRESHOLD) out.litCount++;
       if (out.inside[i] >= 2 && out.lit[i] > 0) {
@@ -2932,17 +2948,17 @@ ET.searchSets = (function () {
     var X = set.vectors;
     var D = set.dimension;
     var lengths = [];
-    for (var s = 0; s < searches.length; s++) lengths.push(hitLengths(X, D, set.count, searches[s].hits));
+    for (const search of searches) lengths.push(hitLengths(X, D, set.count, search.hits));
     var pairs = [];
     for (var a = 0; a < searches.length; a++) {
       for (var b = a + 1; b < searches.length; b++) {
         var ra = searches[a];
         var rb = searches[b];
         var inB = new Set();
-        for (var h = 0; h < rb.hits.length; h++) inB.add(rb.hits[h].index);
+        for (const hit of rb.hits) inB.add(hit.index);
         var commonIndices = [];
-        for (var g = 0; g < ra.hits.length; g++) {
-          if (inB.has(ra.hits[g].index)) commonIndices.push(ra.hits[g].index);
+        for (const hit of ra.hits) {
+          if (inB.has(hit.index)) commonIndices.push(hit.index);
         }
         pairs.push({
           a: a,
@@ -2971,9 +2987,9 @@ ET.searchSets = (function () {
 
   // Removes from v its components along each of `axes` (orthonormal rows), once.
   function removeAxes(v, axes, D) {
-    for (var k = 0; k < axes.length; k++) {
-      var p = dotD(v, axes[k], D);
-      for (var d = 0; d < D; d++) v[d] -= p * axes[k][d];
+    for (const axis of axes) {
+      var p = dotD(v, axis, D);
+      for (var d = 0; d < D; d++) v[d] -= p * axis[d];
     }
   }
 
@@ -3018,10 +3034,10 @@ ET.searchSets = (function () {
 
   function checkFacing(set, searches) {
     var D = set.dimension;
-    for (var j = 0; j < searches.length; j++) {
-      checkLength(searches[j].query, D, "each query");
-      if (!Array.isArray(searches[j].hits)) throw new TypeError("facing frame: each search needs a hits array");
-      for (var h = 0; h < searches[j].hits.length; h++) checkIndex(searches[j].hits[h].index, set.count);
+    for (const search of searches) {
+      checkLength(search.query, D, "each query");
+      if (!Array.isArray(search.hits)) throw new TypeError("facing frame: each search needs a hits array");
+      for (const hit of search.hits) checkIndex(hit.index, set.count);
     }
   }
 
@@ -3044,8 +3060,8 @@ ET.searchSets = (function () {
   // One search's rows: its query and its named results' loaded vectors.
   function searchRows(X, D, search) {
     var mine = [search.query];
-    for (var h = 0; h < search.hits.length; h++) {
-      var o = search.hits[h].index * D;
+    for (const hit of search.hits) {
+      var o = hit.index * D;
       mine.push(X.subarray(o, o + D));
     }
     return mine;
@@ -3054,8 +3070,8 @@ ET.searchSets = (function () {
   // The mean of rows (each optionally scaled by s), in double precision.
   function meanOfRows(rows, D, s) {
     var c = new Float64Array(D);
-    for (var r = 0; r < rows.length; r++) {
-      for (var d = 0; d < D; d++) c[d] += s ? rows[r][d] * s[d] : rows[r][d];
+    for (const row of rows) {
+      for (var d = 0; d < D; d++) c[d] += s ? row[d] * s[d] : row[d];
     }
     for (var e = 0; e < D; e++) c[e] /= rows.length;
     return c;
@@ -3073,17 +3089,31 @@ ET.searchSets = (function () {
   // search's scaled centre.
   function gatherRows(fit) {
     var out = { scaledCentres: [], plainCentres: [], offsets: [], plainRows: [] };
-    for (var j = 0; j < fit.searches.length; j++) {
-      var mine = searchRows(fit.X, fit.D, fit.searches[j]);
+    for (const search of fit.searches) {
+      var mine = searchRows(fit.X, fit.D, search);
       var c = meanOfRows(mine, fit.D, fit.scale);
       out.scaledCentres.push(c);
       out.plainCentres.push(meanOfRows(mine, fit.D, null));
-      for (var r = 0; r < mine.length; r++) {
-        out.plainRows.push(mine[r]);
-        out.offsets.push(offsetOf(mine[r], fit.D, fit.scale, c));
+      for (const row of mine) {
+        out.plainRows.push(row);
+        out.offsets.push(offsetOf(row, fit.D, fit.scale, c));
       }
     }
     return out;
+  }
+
+  // One pass of the power iteration over rows `from` on: w += (row . v) row for each,
+  // stopping after the row at which a unit of work ends. Returns the next row to do,
+  // or -1 when the rows ran out without a unit ending. (A plain function that resumes
+  // at `from`: the generator itself pays for a for...of over the rows, measured.)
+  function spreadPass(offsets, from, v, w, D, wk) {
+    for (var r = from; r < offsets.length; r++) {
+      var row = offsets[r];
+      var p = dotD(row, v, D);
+      for (var d = 0; d < D; d++) w[d] += p * row[d];
+      if (wk.add(2 * D)) return r + 1;
+    }
+    return -1;
   }
 
   // Step 5: a power iteration on the spread of the rows about their own centres,
@@ -3095,11 +3125,10 @@ ET.searchSets = (function () {
     ET.math.makeRandom(ET.math.mixSeed(fit.seed, FACE_SALT + axes.length)).fillGauss(v);
     for (var it = 0; it < FACE_ITERATIONS; it++) {
       var w = new Float64Array(D);
-      for (var r = 0; r < offsets.length; r++) {
-        var row = offsets[r];
-        var p = dotD(row, v, D);
-        for (var d = 0; d < D; d++) w[d] += p * row[d];
-        if (wk.add(2 * D)) yield;
+      var next = spreadPass(offsets, 0, v, w, D, wk);
+      while (next >= 0) {
+        yield;
+        next = spreadPass(offsets, next, v, w, D, wk);
       }
       var before = lengthD(w, D);
       removeAxes(w, axes, D);
@@ -3159,8 +3188,8 @@ ET.searchSets = (function () {
     var frame = signedFrame(axes, fit.current, D);
     var centre = Float32Array.from(meanOfRows(rows.plainCentres, D, null));
     var reach = FACE_MIN_REACH;
-    for (var r = 0; r < rows.plainRows.length; r++) {
-      reach = Math.max(reach, shownLength(frame, rows.plainRows[r], centre, D));
+    for (const row of rows.plainRows) {
+      reach = Math.max(reach, shownLength(frame, row, centre, D));
     }
     return {
       frame: frame,
@@ -3226,11 +3255,16 @@ ET.searchSets = (function () {
     return st;
   }
 
+  // Written as a comparison so that NaN (and undefined) are not enough.
+  function hasThreeDimensions(D) {
+    return D >= 3;
+  }
+
   function makeFacingFrame(set, searches, options) {
     var o = options || {};
     checkSearches(searches);
     var D = set.dimension;
-    if (!(D >= 3)) throw new RangeError("the facing frame needs at least 3 dimensions");
+    if (!hasThreeDimensions(D)) throw new RangeError("the facing frame needs at least 3 dimensions");
     var fit = {
       X: set.vectors,
       D: D,
@@ -3251,7 +3285,7 @@ ET.searchSets = (function () {
       };
     }
     var rowCount = 0;
-    for (var j = 0; j < searches.length; j++) rowCount += 1 + searches[j].hits.length;
+    for (const search of searches) rowCount += 1 + search.hits.length;
     var wk = new FaceWork(rowCount * D * (1 + 2 * FACE_ITERATIONS * 3));
     return faceStepper(facingGen(fit, wk), wk);
   }
@@ -4172,6 +4206,63 @@ ET.renderer = (function () {
       return !disposed && !lost && gpu !== null && error === null;
     }
 
+    // Makes room for `total` points when the CPU copy is too small: a bigger layout if
+    // needed, double the capacity at least, the old points and lit values copied over.
+    // Returns { ok: true, reallocated } or the failed layout.
+    function growStorage(total) {
+      if (total <= store.capacity) return { ok: true, reallocated: false };
+      var lay = store.lay;
+      if (total > lay.maxPoints) {
+        lay = layout(store.dimension, total, maxTextureSize);
+        if (!lay.ok) return lay;
+      }
+      var cap = Math.min(lay.maxPoints, Math.max(total, store.capacity * 2));
+      var mem = allocate(lay, cap);
+      // points are contiguous at a fixed stride whatever the row packing
+      mem.vectors.set(store.vectors.subarray(0, store.count * lay.floatsPerPoint));
+      mem.attr.set(store.attr.subarray(0, store.count * 4));
+      store.vectors = mem.vectors;
+      store.attr = mem.attr;
+      if (store.lit) {
+        var grown = new Float32Array(cap); // appended points: lit value 0, no mark
+        grown.set(store.lit.subarray(0, store.count));
+        store.lit = grown;
+      }
+      store.capacity = cap;
+      store.lay = lay;
+      return { ok: true, reallocated: true };
+    }
+
+    // Uploads only the texture rows the points first..total touch, and their slice of
+    // the colour (and lit) buffers.
+    function uploadAppended(first, total) {
+      var lay = store.lay;
+      var P = lay.pointsPerRow,
+        r0 = Math.floor(first / P),
+        r1 = Math.floor((total - 1) / P),
+        rowFloats = lay.width * 4;
+      gl.activeTexture(gl.TEXTURE0); // never rely on whichever unit was left active
+      gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
+      gl.texSubImage2D(
+        gl.TEXTURE_2D,
+        0,
+        0,
+        r0,
+        lay.width,
+        r1 - r0 + 1,
+        gl.RGBA,
+        gl.FLOAT,
+        store.vectors.subarray(r0 * rowFloats, (r1 + 1) * rowFloats)
+      );
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
+      gl.bufferSubData(gl.ARRAY_BUFFER, first * 16, store.attr.subarray(first * 4, total * 4));
+      if (gpu.vboLit) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
+        gl.bufferSubData(gl.ARRAY_BUFFER, first * 4, store.lit.subarray(first, total));
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    }
+
     var api = {
       // Replace all points. Returns { ok: true, layout, uploaded } or { ok: false, reason, message }.
       setData: function (input) {
@@ -4216,64 +4307,17 @@ ET.renderer = (function () {
         var n = checkPoints(input, store.dimension);
         if (n === 0) return { ok: true, reallocated: false, uploaded: usable() };
         var total = store.count + n;
-        var lay = store.lay;
-        var reallocated = false;
-        if (total > store.capacity) {
-          if (total > lay.maxPoints) {
-            lay = layout(store.dimension, total, maxTextureSize);
-            if (!lay.ok) return lay;
-          }
-          var cap = Math.min(lay.maxPoints, Math.max(total, store.capacity * 2));
-          var mem = allocate(lay, cap);
-          // points are contiguous at a fixed stride whatever the row packing
-          mem.vectors.set(store.vectors.subarray(0, store.count * lay.floatsPerPoint));
-          mem.attr.set(store.attr.subarray(0, store.count * 4));
-          store.vectors = mem.vectors;
-          store.attr = mem.attr;
-          if (store.lit) {
-            var grown = new Float32Array(cap); // appended points: lit value 0, no mark
-            grown.set(store.lit.subarray(0, store.count));
-            store.lit = grown;
-          }
-          store.capacity = cap;
-          store.lay = lay;
-          reallocated = true;
-        }
+        var grown = growStorage(total);
+        if (!grown.ok) return grown;
+        var reallocated = grown.reallocated;
         var first = store.count;
         writePoints(input, n, first);
         if (store.lit) store.lit.fill(0, first, total); // appended points: lit value 0, no mark
         store.count = total;
         if (!usable()) return { ok: true, reallocated: reallocated, uploaded: false };
         try {
-          if (reallocated) {
-            uploadAllPoints();
-          } else {
-            // only the texture rows the new points touch, and their slice of the colour buffer
-            var P = lay.pointsPerRow,
-              r0 = Math.floor(first / P),
-              r1 = Math.floor((total - 1) / P),
-              rowFloats = lay.width * 4;
-            gl.activeTexture(gl.TEXTURE0); // never rely on whichever unit was left active
-            gl.bindTexture(gl.TEXTURE_2D, gpu.texX);
-            gl.texSubImage2D(
-              gl.TEXTURE_2D,
-              0,
-              0,
-              r0,
-              lay.width,
-              r1 - r0 + 1,
-              gl.RGBA,
-              gl.FLOAT,
-              store.vectors.subarray(r0 * rowFloats, (r1 + 1) * rowFloats)
-            );
-            gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboPoint);
-            gl.bufferSubData(gl.ARRAY_BUFFER, first * 16, store.attr.subarray(first * 4, total * 4));
-            if (gpu.vboLit) {
-              gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vboLit);
-              gl.bufferSubData(gl.ARRAY_BUFFER, first * 4, store.lit.subarray(first, total));
-            }
-            gl.bindBuffer(gl.ARRAY_BUFFER, null);
-          }
+          if (reallocated) uploadAllPoints();
+          else uploadAppended(first, total);
         } catch (e) {
           return failGpu(e);
         }

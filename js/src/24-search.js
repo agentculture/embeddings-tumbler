@@ -76,7 +76,7 @@
   }
 
   function allNumbers(v) {
-    for (var i = 0; i < v.length; i++) if (typeof v[i] !== "number") return false;
+    for (const x of v) if (typeof x !== "number") return false;
     return true;
   }
 
@@ -86,7 +86,7 @@
   }
 
   function isAllZero(v) {
-    for (var i = 0; i < v.length; i++) if (v[i] !== 0) return false;
+    for (const x of v) if (x !== 0) return false;
     return true;
   }
 
@@ -240,8 +240,9 @@
   Pool.prototype.offer = function (i, d) {
     var j;
     if (this.n === this.cap) {
-      if (!(d < this.dist[this.cap - 1])) return;
-      j = this.cap - 1;
+      // Not "!(d < worst)": a NaN distance must still be turned away.
+      if (d < this.dist[this.cap - 1]) j = this.cap - 1;
+      else return;
     } else {
       j = this.n++;
     }
@@ -300,8 +301,8 @@
     }
     var hits = pooled.slice(0, k);
     var near = hits.length ? hits[0].distance : null;
-    var radius = hits.length ? hits[hits.length - 1].distance : null;
-    for (var h = 0; h < hits.length; h++) hits[h].gap = hits[h].distance - near;
+    var radius = hits.length ? hits.at(-1).distance : null;
+    for (const hit of hits) hit.gap = hit.distance - near;
     return {
       measure: MEASURE,
       k: k,
@@ -316,46 +317,61 @@
     };
   }
 
+  // What the scan needs besides the vectors: the query as doubles with its
+  // length, and (with a scale) the squared scale, the scaled query and its length.
+  function scanSetup(q32, scale, D) {
+    var q = Float64Array.from(q32);
+    var setup = { q: q, qn: Math.sqrt(sumSquares(q, null)), s2: null, qs2: null, qnS: 0 };
+    if (scale) {
+      var s2 = squares(scale);
+      var qs2 = new Float64Array(D);
+      for (var e = 0; e < D; e++) qs2[e] = q[e] * s2[e];
+      setup.s2 = s2;
+      setup.qs2 = qs2;
+      setup.qnS = Math.sqrt(sumSquares(q, s2));
+    }
+    return setup;
+  }
+
+  // One row's distance (and, when scaled, its plain distance as well).
+  function scanRow(V, i, D, setup, acc, distances, plainDistances) {
+    if (plainDistances) {
+      rowScaled(V, i * D, D, setup.q, setup.s2, setup.qs2, acc);
+      plainDistances[i] = cosineDistance(acc.dot, acc.nn, setup.qn);
+      distances[i] = cosineDistance(acc.dotS, acc.nnS, setup.qnS);
+    } else {
+      rowPlain(V, i * D, D, setup.q, acc);
+      distances[i] = cosineDistance(acc.dot, acc.nn, setup.qn);
+    }
+  }
+
+  // The plain rank of each pooled point (a scaled search only).
+  function* pooledPlainRanks(pool, plainDistances, N, wk) {
+    var plainRanks = new Int32Array(pool.n);
+    for (var r = 0; r < pool.n; r++) {
+      var pi = pool.idx[r];
+      plainRanks[r] = 1 + countBefore(plainDistances, plainDistances[pi], pi);
+      if (wk.add(N)) yield;
+    }
+    return plainRanks;
+  }
+
   function* scanGen(set, q32, scale, k, wk) {
     var N = set.count;
     var D = set.dimension;
     var V = set.vectors;
     var scaled = !!scale;
-    var q = Float64Array.from(q32);
-    var qn = Math.sqrt(sumSquares(q, null));
-    var s2 = scaled ? squares(scale) : null;
-    var qs2 = null;
-    var qnS = 0;
-    if (scaled) {
-      qs2 = new Float64Array(D);
-      for (var e = 0; e < D; e++) qs2[e] = q[e] * s2[e];
-      qnS = Math.sqrt(sumSquares(q, s2));
-    }
+    var setup = scanSetup(q32, scale, D);
     var pool = new Pool(Math.min(POOL_FACTOR * k, N));
     var distances = new Float64Array(N);
     var plainDistances = scaled ? new Float64Array(N) : null;
     var acc = { dot: 0, nn: 0, dotS: 0, nnS: 0 };
     for (var i = 0; i < N; i++) {
-      if (scaled) {
-        rowScaled(V, i * D, D, q, s2, qs2, acc);
-        plainDistances[i] = cosineDistance(acc.dot, acc.nn, qn);
-        distances[i] = cosineDistance(acc.dotS, acc.nnS, qnS);
-      } else {
-        rowPlain(V, i * D, D, q, acc);
-        distances[i] = cosineDistance(acc.dot, acc.nn, qn);
-      }
+      scanRow(V, i, D, setup, acc, distances, plainDistances);
       pool.offer(i, distances[i]);
       if (wk.add(scaled ? 4 * D : 2 * D)) yield;
     }
-    var plainRanks = null;
-    if (scaled) {
-      plainRanks = new Int32Array(pool.n);
-      for (var r = 0; r < pool.n; r++) {
-        var pi = pool.idx[r];
-        plainRanks[r] = 1 + countBefore(plainDistances, plainDistances[pi], pi);
-        if (wk.add(N)) yield;
-      }
-    }
+    var plainRanks = scaled ? yield* pooledPlainRanks(pool, plainDistances, N, wk) : null;
     return buildRanking(set, k, scaled, pool, distances, plainDistances, plainRanks);
   }
 
@@ -379,8 +395,8 @@
 
   function scoresOk(ranking, scores) {
     if (!isNumericArray(scores) || scores.length !== ranking.pool.length) return false;
-    for (var i = 0; i < scores.length; i++) {
-      if (typeof scores[i] !== "number" || !Number.isFinite(scores[i])) return false;
+    for (const score of scores) {
+      if (typeof score !== "number" || !Number.isFinite(score)) return false;
     }
     return true;
   }
@@ -396,7 +412,7 @@
     var take = Math.min(ranking.k, order.length);
     var hits = [];
     for (var r = 0; r < take; r++) {
-      var hit = Object.assign({}, ranking.pool[order[r]]);
+      var hit = { ...ranking.pool[order[r]] };
       hit.rank = r + 1;
       hit.moved = hit.embeddingRank - hit.rank;
       hit.score = scores[order[r]];
@@ -404,11 +420,11 @@
     }
     var near = null;
     var radius = null;
-    for (var h = 0; h < hits.length; h++) {
-      if (near === null || hits[h].distance < near) near = hits[h].distance;
-      if (radius === null || hits[h].distance > radius) radius = hits[h].distance;
+    for (const picked of hits) {
+      if (near === null || picked.distance < near) near = picked.distance;
+      if (radius === null || picked.distance > radius) radius = picked.distance;
     }
-    for (var g = 0; g < hits.length; g++) hits[g].gap = hits[g].distance - near;
+    for (const picked of hits) picked.gap = picked.distance - near;
     return { ok: true, hits: hits, near: near, radius: radius };
   }
 
@@ -446,7 +462,7 @@
   function addTo(map, key, i) {
     var list = map.get(key);
     if (!list) map.set(key, [i]);
-    else if (list[list.length - 1] !== i) list.push(i);
+    else if (list.at(-1) !== i) list.push(i);
   }
 
   function indexPoint(set, i, words, phrases) {
@@ -460,7 +476,7 @@
       var list = tokens(fields[f]);
       if (list.length === 0) continue;
       addTo(phrases, list.join(" "), i);
-      for (var w = 0; w < list.length; w++) addTo(words, list[w], i);
+      for (const word of list) addTo(words, word, i);
     }
     return cost;
   }
@@ -484,7 +500,7 @@
   function prefixPoints(index, word) {
     var seen = new Set();
     index.words.forEach(function (list, key) {
-      if (key.startsWith(word)) for (var j = 0; j < list.length; j++) seen.add(list[j]);
+      if (key.startsWith(word)) for (const point of list) seen.add(point);
     });
     return Array.from(seen).sort(function (a, b) {
       return a - b;
@@ -495,15 +511,15 @@
   function resolveWords(index, words) {
     var used = [];
     var unmatched = [];
-    for (var w = 0; w < words.length; w++) {
-      var points = index.words.get(words[w]);
+    for (const word of words) {
+      var points = index.words.get(word);
       var how = "exact";
-      if (!points && Array.from(words[w]).length >= PREFIX_MIN) {
-        points = prefixPoints(index, words[w]);
+      if (!points && Array.from(word).length >= PREFIX_MIN) {
+        points = prefixPoints(index, word);
         how = "prefix";
       }
-      if (points && points.length > 0) used.push({ word: words[w], how: how, points: points });
-      else unmatched.push(words[w]);
+      if (points && points.length > 0) used.push({ word: word, how: how, points: points });
+      else unmatched.push(word);
     }
     return { used: used, unmatched: unmatched };
   }
@@ -513,8 +529,8 @@
     var D = set.dimension;
     var V = set.vectors;
     var sum = new Float64Array(D);
-    for (var p = 0; p < points.length; p++) {
-      var o = points[p] * D;
+    for (const point of points) {
+      var o = point * D;
       for (var d = 0; d < D; d++) sum[d] += V[o + d];
       if (wk.add(D)) yield;
     }
@@ -546,8 +562,8 @@
     }
     if (picked.used.length === 0) return wordFailure("words-none", words, picked.unmatched);
     var total = new Float64Array(set.dimension);
-    for (var u = 0; u < picked.used.length; u++) {
-      yield* addMean(set, picked.used[u].points, 1 / picked.used.length, total, wk);
+    for (const match of picked.used) {
+      yield* addMean(set, match.points, 1 / picked.used.length, total, wk);
     }
     var vector = Float32Array.from(total);
     if (isAllZero(vector)) return wordFailure("query-zero", words, picked.unmatched);
