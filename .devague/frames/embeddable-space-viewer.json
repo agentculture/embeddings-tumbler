@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T06:00:11Z",
+  "updated": "2026-11-14T07:01:04Z",
   "claims": [
     {
       "id": "c1",
@@ -1225,6 +1225,18 @@
       "skipped_check": "the bound asserted over several seeds in the committed test",
       "refs": [
         "t7"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l29",
+      "code": "control-absent",
+      "what": "embeddings-tumbler's SonarCloud scan had never run (the token secret was empty), so no task in this run was checked by it; the first scan on PR 3 found 572 open issues and a failing quality gate.",
+      "skipped_check": "a SonarCloud analysis of each merged task",
+      "refs": [
+        "t13",
+        "t14"
       ],
       "origin": "llm",
       "status": "proposed"
