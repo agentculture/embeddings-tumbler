@@ -28,13 +28,21 @@
     bad.failures.push(String(err));
   }
 
-  // { http, ws } base addresses for a loopback origin such as http://127.0.0.1:41234.
+  // The schemes this page uses, keyed by the protocol it is served over. The harness serves
+  // this page and the foreign server alike over plain HTTP on loopback (a TLS scheme would
+  // fail the handshake before the foreign server could log the request this control is for),
+  // so the one known pair is the page's own protocol and its WebSocket counterpart.
+  const SCHEMES = [{ page: "http:", socket: "ws:" }];
+
+  // { http, ws } base addresses for a loopback origin such as 127.0.0.1:41234 served, like
+  // this page, over the page's own protocol.
   function foreignBase(value) {
     const url = new URL(value);
     const host = HOSTS.find((h) => h === url.hostname);
-    if (!host || url.protocol !== "http:") throw new Error("not a test origin");
+    const scheme = SCHEMES.find((s) => s.page === location.protocol && s.page === url.protocol);
+    if (!host || !scheme) throw new Error("not a test origin");
     const port = url.port === "" ? "" : ":" + Number(url.port);
-    return { http: "http://" + host + port, ws: "ws://" + host + port };
+    return { http: scheme.page + "//" + host + port, ws: scheme.socket + "//" + host + port };
   }
 
   const ASK = {

@@ -152,12 +152,50 @@
     for (let j = 0; j < n; j++) for (let m = 0; m < d; m++) X[j * d + m] -= mean[m];
   }
 
-  async function fixture(name) {
-    const base = "/tests/fixtures/contract/";
-    const r = await fetch(base + encodeURIComponent(name) + ".json");
+  // The contract fixtures this page can draw. ?fixture= only selects one of these by its
+  // key: the addresses requested are the fixed ones below, so no text from the query string
+  // or from a fetched file is ever put in a request. file is the block name the fixture
+  // must declare; block is the fixed address fetched for it.
+  const FIXTURES = [
+    {
+      key: "valid-384",
+      data: "/tests/fixtures/contract/valid-384.json",
+      file: "valid-384.f32",
+      block: "/tests/fixtures/contract/valid-384.f32",
+    },
+    {
+      key: "valid-1024",
+      data: "/tests/fixtures/contract/valid-1024.json",
+      file: "valid-1024.f32",
+      block: "/tests/fixtures/contract/valid-1024.f32",
+    },
+    {
+      key: "top-k-16",
+      data: "/tests/fixtures/contract/top-k-16.json",
+      file: "top-k-16.f32",
+      block: "/tests/fixtures/contract/top-k-16.f32",
+    },
+    {
+      key: "labels-only",
+      data: "/tests/fixtures/contract/labels-only.json",
+      file: "labels-only.f32",
+      block: "/tests/fixtures/contract/labels-only.f32",
+    },
+    {
+      key: "append-384",
+      data: "/tests/fixtures/contract/append-384.json",
+      file: "append-384.f32",
+      block: "/tests/fixtures/contract/append-384.f32",
+    },
+  ];
+
+  async function fixture(known) {
+    const name = known.key;
+    const r = await fetch(known.data);
     if (!r.ok) throw new Error("no fixture " + name);
     const meta = await r.json();
-    const buf = await (await fetch(base + encodeURIComponent(meta.vectors.file))).arrayBuffer();
+    if (meta.vectors?.file !== known.file) throw new Error("fixture " + name + " names an unexpected vector block");
+    const buf = await (await fetch(known.block)).arrayBuffer();
     const d = meta.dimension;
     const n = meta.count;
     const X = new Float32Array(buf.slice(0));
@@ -396,11 +434,12 @@
     stats.error = String(e);
   }
 
-  const name = q.get("fixture");
-  if (name !== null && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
-    info.textContent = "fixture must be a plain name such as valid-1024";
+  const asked = q.get("fixture");
+  const known = FIXTURES.find((f) => f.key === asked) || null;
+  if (asked !== null && !known) {
+    info.textContent = "fixture must be one of: " + FIXTURES.map((f) => f.key).join(", ");
     stats.error = "bad-fixture-name";
     return;
   }
-  (name ? fixture(name) : Promise.resolve(synthetic(N, D))).then(start).catch(showError);
+  (known ? fixture(known) : Promise.resolve(synthetic(N, D))).then(start).catch(showError);
 })();
