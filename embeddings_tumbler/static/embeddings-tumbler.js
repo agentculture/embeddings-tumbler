@@ -5902,13 +5902,10 @@ ET.viewer = (function () {
     return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: draw };
   }
 
-  // Options for a mode instance: the viewer's defaults, then the host's modeOptions.
-  // Tumble's crossfade is lengthened to 6 s of mode time: its refit (after appends)
-  // blends from the old tour into the new one over this time, and at the mode's own
-  // 1.5 s the picture moved about three times faster than in normal running during
-  // the blend (measured); at 6 s it stays within about 1.4 times. The same option
-  // sets how long Tumble takes to blend in when entered from another mode.
-  var MODE_DEFAULTS = { tumble: { transition: 6 } };
+  // Options for a mode instance: the viewer's defaults (none today), then the host's
+  // modeOptions. Tumble's refit turns onto the new tour over its own
+  // refitTransition ("auto": sized to the turn); mode entry keeps the mode's 1.5 s.
+  var MODE_DEFAULTS = {};
   function modeOptionsFor(v, id) {
     var out = {};
     var k;
@@ -5964,7 +5961,6 @@ ET.viewer = (function () {
       jobs: [prep],
       clock: 0,
       wiresVersion: -1,
-      held: false, // the first frame of a new instance is drawn before any heavy work
       refit: null,
       readyAt: null,
       lastFocusTo: -1,
@@ -6029,6 +6025,18 @@ ET.viewer = (function () {
 
   function update(v, data) {
     if (v.destroyed) return { ok: false, code: "destroyed", message: "This viewer has been destroyed." };
+    var began = now(v);
+    try {
+      return applyUpdate(v, data);
+    } finally {
+      // A long update (a large upload) is the viewer's own work too: the next frame
+      // counts the gap as lost time, as after a long frame.
+      // Anything over about one frame (20 ms) would show as a skipped step.
+      if (now(v) - began > 20) v.lostTime = true;
+    }
+  }
+
+  function applyUpdate(v, data) {
     var res;
     try {
       res = ET.contract.validate(data, v.set);
@@ -6260,7 +6268,6 @@ ET.viewer = (function () {
       if (r && r.work && typeof r.work.step === "function") m.jobs.push(r.work);
       if (r && r.restart) {
         m.clock = 0;
-        m.held = false;
         m.readyAt = null;
       }
     } else startMode(v, v.modeId, null);
@@ -6386,8 +6393,13 @@ ET.viewer = (function () {
     var dt = v.prev === null ? 1 / 60 : clamp((t - v.prev) / 1000, 0.001, 0.05);
     // After a long frame of the viewer's own work (a fit), count the gap as lost time,
     // not motion, so the picture does not leap ahead by a whole clamped step.
-    if (v.lastSpent > 50) dt = 1 / 60;
-    v.prev = t;
+    // The rAF timestamp of a delayed frame is the vsync time from before the delay;
+    // measure the next frame from when this one actually ran, or it would leap instead.
+    if (v.lastSpent > 50 || v.lostTime) {
+      v.lostTime = false;
+      dt = 1 / 60;
+      v.prev = Math.max(t, start);
+    } else v.prev = t;
     v.dirty = false;
     try {
       step(v, dt, start);
@@ -6413,8 +6425,12 @@ ET.viewer = (function () {
     if (!v.broken && needsMore(v)) schedule(v);
   }
 
+  // Preparation and refit work run in small units (a few milliseconds each) inside a
+  // per-frame budget: prepareBudgetMs (8), halved after a frame that ran long, so the
+  // page keeps its frame rate while a mode prepares or refits.
   function pump(v, m, start) {
     var budget = Math.max(1, Number(v.options.prepareBudgetMs) || 8);
+    if (v.lastSpent > 16) budget = Math.max(1, budget / 2);
     while (m.jobs.length) {
       var job = m.jobs[0];
       var left = budget - (now(v) - start);
@@ -6468,8 +6484,7 @@ ET.viewer = (function () {
       clearLabels(v, 0);
       return;
     }
-    if (m.held) pump(v, m, start);
-    else m.held = true; // first frame for this instance: draw the hold state, work next frame
+    pump(v, m, start);
     var ready = m.inst.isReady();
     if (ready && m.readyAt === null) {
       m.readyAt = now(v);
@@ -7202,6 +7217,7 @@ ET.viewer = (function () {
         lastRefit: null,
       },
       lastSpent: 0,
+      lostTime: false,
       paintKey: null,
     };
     v.timing.mountAt = now(v);

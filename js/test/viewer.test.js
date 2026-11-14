@@ -509,21 +509,18 @@ test("same data, seed and elapsed time give the same frame", () => {
 
 // ---------- the rest of the brief ----------
 
-test("heavy preparation waits until after the first painted frame", () => {
+test("while a mode prepares the status says so and the clock waits for ready", () => {
   const { dom, h, v } = setup();
-  h.update(makeSet({ n: 200, d: 32 }));
-  let steps = 0;
-  const job = v.mode.jobs[0];
-  const orig = job.step;
-  job.step = function () {
-    steps++;
-    return orig.apply(this, arguments);
-  };
+  h.update(makeSet({ n: 2000, d: 64 }));
   dom.flush();
-  assert.strictEqual(steps, 0, "the first frame only paints the preparing state");
+  assert.ok(!h.info().ready, "Tumble prepares over several frames");
   assert.match(v.status.textContent, /finding the strongest directions/);
-  dom.flush();
-  assert.ok(steps > 0);
+  assert.strictEqual(h.time(), 0, "no motion before ready");
+  let n = 0;
+  while (!h.info().ready && n++ < 500) dom.flush();
+  assert.ok(h.info().ready);
+  dom.frames(3);
+  assert.ok(h.time() > 0);
   h.destroy();
 });
 
@@ -948,5 +945,22 @@ test("after a long frame of the viewer's own work the next frame does not leap a
   v.lastSpent = 300;
   dom.flush(400);
   assert.ok(h.time() - t0 < 0.02, "advanced by one normal frame, not 50 ms: " + (h.time() - t0));
+  h.destroy();
+});
+
+test("after a long update() call the next frame does not leap ahead either", () => {
+  const { dom, h, v } = setup();
+  h.update(makeSet({ n: 40, d: 16 }));
+  dom.frames(30);
+  const t0 = h.time();
+  const orig = v.renderer.appendData;
+  v.renderer.appendData = function () {
+    dom.advance(120); // the upload takes 120 ms of the host's time
+    return orig.apply(this, arguments);
+  };
+  h.update(makeSet({ n: 5, d: 16, op: "append", idPrefix: "u" }));
+  v.renderer.appendData = orig;
+  dom.flush(10);
+  assert.ok(h.time() - t0 < 0.02, "one normal frame, not a clamped 50 ms: " + (h.time() - t0));
   h.destroy();
 });

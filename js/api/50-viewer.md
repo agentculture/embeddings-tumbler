@@ -68,10 +68,10 @@ All optional.
 | `title` | `""` | A title drawn over the stage in the masthead (text, never markup). Empty: no title line. |
 | `provenanceOpen` | `true` | The provenance block is a `<details>`; `false` starts it collapsed (its summary line still names source, model, dimension, items, seed, synthetic and the shadow sentence). The block cannot be removed. |
 | `lightStyle` | `null` | How the picture is drawn when the background is light: `"panel"`, `"ink"` or `"soft"` (see "Light backgrounds"). `null`: the `--tumbler-light-style` property, else `"panel"`. |
-| `modeOptions` | `null` | Per-mode options passed to `ET.modes.create`, for example `{ tumble: { transition: 3 } }`. The viewer's own default is `{ tumble: { transition: 6 } }` (see "Appends"). |
+| `modeOptions` | `null` | Per-mode options passed to `ET.modes.create`, for example `{ tumble: { refitTransition: 6 } }` (see `js/api/40-modes.md`). The viewer adds none of its own. |
 | `maxPixelRatio` | `2` | Cap on `devicePixelRatio` for the drawing buffer (the reference's). |
 | `preserveDrawingBuffer` | `false` | Keep the WebGL drawing buffer so the host (or a test) can read pixels or take a screenshot. Costs some speed. |
-| `prepareBudgetMs` | `8` | Milliseconds of mode preparation per animation frame (see "Heavy work"). |
+| `prepareBudgetMs` | `8` | Milliseconds of mode preparation per animation frame, halved after a frame that ran over 16 ms (see "Heavy work"). |
 | `refitQuietSeconds` | `2` | Tumble refit policy after appends (see "Appends"). `Infinity` never refits. |
 | `refitShare` | `0.01` | Tumble refits only when the points appended since the last fit are at least this share of the set (and at least one). |
 | `onError(result)` | none | Called with every refusal `{ ok: false, code, message }` (the same object `update` returns). |
@@ -191,40 +191,43 @@ Points are added without resetting the camera or dropping points:
   axes, and the share is fresh again. A stream of appends therefore never
   triggers a refit per append. A refit never starts while paused, or while
   hidden or off screen (frames do not run then). It starts after resume.
-- **The refit crossfade is 6 s of mode time** (the viewer creates Tumble with
-  `transition: 6`; the mode's own default is 1.5 s). The crossfade has no step,
-  but while it runs the picture turns faster than in normal running, by an
-  amount that depends on how far the new tour lies from the old. Largest
-  per-frame change of the frame across the refit, against the largest in
-  normal running at the same speed (sample set, Tumble, 3 x 200 points
-  appended):
+- **The refit turn** is Tumble's own `refitTransition` (`"auto"`: sized to how
+  far the new tour lies from the old, between 1.5 s and 12 s of mode time;
+  `describe().refitTransition` gives the latest). The fit itself runs in units
+  of a few milliseconds inside the frame budget, so a refit causes no stall.
+  Mode entry keeps the mode's 1.5 s blend.
+- **After a long piece of the viewer's own work** the next frame advances the
+  clock by one normal frame (1/60 s), not by the whole gap, so the picture does
+  not leap. This applies after a frame of over 50 ms, and after an `update()`
+  call of over 20 ms (a large upload, such as the renderer doubling its
+  capacity on an append). The delayed frame's rAF timestamp is not used as the
+  reference for the next one.
+- Measured on Chromium with the AMD Radeon 760M GPU, demo page, sample set of
+  12,288 points, Tumble, "append 200 points" pressed three times. The figure is
+  the largest per-frame change of the frame, divided by the largest in 5 s of
+  normal running at the same speed (0.0143 at speed 1, 0.0429 at speed 3):
 
-  | Where | Speed | Transition 1.5 s | Transition 6 s |
-  |-------|-------|------------------|----------------|
-  | node, 12,288 x 384 | 1 | 3.2x (0.0361 vs 0.0114) | 1.32x (0.0151) |
-  | node, 12,288 x 384 | 3 | 3.2x (0.1099 vs 0.0343) | 1.41x (0.0485) |
-  | node, 12,288 x 1024 | 1 / 3 | not measured | 1.10x / 1.13x |
-  | Chromium GPU, demo page, 384-d, seed "1" | 1 | not measured | 2.3x (0.0336 vs 0.0143) |
-  | Chromium GPU, demo page, 384-d, seed "1" | 3 | not measured | 1.6x (0.0690 vs 0.0429) |
+  | Dimension | Speed | Around the appends | During the refit and its turn | Turn length |
+  |-----------|-------|--------------------|-------------------------------|-------------|
+  | 384 | 1 | 1.00 | 1.09 | 4.3 s |
+  | 384 | 3 | 1.00 | 1.11 | 4.5 s |
+  | 1024 | 1 | 1.00 | 1.14 | 7.2 s |
+  | 1024 | 3 | 1.00 | 1.00 | 4.6 s |
 
-  The same `transition` also sets how long Tumble takes to blend in when it is
-  entered from another mode (6 s instead of 1.5 s). Set
-  `modeOptions.tumble.transition` to change both.
-- **After a long frame of the viewer's own work** (more than 50 ms, such as a
-  fit), the next frame advances the clock by one normal frame (1/60 s) instead
-  of a whole clamped 50 ms step, so the picture does not leap after the stall.
+  The refit's work came to 212 ms (384-d) and 543 to 556 ms (1024-d) of
+  main-thread time in all, with the longest step 8.8 to 10.3 ms. No long task,
+  and the largest frame gap was 16.8 ms across the refit window.
 - Labels: new labelled points join the label sample while it has room (300).
 - Provenance: the base set's provenance is kept; the item count updates.
   `text_included` is true if either side says so.
 
 Measured (Chromium, AMD Radeon 760M, 10,000 x 1024-d sample set, Tumble): one
-append of 100 points takes 20 to 29 ms on the main thread (93 ms for the first,
-which doubles the renderer's capacity and re-uploads the point texture). Of
-that, 0.8 ms is the viewer and renderer; the rest is the contract loader's
-validation, which returns a fresh set with a copy of **all** vectors
-(`O(N * D)`, 41 MB here) on every append. The later Tumble refit is one
-indivisible stall of 888 ms at 10,500 x 1024-d (about 200 ms at 12,888 x 384,
-500 to 900 ms at 12,888 x 1024; see `info().timing.lastRefit`).
+append of 100 points takes 2.2 to 5.9 ms on the main thread. The first takes
+99 ms, because it doubles the renderer's capacity and re-uploads the point
+texture. On "append 200 points" onto 12,288 points: 44 to 46 ms for the first
+(384-d) and 114 to 119 ms (1024-d), then 2 to 8 ms each. The later refit
+(522 ms of work at 10,500 x 1024) produced no long task; its longest step was
+9.6 ms.
 
 ## Time, seed and reproducing a view
 
@@ -256,23 +259,32 @@ indivisible stall of 888 ms at 10,500 x 1024-d (about 200 ms at 12,888 x 384,
 
 ## Heavy work
 
-Mode preparation (`prepare()` steppers, Lattice's neighbour search, Tumble's
-refit) is pumped with a budget of `prepareBudgetMs` per frame, and never in the
-first frame after a mode instance starts: that frame paints the mode's
-"preparing" status first (for Tumble, `finding the strongest directions in
-1,024-d … 0%`). `aria-busy` is set on the root while preparing. Tumble's
-principal-direction fit is one indivisible unit (`js/api/40-modes.md`), so it
-still blocks the main thread once.
+Mode preparation (`prepare()` steppers, Lattice's neighbour search, Tumble's fit
+and refit, Wander's first stop) runs in units of a few milliseconds. The viewer
+pumps it every frame within a budget of `prepareBudgetMs` (8 ms), halved after a
+frame that ran over 16 ms. Until the mode is ready the picture holds still and
+the status shows the mode's preparing line (for Tumble, `finding the strongest
+directions in 1,024-d … 40%`). `aria-busy` is set on the root while preparing.
+The clock starts when the mode reports ready.
 
-Measured on the development machine, built-in sample set, 12,288 points:
+Measured on Chromium with the AMD Radeon 760M GPU, the demo page with one
+viewer, the built-in sample set of 12,288 points, two runs each:
 
 | | 384-d | 1024-d |
 |--|-------|--------|
-| Longest main-thread task while loading (Tumble's fit) | 202 to 215 ms | 512 to 548 ms |
-| `update()` call (validation, colours, upload) | 52 to 56 ms | 117 to 121 ms |
-| Time to first frame (from `mount`) | 91 to 93 ms | 152 to 162 ms |
-| Time to first moving frame (Tumble ready) | 334 to 336 ms | 718 to 782 ms |
+| Most script time in one viewer frame while loading | 11.8 to 13.0 ms | 13.2 to 15.0 ms |
+| Longest frame gap while loading | 100 to 150 ms | 317 to 350 ms |
+| Longest main-thread task while loading | 147 to 167 ms | 308 to 338 ms |
+| `update()` call (validation, colours, upload) | 52 to 54 ms | 116 to 122 ms |
+| Time to first frame (from `mount`) | 83 to 104 ms | 146 to 158 ms |
+| Time to first moving frame (Tumble ready) | 536 to 563 ms | 1,263 to 1,282 ms |
 | JS heap after load (one viewer, sample pool included) | 90 to 93 MB | 231 to 284 MB |
+
+The longest task while loading, and the frame gap it causes, is not frame work.
+It is the demo page's own script: generating 14,288 sample points, then the
+`update()` call (the loader's validation, the colours and the GPU upload).
+Every frame after that stays within about 15 ms of script. The heap figures are
+from before the performance pass and were not re-measured.
 
 ## DOM structure
 
@@ -497,4 +509,4 @@ sample set of 12,288 points, 5 s per mode after 1.5 s to settle:
 | SwiftShader (software) | 384 | 34.0 | 29.6 | 28.0 |
 | SwiftShader (software) | 1024 | 26.2 | 21.8 | 23.8 |
 
-On the GPU the display's 60 fps cap is reached, so the headroom is not measured.
+On the GPU the display's 60 fps cap is reached, so the headroom is not measured. This table was measured before the performance pass and has not been re-measured since; the GPU still held 60 fps in every run of the measurements above.
