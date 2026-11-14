@@ -351,7 +351,7 @@ the trails and the colours alone.
 | `--tumbler-foreground` | `#e9eef6` | `#1b2130` | text, labels |
 | `--tumbler-muted` | `#8a96ab` | `#5b6578` | secondary text |
 | `--tumbler-line` | `#1b2436` | `#d6dae2` | rules and button borders |
-| `--tumbler-accent` | `#ffc56b` | `#a35f00` | status line, selected mode, readout cells, checkboxes |
+| `--tumbler-accent` | `#ffc56b` | `#a35f00` | status line, selected mode, checkboxes |
 | `--tumbler-ungrouped` | `#8cadff` | `#8cadff` | points with no group |
 | `--tumbler-group-1` .. `--tumbler-group-24` | the reference's hues `hsl(h 90% 62%)` for h = 28, 52, 96, 140, 170, 198, 226, 266, 328, 4, 298, then golden-angle steps | same | group colours, in order of first appearance in the data |
 | `--tumbler-font` | `system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif` | same | body text |
@@ -456,15 +456,43 @@ a shadow of the space", so the facts stay visible when the block is collapsed.
 
 One cell per dimension of the data (a canvas `D` pixels wide, stretched to the
 panel width with `image-rendering: pixelated`, so 2,560 cells cost no DOM
-nodes). Cell `d` shows how much dimension `d` contributes to the three axes on
-screen relative to an even share: `e = (f0[d]^2 + f1[d]^2 + f2[d]^2) * D / 3`
-(the reference's formula). Opacity is `min(1, e * 80 / 255)` and the colour is
-the accent, its green channel lowered by `min(60, 12 e)` (exactly the
-reference's colours with the default accent). The caption names dimension 1
-and dimension D. At large D several cells share a screen pixel and the browser
-resamples them. Sizes are the reference's: 22 px of cells (`box-sizing:
-content-box`, so a host's border-box reset does not shrink it) between a 1 px
-line above and below in `--tumbler-line`, and the caption 6 px beneath.
+nodes). Cell `d` is drawn from its squared components on the three screen axes,
+`ax = f0[d]^2` (horizontal), `ay = f1[d]^2` (vertical) and `az = f2[d]^2`
+(depth), where `f0`, `f1`, `f2` are the three rows of the frame.
+
+- **Opacity** is the reference's contribution formula, unchanged:
+  `e = (ax + ay + az) * D / 3`, and the cell's alpha is `min(255, 80 e)`, that
+  is, opacity `min(1, e * 80 / 255)`.
+- **Colour** mixes three fixed colours by each axis's share of the cell:
+  `(H * ax + V * ay + Dp * az) / (ax + ay + az)`, channel by channel (a cell
+  with no share at all gets black, and is fully clear anyway). A dimension that
+  feeds only one axis shows that axis's colour exactly; one fed equally by all
+  three shows their even mix.
+
+| Axis | Dark stage | Light stage |
+|------|------------|-------------|
+| horizontal | `rgb(255, 150, 60)` | `rgb(176, 84, 0)` |
+| vertical | `rgb(80, 220, 160)` | `rgb(0, 128, 82)` |
+| depth | `rgb(130, 140, 255)` | `rgb(72, 82, 214)` |
+
+The three colours are fixed: they are not themable, and there are no custom
+properties for them (the strip no longer uses `--tumbler-accent`). The stage
+counts as light by the rule that already picks the soft-ink treatment (the
+resolved `--tumbler-background` is light). The light set is the dark set
+darkened so cells and legend words keep a contrast of at least 4.5 to 1 on the
+default light panel (`#f6f4ee`) and on white; the dark set has at least 6.9 to
+1 on `#04060b`. The strip is drawn with transparency over the panel, so a
+host's own panel colours are the host's to check.
+
+The caption sits below the strip: "dimension 1" on the left, "how much each of the
+D dimensions contributes to the view right now · colour: horizontal vertical
+depth" in the middle, and "dimension D" on the right. The three axis words are
+the legend; each is `<b class="tumbler-axis-horizontal">` (and `-vertical`,
+`-depth`) coloured in its axis colour. At large D several cells share a screen
+pixel and the browser resamples them. Sizes are the reference's: 22 px of cells
+(`box-sizing: content-box`, so a host's border-box reset does not shrink it)
+between a 1 px line above and below in `--tumbler-line`, and the caption 6 px
+beneath. The GL frame is not affected.
 
 ## Labels
 

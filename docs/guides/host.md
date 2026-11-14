@@ -553,7 +553,7 @@ element it is mounted in, or any ancestor. It reads them at mount, on every
 | `--tumbler-foreground` | `#e9eef6` | `#1b2130` | text, labels |
 | `--tumbler-muted` | `#8a96ab` | `#5b6578` | secondary text |
 | `--tumbler-line` | `#1b2436` | `#d6dae2` | rules and button borders |
-| `--tumbler-accent` | `#ffc56b` | `#a35f00` | status line, selected mode, readout cells, checkboxes |
+| `--tumbler-accent` | `#ffc56b` | `#a35f00` | status line, selected mode, checkboxes |
 | `--tumbler-ungrouped` | `#8cadff` | `#8cadff` | points with no group |
 | `--tumbler-group-1` to `--tumbler-group-24` | hues `hsl(h 90% 62%)` | same | group colours, in order of first appearance in the data |
 | `--tumbler-font` | system UI sans-serif | same | body text |

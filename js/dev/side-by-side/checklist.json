@@ -158,6 +158,10 @@
     {
      "title": "One cell per dimension of the data",
      "visible": "no"
+    },
+    {
+     "title": "The strip's cells are coloured by screen axis",
+     "visible": "yes"
     }
    ]
   },
