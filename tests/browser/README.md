@@ -160,12 +160,13 @@ that each harness check **fails** on them:
 
 ## Known defect, marked as an expected failure
 
-- **D1**, `test_tumble_finishes_preparing_under_reduced_motion_without_input`:
-  with `prefers-reduced-motion: reduce` the viewer goes idle before Tumble has
-  finished fitting its directions, so the status stays at "finding the
-  strongest directions ... N% · paused" until input, a resize, a theme change
-  or new data wakes it. The append test works around it with the public
-  `handle.refreshTheme()`.
+- **D1 (fixed)**, `test_tumble_finishes_preparing_under_reduced_motion_without_input`:
+  with `prefers-reduced-motion: reduce` the viewer used to go idle before Tumble
+  had finished fitting its directions, leaving the status at "finding the
+  strongest directions ... N% · paused" until input woke it. The viewer now
+  keeps taking frames until the mode is ready and shows the mode's own status
+  on the frame it becomes ready. The test is a normal test now; the append
+  test's `handle.refreshTheme()` call is kept as a harmless nudge.
 
 ## Not covered
 

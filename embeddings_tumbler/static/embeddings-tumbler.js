@@ -6467,6 +6467,9 @@ ET.viewer = (function () {
     var m = v.mode;
     if (!m || !v.set || v.set.count === 0) return false;
     if (m.jobs.length || m.refit) return true;
+    // A mode that is still preparing needs frames until it is ready, even when the
+    // view is paused or motion is reduced: otherwise it would wait for input forever.
+    if (!readyOf(m)) return true;
     if (v.running) return true;
     if (v.drag.active || v.pinch) return true;
     // Paused: keep twinkling (the reference does) unless motion is reduced.
@@ -6522,6 +6525,9 @@ ET.viewer = (function () {
   function pump(v, m, start) {
     var budget = Math.max(1, Number(v.options.prepareBudgetMs) || 8);
     if (v.lastSpent > 16) budget = Math.max(1, budget / 2);
+    // A paused view has no motion to keep smooth, so it may spend longer per frame on
+    // getting ready (it still answers input every frame).
+    if (!v.running) budget = Math.max(budget, 40);
     while (m.jobs.length) {
       var job = m.jobs[0];
       var left = budget - (now(v) - start);
@@ -6579,6 +6585,9 @@ ET.viewer = (function () {
     var ready = m.inst.isReady();
     if (ready && m.readyAt === null) {
       m.readyAt = now(v);
+      // Show the mode's own status on this very frame: under reduced motion the loop
+      // may stop right after it, and the "finding ..." line must not be left behind.
+      v.statusClock = STATUS_EVERY;
       if (v.timing.firstReadyMs === null) v.timing.firstReadyMs = m.readyAt - v.timing.mountAt;
     }
     var moving = ready && v.running;

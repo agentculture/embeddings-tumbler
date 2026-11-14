@@ -71,7 +71,7 @@ All optional.
 | `modeOptions` | `null` | Per-mode options passed to `ET.modes.create`, for example `{ tumble: { refitTransition: 6 } }` (see `js/api/40-modes.md`). The viewer adds none of its own. |
 | `maxPixelRatio` | `2` | Cap on `devicePixelRatio` for the drawing buffer (the reference's). |
 | `preserveDrawingBuffer` | `false` | Keep the WebGL drawing buffer so the host (or a test) can read pixels or take a screenshot. Costs some speed. |
-| `prepareBudgetMs` | `8` | Milliseconds of mode preparation per animation frame, halved after a frame that ran over 16 ms (see "Heavy work"). |
+| `prepareBudgetMs` | `8` | Milliseconds of mode preparation per animation frame, halved after a frame that ran over 16 ms (see "Heavy work"). While the view is paused the budget is at least 40 ms, and frames keep running until the mode is ready even when paused or under reduced motion. |
 | `refitQuietSeconds` | `2` | Tumble refit policy after appends (see "Appends"). `Infinity` never refits. |
 | `refitShare` | `0.01` | Tumble refits only when the points appended since the last fit are at least this share of the set (and at least one). |
 | `onError(result)` | none | Called with every refusal `{ ok: false, code, message }` (the same object `update` returns). |

@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T03:26:23Z",
+  "updated": "2026-11-14T03:52:29Z",
   "claims": [
     {
       "id": "c1",
@@ -1145,6 +1145,29 @@
       "refs": [
         "t17",
         "t11"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l22",
+      "code": "assumption-for-measurement",
+      "what": "t14: no workflow has run on a GitHub runner and the Chromium install step was never executed; wall times were measured on a heavily loaded machine; the older seven browser test files were not run in GPU mode; the cause of a slight brightness shift of the existing cloud after an append was not investigated; no negative control provokes a favicon or service-worker request. The harness found a real defect: under prefers-reduced-motion the viewer stopped taking frames before Tumble finished preparing. Main agent fixed it (frames continue until the mode is ready; status refreshed on the ready frame; a paused view gets a 40 ms preparation budget) and removed the expected-failure marker: the test passed 6 of 6 alone and the full parallel suite passes (550 passed).",
+      "skipped_check": "a real CI run of browser.yml; GPU-mode run of the older browser tests",
+      "refs": [
+        "t14",
+        "t8"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l23",
+      "code": "assumption-for-measurement",
+      "what": "t13 fixes: some new workflow and release-state tests were made to pass without a recorded failing run (mutation-tested afterwards); the release-state script assumes npm 11 keeps npm 9's JSON error format (it fails closed if not); passing built file paths between workflow steps was simulated locally only. After merging t13 and t14 together one workflow test failed because the browser workflow lacked the shell default the packaging tests require; main agent added it.",
+      "skipped_check": "a real CI run; npm 11 output format",
+      "refs": [
+        "t13"
       ],
       "origin": "llm",
       "status": "proposed"

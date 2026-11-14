@@ -11,6 +11,10 @@ on:
   push:
     branches: [main]
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   browser:
     name: browser (Chromium, SwiftShader software rendering)

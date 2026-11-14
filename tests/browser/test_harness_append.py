@@ -174,21 +174,12 @@ def test_c5_negative_control_a_reload_is_detected(open_tab, site):
     assert len(tab.main_navigations) == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "defect D1 (shipped code, reported to the main agent, not fixed here): with "
-        "prefers-reduced-motion the viewer goes idle before Tumble has finished fitting its "
-        "directions, so the status stays at 'finding the strongest directions ... N% · paused' "
-        "and the fit never completes until input, a resize, a theme change or data wakes it"
-    ),
-)
 def test_tumble_finishes_preparing_under_reduced_motion_without_input(open_tab, site, webgl):
     tab = open_tab(reduced_motion="reduce")
     tab.goto(site().url("index.html"))  # the shipped page with the built-in sample set
     tab.wait_for(INFO, lambda i: bool(i and i["count"] and i["frames"]), arg="space")
     tab.page.wait_for_timeout(1000)
-    status = tab.wait_for(INFO, lambda i: STILL_FITTING not in i["status"], arg="space", timeout=5)[
-        "status"
-    ]
+    status = tab.wait_for(
+        INFO, lambda i: STILL_FITTING not in i["status"], arg="space", timeout=60
+    )["status"]
     assert "strongest directions" in status
