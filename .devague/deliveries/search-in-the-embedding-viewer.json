@@ -2,7 +2,7 @@
   "plan_slug": "search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-14T16:05:41Z",
-  "updated": "2026-11-14T17:23:30Z",
+  "updated": "2026-11-14T17:31:33Z",
   "deviations": [
     {
       "id": "d1",
@@ -33,6 +33,20 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "While a mode prepares (at start and on entering a view) the cloud keeps its slow turn and the status line shows progress; the picture no longer stands still until the mode is ready. This changes how the released viewer starts with no search.",
+      "task_ref": "t8",
+      "reason": "On the owner's phone the still picture during preparation read as frozen ('possibly it takes time to start. And I can still move it manually'). Asked whether to keep the view turning while it prepares, the owner answered on 2026-11-14: 'Keep the view turning while it prepares, yes'.",
+      "affects": [
+        "t6",
+        "c7"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
     }
   ],
   "evidence": [],
