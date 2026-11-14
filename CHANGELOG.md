@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-11-14
+
+### Added
+
+- The delivery summary for the viewer build: `docs/deliveries/2026-11-13-embeddable-space-viewer.md`.
+
+### Changed
+
+- `docs/release.md` and `CLAUDE.md` record that trusted publishing works (0.11.4 was published from CI with no token) and what went wrong on the first attempt.
+
 ## [0.11.4] - 2026-11-14
 
 ### Changed

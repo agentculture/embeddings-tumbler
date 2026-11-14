@@ -43,9 +43,11 @@ harness (`tests/browser/`); the host and producer guides (`docs/guides/`).
 `js/README.md` is the module convention and `js/api/` documents each module's
 interface.
 
-Version 0.11.2 is on npm and PyPI (2026-11-14); the npm copy was the one-time
-manual first publish. Not done yet: the trusted publisher on npmjs.com, without
-which CI cannot publish the next npm version (`docs/release.md`). Only Chromium has been tested automatically. Search
+Released on npm and PyPI since 2026-11-14: 0.11.2 was the one-time manual first
+npm publish, and from 0.11.4 on CI publishes both by trusted publishing with no
+token (`docs/release.md`). What the build delivered, measured against the plan,
+is in `docs/deliveries/2026-11-13-embeddable-space-viewer.md`. Not done yet:
+only Chromium has been tested automatically. Search
 (type text, or several texts, and see what links to each) is specced but not
 built `(planned)`: `docs/specs/2026-11-14-search-in-the-embedding-viewer.md`,
 its obligations in the file of the same name ending `-obligations.md`, and two
