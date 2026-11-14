@@ -245,3 +245,6 @@ js-coverage*.lcov
 
 # devague working state (not committed by default)
 .devague/reviews/
+
+# Agent worktrees made by Claude Code: never part of the repository or of a source distribution.
+.claude/worktrees/
