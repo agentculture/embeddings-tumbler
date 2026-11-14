@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T21:05:07Z",
+  "updated": "2026-11-14T22:34:38Z",
   "claims": [
     {
       "id": "c1",
@@ -1126,6 +1126,17 @@
       "skipped_check": "",
       "refs": [
         "docs/evidence/2026-11-14-real-search-proof.md"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l19",
+      "code": "assumption-for-measurement",
+      "what": "The slow-script fix was measured in Chromium with its compiler off standing in for the phone, one run per setting on a shared machine; nothing ran on WebKit or the phone. That the phone runs JavaScript without a compiler is inferred from its readings, not checked. The zoom now differs from the previous release by up to 3.9e-9 relative and label positions by under 0.01 px.",
+      "skipped_check": "a reading on the owner's phone after the fix",
+      "refs": [
+        "js/api/50-viewer.md, A device that runs JavaScript slowly"
       ],
       "origin": "llm",
       "status": "proposed"
