@@ -4315,13 +4315,23 @@ ET.viewer = (function () {
     try {
       fn(arg);
     } catch (err) {
-      // A host callback's own error is the host's: report it on its own stack, not ours.
-      var w = v.win;
-      if (w && typeof w.setTimeout === "function") {
-        w.setTimeout(function () {
-          throw err;
-        }, 0);
-      }
+      reportHostError(v, err);
+    }
+  }
+
+  // A host callback's own error is the host's: rethrow it on a later task, outside the
+  // viewer's stack, so the host's error handling sees it and the viewer keeps running.
+  // Without setTimeout, a microtask; without that, console.error. Never dropped.
+  function reportHostError(v, err) {
+    var w = v.win || {};
+    var rethrow = function () {
+      throw err;
+    };
+    if (typeof w.setTimeout === "function") w.setTimeout(rethrow, 0);
+    else if (typeof w.queueMicrotask === "function") w.queueMicrotask(rethrow);
+    else {
+      var c = w.console || (typeof console !== "undefined" ? console : null);
+      if (c && typeof c.error === "function") c.error("embeddings-tumbler: a host callback threw", err);
     }
   }
 
@@ -5184,10 +5194,20 @@ ET.viewer = (function () {
   }
 
   // Start mode `id` on the current set. Returns true, or false after showing why not.
+  function errorText(err, fallback) {
+    return err && err.message ? String(err.message) : fallback;
+  }
+
+  // Start mode `id` on the current set. Returns true, or false after showing why not
+  // (v.modeError holds the message). Every call into the mode is guarded: a mode is
+  // pluggable host code and may throw. The previous instance is left only once the
+  // new one has entered and prepared.
   function startMode(v, id, from) {
     var def = ET.modes.get(id);
+    v.modeError = null;
     if (!def) {
-      notify(v, 'There is no view called "' + String(id) + '".');
+      v.modeError = 'There is no view called "' + String(id) + '".';
+      notify(v, v.modeError);
       return false;
     }
     if (!v.set) {
@@ -5195,26 +5215,25 @@ ET.viewer = (function () {
       paintModeButtons(v);
       return true;
     }
-    var inst;
+    var inst = null;
+    var prep;
     try {
       inst = ET.modes.create(id, modeOptionsFor(v, id));
       inst.enter(v.set, { seed: v.seed, from: from || null });
+      prep = inst.prepare();
+      if (!prep || typeof prep.step !== "function") throw new TypeError(def.title + ": prepare() returned no stepper");
     } catch (err) {
-      notify(v, err && err.message ? err.message : "This view cannot show the data.");
+      v.modeError = errorText(err, "This view cannot show the data.");
+      notify(v, v.modeError);
+      leaveSafely(inst);
       return false;
     }
-    if (v.mode) {
-      try {
-        v.mode.inst.leave();
-      } catch (err) {
-        // a mode's leave() has nothing the viewer needs
-      }
-    }
+    if (v.mode) leaveSafely(v.mode.inst);
     v.mode = {
       id: id,
       title: def.title,
       inst: inst,
-      jobs: [inst.prepare()],
+      jobs: [prep],
       clock: 0,
       wiresVersion: -1,
       held: false, // the first frame of a new instance is drawn before any heavy work
@@ -5231,6 +5250,33 @@ ET.viewer = (function () {
     return true;
   }
 
+  function leaveSafely(inst) {
+    if (!inst) return;
+    try {
+      inst.leave();
+    } catch (err) {
+      // a mode's leave() has nothing the viewer needs
+    }
+  }
+
+  function readyOf(m) {
+    try {
+      return !!(m && m.inst.isReady());
+    } catch (err) {
+      return false;
+    }
+  }
+
+  // A frame threw: the loop stops and a notice says so; a replace or a mode switch
+  // that succeeds starts it again.
+  function recover(v) {
+    if (!v.broken) return;
+    v.broken = false;
+    if (v.noticeMessage && v.noticeMessage.indexOf("The viewer stopped") === 0) clearNotice(v);
+    v.prev = null;
+    invalidate(v);
+  }
+
   function setMode(v, id) {
     if (v.destroyed) return false;
     if (typeof id !== "string") return false;
@@ -5244,6 +5290,7 @@ ET.viewer = (function () {
     }
     var ok = startMode(v, id, copyState(v.last));
     if (ok) {
+      recover(v);
       call(v, v.options.onModeChange, id);
       invalidate(v);
     }
@@ -5258,21 +5305,16 @@ ET.viewer = (function () {
     try {
       res = ET.contract.validate(data, v.set);
     } catch (err) {
-      res = { ok: false, code: "invalid-field", message: 'Field "(unreadable data)" is missing or not valid.' };
+      // The loader never throws for bad data (a hostile getter is its own
+      // invalid-field refusal), so anything caught here is a fault, not the data's.
+      res = { ok: false, code: "internal", message: "Internal error while checking the data: " + errorText(err, String(err)) };
     }
     // Re-read the host's theme on every update (no polling).
     v.theme = readTheme(v);
     applyTheme(v);
     if (v.set && paintKey(v) !== v.paintKey) recolour(v);
     if (!res || !res.ok) {
-      var refusal = { ok: false, code: res ? res.code : "invalid-field", message: res ? res.message : "Data refused." };
-      // With a view showing (or a graphics message up), the refusal is a notice and
-      // the view keeps running unchanged; with nothing to show it fills the stage.
-      if (v.set || v.fatalKind === "gpu") notify(v, refusal.message);
-      else fatal(v, refusal.message, "data");
-      call(v, v.options.onError, refusal);
-      invalidate(v);
-      return refusal;
+      return refuse(v, { ok: false, code: res ? res.code : "internal", message: res ? res.message : "Data refused." });
     }
     var op = "replace";
     try {
@@ -5280,55 +5322,156 @@ ET.viewer = (function () {
     } catch (err) {
       op = "replace";
     }
-    clearNotice(v);
-    if (v.fatalKind === "data") clearFatal(v);
-    var out = op === "append" ? applyAppend(v, res.set) : applyReplace(v, res.set);
-    if (out.ok) {
-      if (v.fatalKind === "gpu" && v.rendering) clearFatal(v);
-    } else {
-      call(v, v.options.onError, out);
+    clearNotice(v); // an older notice; a fallback view or a refusal sets its own
+    var out;
+    try {
+      out = op === "append" ? applyAppend(v, res.set) : applyReplace(v, res.set);
+    } catch (err) {
+      // Nothing in the application path should throw; if it does, it is reported, the
+      // loop is left to the frame guard, and the host gets a result.
+      out = { ok: false, code: "internal", message: "Internal error while showing the data: " + errorText(err, String(err)) };
     }
+    if (!out.ok) {
+      if (!out.accepted) return refuse(v, out);
+      clearNotice(v);
+      call(v, v.options.onError, strip(out));
+      invalidate(v);
+      return strip(out);
+    }
+    if (v.fatalKind === "data") clearFatal(v);
+    if (v.fatalKind === "gpu" && v.rendering) clearFatal(v);
+    if (op === "replace") recover(v);
     invalidate(v);
     return out;
   }
 
+  function strip(r) {
+    return { ok: false, code: r.code, message: r.message };
+  }
+
+  // A refusal: nothing changed. Shown inside the element, passed to onError, returned.
+  function refuse(v, r) {
+    var refusal = strip(r);
+    // With a view showing (or a graphics message up), the refusal is a notice and the
+    // view keeps running unchanged; with nothing to show it fills the stage.
+    if (v.set || v.fatalKind === "gpu") notify(v, refusal.message);
+    else fatal(v, refusal.message, "data");
+    call(v, v.options.onError, refusal);
+    invalidate(v);
+    return refusal;
+  }
+
+  // What a failed update restores.
+  function snapshot(v) {
+    var gi = {};
+    for (var k in v.groupIndex) if (Object.prototype.hasOwnProperty.call(v.groupIndex, k)) gi[k] = v.groupIndex[k];
+    return {
+      set: v.set,
+      groupIndex: gi,
+      groupNames: v.groupNames.slice(),
+      labelledCount: v.labelledCount,
+      labelSample: v.labelSample.slice(),
+      last: v.last,
+      spin: v.spin,
+      drag: v.drag,
+      sinceAppend: v.sinceAppend,
+    };
+  }
+
+  function restore(v, snap) {
+    v.set = snap.set;
+    v.groupIndex = snap.groupIndex;
+    v.groupNames = snap.groupNames;
+    v.labelledCount = snap.labelledCount;
+    v.labelSample = snap.labelSample;
+    v.last = snap.last;
+    v.spin = snap.spin;
+    v.drag = snap.drag;
+    v.sinceAppend = snap.sinceAppend;
+    restoreRenderer(v);
+    sizeStrip(v);
+    describeSet(v);
+    renderProvenance(v);
+  }
+
+  // Put the renderer's copy back to the set the view holds (after a failed upload or
+  // a refused update), rebuilding the GPU objects if a failure dropped them.
+  function restoreRenderer(v) {
+    var r = v.renderer;
+    if (!r) return;
+    try {
+      var set = v.set;
+      if (set) {
+        var pc = paint(v, set, 0, set.count);
+        r.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
+      } else {
+        var D = r.status().dimension || 1;
+        r.setData({ vectors: new Float32Array(0), dimension: D });
+      }
+      var st = r.status();
+      if (!st.ok && !st.lost && !st.disposed) {
+        var rb = r.rebuild();
+        if (!rb || !rb.ok) fatal(v, (rb && rb.message) || "The graphics card could not take the data back.");
+      }
+      if (v.mode) v.mode.wiresVersion = -1;
+      v.paintKey = paintKey(v);
+      v.needClear = true;
+    } catch (err) {
+      fatal(v, "The graphics card could not take the data back: " + errorText(err, String(err)));
+    }
+  }
+
+  function gpuThrew(err) {
+    return { ok: false, code: "gpu-failed", message: "The graphics card could not take the data: " + errorText(err, String(err)) };
+  }
+
   function applyReplace(v, set) {
+    var snap = snapshot(v);
     v.groupIndex = {};
     v.groupNames = [];
     v.labelledCount = countLabelled(set, 0, set.count);
     v.labelSample = [];
     extendLabelSample(v, set, 0);
+    var gpu = null;
+    if (v.renderer) {
+      try {
+        var pc = paint(v, set, 0, set.count);
+        gpu = v.renderer.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
+      } catch (err) {
+        restore(v, snap);
+        return gpuThrew(err);
+      }
+    }
     v.set = set;
     v.last = null;
     v.spin = 0;
     v.drag = { active: false, yaw: 0, pitch: 0, x: 0, y: 0 };
     v.needClear = true;
     v.sinceAppend = Infinity;
-    if (v.mode) {
-      try {
-        v.mode.inst.leave();
-      } catch (err) {
-        // nothing to keep
-      }
-      v.mode = null;
+    var oldMode = v.mode;
+    // startMode leaves the old instance only when the new one has started.
+    var started = startMode(v, v.modeId, null);
+    var firstError = v.modeError;
+    if (!started) {
+      // The chosen view cannot show this data (too few dimensions, or a failing
+      // mode): try the others.
+      var ids = ET.modes.ids();
+      for (var i = 0; i < ids.length && !started; i++) if (ids[i] !== v.modeId) started = startMode(v, ids[i], null);
     }
-    var gpu = null;
-    if (v.renderer) {
-      var pc = paint(v, set, 0, set.count);
-      gpu = v.renderer.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
+    if (!started) {
+      v.mode = oldMode;
+      restore(v, snap);
+      return { ok: false, code: "mode-failed", message: "No view can show this data: " + (firstError || "every view refused it.") };
     }
+    if (firstError) notify(v, firstError); // shown on top of the fallback view
     v.paintKey = paintKey(v);
     sizeStrip(v);
     describeSet(v);
-    if (!startMode(v, v.modeId, null)) {
-      // The chosen view cannot show this data (too few dimensions): try the others.
-      var ids = ET.modes.ids();
-      for (var i = 0; i < ids.length && !v.mode; i++) if (ids[i] !== v.modeId) startMode(v, ids[i], null);
-    }
     renderProvenance(v);
     if (gpu && gpu.ok === false) {
+      // Accepted, but this GPU cannot draw it: the data and provenance stand.
       fatal(v, gpu.message);
-      return { ok: false, code: gpu.reason, message: gpu.message };
+      return { ok: false, accepted: true, code: gpu.reason, message: gpu.message };
     }
     return { ok: true, op: "replace", count: set.count, added: set.count };
   }
@@ -5343,6 +5486,7 @@ ET.viewer = (function () {
       return { ok: true, op: "append", count: set.count, added: 0 };
     }
     var t0 = now(v);
+    var snap = snapshot(v);
     var hadLabelled = v.labelledCount;
     v.labelledCount += countLabelled(set, from, set.count);
     if (hadLabelled === 0 && v.labelledCount > 0) {
@@ -5350,38 +5494,52 @@ ET.viewer = (function () {
       v.labelSample = [];
       extendLabelSample(v, set, 0);
     } else extendLabelSample(v, set, from);
-    var gpu = null;
     if (v.renderer) {
-      var pc = paint(v, set, from, set.count);
-      var D = set.dimension;
+      var gpu;
       try {
+        var pc = paint(v, set, from, set.count); // may add groups: rolled back on failure
+        var D = set.dimension;
         gpu = v.renderer.appendData({
           vectors: set.vectors.subarray(from * D, set.count * D),
           colours: pc.colours,
           weights: pc.weights,
         });
       } catch (err) {
-        gpu = { ok: false, reason: "gpu-failed", message: err && err.message ? err.message : "append failed" };
+        gpu = gpuThrew(err);
+        gpu.reason = "gpu-failed";
+      }
+      if (!gpu || gpu.ok === false) {
+        restore(v, snap);
+        return { ok: false, code: gpu && gpu.reason ? gpu.reason : "gpu-failed", message: gpu && gpu.message ? gpu.message : "append failed" };
       }
     }
     v.set = set;
     if (v.mode) {
-      var r = v.mode.inst.dataChanged(set, { op: "append", added: k, t: v.mode.clock });
-      if (r && r.work) v.mode.jobs.push(r.work);
+      var m = v.mode;
+      var r;
+      try {
+        r = m.inst.dataChanged(set, { op: "append", added: k, t: m.clock });
+      } catch (err) {
+        // The mode is in an unknown state: put the old set back and start the same
+        // view again from the frame last drawn.
+        var msg = m.title + " failed on the new points: " + errorText(err, String(err));
+        restore(v, snap);
+        v.mode = null;
+        leaveSafely(m.inst);
+        if (!startMode(v, m.id, copyState(v.last))) startMode(v, "tumble", copyState(v.last));
+        return { ok: false, code: "mode-failed", message: msg };
+      }
+      if (r && r.work && typeof r.work.step === "function") m.jobs.push(r.work);
       if (r && r.restart) {
-        v.mode.clock = 0;
-        v.mode.held = false;
-        v.mode.readyAt = null;
+        m.clock = 0;
+        m.held = false;
+        m.readyAt = null;
       }
     } else startMode(v, v.modeId, null);
     v.sinceAppend = 0;
     describeSet(v);
     renderProvenance(v);
     v.timing.lastAppendMs = now(v) - t0;
-    if (gpu && gpu.ok === false) {
-      fatal(v, gpu.message);
-      return { ok: false, code: gpu.reason, message: gpu.message };
-    }
     return { ok: true, op: "append", count: set.count, added: k };
   }
 
@@ -5506,8 +5664,10 @@ ET.viewer = (function () {
     try {
       step(v, dt, start);
     } catch (err) {
-      fatal(v, "The viewer stopped: " + (err && err.message ? err.message : String(err)));
+      // The loop stops; the last picture stays with a notice over it. A replace or a
+      // mode switch that succeeds starts it again (recover()).
       v.broken = true;
+      notify(v, "The viewer stopped: " + errorText(err, String(err)) + ". Send new data or switch views to restart it.");
       return;
     }
     var spent = now(v) - start;
@@ -5535,7 +5695,7 @@ ET.viewer = (function () {
       if (job.done) m.jobs.shift();
       else break;
     }
-    if (m.refit && now(v) - start < budget) {
+    if (m.refit && v.running && now(v) - start < budget) {
       var r0 = now(v);
       m.refit.step(Math.max(1, budget - (r0 - start)));
       var took = now(v) - r0;
@@ -5556,6 +5716,9 @@ ET.viewer = (function () {
   // refitQuietSeconds and the points added since the last fit are at least
   // refitShare of the set (and at least one), fit the directions again.
   function considerRefit(v, m) {
+    // Never while paused (frames do not run at all while hidden or off screen): a
+    // paused view must not take the refit's stall; it starts after resume.
+    if (!v.running) return;
     if (m.refit || m.jobs.length || typeof m.inst.refit !== "function") return;
     if (v.sinceAppend < v.options.refitQuietSeconds) return;
     var d = m.inst.describe();
@@ -6352,15 +6515,15 @@ ET.viewer = (function () {
       l[0].removeEventListener(l[1], l[2], l[3]);
     });
     v.listeners = [];
-    if (v.mode) {
+    if (v.mode) leaveSafely(v.mode.inst);
+    v.mode = null;
+    if (v.renderer) {
       try {
-        v.mode.inst.leave();
+        v.renderer.dispose();
       } catch (err) {
-        // nothing to keep
+        // the element goes away regardless
       }
     }
-    v.mode = null;
-    if (v.renderer) v.renderer.dispose();
     v.renderer = null;
     v.rendering = false;
     if (v.root && v.root.parentNode) v.root.parentNode.removeChild(v.root);
@@ -6386,8 +6549,9 @@ ET.viewer = (function () {
       seed: v.seed,
       speed: v.speed,
       zoom: v.userZoom,
-      ready: !!(m && m.inst.isReady()),
-      preparing: !!(m && (!m.inst.isReady() || m.jobs.length || m.refit)),
+      ready: readyOf(m),
+      preparing: !!(m && (!readyOf(m) || m.jobs.length || m.refit)),
+      broken: v.broken,
       count: v.set ? v.set.count : 0,
       dimension: v.set ? v.set.dimension : 0,
       model: v.set ? v.set.model : null,

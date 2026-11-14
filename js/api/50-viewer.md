@@ -78,8 +78,10 @@ All optional.
 | `onModeChange(id)` | none | Called when the mode changes (button, key or `setMode`). |
 | `onPauseChange(paused)` | none | Called when play/pause changes. |
 
-A callback that throws does not break the viewer: its error is rethrown on a
-fresh task (`setTimeout`), so it reaches the host's error handling, not ours.
+A callback that throws does not break the viewer. Its error is rethrown on a
+later task with `setTimeout`, so it reaches the host's error handling, not
+ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
+`console.error`. It is never dropped.
 
 ## The handle
 
@@ -102,7 +104,7 @@ fresh task (`setTimeout`), so it reaches the host's error handling, not ours.
 | `refreshTheme()` | — | Re-read the `--tumbler-*` custom properties (also done on every `update`). The viewer never polls. |
 | `info()` | object | A snapshot for hosts and tests (below). |
 
-`info()` returns `{ mode, paused, suspended, hidden, onScreen, destroyed,
+`info()` returns `{ mode, paused, broken, suspended, hidden, onScreen, destroyed,
 reducedMotion, time, seed, speed, zoom, ready, preparing, count, dimension,
 model, rendering, animating, frames, fps, status, message, timing }`.
 `suspended` is true while the document is hidden or the element is off screen;
@@ -135,10 +137,27 @@ Refusal (nothing changes in the view):
 - `code` is one of the contract's 15 codes (`docs/data-contract.md`,
   "Refusals"), with its plain message, for example `dimension-mismatch`,
   `model-mismatch`, `append-without-base`, `schema-version`.
-- Viewer codes: `not-mounted` (module `update` on an element with no viewer),
-  `destroyed` (after `destroy`). From the GPU, after the data was accepted:
-  `too-many-points`, `dimension-too-large`, `gpu-failed`, `shader-failed`
-  (the renderer's reasons, see `js/api/30-renderer.md`).
+- Viewer codes:
+  - `not-mounted`: module `update` on an element with no viewer.
+  - `destroyed`: after `destroy`.
+  - `mode-failed`: a mode threw (in `create`, `enter`, `prepare` or
+    `dataChanged`), or no mode can show the set. A mode registered with
+    `registerMode` is host code, so the viewer guards every call into it. On a
+    replace, the other modes are tried first; if none starts, the previous view
+    keeps running. On an append, the old set is put back and the same view
+    restarts from the frame last drawn.
+  - `gpu-failed`: the renderer threw or failed while taking the points, for
+    example a shape error. The previous view is restored, with the renderer's
+    copy put back and rebuilt if needed, and the palette as it was.
+  - `internal`: an unexpected error inside the viewer or the loader's
+    validation. It is reported as a fault, never as bad data. A hostile getter
+    in the data stays the contract's own `invalid-field` with
+    `(unreadable data)`.
+- From the GPU, after a replace was accepted: `too-many-points`,
+  `dimension-too-large`, `shader-failed`, `gpu-failed`, the renderer's reasons
+  from `setData` (see `js/api/30-renderer.md`). In this one case the data and
+  provenance stand, and a message over the stage says this GPU cannot draw them.
+  Every other refusal changes nothing.
 - The message is also shown **inside the element** as text: as a notice at the
   top of the stage (with a Dismiss button) while a view is showing, which keeps
   running unchanged; or over the whole stage when there is nothing to show yet.
@@ -170,7 +189,8 @@ Points are added without resetting the camera or dropping points:
   points added since the last fit are at least `refitShare` (1%) of the set,
   Tumble fits its directions again; the new tour blends in from the current
   axes, and the share is fresh again. A stream of appends therefore never
-  triggers a refit per append.
+  triggers a refit per append. A refit never starts while paused, or while
+  hidden or off screen (frames do not run then). It starts after resume.
 - **The refit crossfade is 6 s of mode time** (the viewer creates Tumble with
   `transition: 6`; the mode's own default is 1.5 s). The crossfade has no step,
   but while it runs the picture turns faster than in normal running, by an
@@ -444,8 +464,13 @@ capitals by CSS (`text-transform`), so the text itself is unchanged.
 - **Context lost**: a notice ("waiting for the browser to restore it"); on
   restore it is cleared and drawing resumes from the renderer's CPU copy. If the
   restore fails, a message is shown and one `rebuild()` is tried a second later.
-- A JavaScript error inside a frame stops that viewer's loop and shows "The
-  viewer stopped: …" inside the element instead of throwing every frame.
+- A JavaScript error inside a frame (for example from a mode's `stateAt`,
+  `mark`, `describe` or a preparation step) stops that viewer's loop and shows
+  the notice "The viewer stopped: …" over the last picture instead of throwing
+  every frame (`info().broken` is true). The next successful replace or mode
+  switch clears it and the loop starts again. `update`, `setMode`, `info`,
+  `seek`, `refreshTheme` and `destroy` never throw into the host, even with a
+  mode whose members all throw (unit tests per member).
 
 ## Security notes
 
