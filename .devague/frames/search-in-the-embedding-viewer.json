@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T15:04:59Z",
+  "updated": "2026-11-14T15:07:24Z",
   "claims": [
     {
       "id": "c1",
@@ -949,6 +949,15 @@
       "id": "l4",
       "code": "assumption-for-measurement",
       "what": "t5: built and tested only against a fake gateway; SonarCloud has not scanned it; cognitive complexity was judged by reading; idle connections are not capped and one rate window covers all tabs. Main agent then ran the route against the real gateway: embed returned a 1,024-d unit vector with its model id, rerank returned scores from the gateway's reranker (so the assumed request shape is correct), a foreign Origin got 403 and text/plain got 415, no CORS header was sent, and the server log held neither the gateway address, a key nor the query text.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l5",
+      "code": "control-absent",
+      "what": "t4: tests were written after the implementation; the old-build-against-new frame comparison was a one-time check, not a permanent test; the relayout path with lit values set is untested (it needs about 16 million points); the light-stage check uses a page that copies the viewer's light treatment, not the viewer; thresholds were set after seeing the numbers, with the tightest margin on the light stage; the object leak count is the agent's own wrapper.",
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
