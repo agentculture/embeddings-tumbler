@@ -25,6 +25,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Lattice draws its hidden directions from the data's strongest directions (the reference draws them from the full space); `hidden: "full"` keeps the reference's rule.
 - On a light background the default treatment is `soft` ink.
 
+### Fixed
+
+- Found by review before the first release: Lattice no longer freezes when points are appended onto a one-point set; an update no longer wipes the trails unless the theme changed; brightness stays consistent when the first labelled point is appended; a data file declaring another dtype, byte order or byte length is refused by the web component and the standalone page; a replace the GPU refuses leaves the view as it was; Wander's memory is bounded; ids and group names such as `__proto__` are handled as plain strings; the provenance grid follows its own width breakpoint; `viewer serve` redirects a folder to its slash form and binds an IPv6 loopback host.
+
 ## [0.10.1] - 2026-11-13
 
 ### Added
