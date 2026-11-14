@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T02:01:35Z",
+  "updated": "2026-11-14T02:17:50Z",
   "claims": [
     {
       "id": "c1",
@@ -1067,6 +1067,17 @@
         "t4",
         "t5",
         "t7"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l15",
+      "code": "control-absent",
+      "what": "t8 fixes: the two lost-time unit tests were written with the fix and never seen failing; the refit-turn ratios in the browser come from one run per case; the robustness paths (throwing modes, broken-viewer recovery, failed GPU append) and the three light styles are covered in the fake DOM only, with no browser test; the light styles were chosen by eye from one GPU screenshot each and the user has not seen them. Main agent re-ran its own reproductions after merge: no frame gap above 34 ms across three appends and the refit (was one 200 ms gap), and a real mouse click dismisses the notice.",
+      "skipped_check": "red run of the lost-time tests; browser tests of robustness paths and light styles",
+      "refs": [
+        "t8"
       ],
       "origin": "llm",
       "status": "proposed"
