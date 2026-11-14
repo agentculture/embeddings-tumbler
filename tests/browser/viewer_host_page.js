@@ -84,6 +84,21 @@
   var extra = split(full, N, N + 200, "append");
   var h;
 
+  // ?manual=1: mount, show the sample set, and stop; the test drives real input.
+  if (q.get("manual") === "1") {
+    h = T.mount(el, { seed: 3 });
+    window.__viewerHandle = h;
+    out.steps.update = T.update(el, base);
+    until(function () {
+      return h.info().ready;
+    }, 20000).then(function () {
+      var info = h.info();
+      if (!info.rendering) out.unavailable = info.message;
+      out.done = true;
+    });
+    return;
+  }
+
   Promise.resolve()
     .then(function () {
       var t0 = performance.now();

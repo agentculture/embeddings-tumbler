@@ -29,16 +29,18 @@ pick a free port (the command prints it).
 | Button | Does |
 |--------|------|
 | mount | `EmbeddingsTumbler.mount(el, ...)` (a second mount on a mounted element returns the same handle) |
-| update (sample) | a full replace with the built-in sample set |
+| update: send the sample set | a full replace with the built-in sample set. A freshly mounted viewer holds no data and says so ("No data yet") until this is pressed |
 | append 200 points | `update` with `op: "append"`: the camera stays, the count grows |
 | send invalid data | a set with schema version 2: a message inside the viewer, the view keeps running |
 | send a label with markup | a replace whose first label and the `ocean` group name contain markup; both must show as text |
-| theme | cycles dark (the defaults), teal and light by changing `--tumbler-*` custom properties on the host element, then calls `refreshTheme()` |
+| theme | cycles dark (the defaults), teal, and three light treatments ("light: dark stage panel", "light: coloured ink", "light: soft ink", set with `--tumbler-light-style`) by changing `--tumbler-*` custom properties on the host element, then calls `refreshTheme()` |
 | destroy | `EmbeddingsTumbler.destroy(el)`: the element is emptied and the loop stops |
 
 Under each viewer a box shows `info()`: mode, elapsed time, seed, user zoom,
 frames per second, frame count, time to first frame and to the first ready
-frame, the longest frame, and the time each `update()` call took.
+frame, the longest frame, the longest gap between animation frames in the
+last 5 s (measured by the page), the last Tumble refit (when, how much work,
+its longest step), and the time each `update()` call took.
 
 ## Query string
 
@@ -49,6 +51,7 @@ frame, the longest frame, and the time each `update()` call took.
 | `seed` | the viewers' seed | `1` |
 | `mode` | starting mode: `tumble`, `lattice` or `wander` | `tumble` |
 | `one` | `1` mounts only the left viewer (for measuring) | off |
+| `theme` | start with this theme: `teal`, `panel`, `ink` or `soft` | dark |
 
 Examples:
 

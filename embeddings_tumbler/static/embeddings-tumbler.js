@@ -4111,6 +4111,11 @@ ET.viewer = (function () {
     display: '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif',
   };
   var STAGE_HEIGHT = "clamp(300px, 62vh, 860px)";
+  // How the picture is drawn on a light host (--tumbler-light-style or the lightStyle
+  // option): "panel" keeps a dark night-sky stage inside the light panel; "ink" draws
+  // each group as saturated coloured ink on the light sky; "soft" is ink, lighter.
+  var LIGHT_STYLES = ["panel", "ink", "soft"];
+  var DEFAULT_LIGHT_STYLE = "panel";
 
   var DEFAULT_OPTIONS = {
     mode: "tumble",
@@ -4124,6 +4129,8 @@ ET.viewer = (function () {
     masthead: true,
     title: "",
     provenanceOpen: true,
+    lightStyle: null, // null: --tumbler-light-style, else DEFAULT_LIGHT_STYLE
+    modeOptions: null, // { tumble: {...}, ... } passed to ET.modes.create
     maxPixelRatio: 2,
     preserveDrawingBuffer: false,
     prepareBudgetMs: 8,
@@ -4498,6 +4505,20 @@ ET.viewer = (function () {
     stage.appendChild(status);
     stage.appendChild(notice);
     stage.appendChild(fatal);
+    var empty = text(v, "p", "tumbler-empty", "No data yet. Call update(data) to show a set of embeddings.", {
+      position: "absolute",
+      left: "16px",
+      right: "16px",
+      top: "50%",
+      margin: "0",
+      transform: "translateY(-50%)",
+      textAlign: "center",
+      fontSize: "13px",
+      pointerEvents: "none",
+      zIndex: "2",
+    });
+    stage.appendChild(empty);
+    v.empty = empty;
     root.appendChild(stage);
 
     var panel = make(v, "div", "tumbler-panel", {
@@ -4708,6 +4729,22 @@ ET.viewer = (function () {
     for (var i = 0; i < MAX_GROUP_PROPS; i++) {
       t.groups.push(colour("--tumbler-group-" + (i + 1)));
     }
+    var style = v.options.lightStyle || raw("--tumbler-light-style");
+    t.lightStyle = LIGHT_STYLES.indexOf(style) >= 0 ? style : DEFAULT_LIGHT_STYLE;
+    // What the stage (sky, status, labels, messages over it) is drawn with: the host's
+    // colours, except a light host with the "panel" style, whose stage stays dark.
+    t.panelStage = light && t.lightStyle === "panel";
+    t.ink = light && !t.panelStage;
+    t.stage = t.panelStage
+      ? {
+          light: false,
+          background: parseColour(DARK.background),
+          sky: parseColour(DARK.sky),
+          foreground: parseColour(DARK.foreground),
+          muted: parseColour(DARK.muted),
+          accent: parseColour(DARK.accent),
+        }
+      : { light: light, background: t.background, sky: t.sky, foreground: t.foreground, muted: t.muted, accent: t.accent };
     return t;
   }
 
@@ -4746,34 +4783,44 @@ ET.viewer = (function () {
     var accent = cssRgb(t.accent);
     var bg = cssRgb(t.background);
     setStyles(v.root, { color: fg, background: bg, fontFamily: t.font });
-    var mid = mix(t.sky, t.background, 0.55);
+    var st = t.stage;
+    var sbg = cssRgb(st.background);
+    var sfg = cssRgb(st.foreground);
+    var mid = mix(st.sky, st.background, 0.55);
     v.stage.style.height = t.stageHeight;
     v.stage.style.background =
       "radial-gradient(ellipse 75% 70% at 50% 46%, " +
-      cssRgb(t.sky) +
+      cssRgb(st.sky) +
       " 0%, " +
       cssRgb(mid) +
       " 48%, " +
-      bg +
+      sbg +
       " 82%)";
-    // The renderer draws light on black. On a dark host it is screened over the sky;
-    // on a light host it is inverted (hue kept) and multiplied, so points show as ink.
-    if (t.light) {
-      v.canvas.style.filter = "invert(1) hue-rotate(180deg)";
+    // The renderer draws light on black. On a dark stage it is screened over the sky.
+    // For ink on a light stage the points are uploaded in complementary colours and the
+    // canvas is inverted and multiplied: each group comes out as ink of its own hue.
+    // Soft ink is the same ink laid on at 70% opacity: lighter, the hues kept.
+    if (t.ink) {
+      v.canvas.style.filter = "invert(1)";
       v.canvas.style.mixBlendMode = "multiply";
+      v.canvas.style.opacity = t.lightStyle === "soft" ? "0.7" : "1";
     } else {
       v.canvas.style.filter = "none";
       v.canvas.style.mixBlendMode = "screen";
+      v.canvas.style.opacity = "1";
     }
     v.mastTitle.style.fontFamily = t.fontDisplay;
-    v.mastTitle.style.textShadow = "0 0 28px " + cssRgb(t.background, 0.9);
+    v.mastTitle.style.color = sfg;
+    v.mastTitle.style.textShadow = "0 0 28px " + cssRgb(st.background, 0.9);
     v.mastLine.style.fontFamily = t.fontData;
-    v.mastLine.style.color = muted;
-    v.mastLine.style.textShadow = "0 0 12px " + bg;
-    setStyles(v.status, { fontFamily: t.fontData, color: accent, textShadow: "0 0 8px " + bg });
-    setStyles(v.fatal, { color: fg, background: cssRgb(t.background, 0.82), fontFamily: t.font });
-    setStyles(v.notice, { color: fg, background: cssRgb(t.background, 0.92), borderColor: accent, fontFamily: t.fontData });
-    v.noticeDismiss.style.borderColor = line;
+    v.mastLine.style.color = cssRgb(st.muted);
+    v.mastLine.style.textShadow = "0 0 12px " + sbg;
+    setStyles(v.status, { fontFamily: t.fontData, color: cssRgb(st.accent), textShadow: "0 0 8px " + sbg });
+    setStyles(v.fatal, { color: sfg, background: cssRgb(st.background, 0.82), fontFamily: t.font });
+    setStyles(v.empty, { color: cssRgb(st.muted), fontFamily: t.fontData });
+    setStyles(v.notice, { color: sfg, background: cssRgb(st.background, 0.92), borderColor: cssRgb(st.accent), fontFamily: t.fontData });
+    v.noticeDismiss.style.borderColor = t.panelStage ? DARK.line : line;
+    v.noticeDismiss.style.color = sfg;
     v.modeNav.style.borderTopColor = line;
     v.modeButtons.forEach(function (mb) {
       mb.title.style.fontFamily = t.fontDisplay;
@@ -4803,7 +4850,8 @@ ET.viewer = (function () {
     v.labelPool.forEach(function (rec) {
       rec.key = "";
     });
-    v.strokeHalo = cssRgb(t.background, 0.85);
+    v.strokeHalo = cssRgb(st.background, 0.85);
+    v.stageFg = sfg;
     v.accent255 = [Math.round(t.accent[0] * 255), Math.round(t.accent[1] * 255), Math.round(t.accent[2] * 255)];
     v.needClear = true;
   }
@@ -4826,10 +4874,14 @@ ET.viewer = (function () {
     if (v.destroyed) return;
     v.theme = readTheme(v);
     applyTheme(v);
-    if (v.set) {
-      recolour(v);
-    }
+    if (v.set && paintKey(v) !== v.paintKey) recolour(v);
     invalidate(v);
+  }
+
+  // What the uploaded point colours depend on; a change means a re-upload.
+  function paintKey(v) {
+    var t = v.theme;
+    return JSON.stringify([t.ink, t.lightStyle, t.ungrouped, t.groups]);
   }
 
   // ---------- point colours and weights ----------
@@ -4866,6 +4918,7 @@ ET.viewer = (function () {
       } else if (v.labelledCount === 0) w = 0.7;
       else if (g < 0) w = 0.05 + 0.2 * h * h;
       else w = 0.1 + 0.55 * h * h * h;
+      if (v.theme.ink) c = inkUpload(c, labelled);
       var o = (i - from) * 3;
       colours[o] = c[0];
       colours[o + 1] = c[1];
@@ -4873,6 +4926,23 @@ ET.viewer = (function () {
       weights[i - from] = w;
     }
     return { colours: colours, weights: weights };
+  }
+
+  // Coloured ink: the hue fully saturated and darkened (labelled points a little
+  // darker), uploaded as its complement; the canvas's invert(1) turns the additive
+  // image back into that ink, multiplied onto the light sky.
+  function inkUpload(c, labelled) {
+    var lo = Math.min(c[0], c[1], c[2]);
+    var hi = Math.max(c[0], c[1], c[2]);
+    var span = hi - lo > 1e-6 ? hi - lo : 1;
+    var k = labelled ? 0.78 : 0.88;
+    var out = [0, 0, 0];
+    for (var j = 0; j < 3; j++) {
+      var sat = hi - lo > 1e-6 ? (c[j] - lo) / span : 0.5;
+      var ink = k * (0.7 * sat + 0.3 * c[j]);
+      out[j] = 1 - ink;
+    }
+    return out;
   }
 
   function countLabelled(set, from, to) {
@@ -4896,6 +4966,7 @@ ET.viewer = (function () {
     var res = v.renderer.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
     if (res && res.ok === false) fatal(v, res.message);
     if (v.mode) v.mode.wiresVersion = -1;
+    v.paintKey = paintKey(v);
   }
 
   // ---------- messages ----------
@@ -4907,10 +4978,12 @@ ET.viewer = (function () {
     v.fatalMessage = String(message);
     v.fatalText.textContent = v.fatalMessage;
     v.fatal.style.display = "flex";
+    if (v.empty) v.empty.style.display = "none";
   }
   function clearFatal(v) {
     v.fatalKind = null;
     v.fatalMessage = null;
+    if (v.empty && !v.set) v.empty.style.display = "";
     v.fatalText.textContent = "";
     v.fatal.style.display = "none";
   }
@@ -5052,6 +5125,11 @@ ET.viewer = (function () {
 
   function describeSet(v) {
     var set = v.set;
+    // With no data the stage says so plainly; the provenance and readout have
+    // nothing to describe and are hidden.
+    v.empty.style.display = set || v.fatalMessage ? "none" : "";
+    v.provenance.style.display = set ? "" : "none";
+    v.readout.style.display = set && v.options.readout ? "" : "none";
     if (!set) {
       v.canvas.setAttribute("aria-label", "Animated 3-D projection of an embedding space (no data yet)");
       v.mastLine.textContent = "";
@@ -5086,6 +5164,25 @@ ET.viewer = (function () {
     return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: draw };
   }
 
+  // Options for a mode instance: the viewer's defaults, then the host's modeOptions.
+  // Tumble's crossfade is lengthened to 6 s of mode time: its refit (after appends)
+  // blends from the old tour into the new one over this time, and at the mode's own
+  // 1.5 s the picture moved about three times faster than in normal running during
+  // the blend (measured); at 6 s it stays within about 1.4 times. The same option
+  // sets how long Tumble takes to blend in when entered from another mode.
+  var MODE_DEFAULTS = { tumble: { transition: 6 } };
+  function modeOptionsFor(v, id) {
+    var out = {};
+    var k;
+    var d = MODE_DEFAULTS[id];
+    if (d) for (k in d) if (Object.prototype.hasOwnProperty.call(d, k)) out[k] = d[k];
+    var host = v.options.modeOptions && v.options.modeOptions[id];
+    if (host && typeof host === "object") {
+      for (k in host) if (Object.prototype.hasOwnProperty.call(host, k)) out[k] = host[k];
+    }
+    return out;
+  }
+
   // Start mode `id` on the current set. Returns true, or false after showing why not.
   function startMode(v, id, from) {
     var def = ET.modes.get(id);
@@ -5100,7 +5197,7 @@ ET.viewer = (function () {
     }
     var inst;
     try {
-      inst = ET.modes.create(id);
+      inst = ET.modes.create(id, modeOptionsFor(v, id));
       inst.enter(v.set, { seed: v.seed, from: from || null });
     } catch (err) {
       notify(v, err && err.message ? err.message : "This view cannot show the data.");
@@ -5166,6 +5263,7 @@ ET.viewer = (function () {
     // Re-read the host's theme on every update (no polling).
     v.theme = readTheme(v);
     applyTheme(v);
+    if (v.set && paintKey(v) !== v.paintKey) recolour(v);
     if (!res || !res.ok) {
       var refusal = { ok: false, code: res ? res.code : "invalid-field", message: res ? res.message : "Data refused." };
       // With a view showing (or a graphics message up), the refusal is a notice and
@@ -5203,7 +5301,7 @@ ET.viewer = (function () {
     v.set = set;
     v.last = null;
     v.spin = 0;
-    v.drag = { yaw: 0, pitch: 0 };
+    v.drag = { active: false, yaw: 0, pitch: 0, x: 0, y: 0 };
     v.needClear = true;
     v.sinceAppend = Infinity;
     if (v.mode) {
@@ -5219,6 +5317,7 @@ ET.viewer = (function () {
       var pc = paint(v, set, 0, set.count);
       gpu = v.renderer.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
     }
+    v.paintKey = paintKey(v);
     sizeStrip(v);
     describeSet(v);
     if (!startMode(v, v.modeId, null)) {
@@ -5399,6 +5498,9 @@ ET.viewer = (function () {
     }
     var start = now(v);
     var dt = v.prev === null ? 1 / 60 : clamp((t - v.prev) / 1000, 0.001, 0.05);
+    // After a long frame of the viewer's own work (a fit), count the gap as lost time,
+    // not motion, so the picture does not leap ahead by a whole clamped step.
+    if (v.lastSpent > 50) dt = 1 / 60;
     v.prev = t;
     v.dirty = false;
     try {
@@ -5409,6 +5511,7 @@ ET.viewer = (function () {
       return;
     }
     var spent = now(v) - start;
+    v.lastSpent = spent;
     if (spent > v.timing.longestFrameMs) v.timing.longestFrameMs = spent;
     v.frames++;
     if (v.timing.firstFrameMs === null) v.timing.firstFrameMs = now(v) - v.timing.mountAt;
@@ -5433,8 +5536,19 @@ ET.viewer = (function () {
       else break;
     }
     if (m.refit && now(v) - start < budget) {
-      m.refit.step(Math.max(1, budget - (now(v) - start)));
-      if (m.refit.done) m.refit = null;
+      var r0 = now(v);
+      m.refit.step(Math.max(1, budget - (r0 - start)));
+      var took = now(v) - r0;
+      m.refitSpent += took;
+      if (took > m.refitLongest) m.refitLongest = took;
+      if (m.refit.done) {
+        m.refit = null;
+        v.timing.lastRefit = {
+          atMs: now(v) - v.timing.mountAt,
+          durationMs: m.refitSpent,
+          longestStepMs: m.refitLongest,
+        };
+      }
     }
   }
 
@@ -5448,6 +5562,8 @@ ET.viewer = (function () {
     if (!d || !d.varianceShareStale || !(d.pointsSinceFit > 0)) return;
     if (d.pointsSinceFit < Math.max(1, Math.ceil(v.options.refitShare * v.set.count))) return;
     m.refit = m.inst.refit();
+    m.refitSpent = 0;
+    m.refitLongest = 0;
     v.timing.refits++;
   }
 
@@ -5457,7 +5573,7 @@ ET.viewer = (function () {
     v.sinceAppend += dt;
     if (!m || !v.set) {
       if (r && v.rendering) r.draw({ clear: true, dt: dt });
-      v.status.textContent = v.set ? "this view cannot show the data" : "waiting for data";
+      v.status.textContent = v.set ? "this view cannot show the data" : "";
       clearLabels(v, 0);
       return;
     }
@@ -5517,6 +5633,13 @@ ET.viewer = (function () {
     out.time = v.drawTime;
     out.dt = dt;
     if (!v.trails) out.trails = 0;
+    // Ink is dark where light piles up, so it is drawn with less gain than light on
+    // black (cores keep their hue instead of burning to black); soft ink, less again.
+    if (v.theme.ink) {
+      var soft = v.theme.lightStyle === "soft";
+      out.gain = soft ? 0.55 : 0.7;
+      out.bloom = soft ? 0.3 : 0.45;
+    }
     if (v.reducedMotion) out.twinkle = 0;
     out.clear = !!v.needClear;
     return out;
@@ -5635,7 +5758,7 @@ ET.viewer = (function () {
     }
     var used = 0;
     var fogMix = clamp(Number(s.draw.fog) || 0, 0, 1);
-    var fg = cssRgb(v.theme.foreground);
+    var fg = v.stageFg;
     var sample = v.labelSample;
     var n = sample.length;
     if (v.sx.length < n) {
@@ -5667,7 +5790,7 @@ ET.viewer = (function () {
         if (!cn[gi]) continue;
         // Lighter than the points on a dark host (the reference's 72% lightness),
         // darker on a light one so the names stay readable.
-        var col = cssRgb(v.theme.light ? mix(groupColour(v, gi), [0, 0, 0], 0.45) : mix(groupColour(v, gi), [1, 1, 1], 0.3));
+        var col = cssRgb(v.theme.stage.light ? mix(groupColour(v, gi), [0, 0, 0], 0.45) : mix(groupColour(v, gi), [1, 1, 1], 0.3));
         used = label(v, used, shorten(v.groupNames[gi], 32), cx[gi] / cn[gi] / dpr, cy[gi] / cn[gi] / dpr - 14, {
           kind: "group",
           colour: col,
@@ -5856,8 +5979,17 @@ ET.viewer = (function () {
       return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
     }
 
+    // Only a press on the sky itself turns the cloud. A press on a control inside the
+    // stage (the notice's Dismiss button, a message) is left alone: no pointer
+    // capture, no drag, no focus change, so the control gets its own click.
+    function onSky(e) {
+      var t = e.target;
+      return t === stage || t === v.canvas || t === v.overlay || t === v.labelLayer;
+    }
+
     listen(v, stage, "pointerdown", function (e) {
       if (e.button !== undefined && e.button > 0) return;
+      if (!onSky(e)) return;
       pointers[e.pointerId] = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: now(v) };
       count = Object.keys(pointers).length;
       try {
@@ -5936,6 +6068,7 @@ ET.viewer = (function () {
       invalidate(v);
     });
     listen(v, stage, "dblclick", function (e) {
+      if (!onSky(e)) return;
       if (e.preventDefault) e.preventDefault();
       setZoom(v, 1);
     });
@@ -5964,7 +6097,10 @@ ET.viewer = (function () {
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       var k = e.key;
       var handled = true;
-      if (/^[1-9]$/.test(k)) {
+      if (k === "Escape" || k === "Esc") {
+        if (v.noticeMessage !== null) clearNotice(v);
+        else handled = false;
+      } else if (/^[1-9]$/.test(k)) {
         var ids = v.modeButtons.map(function (mb) {
           return mb.id;
         });
@@ -6165,7 +6301,17 @@ ET.viewer = (function () {
       fatalMessage: null,
       fatalKind: null,
       noticeMessage: null,
-      timing: { mountAt: 0, firstFrameMs: null, firstReadyMs: null, longestFrameMs: 0, lastAppendMs: null, refits: 0 },
+      timing: {
+        mountAt: 0,
+        firstFrameMs: null,
+        firstReadyMs: null,
+        longestFrameMs: 0,
+        lastAppendMs: null,
+        refits: 0,
+        lastRefit: null,
+      },
+      lastSpent: 0,
+      paintKey: null,
     };
     v.timing.mountAt = now(v);
     v.tick = function (t) {
@@ -6183,6 +6329,7 @@ ET.viewer = (function () {
     makeRenderer(v);
     sizeStrip(v);
     renderProvenance(v);
+    describeSet(v);
     wire(v);
     measure(v);
     v.handle = makeHandle(v);
@@ -6256,6 +6403,7 @@ ET.viewer = (function () {
         longestFrameMs: v.timing.longestFrameMs,
         lastAppendMs: v.timing.lastAppendMs,
         refits: v.timing.refits,
+        lastRefit: v.timing.lastRefit ? Object.assign({}, v.timing.lastRefit) : null,
       },
     };
   }
@@ -6352,6 +6500,8 @@ ET.viewer = (function () {
     parseColour: parseColour,
     safeCssValue: safeCssValue,
     SHADOW: SHADOW,
+    LIGHT_STYLES: LIGHT_STYLES,
+    DEFAULT_LIGHT_STYLE: DEFAULT_LIGHT_STYLE,
   };
 })();
 

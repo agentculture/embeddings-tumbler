@@ -625,6 +625,7 @@ test("theme comes from the host's custom properties, with defaults", () => {
   assert.strictEqual(v.root.style.background, "rgb(4, 6, 11)", "default background");
   assert.strictEqual(v.canvas.style.mixBlendMode, "screen");
   el.style.setProperty("--tumbler-background", "#ffffff");
+  el.style.setProperty("--tumbler-light-style", "ink");
   el.style.setProperty("--tumbler-accent", "rgb(200, 10, 20)");
   el.style.setProperty("--tumbler-font", '"Host Sans", sans-serif');
   el.style.setProperty("--tumbler-group-1", "#00ff00");
@@ -753,5 +754,199 @@ test("a set with too few dimensions for the chosen mode falls back with a messag
   assert.match(v.noticeText.textContent, /Lattice needs at least 4/);
   assert.strictEqual(h.mode(), "tumble");
   assert.doesNotThrow(() => dom.frames(5));
+  h.destroy();
+});
+
+// ---------- fixes from the live test ----------
+
+test("a press on a control inside the stage is not a drag and does not capture the pointer", () => {
+  const { dom, h, v } = setup();
+  h.update(makeSet({ n: 40, d: 16 }));
+  dom.frames(5);
+  h.update({});
+  assert.strictEqual(v.notice.style.display, "flex");
+  let captures = 0;
+  v.stage.setPointerCapture = () => captures++;
+  const down = v.noticeDismiss.dispatchEvent({ type: "pointerdown", pointerId: 1, clientX: 5, clientY: 5, button: 0, pointerType: "mouse" });
+  assert.strictEqual(captures, 0, "no pointer capture for a press on a button");
+  assert.strictEqual(down.defaultPrevented, false);
+  assert.strictEqual(v.drag.active, false, "no drag starts on a control");
+  v.noticeDismiss.dispatchEvent({ type: "pointermove", pointerId: 1, clientX: 80, clientY: 5, pointerType: "mouse" });
+  assert.strictEqual(v.drag.yaw, 0, "moving from a control does not turn the camera");
+  v.noticeDismiss.dispatchEvent({ type: "pointerup", pointerId: 1, clientX: 80, clientY: 5, pointerType: "mouse" });
+  v.noticeDismiss.click();
+  assert.strictEqual(v.notice.style.display, "none");
+  // A double-click on a control does not reset the zoom.
+  h.zoom(2);
+  h.update({});
+  v.noticeDismiss.dispatchEvent({ type: "dblclick" });
+  assert.strictEqual(h.zoom(), 2);
+  // A press on the sky still turns and captures.
+  v.canvas.dispatchEvent({ type: "pointerdown", pointerId: 2, clientX: 10, clientY: 10, button: 0, pointerType: "mouse" });
+  assert.strictEqual(captures, 1);
+  assert.strictEqual(v.drag.active, true);
+  h.destroy();
+});
+
+test("Escape dismisses the notice while the viewer has focus", () => {
+  const { dom, h, v } = setup();
+  h.update(makeSet({ n: 30, d: 16 }));
+  dom.frames(2);
+  h.update({ kind: "nope" });
+  assert.strictEqual(v.notice.style.display, "flex");
+  v.root.dispatchEvent({ type: "keydown", key: "Escape", target: v.noticeDismiss });
+  assert.strictEqual(v.notice.style.display, "none");
+  h.destroy();
+});
+
+test("an empty mounted viewer says plainly that it has no data, with no provenance block", () => {
+  const { dom, h, v } = setup();
+  dom.frames(2);
+  assert.notStrictEqual(v.empty.style.display, "none");
+  assert.match(v.empty.textContent, /No data yet\. Call update\(data\)/);
+  assert.strictEqual(v.provenance.style.display, "none");
+  assert.strictEqual(v.readout.style.display, "none");
+  h.update(makeSet({ n: 20, d: 8 }));
+  assert.strictEqual(v.empty.style.display, "none");
+  assert.notStrictEqual(v.provenance.style.display, "none");
+  assert.notStrictEqual(v.readout.style.display, "none");
+  // A refusal with nothing to show replaces the hint with the message.
+  const { h: h2, v: v2 } = setup();
+  h2.update({});
+  assert.strictEqual(v2.empty.style.display, "none");
+  assert.strictEqual(v2.fatal.style.display, "flex");
+  h.destroy();
+  h2.destroy();
+});
+
+function themed(props) {
+  const dom = makeFakeDom();
+  const el = dom.host();
+  for (const k of Object.keys(props)) el.style.setProperty(k, props[k]);
+  const h = api.mount(el);
+  const v = h._viewer;
+  const uploads = [];
+  const orig = v.renderer.setData;
+  v.renderer.setData = function (a) {
+    uploads.push(Float32Array.from(a.colours));
+    return orig.apply(this, arguments);
+  };
+  h.update(makeSet({ n: 12, d: 8, groups: ["red"], labelEvery: 100 }));
+  dom.frames(3);
+  return { dom, el, h, v, uploads };
+}
+
+test("light background, dark stage panel: the stage keeps the night sky and screen blending", () => {
+  const { h, v, uploads } = themed({ "--tumbler-background": "#ffffff", "--tumbler-light-style": "panel" });
+  assert.strictEqual(v.theme.lightStyle, "panel");
+  assert.strictEqual(v.root.style.background, "rgb(255, 255, 255)", "the panel follows the host");
+  assert.match(v.stage.style.background, /rgb\(4, 6, 11\)/, "the stage stays dark");
+  assert.strictEqual(v.canvas.style.mixBlendMode, "screen");
+  assert.strictEqual(v.canvas.style.filter, "none");
+  assert.strictEqual(v.status.style.color, "rgb(255, 197, 107)", "stage text uses the dark palette");
+  const c = uploads[uploads.length - 1].slice(3, 6); // point 1: unlabelled, group 0
+  // Group 0's colour as given to the renderer: the reference's hsl(28, .9, .62), not inverted.
+  assert.ok(c[0] > 0.9 && c[2] < 0.5, Array.from(c).join(","));
+  h.destroy();
+});
+
+test("light background, coloured ink: complementary colours inverted keep each group's hue", () => {
+  const { h, v, uploads } = themed({ "--tumbler-background": "#ffffff", "--tumbler-light-style": "ink" });
+  assert.strictEqual(v.canvas.style.filter, "invert(1)");
+  assert.strictEqual(v.canvas.style.mixBlendMode, "multiply");
+  const c = uploads[uploads.length - 1];
+  // Orange group: after the CSS inversion the ink is 1 - uploaded, which must be orange-ish:
+  // red channel strongest, blue weakest.
+  const ink = [1 - c[0], 1 - c[1], 1 - c[2]];
+  assert.ok(ink[0] > ink[1] && ink[1] > ink[2], ink.join(","));
+  assert.ok(ink[0] - ink[2] > 0.4, "saturated, not grey or black");
+  h.destroy();
+});
+
+test("light background, soft ink: like coloured ink, drawn lighter", () => {
+  const { dom, h, v } = themed({ "--tumbler-background": "#ffffff", "--tumbler-light-style": "soft" });
+  assert.strictEqual(v.canvas.style.filter, "invert(1)");
+  dom.frames(2);
+  assert.ok(v.lastDraw.gain < 1);
+  h.destroy();
+});
+
+test("a light background with no style chosen uses the documented default; dark hosts are unchanged", () => {
+  const { h, v } = themed({ "--tumbler-background": "#f6f4ee" });
+  assert.strictEqual(v.theme.lightStyle, api._internal.viewer.DEFAULT_LIGHT_STYLE);
+  h.destroy();
+  const d = themed({});
+  assert.strictEqual(d.v.theme.light, false);
+  assert.strictEqual(d.v.canvas.style.mixBlendMode, "screen");
+  assert.strictEqual(d.v.canvas.style.filter, "none");
+  assert.match(d.v.stage.style.background, /rgb\(11, 20, 48\)/);
+  d.h.destroy();
+});
+
+test("switching the light style on a running view re-colours it", () => {
+  const { el, h, v, uploads } = themed({ "--tumbler-background": "#ffffff", "--tumbler-light-style": "panel" });
+  const n = uploads.length;
+  el.style.setProperty("--tumbler-light-style", "ink");
+  h.refreshTheme();
+  assert.strictEqual(uploads.length, n + 1);
+  assert.strictEqual(v.canvas.style.filter, "invert(1)");
+  h.destroy();
+});
+
+test("info() reports the last Tumble refit: when and how long", () => {
+  const { dom, h } = setup({}, { refitQuietSeconds: 0.3 });
+  h.update(makeSet({ n: 200, d: 16 }));
+  dom.frames(30);
+  assert.strictEqual(h.info().timing.lastRefit, null);
+  h.update(makeSet({ n: 40, d: 16, op: "append", idPrefix: "r" }));
+  dom.frames(60);
+  const r = h.info().timing.lastRefit;
+  assert.ok(r, "a refit happened");
+  assert.strictEqual(typeof r.atMs, "number");
+  assert.strictEqual(typeof r.durationMs, "number");
+  assert.strictEqual(typeof r.longestStepMs, "number");
+  h.destroy();
+});
+
+test("the refit crossfade is gentle: per-frame frame change stays near normal running", () => {
+  for (const speed of [1, 3]) {
+    const { dom, h, v } = setup({}, { speed, refitQuietSeconds: 0.5 });
+    h.update(makeSet({ n: 600, d: 32, groups: ["a", "b", "c", "d", "e"] }));
+    dom.frames(60);
+    const prev = new Float32Array(v.last.frame);
+    const change = () => {
+      let s = 0;
+      for (let i = 0; i < prev.length; i++) s += (prev[i] - v.last.frame[i]) ** 2;
+      prev.set(v.last.frame);
+      return Math.sqrt(s);
+    };
+    let normal = 0;
+    for (let i = 0; i < 240; i++) {
+      dom.flush();
+      normal = Math.max(normal, change());
+    }
+    // Same distribution as the set (same seed, so the same cluster centres), new ids.
+    h.update(makeSet({ n: 60, d: 32, op: "append", idPrefix: "n", groups: ["a", "b", "c", "d", "e"] }));
+    let across = 0;
+    for (let i = 0; i < 600; i++) {
+      dom.flush();
+      across = Math.max(across, change());
+    }
+    assert.strictEqual(h.info().timing.refits, 1);
+    console.log(`refit crossfade, speed ${speed}: largest per-frame change ${across.toFixed(5)}, normal ${normal.toFixed(5)}`);
+    assert.ok(across < 1.6 * normal, `speed ${speed}: ${across} vs normal ${normal}`);
+    h.destroy();
+  }
+});
+
+test("after a long frame of the viewer's own work the next frame does not leap ahead", () => {
+  const { dom, h, v } = setup();
+  h.update(makeSet({ n: 40, d: 16 }));
+  dom.frames(30);
+  const t0 = h.time();
+  // Simulate a long step: the next frame arrives 400 ms later and the last frame's work was long.
+  v.lastSpent = 300;
+  dom.flush(400);
+  assert.ok(h.time() - t0 < 0.02, "advanced by one normal frame, not 50 ms: " + (h.time() - t0));
   h.destroy();
 });

@@ -67,6 +67,8 @@ All optional.
 | `masthead` | `true` | `false` hides the masthead over the stage (the count line, and the title if given). |
 | `title` | `""` | A title drawn over the stage in the masthead (text, never markup). Empty: no title line. |
 | `provenanceOpen` | `true` | The provenance block is a `<details>`; `false` starts it collapsed (its summary line still names source, model, dimension, items, seed, synthetic and the shadow sentence). The block cannot be removed. |
+| `lightStyle` | `null` | How the picture is drawn when the background is light: `"panel"`, `"ink"` or `"soft"` (see "Light backgrounds"). `null`: the `--tumbler-light-style` property, else `"panel"`. |
+| `modeOptions` | `null` | Per-mode options passed to `ET.modes.create`, for example `{ tumble: { transition: 3 } }`. The viewer's own default is `{ tumble: { transition: 6 } }` (see "Appends"). |
 | `maxPixelRatio` | `2` | Cap on `devicePixelRatio` for the drawing buffer (the reference's). |
 | `preserveDrawingBuffer` | `false` | Keep the WebGL drawing buffer so the host (or a test) can read pixels or take a screenshot. Costs some speed. |
 | `prepareBudgetMs` | `8` | Milliseconds of mode preparation per animation frame (see "Heavy work"). |
@@ -107,8 +109,10 @@ model, rendering, animating, frames, fps, status, message, timing }`.
 `animating` is true while an animation frame is requested; `frames` counts
 frames that did work; `fps` is measured once a second; `status` is the status
 line; `message` is the message shown, if any; `timing` is `{ firstFrameMs,
-firstReadyMs, longestFrameMs, lastAppendMs, refits }` in milliseconds since
-`mount` (`longestFrameMs` is the longest single animation-frame callback of
+firstReadyMs, longestFrameMs, lastAppendMs, refits, lastRefit }` in milliseconds since
+`mount`; `lastRefit` is `null` or `{ atMs, durationMs, longestStepMs }`: when the
+last Tumble refit finished (milliseconds since `mount`), the main-thread time its
+work took in all, and its longest single step (`longestFrameMs` is the longest single animation-frame callback of
 this viewer, which is where mode preparation runs).
 
 ## Results of `update`
@@ -164,9 +168,31 @@ Points are added without resetting the camera or dropping points:
   tour states is stale, and the status and provenance say so ("before N new
   points"). Once no append has arrived for `refitQuietSeconds` (2 s) and the
   points added since the last fit are at least `refitShare` (1%) of the set,
-  Tumble fits its directions again; the new tour blends in over 1.5 s from the
-  current axes, and the share is fresh again. A stream of appends therefore
-  never triggers a refit per append.
+  Tumble fits its directions again; the new tour blends in from the current
+  axes, and the share is fresh again. A stream of appends therefore never
+  triggers a refit per append.
+- **The refit crossfade is 6 s of mode time** (the viewer creates Tumble with
+  `transition: 6`; the mode's own default is 1.5 s). The crossfade has no step,
+  but while it runs the picture turns faster than in normal running, by an
+  amount that depends on how far the new tour lies from the old. Largest
+  per-frame change of the frame across the refit, against the largest in
+  normal running at the same speed (sample set, Tumble, 3 x 200 points
+  appended):
+
+  | Where | Speed | Transition 1.5 s | Transition 6 s |
+  |-------|-------|------------------|----------------|
+  | node, 12,288 x 384 | 1 | 3.2x (0.0361 vs 0.0114) | 1.32x (0.0151) |
+  | node, 12,288 x 384 | 3 | 3.2x (0.1099 vs 0.0343) | 1.41x (0.0485) |
+  | node, 12,288 x 1024 | 1 / 3 | not measured | 1.10x / 1.13x |
+  | Chromium GPU, demo page, 384-d, seed "1" | 1 | not measured | 2.3x (0.0336 vs 0.0143) |
+  | Chromium GPU, demo page, 384-d, seed "1" | 3 | not measured | 1.6x (0.0690 vs 0.0429) |
+
+  The same `transition` also sets how long Tumble takes to blend in when it is
+  entered from another mode (6 s instead of 1.5 s). Set
+  `modeOptions.tumble.transition` to change both.
+- **After a long frame of the viewer's own work** (more than 50 ms, such as a
+  fit), the next frame advances the clock by one normal frame (1/60 s) instead
+  of a whole clamped 50 ms step, so the picture does not leap after the stall.
 - Labels: new labelled points join the label sample while it has room (300).
 - Provenance: the base set's provenance is kept; the item count updates.
   `text_included` is true if either side says so.
@@ -177,7 +203,8 @@ which doubles the renderer's capacity and re-uploads the point texture). Of
 that, 0.8 ms is the viewer and renderer; the rest is the contract loader's
 validation, which returns a fresh set with a copy of **all** vectors
 (`O(N * D)`, 41 MB here) on every append. The later Tumble refit is one
-indivisible stall of 888 ms at 10,500 x 1024-d.
+indivisible stall of 888 ms at 10,500 x 1024-d (about 200 ms at 12,888 x 384,
+500 to 900 ms at 12,888 x 1024; see `info().timing.lastRefit`).
 
 ## Time, seed and reproducing a view
 
@@ -245,6 +272,7 @@ div.tumbler                       role="group", aria-label, tabindex="0" (keys w
     p.tumbler-status              the mode's status line (aria-live="off"; readable, not announced)
     div.tumbler-notice            role="alert"; p.tumbler-notice-text + button.tumbler-notice-dismiss
     div.tumbler-message           role="alert"; p.tumbler-message-text (no WebGL, lost GPU, refusal with no view)
+    p.tumbler-empty               "No data yet. Call update(data) to show a set of embeddings." (no data, no message)
   div.tumbler-panel
     div.tumbler-modes             role="group" aria-label="View"
       button.tumbler-mode         data-mode, aria-pressed; b.tumbler-mode-title + span.tumbler-mode-summary
@@ -282,6 +310,7 @@ the viewer's root at mount, on every `update`, and on `refreshTheme()`.
 | `--tumbler-font` | `system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif` | same | body text |
 | `--tumbler-font-data` | `ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace` | same | status, labels, controls, provenance |
 | `--tumbler-font-display` | `"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif` | same | title, mode names, Wander's stop name |
+| `--tumbler-light-style` | `panel` | same | `panel`, `ink` or `soft`: how a light background is drawn (below); ignored on a dark background |
 | `--tumbler-stage-height` | `clamp(300px, 62vh, 860px)` | same | height of the stage (any CSS length) |
 
 - Colours accept hex, `rgb()`/`rgba()`, `hsl()`/`hsla()`, and anything else the
@@ -292,18 +321,34 @@ the viewer's root at mount, on every `update`, and on `refreshTheme()`.
   bundled here (t11 decides for the standalone page).
 - Font and length values that could name a resource (anything with `url(`,
   `image-set`, backslashes or `; { } < >`) are ignored and the default is used.
-- **Light backgrounds** (`--tumbler-background` with luminance above 0.5): the
-  renderer draws light on black, which would wash out on a light page. The
-  canvas is then shown with `filter: invert(1) hue-rotate(180deg)` and
-  `mix-blend-mode: multiply`, so points appear as dark ink of the same hue on
-  the light sky; on a dark background it uses `mix-blend-mode: screen` over the
-  sky, as the reference does. The renderer's own `background` stays black in
-  both cases. Group names are darkened instead of lightened on a light sky.
-  Defaults for unset colours switch to the light column above.
+- **Light backgrounds** (`--tumbler-background` with luminance above 0.5). The
+  renderer draws light on black (glow, bloom), which would wash out on a light
+  page. Three treatments; a host picks one with `--tumbler-light-style` (or the
+  `lightStyle` option):
+  - `panel` (**the default**): the stage keeps the dark night sky and the
+    reference's light-on-dark picture, screened over it; everything outside
+    the stage (mode switch, readout, controls, provenance) follows the light
+    host colours. Text on the stage (status, labels, messages) uses the dark
+    palette. Colours are exactly the reference's.
+  - `ink`: the stage is light and each group is drawn as saturated ink of its
+    own hue. The points are uploaded in **complementary** colours (the hue
+    fully saturated and darkened, then `1 - c`) and the canvas is shown with
+    `filter: invert(1)` and `mix-blend-mode: multiply`, so the additive image
+    comes back as coloured ink on the light sky; gain 0.7 and bloom 0.45 keep
+    dense cores coloured instead of burning to black. Group names are darkened.
+  - `soft`: `ink` laid on at 70% canvas opacity with gain 0.55 and bloom 0.3:
+    lighter, hues kept.
+  Defaults for unset colours switch to the light column above. On a dark
+  background the canvas uses `mix-blend-mode: screen` over the sky, exactly as
+  before. The renderer's own `background` stays black in every case.
+  Why `panel` is the default: it is the reference's look with its glow and
+  colours intact, which is what the sign-off (t17) compares against. The ink
+  styles keep each group's hue but lose the glow, and dense cores read as dark
+  saturated colour.
 - The stage gets `isolation: isolate`, so the blending never involves host
   content behind the element.
 
-## The provenance block (always present)
+## The provenance block (present whenever the view holds a set)
 
 Every value is inserted with `textContent`. Rows, in order:
 
@@ -359,11 +404,17 @@ capitals by CSS (`text-transform`), so the text itself is unchanged.
 - Mode buttons (real `<button>`s with `aria-pressed`, at least 44 px tall),
   Pause/Play, Reset zoom, a speed slider, Labels and Trails checkboxes, a hint.
 - **Keys** only while focus is inside the viewer (the root is focusable and a
-  pointer press on the stage focuses it): `1`..`9` modes in button order,
+  pointer press on the stage focuses it): `Escape` dismisses the notice,
+  `1`..`9` modes in button order,
   space play/pause (when the root itself has focus), `+`/`=` zoom in, `-` zoom
   out, `0` reset zoom. Keys typed into the viewer's inputs are ignored. No key
   listener is ever added to the document or window.
-- **Drag** to turn (pointer events, so mouse, pen and touch). The stage has
+- **Drag** to turn (pointer events, so mouse, pen and touch). Only a press on
+  the sky itself (the canvases or the label layer) starts a drag, captures the
+  pointer and focuses the viewer; a press on a control inside the stage (the
+  notice's Dismiss button) is left to that control, so it gets its click, and a
+  drag that starts on it does not turn the camera. Double-click resets the zoom
+  only on the sky. Every control is a native element, so Enter and Space work. The stage has
   `touch-action: pan-y`: a vertical swipe on a phone scrolls the page, a
   horizontal drag turns the cloud, as in the reference.
 - **User zoom** multiplies each mode's automatic zoom, so switching modes still
@@ -383,6 +434,11 @@ capitals by CSS (`text-transform`), so the text itself is unchanged.
   framebuffer and vertex array deleted, and the WebGL context released at
   once), and removes its root from `el`. Twenty mount/destroy cycles leave no
   canvas, frame request, observer or listener behind (unit test).
+- **No data yet**: a freshly mounted viewer says "No data yet. Call
+  update(data) to show a set of embeddings." in the middle of the stage; the
+  provenance block and the readout strip are hidden until a set arrives (a
+  replace with zero points counts as a set: it shows provenance and the status
+  `no points yet`).
 - **WebGL 2 unavailable**: a plain message over the stage; `update` still
   validates, the provenance block still shows, nothing throws.
 - **Context lost**: a notice ("waiting for the browser to restore it"); on

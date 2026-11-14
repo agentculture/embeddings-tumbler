@@ -76,8 +76,15 @@
         "--tumbler-font": "Georgia, serif",
       },
     },
-    {
-      name: "light",
+  ];
+  // Three light treatments, chosen with --tumbler-light-style (see js/api/50-viewer.md).
+  [
+    ["light: dark stage panel", "panel"],
+    ["light: coloured ink", "ink"],
+    ["light: soft ink", "soft"],
+  ].forEach(function (pair) {
+    THEMES.push({
+      name: pair[0],
       props: {
         "--tumbler-background": "#f6f4ee",
         "--tumbler-sky": "#ffffff",
@@ -85,15 +92,35 @@
         "--tumbler-muted": "#5b6578",
         "--tumbler-line": "#d6dae2",
         "--tumbler-accent": "#a35f00",
+        "--tumbler-light-style": pair[1],
       },
-    },
-  ];
+    });
+  });
+  var START_THEME = q.get("theme") || "";
   var ALL_PROPS = [];
   THEMES.forEach(function (t) {
     Object.keys(t.props).forEach(function (k) {
       if (ALL_PROPS.indexOf(k) < 0) ALL_PROPS.push(k);
     });
   });
+
+  // Longest gap between animation frames in the last 5 s, seen by the page itself.
+  var gaps = [];
+  var lastFrameAt = null;
+  function watchFrames(t) {
+    if (lastFrameAt !== null) gaps.push([t, t - lastFrameAt]);
+    lastFrameAt = t;
+    while (gaps.length && gaps[0][0] < t - 5000) gaps.shift();
+    requestAnimationFrame(watchFrames);
+  }
+  requestAnimationFrame(watchFrames);
+  function longestGap() {
+    var m = 0;
+    gaps.forEach(function (g) {
+      if (g[1] > m) m = g[1];
+    });
+    return m;
+  }
 
   var sides = {};
   ["a", "b"].forEach(function (name) {
@@ -149,16 +176,7 @@
       });
       r = T.update(side.el, m);
     } else if (what === "theme") {
-      side.theme = (side.theme + 1) % THEMES.length;
-      var th = THEMES[side.theme];
-      ALL_PROPS.forEach(function (k) {
-        side.el.style.removeProperty(k);
-      });
-      Object.keys(th.props).forEach(function (k) {
-        side.el.style.setProperty(k, th.props[k]);
-      });
-      e.currentTarget.textContent = "theme: " + th.name;
-      if (side.handle) side.handle.refreshTheme();
+      setTheme(side, (side.theme + 1) % THEMES.length, e.currentTarget);
     } else if (what === "destroy") {
       r = T.destroy(side.el);
       side.handle = null;
@@ -167,10 +185,23 @@
     show(side);
   }
 
+  function setTheme(side, index, button) {
+    side.theme = index;
+    var th = THEMES[side.theme];
+    ALL_PROPS.forEach(function (k) {
+      side.el.style.removeProperty(k);
+    });
+    Object.keys(th.props).forEach(function (k) {
+      side.el.style.setProperty(k, th.props[k]);
+    });
+    button.textContent = "theme: " + th.name;
+    if (side.handle) side.handle.refreshTheme();
+  }
+
   function show(side) {
     var h = T.get(side.el);
     var lines = [];
-    if (!h) lines.push("not mounted");
+    if (!h) lines.push("not mounted. Press mount, then update: mount carries no data.");
     else {
       var i = h.info();
       lines.push(
@@ -181,6 +212,11 @@
       lines.push(
         "first frame " + fmt(i.timing.firstFrameMs) + " ms | ready " + fmt(i.timing.firstReadyMs) +
           " ms | longest frame " + fmt(i.timing.longestFrameMs) + " ms | refits " + i.timing.refits
+      );
+      var lr = i.timing.lastRefit;
+      lines.push(
+        "longest frame gap, last 5 s: " + fmt(longestGap()) + " ms | last refit: " +
+          (lr ? "at " + fmt(lr.atMs / 1000) + " s, " + fmt(lr.durationMs) + " ms of work, longest step " + fmt(lr.longestStepMs) + " ms" : "none")
       );
       if (side.updateMs !== undefined) lines.push("last update() " + fmt(side.updateMs) + " ms");
       if (side.appendMs.length) lines.push("append() ms: " + side.appendMs.map(fmt).join(", "));
@@ -205,6 +241,12 @@
     if (ONE && name === "b") return;
     var s = sides[name];
     s.handle = T.mount(s.el, { seed: SEED, mode: MODE, title: name === "a" ? "Embedding Tumbler" : "" });
+    if (START_THEME) {
+      var idx = THEMES.findIndex(function (t) {
+        return t.name === START_THEME || (t.props["--tumbler-light-style"] || t.name) === START_THEME;
+      });
+      if (idx >= 0) setTheme(s, idx, document.querySelector('[data-side="' + name + '"] button[data-act="theme"]'));
+    }
     var u0 = performance.now();
     s.lastResult = T.update(s.el, slice(0, N, "replace"));
     s.updateMs = performance.now() - u0;

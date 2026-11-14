@@ -12,12 +12,13 @@
   <h1>Viewer API demo <small>development only, not shipped</small></h1>
   <p>Two independent viewers mounted from the script API (<code>mount</code>, <code>update</code>, <code>destroy</code>)
     under <code>script-src 'self'; style-src 'self'</code>. CSP violations seen: <b id="csp">0</b>.</p>
+  <p class="hint">After <code>destroy</code>, press <code>mount</code> and then <code>update</code>: a freshly mounted viewer holds no data and says so until it gets some.</p>
 </header>
 <main class="pair">
   <section class="side" data-side="a">
     <div class="bar">
       <button type="button" data-act="mount">mount</button>
-      <button type="button" data-act="update">update (sample)</button>
+      <button type="button" data-act="update">update: send the sample set</button>
       <button type="button" data-act="append">append 200 points</button>
       <button type="button" data-act="invalid">send invalid data</button>
       <button type="button" data-act="markup">send a label with markup</button>
@@ -30,7 +31,7 @@
   <section class="side" data-side="b">
     <div class="bar">
       <button type="button" data-act="mount">mount</button>
-      <button type="button" data-act="update">update (sample)</button>
+      <button type="button" data-act="update">update: send the sample set</button>
       <button type="button" data-act="append">append 200 points</button>
       <button type="button" data-act="invalid">send invalid data</button>
       <button type="button" data-act="markup">send a label with markup</button>
