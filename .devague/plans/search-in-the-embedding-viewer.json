@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "drafting",
   "created": "2026-11-14T13:25:21Z",
-  "updated": "2026-11-14T13:26:47Z",
+  "updated": "2026-11-14T13:40:12Z",
   "targets": [
     {
       "id": "c1",
@@ -834,6 +834,55 @@
       "instruction": "Follow the pattern of the first comparison (js/dev/side-by-side/ and tests/test_reference_differences.py)."
     }
   ],
-  "risks": [],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "With three or four searches the facing view scales to fit all of them, so two that touch can end up small beside a far one. A way to face a chosen pair is not specified (parked in the spec).",
+      "kind": "follow_up",
+      "task_id": "t3",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "Labels and distance numbers overlap inside a tight cluster of results; no decluttering rule is specified (parked in the spec).",
+      "kind": "follow_up",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Whether Wander should visit the results of a search is undecided; the plan leaves Wander's route unchanged.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "Retrieval quality with EmbeddingGemma 2 queries, with any reranker, and on reduced files was not probed before planning; t14 measures the first, the others only as far as a reranker is available on the gateway.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t14",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "The swing, the per-point lit buffer and the panel all land in files that the frame-hash and fidelity tests pin; a change that alters the no-search frame by one bit fails those tests by design and must be fixed in the task, not by re-pinning the hash.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "Only Chromium is tested automatically; search adds DOM and input behaviour that may differ in Firefox and Safari.",
+      "kind": "follow_up",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
   "obligations": []
 }
