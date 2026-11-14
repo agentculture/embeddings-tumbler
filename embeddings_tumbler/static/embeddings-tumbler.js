@@ -4475,8 +4475,8 @@ ET.renderer = (function () {
 // ---------------------------------------------------------------------------
 ET.modes = (function () {
   // Members every mode instance must have (see js/api/40-modes.md).
-  // Optional members: mark(t) (fix the time of a finished event) and, for
-  // Tumble, refit(t).
+  // Optional members: mark(t) (fix the time of a finished event), face(target,
+  // t, options) (the swing toward the searches) and, for Tumble, refit(t).
   var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
   var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
   var registry = [];
@@ -4928,6 +4928,188 @@ ET.modes = (function () {
     return t;
   }
 
+  // ----- the swing toward the searches (js/api/40-modes.md, "Facing the searches")
+  //
+  // A swing is an event at a fixed time T. From T to its end U the frame is
+  // pulled toward the facing frame Q with weight w = 1 - exp(-PULL (t - T)) while
+  // it keeps drifting: the frame is the closed-form solution of the reference's
+  // per-frame pull (F += (Q - F)(1 - exp(-2 dt))) with a drift velocity of
+  // SWING_DRIFT rad/s per axis whose direction turns at SWING_TURN rad/s, then
+  // orthonormalised. The drift's directions are drawn from the view seed and the
+  // swing's number, so the frames are a pure function of the calls. The centre
+  // and zoom are pulled toward the target's with the same weight. After U the
+  // mode's own motion carries on from the state shown at U (each mode file).
+  var SWING_DURATION = 6; // seconds of mode time (the reference's)
+  var SWING_PULL = 2; // 1/s: the reference's pull, 1 - exp(-2 dt) per frame
+  var SWING_DRIFT = 0.21; // rad/s per axis: half the reference tumble's 0.42
+  var SWING_TURN = 1.5; // rad/s: how fast the drift's direction turns
+  var SALT_SWING = 0x5e1f0c;
+
+  function allFinite(a) {
+    for (var x of a) if (!Number.isFinite(x)) return false;
+    return true;
+  }
+
+  // A checked copy of a facing target { frame, centre, zoom }, or null.
+  function faceTarget(target, D) {
+    if (!target || typeof target !== "object") return null;
+    var f = target.frame;
+    var c = target.centre;
+    var z = target.zoom;
+    if (f?.length !== 3 * D || c?.length !== D) return null;
+    var good = z > 0 && Number.isFinite(z); // false for a missing or non-numeric zoom too
+    if (!good) return null;
+    var frame = Float32Array.from(f);
+    var centre = Float32Array.from(c);
+    if (!allFinite(frame) || !allFinite(centre)) return null;
+    ET.math.orthonormalize(frame, 3, D);
+    return { frame: frame, centre: centre, zoom: z };
+  }
+
+  // { duration, searches } from face()'s options, or null when the duration is
+  // not a positive finite number.
+  function swingOptions(options) {
+    var o = options || {};
+    var duration = o.duration === undefined ? SWING_DURATION : o.duration;
+    var good = duration > 0 && Number.isFinite(duration);
+    if (!good) return null;
+    var n = Math.round(o.searches);
+    if (Number.isNaN(n) || n < 1) n = 1; // a missing or non-numeric count is one search
+    return { duration: duration, searches: Math.min(4, n) };
+  }
+
+  function makeSwing(tg, shown, T, op, seed, index, D) {
+    var Q = tg.frame;
+    var A = shown.frame;
+    // Each target axis is flipped to the shorter turn from the frame shown, so
+    // the pull never passes through a row that cancels out.
+    for (var r = 0; r < 3; r++) {
+      var dp = 0;
+      for (var d = 0; d < D; d++) dp += Q[r * D + d] * A[r * D + d];
+      if (dp < 0) for (var d2 = 0; d2 < D; d2++) Q[r * D + d2] = -Q[r * D + d2];
+    }
+    var rng = ET.math.makeRandom(ET.math.mixSeed(ET.math.mixSeed(seed, SALT_SWING), index));
+    var H = new Float64Array(6 * D);
+    rng.fillGauss(H, 0, 6 * D);
+    for (var row = 0; row < 6; row++) {
+      var n = 0;
+      for (var d3 = 0; d3 < D; d3++) n += H[row * D + d3] * H[row * D + d3];
+      n = Math.sqrt(n) || 1;
+      for (var d4 = 0; d4 < D; d4++) H[row * D + d4] /= n;
+    }
+    return {
+      index: index,
+      T: T,
+      U: T + op.duration,
+      n: op.searches,
+      A: A,
+      C0: shown.centre,
+      Z0: shown.zoom,
+      Q: Q,
+      Qc: tg.centre,
+      Qz: tg.zoom,
+      H: H,
+      info: shown.info || null,
+      cache: {},
+    };
+  }
+
+  // The swing's frame and centre at mode time t (clamped to [T, U]) written
+  // into `frame` and `centre`; returns the zoom.
+  function swingState(s, t, frame, centre) {
+    var D = s.Qc.length;
+    var tau = Math.min(Math.max(t - s.T, 0), s.U - s.T);
+    var k = Math.exp(-SWING_PULL * tau); // 1 - w
+    var c = Math.cos(SWING_TURN * tau) - k;
+    var sn = Math.sin(SWING_TURN * tau);
+    var den = SWING_PULL * SWING_PULL + SWING_TURN * SWING_TURN;
+    // The drift's offset: the integral of exp(-PULL (tau - u)) times the turning
+    // velocity, in closed form (zero at tau = 0, so the swing starts with no jump).
+    var a = (SWING_DRIFT * (SWING_PULL * c + SWING_TURN * sn)) / den;
+    var b = (SWING_DRIFT * (SWING_PULL * sn - SWING_TURN * c)) / den;
+    var x = new Float64Array(3 * D);
+    var H = s.H;
+    for (var i = 0; i < 3 * D; i++) x[i] = s.Q[i] + k * (s.A[i] - s.Q[i]) + a * H[i] + b * H[3 * D + i];
+    ET.math.orthonormalize(x, 3, D);
+    for (var i2 = 0; i2 < 3 * D; i2++) frame[i2] = x[i2];
+    for (var d = 0; d < D; d++) centre[d] = s.Qc[d] + k * (s.C0[d] - s.Qc[d]);
+    return s.Qz + k * (s.Z0 - s.Qz);
+  }
+
+  // The state shown at the swing's end U: { frame, centre, zoom }, computed once.
+  function swingEnd(s) {
+    if (!s.cache.end) {
+      var D = s.Qc.length;
+      var e = { frame: new Float32Array(3 * D), centre: new Float32Array(D), zoom: 0 };
+      e.zoom = swingState(s, s.U, e.frame, e.centre);
+      s.cache.end = e;
+    }
+    return s.cache.end;
+  }
+
+  // How far the mode has come back after the swing: 0 at U, 1 from U + duration on.
+  function swingRelease(s, t, duration) {
+    var blending = t - s.U < duration; // false for a NaN duration too
+    return blending ? ET.math.smoothstep((t - s.U) / duration) : 1;
+  }
+
+  // centre := from + (centre - from) e, in place; returns the zoom blended the same way.
+  function releaseCentreZoom(end, e, centre, zoom) {
+    if (e >= 1) return zoom;
+    for (var d = 0; d < centre.length; d++) centre[d] = end.centre[d] + (centre[d] - end.centre[d]) * e;
+    return end.zoom + (zoom - end.zoom) * e;
+  }
+
+  function swingStatus(s, verb) {
+    return "swinging to face " + (s.n > 1 ? "the " + s.n + " searches" : "the search") + ", then " + verb + " on";
+  }
+
+  // The swings of one mode entry, in start order. shownAt(T) answers the state
+  // shown at T as { frame, centre, zoom, info? } (copies); `info` is kept on the
+  // swing for the mode's own use.
+  function makeSwings(D, seed) {
+    var list = [];
+
+    // The latest swing that has started by t (it may have ended), or null.
+    function at(t) {
+      for (var i = list.length - 1; i >= 0; i--) if (list[i].T <= t) return list[i];
+      return null;
+    }
+
+    function face(target, time, options, shownAt) {
+      var tg = faceTarget(target, D);
+      var op = swingOptions(options);
+      if (!tg || !op) return false;
+      var T = checkTime(time);
+      var last = list.length ? list.at(-1) : null;
+      if (last && last.T > T) T = last.T; // a fixed past is never rewritten
+      var shown = shownAt(T);
+      if (last && last.U > T) {
+        last.U = T; // a new swing starts from the frame shown at its time
+        last.cache = {};
+      }
+      list.push(makeSwing(tg, shown, T, op, seed, list.length, D));
+      return true;
+    }
+
+    // End the newest swing at t if it is in progress then.
+    function end(time) {
+      var t = checkTime(time);
+      var last = list.length ? list.at(-1) : null;
+      if (!last || t < last.T || t >= last.U) return false;
+      last.U = t;
+      last.cache = {};
+      return true;
+    }
+
+    function describe() {
+      var last = list.length ? list.at(-1) : null;
+      return last ? { at: last.T, until: last.U } : null;
+    }
+
+    return { at: at, face: face, end: end, describe: describe, list: list };
+  }
+
   return {
     INTERFACE: INTERFACE.slice(),
     register: register,
@@ -4957,6 +5139,13 @@ ET.modes = (function () {
     changed: changed,
     isPrefix: isPrefix,
     EMPTY_STATUS: EMPTY_STATUS,
+    SWING_DURATION: SWING_DURATION,
+    makeSwings: makeSwings,
+    swingState: swingState,
+    swingEnd: swingEnd,
+    swingRelease: swingRelease,
+    releaseCentreZoom: releaseCentreZoom,
+    swingStatus: swingStatus,
   };
 })();
 // ---------------------------------------------------------------------------
@@ -5001,6 +5190,7 @@ ET.modes = (function () {
       describe: describe,
       refit: refit,
       mark: mark,
+      face: face,
       leave: leave,
     };
 
@@ -5027,6 +5217,7 @@ ET.modes = (function () {
     // touches no state, so it can never make the instance ready on old data.
     var gen = 0;
     var refitGen = 0;
+    var swings = null; // the swings toward the searches (M.makeSwings)
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Tumble");
@@ -5046,6 +5237,7 @@ ET.modes = (function () {
       refitRunning = false;
       requestedAt = null;
       progress = 0;
+      swings = M.makeSwings(D, seed);
       self.time = 0;
       self.varianceShare = null;
       hold = entry ? entry.frame : M.startFrame(D, seed);
@@ -5255,13 +5447,56 @@ ET.modes = (function () {
       if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
       if (pending) fixSwitch(t); // no time was given: the first query fixes it
       out.t = t;
-      frameAt(t, out.frame);
-      glide.at(t, out.centre);
-      out.draw = drawFor(out.frame, out.centre, t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) {
+        var zoom = M.swingState(sw, t, out.frame, out.centre);
+        out.draw = drawFor(out.frame, out.centre, t);
+        out.draw.zoom = zoom;
+      } else {
+        frameAt(t, out.frame);
+        glide.at(t, out.centre);
+        if (sw) released(sw, t);
+        out.draw = drawFor(out.frame, out.centre, t);
+        if (sw) out.draw.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), out.centre, out.draw.zoom);
+      }
       out.wires = null;
       out.focus = null;
       out.status = status(t);
       return out;
+    }
+
+    // After a swing ends at U, Tumble turns back onto its tour from the frame
+    // shown at U the way it turns onto a refitted tour: the tour's axes are
+    // relabelled (order and sign) to match that frame, and a fixed rotation that
+    // takes the tour's frame at U to the frame shown unwinds along refitEase over
+    // a length chosen as for a refit ("auto": the turn adds at most half the
+    // tour's mean rate). A blend over `transition` seconds, as on entry, turned up
+    // to five times faster than the tour moves (measured). The centre and zoom
+    // come back over `transition` (stateAt).
+    function released(sw, t) {
+      var c = sw.cache;
+      if (!c.turn) {
+        var end = M.swingEnd(sw);
+        var raw = frameAt(sw.U, new Float32Array(3 * D));
+        c.al = M.alignment(raw, end.frame, D);
+        var start = M.applyAlignment(raw, c.al, D);
+        c.turn = makeRefitBlend(end.frame, start, D);
+        c.turn.duration = refitDuration(c.turn, tours[activeIndex(sw.U)].tour, sw.U);
+      }
+      M.applyAlignment(new Float32Array(out.frame), c.al, D, out.frame);
+      var u = (t - sw.U) / c.turn.duration;
+      if (u < 1) applyRefitBlend(c.turn, 1 - refitEase(u), out.frame, D);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t.
+    function face(target, time, options) {
+      if (!isReady() || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var s = stateAt(T);
+        return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), zoom: s.draw.zoom };
+      });
     }
 
     function step(dt) {
@@ -5273,6 +5508,8 @@ ET.modes = (function () {
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
       if (!isReady()) return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return M.swingStatus(sw, "tumbling");
       var cur = tours[activeIndex(t)];
       var s = "tour of " + cur.tour.subspace + " strongest directions · " + (cur.share * 100).toFixed(1) + "% of variance";
       var since = set.count - cur.count;
@@ -5353,6 +5590,7 @@ ET.modes = (function () {
         refitAt: last?.t0 > -Infinity ? last.t0 : null,
         refitTransition: last?.blend ? last.blend.duration : null,
         refitPending: refitRunning,
+        facing: swings ? swings.describe() : null,
         empty: empty,
       };
     }
@@ -5792,6 +6030,7 @@ ET.modes = (function () {
 (function () {
   var M = ET.modes;
   var KNN_SLICE_MS = 1; // a unit of neighbour work stops after its first row once this has passed
+  var SALT_RESUME = 0x1a77ce; // the swap schedule that starts after a swing draws from its own stream
 
   var DEFAULTS = {
     period: 3.4, // seconds per axis swap (the reference's)
@@ -5827,6 +6066,7 @@ ET.modes = (function () {
       dataChanged: dataChanged,
       describe: describe,
       mark: mark,
+      face: face,
       leave: leave,
     };
 
@@ -5842,6 +6082,8 @@ ET.modes = (function () {
     var guided = false; // the swap tour draws from the fitted directions
     var fitAtEntry = false; // decided once per entry: the entry waits for the fit
     var fitShare = null; // share of variance in those directions
+    var swapBasis = null; // { basis, rows } the swap tour draws hidden directions from, when guided
+    var swings = null; // the swings toward the searches (M.makeSwings)
     var epoch = 0; // bumped by enter and leave: work queued for an earlier entry does nothing
     var hold = null;
     var knn = null; // the stepper in progress (or finished)
@@ -5874,6 +6116,8 @@ ET.modes = (function () {
       swap = ET.math.makeSwapTour(hold, D, { seed: seed, period: opt.period });
       guided = false;
       fitShare = null;
+      swapBasis = null;
+      swings = M.makeSwings(D, seed);
       fitAtEntry = wantsGuided(s);
       epoch++;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
@@ -5950,6 +6194,7 @@ ET.modes = (function () {
               basisRows: tour.subspace,
             });
             guided = true;
+            swapBasis = { basis: tour.basis, rows: tour.subspace };
             fitShare = tour.varianceShare;
             return true;
           },
@@ -6066,11 +6311,19 @@ ET.modes = (function () {
       if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
       if (pendingWires) fixWires(t); // no time was given: the first query fixes it
       out.t = t;
-      swap.frameAt(t, out.frame);
-      glide.at(t, out.centre);
+      var sw = swings.at(t);
+      var swinging = sw !== null && t < sw.U;
+      var zoom = 0;
+      if (swinging) {
+        zoom = M.swingState(sw, t, out.frame, out.centre);
+      } else {
+        swapAt(sw, t).frameAt(sw ? t - sw.U : t, out.frame);
+        glide.at(t, out.centre);
+        zoom = M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample);
+      }
       var sc = st.radius / M.REFERENCE_RADIUS;
       var draw = {
-        zoom: M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample),
+        zoom: zoom,
         wires: 0,
         dim: 0.55,
         trails: 0.1,
@@ -6081,6 +6334,8 @@ ET.modes = (function () {
         depthOfField: 1.1,
       };
       out.draw = M.blendDraw(draw, entry, t, opt.transition);
+      if (swinging) out.draw.zoom = zoom;
+      else if (sw) out.draw.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), out.centre, out.draw.zoom);
       // the wire fade-in is its own ramp, not part of the entry blend
       out.draw.wires = wireOpacity(t);
       var list = activeList(t);
@@ -6088,6 +6343,37 @@ ET.modes = (function () {
       out.focus = null;
       out.status = status(t);
       return out;
+    }
+
+    // The swap schedule in force at t: the entry's, or after a swing (sw, ended
+    // by t) a new schedule that starts from the frame shown at the swing's end, in
+    // the time since then. It keeps swapping axes from there with no jump.
+    function swapAt(sw, t) {
+      if (!sw || t < sw.U) return swap;
+      if (!sw.cache.swap) {
+        var o = { seed: ET.math.mixSeed(ET.math.mixSeed(seed, SALT_RESUME), sw.index), period: opt.period };
+        if (swapBasis) {
+          o.basis = swapBasis.basis;
+          o.basisRows = swapBasis.rows;
+        }
+        sw.cache.swap = ET.math.makeSwapTour(M.swingEnd(sw).frame, D, o);
+      }
+      return sw.cache.swap;
+    }
+
+    function swapStateAt(sw, t) {
+      return sw ? swapAt(sw, t).stateAt(t - sw.U) : swap.stateAt(t);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t.
+    function face(target, time, options) {
+      if (!isReady() || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var s = stateAt(T);
+        return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), zoom: s.draw.zoom };
+      });
     }
 
     function step(dt) {
@@ -6099,7 +6385,9 @@ ET.modes = (function () {
     function status(time) {
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
-      var s = swap.stateAt(t);
+      var sw = isReady() ? swings.at(t) : null;
+      if (sw && t < sw.U) return M.swingStatus(sw, "swapping axes");
+      var s = swapStateAt(sw, t);
       var pctSwap = String(Math.round(Math.min(1, s.u) * 100));
       while (pctSwap.length < 3) pctSwap = " " + pctSwap;
       var line = "swap " + (s.cycle + 1) + " · axis " + "XYZ".charAt(s.axis) + " trading for a hidden direction · " + pctSwap + "%";
@@ -6157,6 +6445,7 @@ ET.modes = (function () {
         wiresShownAt: lists.length ? lists[0].T : null,
         wiresReplacedAt: lists.length > 1 ? last.T : null,
         wiresPending: pendingWires !== null,
+        facing: swings ? swings.describe() : null,
         empty: empty,
         varianceShare: fitShare,
       };
@@ -6263,6 +6552,7 @@ ET.modes = (function () {
       neighboursOf: neighboursOf,
       retained: retained,
       mark: function () {}, // Wander has no events to fix
+      face: face,
       leave: leave,
     };
 
@@ -6290,6 +6580,7 @@ ET.modes = (function () {
     var ahead = null; // the next hop's work in progress: { h, j, c, scan, fit }
     var out = null;
     var tmpC = null;
+    var swings = null; // the swings toward the searches (M.makeSwings)
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Wander");
@@ -6312,6 +6603,7 @@ ET.modes = (function () {
       cur = { h: -1, prev: -1, recent: [], frame: startFrame };
       hopsComputed = 0;
       ahead = null;
+      swings = M.makeSwings(D, seed);
       self.time = 0;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
       tmpC = new Float64Array(D);
@@ -6593,20 +6885,51 @@ ET.modes = (function () {
       return { h: h, local: t - h * cycle };
     }
 
+    // The hop at t (not during a swing): with no swing before t, hopAt(t). After
+    // a swing (sw, ended by t) a new leg starts at its end U with the hop after
+    // the one the swing interrupted (sw.info.hT); `first` marks the leg's first
+    // hop, which flies from the frame and centre shown at U.
+    function legAt(sw, t) {
+      if (!sw) return hopAt(t);
+      var lt = t - sw.U;
+      var k = Math.floor(lt / cycle);
+      return { h: sw.info.hT + 1 + k, local: lt - k * cycle, first: k === 0 };
+    }
+
+    // The hop in progress at t: during a swing, the hop it interrupted.
+    function hopInProgress(t) {
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return sw.info.hT;
+      return legAt(sw, t).h;
+    }
+
+    // A route frame as shown in the leg after swing sw: its axes relabelled
+    // (order and sign) to match the frame shown at the swing's end, the same
+    // relabelling for every hop of the leg, so the hops stay aligned to each other.
+    function legFrame(sw, f) {
+      return sw ? M.applyAlignment(f, sw.cache.al, D) : f;
+    }
+
     function stateAt(time) {
       var t = M.checkTime(time);
       out.t = t;
       if (!ready || empty) return M.holdState(out, startFrame, entry, t, status(t));
-      var hp = hopAt(t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return swingingState(sw, t);
+      var hp = legAt(sw, t);
       var h = hp.h;
+      var end = sw ? legEnd(sw) : null;
       ensure(h - 1);
       ensure(h);
       var prevRec = rec(h - 1);
       var hereRec = rec(h);
       workAhead(h + 1);
+      var first = !!hp.first;
       var j = hereRec.target;
-      var fromF = prevRec.frame;
-      var toF = hereRec.frame;
+      var from = flightStart(sw, first, prevRec);
+      var fromF = from.frame;
+      var toF = legFrame(sw, hereRec.frame);
+      var fromC = from.centre;
       var X = set.vectors;
       var oj = j * D;
       var phase;
@@ -6614,9 +6937,9 @@ ET.modes = (function () {
       if (hp.local < opt.travel) {
         phase = "travel";
         e = ET.math.smoothstep(hp.local / opt.travel);
-        var oc = h > 0 ? prevRec.target * D : -1;
+        var oc = h > 0 && !first ? prevRec.target * D : -1;
         for (var d = 0; d < D; d++) {
-          var a = oc >= 0 ? X[oc + d] : startCentre[d];
+          var a = oc >= 0 ? X[oc + d] : fromC[d];
           tmpC[d] = a + (X[oj + d] - a) * e;
         }
         for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
@@ -6629,11 +6952,49 @@ ET.modes = (function () {
       }
       out.focus = {
         phase: phase,
-        from: h > 0 ? prevRec.target : -1,
+        from: h > 0 && !first ? prevRec.target : -1,
         to: j,
         e: e,
         neighbours: Int32Array.from(nearVisits(ctx, j, opt.spokes)),
       };
+      out.draw = drawAt(t);
+      // The centre needs no blend: the leg's first hop flies from the centre shown at U.
+      if (sw) out.draw.zoom = end.zoom + (out.draw.zoom - end.zoom) * M.swingRelease(sw, t, opt.transition);
+      out.status = status(t);
+      return out;
+    }
+
+    // The state shown at swing sw's end, with the leg's relabelling of route
+    // frames worked out (once) against it.
+    function legEnd(sw) {
+      var end = M.swingEnd(sw);
+      if (!sw.cache.al) {
+        ensure(sw.info.hT + 1);
+        sw.cache.al = M.alignment(rec(sw.info.hT + 1).frame, end.frame, D);
+      }
+      return end;
+    }
+
+    // Where a flight starts: the frame and the centre used when there is no
+    // previous stop. A leg's first hop starts from the state shown at the swing's end.
+    function flightStart(sw, first, prevRec) {
+      if (first) return M.swingEnd(sw);
+      return { frame: legFrame(sw, prevRec.frame), centre: startCentre };
+    }
+
+    // During a swing: the swing's frame, centre and zoom; the spokes of the hop
+    // it interrupted, as they were at its start.
+    function swingingState(sw, t) {
+      var zoom = M.swingState(sw, t, out.frame, out.centre);
+      workAhead(sw.info.hT + 1); // the next leg's first stop, ahead of need
+      out.focus = sw.info.focus;
+      out.draw = drawAt(t);
+      out.draw.zoom = zoom;
+      out.status = status(t);
+      return out;
+    }
+
+    function drawAt(t) {
       var draw = {
         zoom: opt.zoom / scale,
         wires: 0,
@@ -6645,9 +7006,27 @@ ET.modes = (function () {
         twinkle: 0.18,
         depthOfField: 1.1,
       };
-      out.draw = M.blendDraw(draw, entry, t, opt.transition);
-      out.status = status(t);
-      return out;
+      return M.blendDraw(draw, entry, t, opt.transition);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t. The swing remembers the hop it
+    // interrupts (hT) and that hop's spokes.
+    function face(target, time, options) {
+      if (!ready || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var prior = swings.at(T);
+        var hT = prior && T < prior.U ? prior.info.hT : legAt(prior, T).h;
+        var s = stateAt(T);
+        var f = s.focus ? { ...s.focus, neighbours: new Int32Array(s.focus.neighbours) } : null;
+        return {
+          frame: new Float32Array(s.frame),
+          centre: new Float32Array(s.centre),
+          zoom: s.draw.zoom,
+          info: { hT: hT, focus: f },
+        };
+      });
     }
 
     // A point's name for the status line, cut to 24 characters so the line
@@ -6658,13 +7037,13 @@ ET.modes = (function () {
       return n.length > 24 ? n.slice(0, 23) + "…" : n;
     }
 
-    function describeStop(h, phase) {
+    function describeStop(h, phase, first) {
       var j = rec(h).target;
       if (phase === "dwell") {
         var g = groupOf(j);
         return 'at "' + nameOf(j) + '"' + (g ? " · " + g : "") + " · stop " + (h + 1);
       }
-      var i = h > 0 ? rec(h - 1).target : -1;
+      var i = h > 0 && !first ? rec(h - 1).target : -1;
       var gj = groupOf(j);
       var far = i >= 0 && gj !== "" && groupOf(i) !== gj;
       return (i >= 0 ? '"' + nameOf(i) + '" → ' : "heading to ") + '"' + nameOf(j) + '"' + (far ? " · long leap to " + gj : "");
@@ -6679,10 +7058,12 @@ ET.modes = (function () {
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
       if (!ready) return "getting ready to wander …";
-      var hp = hopAt(t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return M.swingStatus(sw, "wandering");
+      var hp = legAt(sw, t);
       ensure(hp.h - 1);
       ensure(hp.h);
-      return describeStop(hp.h, hp.local < opt.travel ? "travel" : "dwell");
+      return describeStop(hp.h, hp.local < opt.travel ? "travel" : "dwell", hp.first);
     }
 
     // Append: the hops up to the one in progress at time t are kept (so the view
@@ -6701,7 +7082,9 @@ ET.modes = (function () {
         enter(newSet, { seed: seed, from: from });
         return M.changed(prepare(), true);
       }
-      var h = hopAt(t).h;
+      var h = hopInProgress(t);
+      // A leg that starts after h re-relabels its frames against the stops chosen again.
+      for (var sw of swings.list) if (sw.info.hT >= h) sw.cache.al = null;
       // Keep the route up to hop h (computed with the data so far); drop the rest.
       ensure(h);
       if (cur.h > h) {
@@ -6760,6 +7143,7 @@ ET.modes = (function () {
         dwell: opt.dwell,
         labelled: ctx ? ctx.labelled : 0,
         visiting: ctx?.labelled >= 2 ? "labelled points" : "any point",
+        facing: swings ? swings.describe() : null,
         empty: empty,
         varianceShare: null,
       };

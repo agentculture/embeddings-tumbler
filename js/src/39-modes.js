@@ -16,8 +16,8 @@
 // ---------------------------------------------------------------------------
 ET.modes = (function () {
   // Members every mode instance must have (see js/api/40-modes.md).
-  // Optional members: mark(t) (fix the time of a finished event) and, for
-  // Tumble, refit(t).
+  // Optional members: mark(t) (fix the time of a finished event), face(target,
+  // t, options) (the swing toward the searches) and, for Tumble, refit(t).
   var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
   var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
   var registry = [];
@@ -469,6 +469,188 @@ ET.modes = (function () {
     return t;
   }
 
+  // ----- the swing toward the searches (js/api/40-modes.md, "Facing the searches")
+  //
+  // A swing is an event at a fixed time T. From T to its end U the frame is
+  // pulled toward the facing frame Q with weight w = 1 - exp(-PULL (t - T)) while
+  // it keeps drifting: the frame is the closed-form solution of the reference's
+  // per-frame pull (F += (Q - F)(1 - exp(-2 dt))) with a drift velocity of
+  // SWING_DRIFT rad/s per axis whose direction turns at SWING_TURN rad/s, then
+  // orthonormalised. The drift's directions are drawn from the view seed and the
+  // swing's number, so the frames are a pure function of the calls. The centre
+  // and zoom are pulled toward the target's with the same weight. After U the
+  // mode's own motion carries on from the state shown at U (each mode file).
+  var SWING_DURATION = 6; // seconds of mode time (the reference's)
+  var SWING_PULL = 2; // 1/s: the reference's pull, 1 - exp(-2 dt) per frame
+  var SWING_DRIFT = 0.21; // rad/s per axis: half the reference tumble's 0.42
+  var SWING_TURN = 1.5; // rad/s: how fast the drift's direction turns
+  var SALT_SWING = 0x5e1f0c;
+
+  function allFinite(a) {
+    for (var x of a) if (!Number.isFinite(x)) return false;
+    return true;
+  }
+
+  // A checked copy of a facing target { frame, centre, zoom }, or null.
+  function faceTarget(target, D) {
+    if (!target || typeof target !== "object") return null;
+    var f = target.frame;
+    var c = target.centre;
+    var z = target.zoom;
+    if (f?.length !== 3 * D || c?.length !== D) return null;
+    var good = z > 0 && Number.isFinite(z); // false for a missing or non-numeric zoom too
+    if (!good) return null;
+    var frame = Float32Array.from(f);
+    var centre = Float32Array.from(c);
+    if (!allFinite(frame) || !allFinite(centre)) return null;
+    ET.math.orthonormalize(frame, 3, D);
+    return { frame: frame, centre: centre, zoom: z };
+  }
+
+  // { duration, searches } from face()'s options, or null when the duration is
+  // not a positive finite number.
+  function swingOptions(options) {
+    var o = options || {};
+    var duration = o.duration === undefined ? SWING_DURATION : o.duration;
+    var good = duration > 0 && Number.isFinite(duration);
+    if (!good) return null;
+    var n = Math.round(o.searches);
+    if (Number.isNaN(n) || n < 1) n = 1; // a missing or non-numeric count is one search
+    return { duration: duration, searches: Math.min(4, n) };
+  }
+
+  function makeSwing(tg, shown, T, op, seed, index, D) {
+    var Q = tg.frame;
+    var A = shown.frame;
+    // Each target axis is flipped to the shorter turn from the frame shown, so
+    // the pull never passes through a row that cancels out.
+    for (var r = 0; r < 3; r++) {
+      var dp = 0;
+      for (var d = 0; d < D; d++) dp += Q[r * D + d] * A[r * D + d];
+      if (dp < 0) for (var d2 = 0; d2 < D; d2++) Q[r * D + d2] = -Q[r * D + d2];
+    }
+    var rng = ET.math.makeRandom(ET.math.mixSeed(ET.math.mixSeed(seed, SALT_SWING), index));
+    var H = new Float64Array(6 * D);
+    rng.fillGauss(H, 0, 6 * D);
+    for (var row = 0; row < 6; row++) {
+      var n = 0;
+      for (var d3 = 0; d3 < D; d3++) n += H[row * D + d3] * H[row * D + d3];
+      n = Math.sqrt(n) || 1;
+      for (var d4 = 0; d4 < D; d4++) H[row * D + d4] /= n;
+    }
+    return {
+      index: index,
+      T: T,
+      U: T + op.duration,
+      n: op.searches,
+      A: A,
+      C0: shown.centre,
+      Z0: shown.zoom,
+      Q: Q,
+      Qc: tg.centre,
+      Qz: tg.zoom,
+      H: H,
+      info: shown.info || null,
+      cache: {},
+    };
+  }
+
+  // The swing's frame and centre at mode time t (clamped to [T, U]) written
+  // into `frame` and `centre`; returns the zoom.
+  function swingState(s, t, frame, centre) {
+    var D = s.Qc.length;
+    var tau = Math.min(Math.max(t - s.T, 0), s.U - s.T);
+    var k = Math.exp(-SWING_PULL * tau); // 1 - w
+    var c = Math.cos(SWING_TURN * tau) - k;
+    var sn = Math.sin(SWING_TURN * tau);
+    var den = SWING_PULL * SWING_PULL + SWING_TURN * SWING_TURN;
+    // The drift's offset: the integral of exp(-PULL (tau - u)) times the turning
+    // velocity, in closed form (zero at tau = 0, so the swing starts with no jump).
+    var a = (SWING_DRIFT * (SWING_PULL * c + SWING_TURN * sn)) / den;
+    var b = (SWING_DRIFT * (SWING_PULL * sn - SWING_TURN * c)) / den;
+    var x = new Float64Array(3 * D);
+    var H = s.H;
+    for (var i = 0; i < 3 * D; i++) x[i] = s.Q[i] + k * (s.A[i] - s.Q[i]) + a * H[i] + b * H[3 * D + i];
+    ET.math.orthonormalize(x, 3, D);
+    for (var i2 = 0; i2 < 3 * D; i2++) frame[i2] = x[i2];
+    for (var d = 0; d < D; d++) centre[d] = s.Qc[d] + k * (s.C0[d] - s.Qc[d]);
+    return s.Qz + k * (s.Z0 - s.Qz);
+  }
+
+  // The state shown at the swing's end U: { frame, centre, zoom }, computed once.
+  function swingEnd(s) {
+    if (!s.cache.end) {
+      var D = s.Qc.length;
+      var e = { frame: new Float32Array(3 * D), centre: new Float32Array(D), zoom: 0 };
+      e.zoom = swingState(s, s.U, e.frame, e.centre);
+      s.cache.end = e;
+    }
+    return s.cache.end;
+  }
+
+  // How far the mode has come back after the swing: 0 at U, 1 from U + duration on.
+  function swingRelease(s, t, duration) {
+    var blending = t - s.U < duration; // false for a NaN duration too
+    return blending ? ET.math.smoothstep((t - s.U) / duration) : 1;
+  }
+
+  // centre := from + (centre - from) e, in place; returns the zoom blended the same way.
+  function releaseCentreZoom(end, e, centre, zoom) {
+    if (e >= 1) return zoom;
+    for (var d = 0; d < centre.length; d++) centre[d] = end.centre[d] + (centre[d] - end.centre[d]) * e;
+    return end.zoom + (zoom - end.zoom) * e;
+  }
+
+  function swingStatus(s, verb) {
+    return "swinging to face " + (s.n > 1 ? "the " + s.n + " searches" : "the search") + ", then " + verb + " on";
+  }
+
+  // The swings of one mode entry, in start order. shownAt(T) answers the state
+  // shown at T as { frame, centre, zoom, info? } (copies); `info` is kept on the
+  // swing for the mode's own use.
+  function makeSwings(D, seed) {
+    var list = [];
+
+    // The latest swing that has started by t (it may have ended), or null.
+    function at(t) {
+      for (var i = list.length - 1; i >= 0; i--) if (list[i].T <= t) return list[i];
+      return null;
+    }
+
+    function face(target, time, options, shownAt) {
+      var tg = faceTarget(target, D);
+      var op = swingOptions(options);
+      if (!tg || !op) return false;
+      var T = checkTime(time);
+      var last = list.length ? list.at(-1) : null;
+      if (last && last.T > T) T = last.T; // a fixed past is never rewritten
+      var shown = shownAt(T);
+      if (last && last.U > T) {
+        last.U = T; // a new swing starts from the frame shown at its time
+        last.cache = {};
+      }
+      list.push(makeSwing(tg, shown, T, op, seed, list.length, D));
+      return true;
+    }
+
+    // End the newest swing at t if it is in progress then.
+    function end(time) {
+      var t = checkTime(time);
+      var last = list.length ? list.at(-1) : null;
+      if (!last || t < last.T || t >= last.U) return false;
+      last.U = t;
+      last.cache = {};
+      return true;
+    }
+
+    function describe() {
+      var last = list.length ? list.at(-1) : null;
+      return last ? { at: last.T, until: last.U } : null;
+    }
+
+    return { at: at, face: face, end: end, describe: describe, list: list };
+  }
+
   return {
     INTERFACE: INTERFACE.slice(),
     register: register,
@@ -498,5 +680,12 @@ ET.modes = (function () {
     changed: changed,
     isPrefix: isPrefix,
     EMPTY_STATUS: EMPTY_STATUS,
+    SWING_DURATION: SWING_DURATION,
+    makeSwings: makeSwings,
+    swingState: swingState,
+    swingEnd: swingEnd,
+    swingRelease: swingRelease,
+    releaseCentreZoom: releaseCentreZoom,
+    swingStatus: swingStatus,
   };
 })();
