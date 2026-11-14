@@ -1,0 +1,25 @@
+{
+  "plan_slug": "search-in-the-embedding-viewer",
+  "schema_version": 2,
+  "created": "2026-11-14T16:05:41Z",
+  "updated": "2026-11-14T16:05:41Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Lattice's neighbour wires are toned down when they pile up, with or without a search. This changes the released viewer's no-search picture in Lattice, which the build's rule and task t4's first criterion ('with no search the frame is byte-identical to today's') forbade. Tumble, Wander and Focus with no search stay identical.",
+      "task_ref": "t4",
+      "reason": "The owner tried the build on 2026-11-14 and said 'Lattice appears very bright. and a bit pixelated'; measured with no search: 11,710 lit pixels of 57,600, 3,812 near white. Asked whether to tone the wires down when there is no search, the owner answered 'Please do'.",
+      "affects": [
+        "t6",
+        "c8"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}
