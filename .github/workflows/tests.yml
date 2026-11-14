@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
 
+# Every `run:` step uses bash with -e and -o pipefail (GitHub's explicit-bash
+# invocation); multi-line steps add `set -euo pipefail` themselves.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -28,6 +34,24 @@ jobs:
       - run: uv python install 3.12
 
       - run: uv sync
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      # The committed generated files (the assembled core file, the shipped
+      # sample, shell and page copies, package.json's version) must match
+      # their sources; each script exits 1 and names the fix when stale.
+      - name: generated files are current
+        run: |
+          set -euo pipefail
+          python3 scripts/assemble.py --check
+          python3 scripts/sync_sample.py --check
+          python3 scripts/sync_static.py --check
+          python3 scripts/sync_version.py --check
+
+      - name: node --test
+        run: node --test
 
       - run: uv run pytest -n auto --cov=embeddings_tumbler --cov-report=xml:coverage.xml --cov-report=term -v
 
@@ -71,6 +95,7 @@ jobs:
 
       - name: markdownlint-cli2
         run: |
+          set -euo pipefail
           npm install -g markdownlint-cli2@0.21.0
           markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
 
@@ -111,7 +136,7 @@ jobs:
       - name: per-harness smoke check
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           uv run python scripts/harness-smoke.py --stage all --require config 2>&1 \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -139,10 +164,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           # AgentCulture rule: every PR bumps the version — even docs/config/CI.
           # See CLAUDE.md and the version-bump skill for rationale.
-          PR_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          MAIN_VERSION=$(git show origin/main:pyproject.toml 2>/dev/null | python3 -c "import sys,tomllib; print(tomllib.loads(sys.stdin.read())['project']['version'])" 2>/dev/null || echo "")
+          PR_VERSION="$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          MAIN_VERSION="$(git show origin/main:pyproject.toml 2>/dev/null | python3 -c "import sys,tomllib; print(tomllib.loads(sys.stdin.read())['project']['version'])" 2>/dev/null || echo "")"
 
           if [ -z "$MAIN_VERSION" ]; then
             echo "No pyproject.toml on main yet — skipping version check (initial scaffold)."
@@ -155,14 +181,16 @@ jobs:
 
           $MARKER"
 
-            EXISTING=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
-              --jq '.[] | select(.body | contains("<!-- version-check -->")) | .id' | head -1)
+            # `first // empty` instead of `| head -1`: under pipefail, head
+            # closing the pipe early could fail the step before it comments.
+            EXISTING="$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+              --jq '[.[] | select(.body | contains("<!-- version-check -->")) | .id] | first // empty')"
 
             if [ -n "$EXISTING" ]; then
-              gh api repos/${{ github.repository }}/issues/comments/$EXISTING \
+              gh api "repos/${{ github.repository }}/issues/comments/${EXISTING}" \
                 -X PATCH -f body="$BODY" > /dev/null
             else
-              gh pr comment ${{ github.event.pull_request.number }} --body "$BODY" || true
+              gh pr comment "${{ github.event.pull_request.number }}" --body "$BODY" || true
             fi
 
             echo "::error::Version $PR_VERSION matches main. Bump before merging."

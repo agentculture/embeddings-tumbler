@@ -1,9 +1,51 @@
 {
-  "name": "embeddings-tumbler",
+  "name": "@culture.dev/embeddings-tumbler",
   "version": "0.10.1",
-  "private": true,
-  "description": "Drop-in viewer for embedding spaces.",
+  "description": "Drop-in viewer for embedding spaces: a moving 3-D window through the full-dimensional space. One dependency-free script with mount, update and destroy.",
+  "keywords": [
+    "embeddings",
+    "embedding-space",
+    "visualization",
+    "viewer",
+    "projection",
+    "web-component"
+  ],
   "license": "Apache-2.0",
+  "author": "AgentCulture",
+  "homepage": "https://github.com/agentculture/embeddings-tumbler#readme",
+  "bugs": "https://github.com/agentculture/embeddings-tumbler/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentculture/embeddings-tumbler.git"
+  },
+  "main": "embeddings_tumbler/static/embeddings-tumbler.js",
+  "browser": "embeddings_tumbler/static/embeddings-tumbler.js",
+  "unpkg": "embeddings_tumbler/static/embeddings-tumbler.js",
+  "jsdelivr": "embeddings_tumbler/static/embeddings-tumbler.js",
+  "exports": {
+    ".": "./embeddings_tumbler/static/embeddings-tumbler.js",
+    "./embeddings-tumbler.js": "./embeddings_tumbler/static/embeddings-tumbler.js",
+    "./web-component.js": "./embeddings_tumbler/static/web-component.js",
+    "./sample-data.js": "./embeddings_tumbler/static/sample-data.js",
+    "./index.html": "./embeddings_tumbler/static/index.html",
+    "./page.css": "./embeddings_tumbler/static/page.css",
+    "./page.js": "./embeddings_tumbler/static/page.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "embeddings_tumbler/static/embeddings-tumbler.js",
+    "embeddings_tumbler/static/web-component.js",
+    "embeddings_tumbler/static/sample-data.js",
+    "embeddings_tumbler/static/index.html",
+    "embeddings_tumbler/static/page.css",
+    "embeddings_tumbler/static/page.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "test": "node --test"
   }
