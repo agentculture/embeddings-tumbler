@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4] - 2026-11-14
+
+### Changed
+
+- The npm publish step in CI logs verbosely, so a refused trusted-publishing exchange says why. The first tokenless run (0.11.3) failed with only "need auth"; 0.11.3 was not published.
+
 ## [0.11.3] - 2026-11-14
 
 ### Added
