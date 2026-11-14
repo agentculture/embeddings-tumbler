@@ -82,26 +82,7 @@ main {
   --tumbler-font-display: var(--page-font-display);
   /* The reference's stage height. */
   --tumbler-stage-height: clamp(420px, 72vh, 900px);
-}
-
-/* A short screen (a phone held sideways, a small board's display): keep the
- * panel in reach below the sky. */
-@media (max-height: 560px) {
-  .space {
-    --tumbler-stage-height: clamp(260px, 70vh, 420px);
-  }
-}
-
-/* ---------- reference spacing for the viewer's parts ----------
- *
- * The viewer sets its spacing inline as var(--tumbler-<name>, <its default>), so
- * the page sets those custom properties on its host element and the browser uses
- * them (js/api/50-viewer.md lists them). They change spacing and sizes only,
- * never colours, behaviour or content. The class names below are stable for the
- * few things the viewer does not set inline.
- */
-
-.space {
+  /* Spacing and sizes of the viewer's own elements, the reference's values. */
   --tumbler-masthead-top: 22px;
   --tumbler-masthead-left: var(--page-gutter-left);
   --tumbler-masthead-right: var(--page-gutter-right);
@@ -120,6 +101,23 @@ main {
   --tumbler-readout-caption-size: 12px;
   --tumbler-controls-gap: 10px 22px;
 }
+
+/* A short screen (a phone held sideways, a small board's display): keep the
+ * panel in reach below the sky. */
+@media (max-height: 560px) {
+  .space {
+    --tumbler-stage-height: clamp(260px, 70vh, 420px);
+  }
+}
+
+/* ---------- reference spacing for the viewer's parts ----------
+ *
+ * The viewer sets its spacing inline as var(--tumbler-<name>, <its default>), so
+ * the page sets those custom properties on its host element and the browser uses
+ * them (js/api/50-viewer.md lists them). They change spacing and sizes only,
+ * never colours, behaviour or content. The class names below are stable for the
+ * few things the viewer does not set inline.
+ */
 
 @media (max-width: 600px) {
   .space {
