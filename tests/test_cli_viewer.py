@@ -517,3 +517,217 @@ def test_the_redirect_never_lists_a_folder_outside_the_root(tmp_path: Path, monk
     assert listed
     for path in listed:
         assert path == str(root) or path.startswith(str(root) + os.sep), path
+
+
+# --- serve --embed -------------------------------------------------------------------
+
+_EMBED_KEY = "SENTINEL-EMBED-KEY-5e2d"
+_EMBED_ADDRESS = "SENTINEL-EMBED-ADDRESS-c9a0"
+
+
+def _embed_env(monkeypatch, key=_EMBED_KEY):
+    for name in ("EMBEDDINGS_API_KEY", "COLLEAGUE_API_KEY", "EMBEDDINGS_EMBED_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    if key:
+        monkeypatch.setenv("EMBEDDINGS_API_KEY", key)
+    monkeypatch.setenv("EMBEDDINGS_EMBED_URL", f"http://127.0.0.1:9/{_EMBED_ADDRESS}/v1")
+
+
+def _capture_server(monkeypatch):
+    started = {}
+    monkeypatch.setattr(viewer_cmd, "run_server", lambda s: started.setdefault("s", s))
+    return started
+
+
+def test_serve_without_embed_reads_no_gateway_settings(tmp_path, capsys, monkeypatch):
+    from embeddings_tumbler import _embed_route
+
+    def refuse(*_a, **_k):
+        raise AssertionError("the environment was read without --embed")
+
+    monkeypatch.setattr(_embed_route, "load_config", refuse)
+    started = _capture_server(monkeypatch)
+    assert main(["viewer", "serve", str(tmp_path), "--port", "0", "--json"]) == 0
+    server = started["s"]
+    payload = json.loads(capsys.readouterr().out)
+    assert "embed" not in payload
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, headers, _ = _get(payload["url"] + "_tumbler/search", "POST")
+        assert status == 405
+        assert headers["Allow"] == "GET, HEAD"
+        assert _get(payload["url"] + "_tumbler/search")[0] == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
+def test_serve_embed_json_names_the_route_never_the_gateway(tmp_path, capsys, monkeypatch):
+    _embed_env(monkeypatch)
+    started = _capture_server(monkeypatch)
+    argv = ["viewer", "serve", str(tmp_path), "--port", "0", "--json", "--embed"]
+    argv += ["--rerank-model", "rr", "--query-prefix", "query: "]
+    assert main(argv) == 0
+    started["s"].server_close()
+    cap = capsys.readouterr()
+    payload = json.loads(cap.out)
+    assert payload["embed"] == {
+        "enabled": True,
+        "route": "/_tumbler/search",
+        "model": "Qwen/Qwen3-Embedding-0.6B",
+        "rerank_model": "rr",
+        "query_form": "prefixed",
+    }
+    for sentinel in (_EMBED_KEY, _EMBED_ADDRESS, "127.0.0.1:9"):
+        assert sentinel not in cap.out + cap.err
+
+
+def test_serve_embed_text_mode_says_the_route_is_on(tmp_path, capsys, monkeypatch):
+    _embed_env(monkeypatch)
+    monkeypatch.setenv("EMBEDDINGS_EMBED_MODEL", "env-model")
+    started = _capture_server(monkeypatch)
+    argv = ["viewer", "serve", str(tmp_path), "--port", "0", "--embed"]
+    assert main(argv) == 0
+    started["s"].server_close()
+    cap = capsys.readouterr()
+    assert "search route on at /_tumbler/search" in cap.err
+    assert "env-model" in cap.err
+    assert "rerank off" in cap.err
+    assert "static files only" not in cap.err
+    for sentinel in (_EMBED_KEY, _EMBED_ADDRESS):
+        assert sentinel not in cap.out + cap.err
+    # A host name (not an address literal) is loopback when it is localhost.
+    assert main(argv + ["--embed-model", "flag-model", "--host", "localhost"]) == 0
+    started.pop("s").server_close()
+    assert "flag-model" in capsys.readouterr().err
+
+
+def test_serve_embed_without_a_key_is_an_environment_error(tmp_path, capsys, monkeypatch):
+    _embed_env(monkeypatch, key=None)
+    called = []
+    monkeypatch.setattr(_static_server, "make_server", lambda *a, **k: called.append(a))
+    assert main(["viewer", "serve", str(tmp_path), "--embed", "--json"]) == 2
+    cap = capsys.readouterr()
+    assert "EMBEDDINGS_API_KEY" in cap.err
+    assert "COLLEAGUE_API_KEY" in cap.err
+    assert _EMBED_ADDRESS not in cap.err
+    assert cap.out == ""
+    assert called == []
+
+
+def test_serve_embed_with_a_bad_gateway_address_is_an_environment_error(
+    tmp_path, capsys, monkeypatch
+):
+    _embed_env(monkeypatch)
+    monkeypatch.setenv("EMBEDDINGS_EMBED_URL", f"file:///{_EMBED_ADDRESS}")
+    assert main(["viewer", "serve", str(tmp_path), "--embed"]) == 2
+    err = capsys.readouterr().err
+    assert "EMBEDDINGS_EMBED_URL" in err
+    assert _EMBED_ADDRESS not in err
+
+
+def test_serve_embed_refuses_a_non_loopback_bind_without_the_second_flag(
+    tmp_path, capsys, monkeypatch
+):
+    _embed_env(monkeypatch)
+    called = []
+    monkeypatch.setattr(_static_server, "make_server", lambda *a, **k: called.append(a))
+    assert main(["viewer", "serve", str(tmp_path), "--embed", "--host", "192.0.2.7"]) == 1
+    err = capsys.readouterr().err
+    assert "--embed-allow-remote" in err
+    assert called == []  # nothing was bound or served
+
+
+def test_serve_embed_allow_remote_widens_the_bind(tmp_path, capsys, monkeypatch):
+    _embed_env(monkeypatch)
+    seen = {}
+
+    class _FakeServer:
+        server_address = ("192.0.2.7", 8123)
+
+    def fake_make_server(root, host, port, *, quiet, embed):
+        seen.update(host=host, embed=embed)
+        embed.bind(host, 8123)
+        return _FakeServer()
+
+    monkeypatch.setattr(_static_server, "make_server", fake_make_server)
+    monkeypatch.setattr(viewer_cmd, "run_server", lambda s: None)
+    argv = ["viewer", "serve", str(tmp_path), "--embed", "--embed-allow-remote"]
+    assert main(argv + ["--host", "192.0.2.7", "--json"]) == 0
+    cap = capsys.readouterr()
+    assert "warning: binding to 192.0.2.7" in cap.err
+    assert json.loads(cap.out)["embed"]["enabled"] is True
+    assert seen["host"] == "192.0.2.7"
+    assert seen["embed"].config.key == _EMBED_KEY
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::"])
+def test_serve_embed_refuses_the_wildcard_address(tmp_path, capsys, monkeypatch, host):
+    _embed_env(monkeypatch)
+    argv = ["viewer", "serve", str(tmp_path), "--embed", "--embed-allow-remote", "--host", host]
+    assert main(argv) == 1
+    assert "wildcard" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--embed-model", "m"],
+        ["--rerank-model", "r"],
+        ["--query-prefix", "q: "],
+        ["--embed-allow-remote"],
+    ],
+)
+def test_embed_only_flags_need_embed(tmp_path, capsys, monkeypatch, extra):
+    called = []
+    monkeypatch.setattr(_static_server, "make_server", lambda *a, **k: called.append(a))
+    assert main(["viewer", "serve", str(tmp_path), *extra]) == 1
+    assert "needs --embed" in capsys.readouterr().err
+    assert called == []
+
+
+def test_serve_embed_route_answers_through_the_cli(tmp_path, capsys, monkeypatch):
+    # The server the verb builds hands the route path to the route: a same-origin
+    # describe is answered, a foreign one refused.
+    _embed_env(monkeypatch)
+    started = _capture_server(monkeypatch)
+    assert main(["viewer", "serve", str(tmp_path), "--port", "0", "--embed", "--json"]) == 0
+    server = started["s"]
+    port = json.loads(capsys.readouterr().out)["port"]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{port}/_tumbler/search"
+        data = b'{"op": "describe"}'
+        good = {"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"}
+        req = urllib.request.Request(url, data=data, headers=good, method="POST")  # noqa: S310
+        with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310  # nosec B310
+            assert json.loads(r.read())["ok"] is True
+        bad = dict(good, Origin="https://evil.example")
+        req = urllib.request.Request(url, data=data, headers=bad, method="POST")  # noqa: S310
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(req, timeout=5)  # noqa: S310  # nosec B310
+        assert exc.value.code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
+def test_explain_and_learn_describe_the_embed_route(capsys):
+    assert main(["explain", "viewer", "serve"]) == 0
+    text = capsys.readouterr().out
+    for flag in ("--embed", "--embed-model", "--rerank-model", "--query-prefix"):
+        assert flag in text
+    assert "--embed-allow-remote" in text
+    assert "EMBEDDINGS_API_KEY" in text
+    main(["learn"])
+    assert "--embed" in capsys.readouterr().out
+    main(["learn", "--json"])
+    commands = json.loads(capsys.readouterr().out)["commands"]
+    serve = next(c for c in commands if c["path"] == ["viewer", "serve"])
+    assert "--embed" in serve["summary"]
+    main(["viewer", "overview", "--json"])
+    assert "--embed" in capsys.readouterr().out
