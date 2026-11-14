@@ -1,0 +1,499 @@
+<title>Tumbler Search Reference</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+  /* Layout: a night-sky stage with the query bar under it and the ranked results beside it;
+     one dark look on purpose, the same as the viewer this page is a reference for. */
+  :root {
+    color-scheme: dark;
+    --bg: #04060b;
+    --sky: #0b1430;
+    --fg: #e9eef6;
+    --muted: #8a96ab;
+    --line: #1b2436;
+    --panel: #080c16;
+    --accent: #ffc56b;
+    --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+    --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+  .wrap {
+    max-width: 1240px; margin: 0 auto; padding-block: 20px 56px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  .work { display: grid; grid-template-columns: minmax(0, 1fr) 370px; gap: 20px; align-items: start; }
+  .left { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+  .stage {
+    position: relative; height: clamp(380px, 60vh, 620px); border: 1px solid var(--line);
+    background: radial-gradient(120% 90% at 50% 40%, var(--sky) 0%, var(--bg) 72%);
+    overflow: hidden;
+  }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; cursor: grab; }
+  .stage canvas.turning { cursor: grabbing; }
+  .mast { position: absolute; top: 16px; left: 20px; right: 20px; pointer-events: none; }
+  .mast h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-style: italic; font-size: clamp(30px, 5vw, 46px); line-height: 1.05; text-wrap: balance; text-shadow: 0 0 18px var(--bg); }
+  .mast p { margin: 4px 0 0; font-family: var(--font-data); font-size: 12px; letter-spacing: 0.06em; color: var(--muted); text-shadow: 0 0 12px var(--bg); }
+  .status { position: absolute; left: 20px; right: 20px; bottom: 14px; margin: 0; font-family: var(--font-data); font-size: 12px; color: var(--accent); text-shadow: 0 0 10px var(--bg); pointer-events: none; }
+  .tip {
+    position: absolute; max-width: min(300px, 80%); padding: 8px 10px; background: var(--panel); border: 1px solid var(--line);
+    font-size: 13px; line-height: 1.4; pointer-events: none;
+  }
+  .tip small { display: block; margin-top: 4px; font-family: var(--font-data); font-size: 11px; color: var(--muted); }
+
+  .ask { display: flex; flex-direction: column; gap: 10px; }
+  .ask label.big { font-family: var(--font-data); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  textarea {
+    width: 100%; min-height: 66px; resize: vertical; padding: 12px 14px; color: var(--fg); background: var(--panel);
+    border: 1px solid var(--line); font-family: var(--font-body); font-size: 16px; line-height: 1.45;
+  }
+  textarea:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .chips, .toggles { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+  .chips span, .toggles .k { font-family: var(--font-data); font-size: 12px; color: var(--muted); }
+  button {
+    font-family: var(--font-data); font-size: 12px; color: var(--fg); background: transparent; border: 1px solid var(--line);
+    padding: 6px 10px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  .toggles label { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-data); font-size: 12px; color: var(--fg); padding: 6px 10px; border: 1px solid var(--line); cursor: pointer; }
+  .toggles label:has(input:checked) { border-color: var(--accent); color: var(--accent); }
+  .toggles input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+  .toggles input[type="range"] { accent-color: var(--accent); width: 110px; }
+  .unknown { margin: 0; font-family: var(--font-data); font-size: 12px; color: var(--accent); }
+
+  .results { border: 1px solid var(--line); background: var(--panel); min-width: 0; }
+  .results header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+  .results h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-style: italic; font-size: 26px; line-height: 1.1; }
+  .results header p { margin: 4px 0 0; font-family: var(--font-data); font-size: 12px; color: var(--muted); }
+  .results ol { list-style: none; margin: 0; padding: 0; }
+  .results li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 2px 8px; padding: 11px 16px; border-bottom: 1px solid var(--line); cursor: default; }
+  .results li:last-child { border-bottom: 0; }
+  .results li.lit { background: #0d1424; }
+  .results .rank { font-family: var(--font-data); font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums; padding-top: 1px; }
+  .results .text { margin: 0; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+  .results .meta { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--font-data); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .results .meta i { font-style: normal; display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .moved { color: var(--accent); }
+  .gap { grid-column: 2; height: 3px; background: var(--line); position: relative; margin-top: 3px; }
+  .gap b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); }
+  .empty { margin: 0; padding: 16px; color: var(--muted); font-size: 14px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-family: var(--font-data); font-size: 12px; color: var(--muted); }
+  .legend i { font-style: normal; display: inline-flex; align-items: center; gap: 6px; }
+
+  .notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; border-top: 1px solid var(--line); padding-top: 22px; }
+  .notes h2 { margin: 0 0 8px; font-family: var(--font-display); font-weight: 400; font-style: italic; font-size: 26px; line-height: 1.1; }
+  .notes ul { margin: 0; padding-left: 18px; color: var(--fg); }
+  .notes li { margin-bottom: 6px; max-width: 62ch; }
+  .notes p { margin: 0 0 8px; max-width: 62ch; }
+  .notes dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; font-family: var(--font-data); font-size: 12px; }
+  .notes dt { color: var(--muted); }
+  .notes dd { margin: 0; }
+
+  @media (max-width: 940px) {
+    .work { grid-template-columns: minmax(0, 1fr); }
+    .notes { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+
+<div class="wrap">
+  <div class="work">
+    <div class="left">
+      <div class="stage" id="stage">
+        <canvas id="sky" aria-label="The texts as points; the query and its nearest texts are lit and joined by lines"></canvas>
+        <div class="mast">
+          <h1>Embedding Search</h1>
+          <p>write something · see what links to it</p>
+        </div>
+        <p class="status" id="status"></p>
+        <div class="tip" id="tip" hidden></div>
+      </div>
+
+      <div class="ask">
+        <label class="big" for="query">A word, a sentence or a paragraph</label>
+        <textarea id="query" spellcheck="false">storm at sea</textarea>
+        <p class="unknown" id="unknown" hidden></p>
+        <div class="chips">
+          <span>try</span>
+          <button type="button" data-q="storm at sea">storm at sea</button>
+          <button type="button" data-q="why won't my bread rise">why won't my bread rise</button>
+          <button type="button" data-q="the night sky">the night sky</button>
+          <button type="button" data-q="interest">interest</button>
+          <button type="button" data-q="We lost power during the storm, so I baked bread in the wood oven and we watched the stars come out over the bay.">a paragraph</button>
+          <button type="button" data-q="">clear</button>
+        </div>
+        <div class="toggles">
+          <label><input type="checkbox" id="rerank"> Reranker</label>
+          <label><input type="checkbox" id="dist"> Distance difference</label>
+          <label><input type="checkbox" id="only"> Only results</label>
+          <label><input type="checkbox" id="refit" checked> Turn the view to the results</label>
+          <span class="k">results <output id="kout" for="k">8</output></span>
+          <input type="range" id="k" min="3" max="20" step="1" value="8" aria-label="Number of results">
+          <button type="button" id="play">Pause</button>
+        </div>
+        <div class="legend" id="legend"></div>
+      </div>
+    </div>
+
+    <section class="results" aria-live="polite">
+      <header>
+        <h2 id="rtitle">Nearest texts</h2>
+        <p id="rsub"></p>
+      </header>
+      <ol id="list"></ol>
+      <p class="empty" id="empty" hidden>Nothing typed. Every text is shown, coloured by its topic. Type above, or click a point to search from its text.</p>
+    </section>
+  </div>
+
+  <div class="notes">
+    <div>
+      <h2>What this page shows</h2>
+      <ul>
+        <li>The query becomes one more point in the space, drawn as a ring.</li>
+        <li>Its nearest texts are found in the full space, never on the screen. They light up and are joined to the query; the rest dim, or hide with <em>Only results</em>.</li>
+        <li><em>Reranker</em> re-orders the nearest texts with a second scorer and says how far each one moved.</li>
+        <li><em>Distance difference</em> writes each true distance on its line and shows how much farther each result is than the nearest one.</li>
+        <li>Clicking any point searches from that text.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Still open for the spec</h2>
+      <ul>
+        <li>Who embeds the query. A page may not hold the gateway address or key, so something on the server side must do it.</li>
+        <li>Which reranker is used, and where it runs.</li>
+        <li>What <em>distance difference</em> should mean exactly. Here it is the distance to the query and the gap to the nearest result.</li>
+        <li>Whether the view turns to fit the results by default.</li>
+        <li>How search sits beside Tumble, Lattice and Wander.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Where the data comes from</h2>
+      <p>Everything here is made in the page. Nothing is sent anywhere.</p>
+      <dl>
+        <dt>Source</dt><dd>96 example sentences written for this page, 8 topics</dd>
+        <dt>Model</dt><dd>a toy word-vector embedder in the page, not a real model</dd>
+        <dt>Dimension</dt><dd>192</dd>
+        <dt>Distance</dt><dd>cosine, in all 192 dimensions</dd>
+        <dt>Reranker</dt><dd>a toy: rewards words shared exactly with the query</dd>
+        <dt>Seed</dt><dd>7</dd>
+        <dt>View</dt><dd>linear projection onto 3 directions; a shadow of the space, so length on screen is not distance</dd>
+      </dl>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const D = 192, SEED = 7;
+  const GROUPS = [
+    { name: "sea and weather", color: [127, 183, 255] },
+    { name: "cooking", color: [255, 157, 107] },
+    { name: "astronomy", color: [184, 166, 255] },
+    { name: "music", color: [255, 125, 156] },
+    { name: "garden", color: [155, 227, 125] },
+    { name: "software", color: [94, 224, 208] },
+    { name: "medicine", color: [229, 140, 255] },
+    { name: "money", color: [208, 216, 106] },
+  ];
+  const RAW = [
+    ["A storm rolled in from the sea and the harbour closed for the night.", "The tide came in faster than the fishermen expected.", "Waves broke over the pier as the wind turned north.", "Fog settled on the coast and the lighthouse kept its lamp burning.", "The ferry was cancelled because of high wind and rough water.", "Sailors read the clouds for signs of rain before leaving port.", "A calm sea at dawn, with a light breeze from the west.", "The forecast warns of heavy rain and thunder along the coast.", "Salt spray covered the deck while the boat crossed the bay.", "After the hurricane the beach was covered in driftwood.", "The captain steered the ship around the reef in the dark.", "Snow fell on the harbour and the fishing boats stayed tied up."],
+    ["Knead the bread dough until it is smooth, then let it rise.", "My sourdough starter needs flour and water every morning.", "Simmer the tomato sauce slowly with garlic and basil.", "Roast the chicken with lemon, butter and thyme.", "Whisk the eggs and sugar before folding in the flour.", "The soup needs more salt and a little pepper.", "Bake the cake for forty minutes in a hot oven.", "Chop the onions and fry them in olive oil until golden.", "Fresh pasta cooks in boiling water in two minutes.", "The recipe calls for yeast, warm milk and a pinch of sugar.", "Grill the fish and serve it with rice and lime.", "Melt dark chocolate with cream for a simple dessert."],
+    ["The telescope showed four moons in orbit around Jupiter.", "A comet crossed the night sky with a long bright tail.", "Light from that distant galaxy left it before the Earth formed.", "The rover drilled into red rock on the surface of Mars.", "A total eclipse turned the afternoon dark for three minutes.", "Astronomers measured how fast the star moves around the black hole.", "The rocket carried a satellite into orbit above the equator.", "On a clear night you can see the Milky Way from the desert.", "Saturn's rings are made of ice and dust.", "The space station passes over the city just after sunset.", "A new planet was found circling a small red star.", "Meteors fell all night during the August shower."],
+    ["The orchestra tuned to the oboe before the concert began.", "She practised the piano sonata for two hours every evening.", "The drummer kept a steady rhythm under the guitar solo.", "A choir sang the old hymn in four-part harmony.", "He wrote the melody first and the lyrics a week later.", "The violin section played the opening theme very softly.", "The band recorded their album in a small studio.", "Jazz players trade short solos over the same chords.", "The singer's voice cracked on the highest note of the song.", "Tune the guitar strings before you start to play.", "The opera ends with a duet for soprano and tenor.", "A slow bass line opens the second song on the record."],
+    ["Plant the tomato seedlings after the last frost.", "The roses need pruning before spring growth begins.", "Bees crowd the lavender when it flowers in June.", "Water the garden early so the soil stays damp through the heat.", "Compost turns kitchen scraps into rich dark soil.", "The apple tree gave more fruit than we could pick.", "Weeds grew between the rows of beans and carrots.", "Sow the seeds thinly and cover them with fine soil.", "Slugs ate the lettuce leaves during the wet week.", "Autumn leaves make a good mulch for the flower beds.", "The greenhouse keeps the young plants warm at night.", "Dig the potato bed deeply and add manure in winter."],
+    ["The test failed because the function returned null.", "Push the commit to the branch and open a pull request.", "The server ran out of memory under heavy load.", "A cache in front of the database cut response time in half.", "The bug only appears when two threads write the same file.", "Refactor the module before adding the new feature.", "The compiler reported a type error on line forty.", "Deploy the release after the build passes every check.", "Search the logs for the request that caused the crash.", "The index makes the query fast even on a large table.", "Rotate the access key and store it outside the code.", "The vector index returns the nearest neighbours of a query."],
+    ["The doctor listened to her heart and lungs with a stethoscope.", "Take the antibiotic twice a day until the course is finished.", "The nurse measured his blood pressure and temperature.", "A fever and a sore throat are common signs of infection.", "The surgeon repaired the torn ligament in the knee.", "The vaccine trains the immune system to recognise the virus.", "An X-ray showed a small fracture in the wrist bone.", "The patient slept badly and complained of a headache.", "Rest, fluids and time cure most colds.", "The clinic tests blood sugar for signs of diabetes.", "Physiotherapy helped him walk again after the injury.", "The pharmacist explained the dose and the side effects."],
+    ["The bank raised the interest rate on new loans.", "She saved a tenth of her salary every month.", "The company reported higher profit and paid a dividend.", "Inflation pushed up the price of food and rent.", "He sold his shares before the market fell.", "The budget sets aside money for tax and insurance.", "A mortgage spreads the cost of a house over thirty years.", "The shop gave a refund when the invoice was wrong.", "Investors moved their money from stocks into bonds.", "The currency lost value against the dollar this year.", "Pay the credit card bill in full to avoid interest.", "The startup raised funding from two investors."],
+  ];
+  const STOP = new Set("a an and are as at be because been before but by can could did do does for from had has have he her him his how i if in into is it its just let me more most my no not of on only or our out over she so than that the their them then there they this to too under until up us was we were what when which while who why will with won would you your t s".split(" "));
+
+  /* ---------- the toy embedder ---------- */
+  function fnv(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+  function rng(seed) { let a = seed >>> 0; return function () { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  function dot(a, b) { let s = 0; for (let i = 0; i < D; i++) s += a[i] * b[i]; return s; }
+  function norm(v) { const n = Math.sqrt(dot(v, v)) || 1; for (let i = 0; i < D; i++) v[i] /= n; return v; }
+  function gauss(key) {
+    const r = rng(fnv(key + ":" + SEED)), v = new Float32Array(D);
+    for (let i = 0; i < D; i++) v[i] = Math.sqrt(-2 * Math.log(Math.max(r(), 1e-9))) * Math.cos(6.2831853 * r());
+    return norm(v);
+  }
+  function stem(w) {
+    if (w.length > 5 && w.endsWith("ing")) w = w.slice(0, -3);
+    else if (w.length > 4 && w.endsWith("ed")) w = w.slice(0, -2);
+    else if (w.length > 4 && w.endsWith("es")) w = w.slice(0, -2);
+    else if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) w = w.slice(0, -1);
+    if (w.length > 3 && w.endsWith("e")) w = w.slice(0, -1);
+    return w;
+  }
+  function words(text) { return (text.toLowerCase().match(/[a-z]+/g) || []).filter(function (w) { return w.length > 1 && !STOP.has(w); }); }
+
+  const TEXTS = [];
+  RAW.forEach(function (list, g) { list.forEach(function (t) { TEXTS.push({ text: t, group: g, stems: words(t).map(stem) }); }); });
+  const N = TEXTS.length, G = GROUPS.length;
+  const df = new Map(), lean = new Map();
+  TEXTS.forEach(function (t) {
+    new Set(t.stems).forEach(function (s) {
+      df.set(s, (df.get(s) || 0) + 1);
+      if (!lean.has(s)) lean.set(s, new Float32Array(G));
+      lean.get(s)[t.group] += 1;
+    });
+  });
+  const topic = GROUPS.map(function (_, g) { return gauss("topic:" + g); });
+  const cache = new Map();
+  function wordVec(s) {
+    if (cache.has(s)) return cache.get(s);
+    const v = Float32Array.from(gauss("word:" + s));
+    const l = lean.get(s);
+    if (l) { const total = df.get(s); for (let g = 0; g < G; g++) if (l[g]) for (let i = 0; i < D; i++) v[i] += 1.0 * (l[g] / total) * topic[g][i]; }
+    norm(v); cache.set(s, v); return v;
+  }
+  function idf(s) { return Math.log(1 + N / (df.get(s) || 0.5)); }
+  function embed(stems) {
+    if (!stems.length) return null;
+    const v = new Float32Array(D);
+    stems.forEach(function (s) { const w = wordVec(s), k = idf(s); for (let i = 0; i < D; i++) v[i] += k * w[i]; });
+    return norm(v);
+  }
+  TEXTS.forEach(function (t) { t.vec = embed(t.stems); });
+
+  /* ---------- the view: three directions, re-fitted to what is shown ---------- */
+  function fit(rows) {
+    const mean = new Float32Array(D);
+    rows.forEach(function (r) { for (let i = 0; i < D; i++) mean[i] += r[i] / rows.length; });
+    const dirs = [];
+    for (let j = 0; j < 3; j++) {
+      let v = Float32Array.from(gauss("fit:" + j));
+      for (let it = 0; it < 30; it++) {
+        const w = new Float32Array(D);
+        rows.forEach(function (r) { let p = 0; for (let i = 0; i < D; i++) p += (r[i] - mean[i]) * v[i]; for (let i = 0; i < D; i++) w[i] += p * (r[i] - mean[i]); });
+        dirs.forEach(function (d) { const p = dot(w, d); for (let i = 0; i < D; i++) w[i] -= p * d[i]; });
+        v = norm(w);
+      }
+      dirs.push(v);
+    }
+    let reach = 1e-6;
+    rows.forEach(function (r) { let s = 0; dirs.forEach(function (d) { let p = 0; for (let i = 0; i < D; i++) p += (r[i] - mean[i]) * d[i]; s += p * p; }); reach = Math.max(reach, Math.sqrt(s)); });
+    return { mean: mean, dirs: dirs, reach: reach };
+  }
+  const WHOLE = fit(TEXTS.map(function (t) { return t.vec; }));
+
+  const el = function (id) { return document.getElementById(id); };
+  const canvas = el("sky"), ctx = canvas.getContext("2d"), stage = el("stage");
+  const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const S = {
+    q: null, hits: [], byIndex: new Map(), unknown: [],
+    frame: WHOLE.dirs.map(function (d) { return Float32Array.from(d); }), centre: Float32Array.from(WHOLE.mean), reach: WHOLE.reach,
+    goal: WHOLE, yaw: 0.6, pitch: 0.28, playing: !still, hover: -1, lit: -1, drag: null, pos: [], qpos: null, w: 0, h: 0, last: 0,
+  };
+
+  function search() {
+    const text = el("query").value;
+    const raw = words(text), stems = raw.map(stem);
+    const k = Number(el("k").value), rerank = el("rerank").checked;
+    S.unknown = raw.filter(function (w, i) { return !df.has(stems[i]); });
+    S.q = embed(stems);
+    S.hits = []; S.byIndex = new Map();
+    if (S.q) {
+      const order = TEXTS.map(function (t, i) { return { i: i, sim: dot(S.q, t.vec) }; }).sort(function (a, b) { return b.sim - a.sim; });
+      order.forEach(function (o, r) { o.embRank = r + 1; });
+      let pool = order.slice(0, Math.min(N, k * 3));
+      if (rerank) {
+        const qs = Array.from(new Set(stems)), total = qs.reduce(function (s, x) { return s + idf(x); }, 0) || 1;
+        pool.forEach(function (o) {
+          const have = new Set(TEXTS[o.i].stems);
+          o.lex = qs.reduce(function (s, x) { return s + (have.has(x) ? idf(x) : 0); }, 0) / total;
+          o.score = 0.6 * o.sim + 0.4 * o.lex;
+        });
+        pool = pool.slice().sort(function (a, b) { return b.score - a.score; });
+      }
+      S.hits = pool.slice(0, k);
+      const nearest = Math.min.apply(null, S.hits.map(function (h) { return 1 - h.sim; }));
+      S.hits.forEach(function (h, r) { h.rank = r + 1; h.dist = 1 - h.sim; h.gap = h.dist - nearest; S.byIndex.set(h.i, h); });
+    }
+    if (S.q && el("refit").checked) S.goal = fit(S.hits.map(function (h) { return TEXTS[h.i].vec; }).concat([S.q]));
+    else S.goal = WHOLE;
+    // keep the turn short: a fitted direction and its negative show the same thing
+    S.goal.dirs.forEach(function (d, j) { if (dot(d, S.frame[j]) < 0) for (let i = 0; i < D; i++) d[i] = -d[i]; });
+    renderList();
+  }
+
+  function make(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
+  function rgb(g, a) { const c = GROUPS[g].color; return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")"; }
+
+  function renderList() {
+    const list = el("list"), showDist = el("dist").checked, rerank = el("rerank").checked;
+    list.textContent = "";
+    el("empty").hidden = !!S.q;
+    el("rtitle").textContent = S.q ? "Nearest texts" : "No query";
+    el("rsub").textContent = S.q ? S.hits.length + " of " + N + " · " + (rerank ? "embedding order, then the reranker" : "embedding order") : "all " + N + " texts are shown";
+    const u = el("unknown");
+    u.hidden = !S.unknown.length;
+    if (S.unknown.length) u.textContent = "The toy embedder in this page does not know: " + S.unknown.join(", ") + ". It only knows words that occur in the " + N + " texts. A real model would place them.";
+    const widest = Math.max.apply(null, S.hits.map(function (h) { return h.gap; }).concat([1e-6]));
+    S.hits.forEach(function (h) {
+      const t = TEXTS[h.i], li = make("li");
+      li.appendChild(make("span", "rank", String(h.rank)));
+      li.appendChild(make("p", "text", t.text));
+      const meta = make("div", "meta");
+      const topicTag = make("i"); const d = make("span", "dot"); d.style.background = rgb(t.group, 1); topicTag.appendChild(d); topicTag.appendChild(document.createTextNode(GROUPS[t.group].name));
+      meta.appendChild(topicTag);
+      meta.appendChild(make("i", "", showDist ? "distance " + h.dist.toFixed(3) : "similarity " + h.sim.toFixed(3)));
+      if (showDist) meta.appendChild(make("i", "", h.gap < 0.0005 ? "the nearest" : "+" + h.gap.toFixed(3) + " farther than the nearest"));
+      if (rerank) {
+        const by = h.embRank - h.rank;
+        meta.appendChild(make("i", by ? "moved" : "", by > 0 ? "up " + by + " (was " + h.embRank + ")" : by < 0 ? "down " + (-by) + " (was " + h.embRank + ")" : "same place"));
+        if (showDist) meta.appendChild(make("i", "", "shared words " + Math.round(h.lex * 100) + "%"));
+      }
+      li.appendChild(meta);
+      if (showDist) { const bar = make("div", "gap"), fill = make("b"); fill.style.width = (100 * h.gap / widest).toFixed(1) + "%"; bar.appendChild(fill); li.appendChild(bar); }
+      li.addEventListener("pointerenter", function () { S.lit = h.i; });
+      li.addEventListener("pointerleave", function () { S.lit = -1; });
+      li.dataset.i = String(h.i);
+      list.appendChild(li);
+    });
+  }
+
+  function resize() {
+    const r = stage.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    S.w = r.width; S.h = r.height;
+    canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function place(v, cy, sy, cp, sp, unit) {
+    let x = 0, y = 0, z = 0;
+    for (let i = 0; i < D; i++) { const d = v[i] - S.centre[i]; x += d * S.frame[0][i]; y += d * S.frame[1][i]; z += d * S.frame[2][i]; }
+    x /= S.reach; y /= S.reach; z /= S.reach;
+    const x1 = x * cy + z * sy, z1 = -x * sy + z * cy;
+    const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+    const f = 3.4 / (3.4 - z2);
+    return [S.w / 2 + x1 * unit * f, S.h * 0.53 - y2 * unit * f, f];
+  }
+
+  function draw(now) {
+    const dt = Math.min(0.05, (now - S.last) / 1000 || 0); S.last = now;
+    if (S.playing && !S.drag) S.yaw += dt * 0.13;
+    const a = still ? 1 : 1 - Math.exp(-dt * 3.2);
+    for (let j = 0; j < 3; j++) for (let i = 0; i < D; i++) S.frame[j][i] += (S.goal.dirs[j][i] - S.frame[j][i]) * a;
+    for (let j = 0; j < 3; j++) { for (let p = 0; p < j; p++) { const d = dot(S.frame[j], S.frame[p]); for (let i = 0; i < D; i++) S.frame[j][i] -= d * S.frame[p][i]; } norm(S.frame[j]); }
+    for (let i = 0; i < D; i++) S.centre[i] += (S.goal.mean[i] - S.centre[i]) * a;
+    S.reach += (S.goal.reach - S.reach) * a;
+
+    const cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
+    const unit = Math.min(S.w, S.h) * 0.36, has = !!S.q, only = el("only").checked, showDist = el("dist").checked;
+    ctx.clearRect(0, 0, S.w, S.h);
+    S.pos = TEXTS.map(function (t) { return place(t.vec, cy, sy, cp, sp, unit); });
+    S.qpos = has ? place(S.q, cy, sy, cp, sp, unit) : null;
+
+    ctx.globalCompositeOperation = "lighter";
+    if (has) {
+      const sims = S.hits.map(function (h) { return h.sim; }), lo = Math.min.apply(null, sims), hi = Math.max.apply(null, sims);
+      S.hits.forEach(function (h) {
+        const p = S.pos[h.i], rel = (h.sim - lo) / (hi - lo + 1e-6);
+        ctx.strokeStyle = "rgba(255,197,107," + (0.14 + 0.5 * rel).toFixed(3) + ")";
+        ctx.lineWidth = S.lit === h.i || S.hover === h.i ? 2 : 1;
+        ctx.beginPath(); ctx.moveTo(S.qpos[0], S.qpos[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
+      });
+    }
+    TEXTS.forEach(function (t, i) {
+      const hit = S.byIndex.has(i);
+      if (has && !hit && only) return;
+      const p = S.pos[i], strength = !has ? 0.85 : hit ? 1 : 0.13, r = (hit ? 3.6 : 2.4) * p[2];
+      ctx.fillStyle = rgb(t.group, (0.16 * strength).toFixed(3));
+      ctx.beginPath(); ctx.arc(p[0], p[1], r * 3.2, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = rgb(t.group, strength.toFixed(3));
+      ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 6.2832); ctx.fill();
+    });
+    ctx.globalCompositeOperation = "source-over";
+    ctx.font = "11px " + getComputedStyle(document.documentElement).getPropertyValue("--font-data");
+    ctx.textBaseline = "middle";
+    if (has) {
+      S.hits.forEach(function (h) {
+        const p = S.pos[h.i];
+        ctx.fillStyle = "#e9eef6"; ctx.fillText(String(h.rank), p[0] + 7, p[1] - 7);
+        if (showDist) { ctx.fillStyle = "#8a96ab"; ctx.fillText(h.dist.toFixed(2), S.qpos[0] + (p[0] - S.qpos[0]) * 0.72 + 5, S.qpos[1] + (p[1] - S.qpos[1]) * 0.72 + 9); }
+      });
+      ctx.strokeStyle = "#ffc56b"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(S.qpos[0], S.qpos[1], 9, 0, 6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(S.qpos[0] - 4, S.qpos[1]); ctx.lineTo(S.qpos[0] + 4, S.qpos[1]); ctx.moveTo(S.qpos[0], S.qpos[1] - 4); ctx.lineTo(S.qpos[0], S.qpos[1] + 4); ctx.stroke();
+      ctx.fillStyle = "#ffc56b"; ctx.fillText("query", S.qpos[0] + 14, S.qpos[1] + 1);
+    }
+    [S.hover, S.lit].forEach(function (i) {
+      if (i < 0 || (has && only && !S.byIndex.has(i))) return;
+      ctx.strokeStyle = "#e9eef6"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(S.pos[i][0], S.pos[i][1], 8, 0, 6.2832); ctx.stroke();
+    });
+    el("status").textContent = has
+      ? S.hits.length + " nearest of " + N + " · cosine in all " + D + " dimensions · view fitted to " + (S.goal === WHOLE ? "every text" : "the results")
+      : N + " texts · " + D + " dimensions · view fitted to every text";
+    document.querySelectorAll("#list li").forEach(function (li) { li.classList.toggle("lit", Number(li.dataset.i) === S.hover); });
+    requestAnimationFrame(draw);
+  }
+
+  /* ---------- input ---------- */
+  function nearestPoint(x, y) {
+    let best = -1, bd = 16 * 16;
+    const has = !!S.q, only = el("only").checked;
+    S.pos.forEach(function (p, i) {
+      if (has && only && !S.byIndex.has(i)) return;
+      const d = (p[0] - x) * (p[0] - x) + (p[1] - y) * (p[1] - y);
+      if (d < bd) { bd = d; best = i; }
+    });
+    return best;
+  }
+  function local(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+  function showTip(i, x, y) {
+    const tip = el("tip");
+    if (i < 0) { tip.hidden = true; return; }
+    const t = TEXTS[i], h = S.byIndex.get(i);
+    tip.textContent = t.text;
+    tip.appendChild(make("small", "", GROUPS[t.group].name + (h ? " · result " + h.rank + " · distance " + h.dist.toFixed(3) : "") + " · click to search from this text"));
+    tip.hidden = false;
+    tip.style.left = Math.max(8, Math.min(x + 14, S.w - tip.offsetWidth - 8)) + "px";
+    tip.style.top = Math.max(8, Math.min(y + 14, S.h - tip.offsetHeight - 8)) + "px";
+  }
+  canvas.addEventListener("pointerdown", function (e) { const p = local(e); S.drag = { x: p[0], y: p[1], moved: 0 }; canvas.classList.add("turning"); try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not needed */ } });
+  canvas.addEventListener("pointermove", function (e) {
+    const p = local(e);
+    if (S.drag) {
+      const dx = p[0] - S.drag.x, dy = p[1] - S.drag.y;
+      S.drag.moved += Math.abs(dx) + Math.abs(dy); S.drag.x = p[0]; S.drag.y = p[1];
+      S.yaw += dx * 0.008; S.pitch = Math.max(-1.2, Math.min(1.2, S.pitch + dy * 0.006));
+      showTip(-1);
+    } else { S.hover = nearestPoint(p[0], p[1]); showTip(S.hover, p[0], p[1]); }
+  });
+  function release(e) {
+    canvas.classList.remove("turning");
+    if (S.drag && S.drag.moved < 5 && e.type === "pointerup") {
+      const p = local(e), i = nearestPoint(p[0], p[1]);
+      if (i >= 0) { el("query").value = TEXTS[i].text; search(); }
+    }
+    S.drag = null;
+  }
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("pointerleave", function () { if (!S.drag) { S.hover = -1; showTip(-1); } });
+
+  let timer = 0;
+  el("query").addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(search, 120); });
+  ["rerank", "dist", "only", "refit"].forEach(function (id) { el(id).addEventListener("change", search); });
+  el("k").addEventListener("input", function () { el("kout").textContent = el("k").value; search(); });
+  document.querySelectorAll("button[data-q]").forEach(function (b) { b.addEventListener("click", function () { el("query").value = b.dataset.q; search(); }); });
+  el("play").textContent = S.playing ? "Pause" : "Turn";
+  el("play").addEventListener("click", function () { S.playing = !S.playing; el("play").textContent = S.playing ? "Pause" : "Turn"; });
+
+  const legend = el("legend");
+  GROUPS.forEach(function (g, i) { const item = make("i"); const d = make("span", "dot"); d.style.background = rgb(i, 1); item.appendChild(d); item.appendChild(document.createTextNode(g.name)); legend.appendChild(item); });
+
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(stage); else window.addEventListener("resize", resize);
+  resize();
+  el("kout").textContent = el("k").value;
+  search();
+  requestAnimationFrame(draw);
+})();
+</script>
