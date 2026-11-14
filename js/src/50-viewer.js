@@ -1551,11 +1551,15 @@ ET.viewer = (function () {
         if (!startMode(v, m.id, copyState(v.last))) startMode(v, "tumble", copyState(v.last));
         return { ok: false, code: "mode-failed", message: msg };
       }
-      if (r && r.work && typeof r.work.step === "function") m.jobs.push(r.work);
       if (r && r.restart) {
+        // The mode entered again: work queued for its earlier entry (a preparation
+        // or a refit still running) belongs to a state that is gone, so drop it.
+        m.jobs = [];
+        m.refit = null;
         m.clock = 0;
         m.readyAt = null;
       }
+      if (r && r.work && typeof r.work.step === "function") m.jobs.push(r.work);
     } else startMode(v, v.modeId, null);
     v.sinceAppend = 0;
     describeSet(v);

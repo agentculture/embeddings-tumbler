@@ -60,10 +60,18 @@
     var progress = 0;
     var hold = null;
     var out = null;
+    // Each enter() and leave() starts a new generation, and each refit() a new refit
+    // generation. A stepper left over from an earlier one (a preparation or refit
+    // abandoned midway) does nothing if it is pumped later: it reports done and
+    // touches no state, so it can never make the instance ready on old data.
+    var gen = 0;
+    var refitGen = 0;
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Tumble");
       var o = opts || {};
+      gen++;
+      refitGen++;
       set = s;
       D = s.dimension;
       seed = o.seed === undefined ? 0 : o.seed;
@@ -87,7 +95,7 @@
     // principal directions and the tour (ET.math.makeGuidedTour), each pumped
     // one unit (about a millisecond) per run(). The tour is bit-identical to
     // the blocking ET.math.guidedTour on the same data and seed.
-    function fit(onDone) {
+    function fit(onDone, live) {
       var fitSet = null;
       var cen = null;
       var tourSt = null;
@@ -99,6 +107,7 @@
             return cen ? cen.progress : 0;
           },
           run: function () {
+            if (!live()) return true;
             if (!cen) {
               fitSet = set;
               cen = ET.math.makeCentre(fitSet.vectors, fitSet.count, D);
@@ -113,6 +122,7 @@
             return tourSt ? tourSt.progress : 0;
           },
           run: function () {
+            if (!live()) return true;
             if (!tourSt) {
               tourSt = ET.math.makeGuidedTour(cen.result.data, fitSet.count, D, {
                 seed: seed,
@@ -132,23 +142,31 @@
       ];
     }
 
-    function tracked(stp) {
+    function tracked(stp, live) {
       var inner = stp.step;
       stp.step = function (budget) {
         var r = inner(budget);
-        progress = stp.progress;
+        if (live()) progress = stp.progress;
         return r;
       };
       return stp;
     }
 
+    // A test of whether the generation `g` is still the current one.
+    function liveFor(g) {
+      return function () {
+        return g === gen;
+      };
+    }
+
     function prepare() {
+      var live = liveFor(gen);
       if (empty) {
         return M.stepper([
           {
             required: true,
             run: function () {
-              emptyReady = true;
+              if (live()) emptyReady = true;
               return true;
             },
           },
@@ -161,6 +179,7 @@
           weight: 1,
           progress: job.progress,
           run: function () {
+            if (!live()) return true;
             if (!job.run()) return false;
             st = job.result;
             var start = entry && entry.centre ? entry.centre : st.mean;
@@ -173,9 +192,9 @@
           var al = entry ? M.alignment(tour.frameAt(0), entry.frame, D) : null;
           tours = [{ tour: tour, al: al, t0: -Infinity, share: tour.varianceShare, count: count }];
           self.varianceShare = tour.varianceShare;
-        }),
+        }, live),
       );
-      return tracked(M.stepper(tasks));
+      return tracked(M.stepper(tasks), live);
     }
 
     function isReady() {
@@ -239,7 +258,9 @@
     // that the turn adds at most REFIT_EXTRA times the tour's own mean rate of
     // change at its fastest (so the frame never changes much faster than in
     // normal running), within [refitTransitionMin, refitTransitionMax].
-    // A pure function of the two tours and the switch time.
+    // A pure function of the blend (the frame shown at the switch and the new
+    // tour's start), the new tour and the switch time: tourRate reads only the
+    // new tour's closed form, so a later refit cannot change it.
     function refitDuration(bl, tour, t0) {
       if (typeof opt.refitTransition === "number" && opt.refitTransition > 0) return opt.refitTransition;
       var lo = opt.refitTransitionMin;
@@ -323,16 +344,26 @@
     // Fit the directions again on the current data. Returns a stepper. The
     // switch to the new tour happens at time `t` when given (never earlier than
     // a previous switch); otherwise at mark(t) or the first stateAt after the
-    // stepper is done. From the switch the new tour blends in over `transition`.
+    // stepper is done. From the switch it turns onto the new tour over the
+    // refit turn's duration (refitDuration). A stepper from an earlier refit()
+    // or entry does nothing.
     function refit(t) {
       if (empty || !isReady()) return prepare();
       refitRunning = true;
       requestedAt = t === undefined ? null : M.checkTime(t);
+      refitGen++;
+      var g = gen;
+      var rg = refitGen;
       return M.stepper(
-        fit(function (tour, count) {
-          pending = { tour: tour, count: count };
-          if (requestedAt !== null) fixSwitch(requestedAt);
-        }),
+        fit(
+          function (tour, count) {
+            pending = { tour: tour, count: count };
+            if (requestedAt !== null) fixSwitch(requestedAt);
+          },
+          function () {
+            return g === gen && rg === refitGen;
+          },
+        ),
       );
     }
 
@@ -363,6 +394,8 @@
     }
 
     function leave() {
+      gen++;
+      refitGen++;
       tours = [];
       pending = null;
       set = null;
@@ -388,6 +421,7 @@
   var REFIT_RAMP = 0.25; // refitEase speeds up over the first quarter and slows down over the last
   var REFIT_PEAK = 1 / (1 - REFIT_RAMP); // refitEase's largest slope
   var REFIT_EXTRA = 0.5; // the turn adds at most this share of the tour's mean rate
+  var REFIT_TINY = 1e-6; // angles (radians) and off-span parts below this do not turn
 
   // Progress 0..1 with an even rate in the middle and smooth ends.
   function refitEase(u) {
@@ -480,21 +514,25 @@
         }
       }
     }
-    // Plane j turns B'_j toward T_j by theta_j, ending at A'_j.
+    // Plane j turns B'_j toward T_j by theta_j, ending at A'_j. T_j is the part
+    // of A'_j off B's span, so it is made orthogonal to all three B'_k (in exact
+    // arithmetic it already is). When that part is below REFIT_TINY (float32
+    // frames carry noise near 1e-7) the plane does not turn: dividing by it would
+    // only blow noise up into a direction. The one exception is a reversed
+    // principal vector (A'_j = -B'_j, a half turn), which turns through a
+    // direction off B's span and off the planes before it; with no room for one
+    // (D = 3) it is left as it is.
     var Tp = new Float64Array(3 * D);
     var theta = new Float64Array(3);
     for (var j3 = 0; j3 < 3; j3++) {
       var cth = dotRows(Ap, j3, Bp, j3, D);
-      var nn = 0;
-      for (var d2 = 0; d2 < D; d2++) {
-        var tv = Ap[j3 * D + d2] - cth * Bp[j3 * D + d2];
-        Tp[j3 * D + d2] = tv;
-        nn += tv * tv;
-      }
-      nn = Math.sqrt(nn);
-      if (nn > 1e-12) {
+      for (var d2 = 0; d2 < D; d2++) Tp[j3 * D + d2] = Ap[j3 * D + d2];
+      var nn = offSpan(Tp, j3, Bp, Tp, 0, D);
+      if (nn > REFIT_TINY) {
         for (var d3 = 0; d3 < D; d3++) Tp[j3 * D + d3] /= nn;
         theta[j3] = Math.atan2(nn, cth);
+      } else if (cth < 0 && halfTurnDirection(Tp, j3, Bp, D)) {
+        theta[j3] = Math.PI;
       } else {
         for (var d4 = 0; d4 < D; d4++) Tp[j3 * D + d4] = 0;
         theta[j3] = 0;
@@ -512,9 +550,11 @@
     var K = new Float64Array(9);
     var sphi = Math.sin(phi);
     var axis = null;
-    if (phi > 1e-12 && sphi > 1e-6) {
+    // Below REFIT_TINY there is no turn inside the span (its axis would be noise).
+    // A small sine with a large angle is a half turn, found from Z + I.
+    if (phi > REFIT_TINY && sphi > 1e-6) {
       axis = [(Z[7] - Z[5]) / (2 * sphi), (Z[2] - Z[6]) / (2 * sphi), (Z[3] - Z[1]) / (2 * sphi)];
-    } else if (phi > 1e-12) {
+    } else if (phi > Math.PI / 2) {
       // a half turn: Z + I = 2 n n^T
       var bi = 0;
       for (var q = 1; q < 3; q++) if (Z[q * 4] > Z[bi * 4]) bi = q;
@@ -537,14 +577,55 @@
     return bl;
   }
 
-  // Q(s) applied to the rows of F, in place, then re-orthonormalised.
+  // Row j of T made orthogonal (twice) to the three rows of B and to rows 0..k-1
+  // of P; returns the remaining length.
+  function offSpan(T, j, B, P, k, D) {
+    var o = j * D;
+    for (var pass = 0; pass < 2; pass++) {
+      for (var r = 0; r < 3 + k; r++) {
+        var R = r < 3 ? B : P;
+        var orr = (r < 3 ? r : r - 3) * D;
+        var dp = 0;
+        for (var d = 0; d < D; d++) dp += T[o + d] * R[orr + d];
+        for (var d2 = 0; d2 < D; d2++) T[o + d2] -= dp * R[orr + d2];
+      }
+    }
+    var n = 0;
+    for (var d3 = 0; d3 < D; d3++) n += T[o + d3] * T[o + d3];
+    return Math.sqrt(n);
+  }
+
+  // A unit direction for a half turn of plane j: the standard basis vector that
+  // keeps most of its length off B's span and off the plane directions before j
+  // (lowest index on a tie), written into row j of Tp. False when there is none.
+  function halfTurnDirection(Tp, j, Bp, D) {
+    var best = -1;
+    var bestLen = 1e-3; // with room, the best keeps at least sqrt((D - 3 - j) / D)
+    for (var e = 0; e < D; e++) {
+      for (var d = 0; d < D; d++) Tp[j * D + d] = d === e ? 1 : 0;
+      var len = offSpan(Tp, j, Bp, Tp, j, D);
+      if (len > bestLen) {
+        bestLen = len;
+        best = e;
+      }
+    }
+    if (best < 0) return false;
+    for (var d2 = 0; d2 < D; d2++) Tp[j * D + d2] = d2 === best ? 1 : 0;
+    var n = offSpan(Tp, j, Bp, Tp, j, D);
+    for (var d3 = 0; d3 < D; d3++) Tp[j * D + d3] /= n;
+    return true;
+  }
+
+  // Q(s) applied to the rows of F, in place. The turned rows are orthonormalised
+  // once, in double precision, before they are stored: a second pass on the
+  // stored float32 rows changes no entry by more than about 1e-7 (tested).
   function applyRefitBlend(bl, s, F, D) {
     var x = new Float64Array(3 * D);
     for (var i = 0; i < 3 * D; i++) x[i] = F[i];
     rotateRows(bl, s, x, D);
     ET.math.orthonormalize(x, 3, D);
     for (var i2 = 0; i2 < 3 * D; i2++) F[i2] = x[i2];
-    return ET.math.orthonormalize(F, 3, D);
+    return F;
   }
 
   function rotateRows(bl, s, x, D) {
@@ -639,6 +720,14 @@
     }
     return sum / 24;
   }
+
+  // The turn's pieces, for tests and for a mode written elsewhere.
+  M.refitTurn = {
+    make: makeRefitBlend,
+    apply: applyRefitBlend,
+    ease: refitEase,
+    tourRate: tourRate,
+  };
 
   M.register({
     id: "tumble",

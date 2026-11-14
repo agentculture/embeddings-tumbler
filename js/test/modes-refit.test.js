@@ -73,7 +73,7 @@ function peaks(inst, T, duration, speed) {
 for (const D of [48, 128]) {
   for (const kind of ["same distribution", "new cluster"]) {
     for (const speed of [1, 3]) {
-      test(`Tumble refit at ${D}-d, ${kind}, speed ${speed}: the turn's peak change is at most 1.5 x normal`, () => {
+      test(`Tumble refit at ${D}-d, ${kind}, speed ${speed}: the turn's peak change is at most 1.4 x normal`, () => {
         const ET = F.freshET();
         const set = F.sampleSet(ET, { dimension: D, count: 900 });
         const inst = F.ready(ET, "tumble", set, { seed: 3 });
@@ -86,7 +86,8 @@ for (const D of [48, 128]) {
         assert.ok(d.refitTransition >= 1.5 && d.refitTransition <= 12, String(d.refitTransition));
         const p = peaks(inst, T, d.refitTransition, speed);
         assert.ok(p.normal > 0);
-        assert.ok(p.turn <= 1.5 * p.normal, `peak ${p.turn} against normal ${p.normal} (x${(p.turn / p.normal).toFixed(2)})`);
+        // measured at seed 3: 1.03 to 1.25 (over seeds 1 to 8 as well: at most 1.31)
+        assert.ok(p.turn <= 1.4 * p.normal, `peak ${p.turn} against normal ${p.normal} (x${(p.turn / p.normal).toFixed(2)})`);
         // continuous at both ends of the turn
         const a = new Float32Array(inst.stateAt(T - 1e-4).frame);
         assert.ok(change(a, inst.stateAt(T).frame) < 1e-3);
