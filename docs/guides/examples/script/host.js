@@ -1,12 +1,12 @@
 (function () {
   "use strict";
 
-  var el = document.getElementById("space");
-  var note = document.getElementById("note");
-  var addButton = document.getElementById("add");
-  var toggleButton = document.getElementById("toggle");
-  var viewer = null;
-  var added = 0;
+  const el = document.getElementById("space");
+  const note = document.getElementById("note");
+  const addButton = document.getElementById("add");
+  const toggleButton = document.getElementById("toggle");
+  let viewer = null;
+  let added = 0;
 
   function say(text) {
     note.textContent = text;
@@ -21,29 +21,21 @@
   }
 
   // The host does the fetching. The viewer never makes a request of its own.
-  function loadData(jsonUrl) {
-    return fetch(jsonUrl)
-      .then(function (response) {
-        if (!response.ok) throw new Error("HTTP " + response.status + " for " + jsonUrl);
-        return response.json();
-      })
-      .then(function (meta) {
-        var file = meta && meta.vectors && meta.vectors.file;
-        // Only fetch a plain file name from the data's own folder.
-        if (typeof file !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file)) {
-          return Object.assign({}, meta); // the viewer will refuse it with a plain message
-        }
-        return fetch(new URL(file, new URL(jsonUrl, location.href)))
-          .then(function (response) {
-            if (!response.ok) throw new Error("HTTP " + response.status + " for " + file);
-            return response.arrayBuffer();
-          })
-          .then(function (block) {
-            // The block goes beside the file-form descriptor, so the viewer checks
-            // the descriptor's dtype, byte order and length against it.
-            return Object.assign({}, meta, { vectors: Object.assign({}, meta.vectors, { data: block }) });
-          });
-      });
+  async function loadData(jsonUrl) {
+    const response = await fetch(jsonUrl);
+    if (!response.ok) throw new Error("HTTP " + response.status + " for " + jsonUrl);
+    const meta = await response.json();
+    const file = meta?.vectors?.file;
+    // Only fetch a plain file name from the data's own folder.
+    if (typeof file !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file)) {
+      return { ...meta }; // the viewer will refuse it with a plain message
+    }
+    const blockResponse = await fetch(new URL(file, new URL(jsonUrl, location.href)));
+    if (!blockResponse.ok) throw new Error("HTTP " + blockResponse.status + " for " + file);
+    const block = await blockResponse.arrayBuffer();
+    // The block goes beside the file-form descriptor, so the viewer checks
+    // the descriptor's dtype, byte order and length against it.
+    return { ...meta, vectors: { ...meta.vectors, data: block } };
   }
 
   function start() {
@@ -51,21 +43,20 @@
     viewer = EmbeddingsTumbler.mount(el, { mode: "tumble", seed: 7, title: "My vectors" });
     toggleButton.textContent = "Remove the viewer";
     addButton.disabled = false;
-    return loadData("space.json").then(
-      function (data) {
+    loadData("space.json")
+      .then(function (data) {
         show(viewer.update(data));
-      },
-      function (error) {
+      })
+      .catch(function (error) {
         say("Could not load the data: " + error.message);
-      }
-    );
+      });
   }
 
   function addPoint() {
     if (!viewer) return;
-    var info = viewer.info();
-    var vector = new Float32Array(info.dimension);
-    for (var i = 0; i < vector.length; i++) vector[i] = Math.sin((added + 1) * (i + 1)) * 0.5;
+    const info = viewer.info();
+    const vector = new Float32Array(info.dimension);
+    for (let i = 0; i < vector.length; i++) vector[i] = Math.sin((added + 1) * (i + 1)) * 0.5;
     added += 1;
     // An append: same model and dimension as the view, new ids, no provenance needed.
     show(

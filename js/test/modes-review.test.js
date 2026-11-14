@@ -13,7 +13,7 @@ function copyState(s) {
   return {
     frame: new Float32Array(s.frame),
     centre: new Float32Array(s.centre),
-    draw: Object.assign({}, s.draw),
+    draw: { ...s.draw },
     status: s.status,
     wires: s.wires ? s.wires.version : null,
   };

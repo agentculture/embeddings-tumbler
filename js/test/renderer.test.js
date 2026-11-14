@@ -388,7 +388,7 @@ function appendRig() {
 
 function lastUpload(state) {
   const tex = state.texSubImages.filter((u) => u.width === 16); // the point texture (frame texture is 4 wide)
-  return { tex: tex[tex.length - 1], buf: state.bufferSubDatas[state.bufferSubDatas.length - 1] };
+  return { tex: tex.at(-1), buf: state.bufferSubDatas.at(-1) };
 }
 
 function checkDrawCounts(r, state, points, wires) {

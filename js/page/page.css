@@ -40,10 +40,6 @@
   box-sizing: border-box;
 }
 
-[hidden] {
-  display: none !important;
-}
-
 html {
   background: var(--page-bg);
   -webkit-text-size-adjust: 100%;
@@ -204,7 +200,9 @@ main {
   text-shadow: 0 0 28px rgba(4, 6, 11, 0.9);
 }
 
+/* The loading line is an <output> (a polite status); it lays out as the paragraph it was. */
 .wait-text {
+  display: block;
   margin: 0;
   max-width: 62ch;
   font-family: var(--page-font-data);
@@ -295,4 +293,12 @@ body[data-page-state="error"] .notes {
   line-height: 1.65;
   color: var(--page-muted);
   overflow-wrap: anywhere;
+}
+
+/* The page hides a mode's notes with the hidden attribute. The class rules above
+ * set display on those elements, so this rule wins by specificity (two classes'
+ * worth), not by !important; it sits last so a rule of equal weight cannot undo it. */
+.notes [hidden],
+[hidden] {
+  display: none;
 }

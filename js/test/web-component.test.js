@@ -5,6 +5,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { makeShellEnv, fixture } = require("./helpers/fake-elements.js");
+const { byCodeUnits } = require("./helpers/order.js");
 
 const A = fixture("valid-384");
 const B = fixture("valid-1024");
@@ -15,7 +16,7 @@ function serve(env, name, set) {
   env.route(DIR + set.json.vectors.file, () => ({ buffer: set.buffer }));
 }
 
-// The shell runs in its own vm realm: compare plain copies.
+// Compare plain copies of what the shell reports (the shape, not the objects' prototypes).
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
 function viewerRoots(el) {
@@ -36,10 +37,10 @@ test("without customElements the file does nothing and does not throw", () => {
   const env = makeShellEnv({ withCore: false });
   const bare = { document: env.root.document, globalThis: null };
   bare.globalThis = bare;
-  const vm = require("node:vm");
   const fs = require("node:fs");
   const { SHELL } = require("./helpers/fake-elements.js");
-  assert.doesNotThrow(() => vm.runInContext(fs.readFileSync(SHELL, "utf8"), vm.createContext(bare)));
+  const { runAsFunction } = require("./helpers/load.js");
+  assert.doesNotThrow(() => runAsFunction(fs.readFileSync(SHELL, "utf8"), ["globalThis"], [bare], "bare-shell"));
 });
 
 // ---------- connect mounts, disconnect destroys ----------
@@ -397,13 +398,13 @@ test("update(data) forwards to the viewer and fires the events", async () => {
   const env = makeShellEnv();
   const el = env.connect(env.create());
   const seen = env.listen(el);
-  const ok = el.update(Object.assign({}, A.json, { vectors: A.buffer }));
+  const ok = el.update({ ...A.json, vectors: A.buffer });
   assert.strictEqual(ok.ok, true);
   assert.strictEqual(seen[0].type, "tumbler-load");
   const bad = el.update({ nope: 1 });
   assert.strictEqual(bad.ok, false);
   assert.strictEqual(seen[1].type, "tumbler-error");
-  assert.deepStrictEqual(Object.keys(seen[1].detail).sort(), ["code", "message"]);
+  assert.deepStrictEqual(Object.keys(seen[1].detail).sort(byCodeUnits), ["code", "message"]);
   const lone = env.create();
   assert.strictEqual(lone.update({}).code, "not-mounted", "before connection: a result, no throw");
 });
@@ -429,4 +430,27 @@ test("shell messages are text, not markup", () => {
   assert.strictEqual(note.tagName, "P");
   assert.strictEqual(note.childNodes.length, 1);
   assert.strictEqual(note.childNodes[0].nodeType, 3);
+});
+
+// ---------- an unexpected failure while loading is reported, never dropped ----------
+
+test("an unexpected throw during a src load is reported as tumbler-error", async () => {
+  const env = makeShellEnv();
+  serve(env, "a", A);
+  env.core.update = () => {
+    throw new Error("unexpected");
+  };
+  const el = env.create({ src: "data/a.json" });
+  const seen = env.listen(el);
+  env.connect(el);
+  await env.settle();
+  assert.deepStrictEqual(plain(seen), [
+    {
+      type: "tumbler-error",
+      detail: { code: "src-unreadable", message: "The data file could not be loaded." },
+      bubbles: true,
+    },
+  ]);
+  const note = el.querySelector(".tumbler-shell-message");
+  assert.strictEqual(note.textContent, "The data file could not be loaded.");
 });

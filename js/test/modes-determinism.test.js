@@ -113,7 +113,7 @@ test("entry from another mode is part of the input: same entry state, same frame
   const set = F.sampleSet(ET);
   const tumble = F.ready(ET, "tumble", set, { seed: 1 });
   const s = tumble.stateAt(4.2);
-  const from = { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) };
+  const from = { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: { ...s.draw } };
   for (const id of MODES) {
     const a = F.framesAt(F.ready(ET, id, set, { seed: 6, from }), TIMES);
     const b = F.framesAt(F.ready(ET, id, set, { seed: 6, from }), TIMES);

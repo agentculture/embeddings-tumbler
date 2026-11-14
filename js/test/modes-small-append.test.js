@@ -19,7 +19,7 @@ function firstRows(ET, n) {
 // Hand an append to the instance the way the viewer does, run its work to the end.
 function appendAndSettle(inst, set, k, t) {
   const r = inst.dataChanged(set, { op: "append", added: k, t: t });
-  for (let i = 0; r && r.work && !r.work.done && i < 100000; i++) r.work.step();
+  for (let i = 0; r?.work && !r.work.done && i < 100000; i++) r.work.step();
   return r;
 }
 
@@ -33,7 +33,7 @@ for (const id of MODES) {
       inst.stateAt(0.5);
       const bigger = F.appendRows(ET, set, donor, n, 4);
       const r = appendAndSettle(inst, bigger, 4, 0.5);
-      assert.ok(inst.isReady(), "ready after the append" + (r && r.restart ? " (restarted)" : ""));
+      assert.ok(inst.isReady(), "ready after the append" + (r?.restart ? " (restarted)" : ""));
       for (const t of [0, 0.5, 1, 3, 7]) {
         const s = inst.stateAt(t);
         assert.ok(F.frameError(s.frame, D) < 1e-4, `${id} frame orthonormal at t=${t}`);

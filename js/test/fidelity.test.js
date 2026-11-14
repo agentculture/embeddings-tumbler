@@ -15,8 +15,8 @@ const sample = require(path.join(ROOT, "js", "sample", "sample-data.js"));
 
 function setup(domOpts, mountOpts) {
   const dom = makeFakeDom(domOpts);
-  const el = dom.host(domOpts && domOpts.width ? { width: domOpts.width } : undefined);
-  const h = api.mount(el, Object.assign({ seed: 3 }, mountOpts || {}));
+  const el = dom.host(domOpts?.width ? { width: domOpts.width } : undefined);
+  const h = api.mount(el, { seed: 3, ...mountOpts });
   return { dom, el, h, v: h._viewer };
 }
 
@@ -212,7 +212,7 @@ function frameStats(ET, set, frame, centre, idx) {
 }
 
 function quantile(a, q) {
-  const s = Float64Array.from(a).sort();
+  const s = Float64Array.from(a).sort((x, y) => x - y); // radii: no NaN, no -0
   return s[Math.min(s.length - 1, Math.floor(q * (s.length - 1)))];
 }
 

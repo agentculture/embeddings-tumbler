@@ -3,10 +3,12 @@
 // test: its own seeded generator and its own linear algebra, so tests can
 // recompute what the module reports.
 
+// mulberry32. The state is kept unsigned (>>> 0): every operation below reads only its
+// low 32 bits, so the stream is bit-for-bit the one a signed (| 0) state gives.
 function rngFrom(seed) {
-  let a = seed | 0;
+  let a = seed >>> 0;
   const next = () => {
-    a = (a + 0x6d2b79f5) | 0;
+    a = (a + 0x6d2b79f5) >>> 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
@@ -20,24 +22,50 @@ function rngFrom(seed) {
   return { next, gauss };
 }
 
+// Remove from row i of M (rows of length L) its components along rows 0..i-1, in two
+// passes of classical Gram-Schmidt.
+function orthogonaliseAgainstEarlier(M, i, L) {
+  for (let pass = 0; pass < 2; pass++) {
+    for (let j = 0; j < i; j++) {
+      let dp = 0;
+      for (let d = 0; d < L; d++) dp += M[i * L + d] * M[j * L + d];
+      for (let d = 0; d < L; d++) M[i * L + d] -= dp * M[j * L + d];
+    }
+  }
+}
+
+// Scale row i of M (rows of length L) to unit length.
+function normaliseRow(M, i, L) {
+  let n = 0;
+  for (let d = 0; d < L; d++) n += M[i * L + d] ** 2;
+  n = Math.sqrt(n);
+  for (let d = 0; d < L; d++) M[i * L + d] /= n;
+}
+
 // Orthonormal rows by plain Gram-Schmidt (Float64Array, rows x D).
 function orthoRows(rows, D, rng) {
   const M = new Float64Array(rows * D);
   for (let i = 0; i < rows; i++) {
     for (let d = 0; d < D; d++) M[i * D + d] = rng.gauss();
-    for (let pass = 0; pass < 2; pass++) {
-      for (let j = 0; j < i; j++) {
-        let dp = 0;
-        for (let d = 0; d < D; d++) dp += M[i * D + d] * M[j * D + d];
-        for (let d = 0; d < D; d++) M[i * D + d] -= dp * M[j * D + d];
-      }
-    }
-    let n = 0;
-    for (let d = 0; d < D; d++) n += M[i * D + d] ** 2;
-    n = Math.sqrt(n);
-    for (let d = 0; d < D; d++) M[i * D + d] /= n;
+    orthogonaliseAgainstEarlier(M, i, D);
+    normaliseRow(M, i, D);
   }
   return M;
+}
+
+// m + 1 orthonormal columns over N samples: column 0 is constant, so columns 1..m are
+// centred and mutually orthogonal. Float64Array((m + 1) * N), one column per row.
+function centredColumns(N, m, rng) {
+  const cols = new Float64Array((m + 1) * N);
+  cols.set(new Float64Array(N).fill(1 / Math.sqrt(N)), 0);
+  const tail = orthoRows(m + 1, N, rng);
+  // Re-orthogonalise the random rows against the constant row, so each column is centred.
+  for (let j = 1; j <= m; j++) {
+    for (let a = 0; a < N; a++) cols[j * N + a] = tail[j * N + a];
+    orthogonaliseAgainstEarlier(cols, j, N);
+    normaliseRow(cols, j, N);
+  }
+  return cols;
 }
 
 // Points with a planted spectrum: the coordinates along the planted directions
@@ -50,25 +78,7 @@ function plantedSpectrum(N, D, sds, noise, seed) {
   const m = sds.length;
   const dirs = orthoRows(m, D, rng);
   // Coefficients: m centred, mutually orthogonal columns over the N samples.
-  const ones = new Float64Array(N).fill(1 / Math.sqrt(N));
-  const cols = new Float64Array((m + 1) * N);
-  cols.set(ones, 0);
-  const tail = orthoRows(m + 1, N, rng);
-  // Re-orthogonalise the random rows against the constant row, so each column is centred.
-  for (let j = 1; j <= m; j++) {
-    for (let a = 0; a < N; a++) cols[j * N + a] = tail[j * N + a];
-    for (let pass = 0; pass < 2; pass++) {
-      for (let q = 0; q < j; q++) {
-        let dp = 0;
-        for (let a = 0; a < N; a++) dp += cols[j * N + a] * cols[q * N + a];
-        for (let a = 0; a < N; a++) cols[j * N + a] -= dp * cols[q * N + a];
-      }
-    }
-    let n = 0;
-    for (let a = 0; a < N; a++) n += cols[j * N + a] ** 2;
-    n = Math.sqrt(n);
-    for (let a = 0; a < N; a++) cols[j * N + a] /= n;
-  }
+  const cols = centredColumns(N, m, rng);
   const X = new Float32Array(N * D);
   const offset = new Float64Array(D);
   for (let d = 0; d < D; d++) offset[d] = rng.gauss() * 0.5; // a non-zero mean
@@ -87,10 +97,7 @@ function plantedSpectrum(N, D, sds, noise, seed) {
 // directions carry no group information, and the group centres lie in a small
 // subspace. Returns { X, N, D, groups: string[] }.
 function plantedGroups(D, opts) {
-  const o = Object.assign(
-    { groups: 6, perGroup: 40, centreScale: 0.7, noise: 1, nuisance: [3, 2.6, 2.2], seed: 7 },
-    opts || {}
-  );
+  const o = { groups: 6, perGroup: 40, centreScale: 0.7, noise: 1, nuisance: [3, 2.6, 2.2], seed: 7, ...opts };
   const rng = rngFrom(o.seed);
   const k = o.groups;
   const sub = orthoRows(k + o.nuisance.length, D, rng);

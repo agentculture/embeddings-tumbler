@@ -151,9 +151,13 @@ test("the tour frame does not depend on how time was sliced", () => {
   const tour = m.guidedTour(m.centre(X, N, D).data, N, D, { seed: 4 });
   const direct = Array.from(tour.frameAt(10));
   let last = null;
+  let lastT = null;
   // (i / 625) * 10 is exactly 10 at i = 625 by construction (i / 625 === 1).
-  for (let i = 1; i <= 625; i++) last = tour.frameAt((i / 625) * 10);
-  assert.strictEqual((625 / 625) * 10, 10);
+  for (let i = 1; i <= 625; i++) {
+    lastT = (i / 625) * 10;
+    last = tour.frameAt(lastT);
+  }
+  assert.strictEqual(lastT, 10, "the sliced walk ends exactly at t = 10");
   assert.deepStrictEqual(Array.from(last), direct);
   assert.deepStrictEqual(Array.from(tour.frameAt(10)), direct); // and again after going back
 });

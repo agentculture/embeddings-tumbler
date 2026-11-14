@@ -5,6 +5,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { loadSources } = require("./helpers/load.js");
+const { byCodeUnits } = require("./helpers/order.js");
 
 const C = loadSources(["20-contract.js"])._internal.contract;
 const PROV = { source: "test", producer: "test", synthetic: true, seed: null, limitations: [], uncertain: [] };
@@ -46,7 +47,7 @@ test("a metadata key named __proto__ is kept as a key, not turned into a prototy
   const r = C.validate(d, null);
   assert.ok(r.ok, r.message);
   const md = r.set.points[0].metadata;
-  assert.deepStrictEqual(Array.from(Object.keys(md)).sort(), ["__proto__", "constructor", "n"]);
+  assert.deepStrictEqual(Array.from(Object.keys(md)).sort(byCodeUnits), ["__proto__", "constructor", "n"]);
   assert.strictEqual(md.polluted, undefined);
   assert.strictEqual(Object.getPrototypeOf(Object.getPrototypeOf(md)), null, "an ordinary object");
   assert.strictEqual(JSON.stringify(md), '{"__proto__":{"polluted":1},"constructor":"c","n":2}');

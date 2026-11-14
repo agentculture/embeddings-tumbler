@@ -12,7 +12,7 @@ function freshET() {
 
 // The built-in sample set, small, validated through the contract loader.
 function sampleSet(ET, opts) {
-  const o = Object.assign({ dimension: 48, count: 700, seed: 20261113 }, opts || {});
+  const o = { dimension: 48, count: 700, seed: 20261113, ...opts };
   const res = ET.contract.validate(sample.generate(o), null);
   if (!res.ok) throw new Error("sample set refused: " + res.message);
   return res.set;

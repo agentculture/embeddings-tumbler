@@ -148,7 +148,7 @@ the same folder.
       <button id="add" type="button">Add a point</button>
       <button id="toggle" type="button">Remove the viewer</button>
     </p>
-    <p id="note" role="status">Loading.</p>
+    <p><output id="note">Loading.</output></p>
     <div id="space" class="space"></div>
   </main>
   <script src="embeddings-tumbler.js"></script>
@@ -199,12 +199,12 @@ pressed, and destroys the viewer when told to.
 (function () {
   "use strict";
 
-  var el = document.getElementById("space");
-  var note = document.getElementById("note");
-  var addButton = document.getElementById("add");
-  var toggleButton = document.getElementById("toggle");
-  var viewer = null;
-  var added = 0;
+  const el = document.getElementById("space");
+  const note = document.getElementById("note");
+  const addButton = document.getElementById("add");
+  const toggleButton = document.getElementById("toggle");
+  let viewer = null;
+  let added = 0;
 
   function say(text) {
     note.textContent = text;
@@ -219,29 +219,21 @@ pressed, and destroys the viewer when told to.
   }
 
   // The host does the fetching. The viewer never makes a request of its own.
-  function loadData(jsonUrl) {
-    return fetch(jsonUrl)
-      .then(function (response) {
-        if (!response.ok) throw new Error("HTTP " + response.status + " for " + jsonUrl);
-        return response.json();
-      })
-      .then(function (meta) {
-        var file = meta && meta.vectors && meta.vectors.file;
-        // Only fetch a plain file name from the data's own folder.
-        if (typeof file !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file)) {
-          return Object.assign({}, meta); // the viewer will refuse it with a plain message
-        }
-        return fetch(new URL(file, new URL(jsonUrl, location.href)))
-          .then(function (response) {
-            if (!response.ok) throw new Error("HTTP " + response.status + " for " + file);
-            return response.arrayBuffer();
-          })
-          .then(function (block) {
-            // The block goes beside the file-form descriptor, so the viewer checks
-            // the descriptor's dtype, byte order and length against it.
-            return Object.assign({}, meta, { vectors: Object.assign({}, meta.vectors, { data: block }) });
-          });
-      });
+  async function loadData(jsonUrl) {
+    const response = await fetch(jsonUrl);
+    if (!response.ok) throw new Error("HTTP " + response.status + " for " + jsonUrl);
+    const meta = await response.json();
+    const file = meta?.vectors?.file;
+    // Only fetch a plain file name from the data's own folder.
+    if (typeof file !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file)) {
+      return { ...meta }; // the viewer will refuse it with a plain message
+    }
+    const blockResponse = await fetch(new URL(file, new URL(jsonUrl, location.href)));
+    if (!blockResponse.ok) throw new Error("HTTP " + blockResponse.status + " for " + file);
+    const block = await blockResponse.arrayBuffer();
+    // The block goes beside the file-form descriptor, so the viewer checks
+    // the descriptor's dtype, byte order and length against it.
+    return { ...meta, vectors: { ...meta.vectors, data: block } };
   }
 
   function start() {
@@ -249,21 +241,20 @@ pressed, and destroys the viewer when told to.
     viewer = EmbeddingsTumbler.mount(el, { mode: "tumble", seed: 7, title: "My vectors" });
     toggleButton.textContent = "Remove the viewer";
     addButton.disabled = false;
-    return loadData("space.json").then(
-      function (data) {
+    loadData("space.json")
+      .then(function (data) {
         show(viewer.update(data));
-      },
-      function (error) {
+      })
+      .catch(function (error) {
         say("Could not load the data: " + error.message);
-      }
-    );
+      });
   }
 
   function addPoint() {
     if (!viewer) return;
-    var info = viewer.info();
-    var vector = new Float32Array(info.dimension);
-    for (var i = 0; i < vector.length; i++) vector[i] = Math.sin((added + 1) * (i + 1)) * 0.5;
+    const info = viewer.info();
+    const vector = new Float32Array(info.dimension);
+    for (let i = 0; i < vector.length; i++) vector[i] = Math.sin((added + 1) * (i + 1)) * 0.5;
     added += 1;
     // An append: same model and dimension as the view, new ids, no provenance needed.
     show(
@@ -331,7 +322,7 @@ The result codes are easy to act on. A fragment:
 
 ```js
 // update() never throws for bad data. It returns a result and the viewer shows the message.
-var result = viewer.update(data);
+const result = viewer.update(data);
 if (result.ok) {
   console.log(result.op, "now showing", result.count, "points,", result.added, "added");
 } else {
@@ -355,7 +346,7 @@ All options are optional and are read once at `mount`:
 
 ```js
 // Every option is optional. Options are read once, when the viewer is mounted.
-var viewer = EmbeddingsTumbler.mount(document.getElementById("space"), {
+const viewer = EmbeddingsTumbler.mount(document.getElementById("space"), {
   mode: "wander",          // "tumble" (default), "lattice" or "wander"
   seed: 20261113,          // makes the tour reproducible; shown on the page as "Seed (view)"
   speed: 1,                // motion speed multiplier
@@ -400,7 +391,7 @@ hands them to the viewer.
     <p>
       <button id="add" type="button">Add a point</button>
     </p>
-    <p id="note" role="status">Loading.</p>
+    <p><output id="note">Loading.</output></p>
     <embeddings-tumbler id="space" src="space.json" mode="lattice" seed="7"></embeddings-tumbler>
   </main>
   <script src="embeddings-tumbler.js"></script>
@@ -436,7 +427,7 @@ The element has no attribute for the built-in sample set. To show it, load
 ```js
 // The built-in sample set with the web component. Load sample-data.js after the core file,
 // leave out the src attribute, and hand the sample to the element from your own script.
-var el = document.getElementById("space");
+const el = document.getElementById("space");
 el.update(EmbeddingsTumbler.sample.generate({ count: 2000, dimension: 384, seed: 7 }));
 ```
 
@@ -482,14 +473,14 @@ And the script that listens for the events and appends a point:
 (function () {
   "use strict";
 
-  var el = document.getElementById("space");
-  var note = document.getElementById("note");
-  var addButton = document.getElementById("add");
-  var added = 0;
+  const el = document.getElementById("space");
+  const note = document.getElementById("note");
+  const addButton = document.getElementById("add");
+  let added = 0;
 
   // The component reports through events that bubble: no callbacks to wire up.
   document.addEventListener("tumbler-load", function (event) {
-    var result = event.detail;
+    const result = event.detail;
     note.textContent = "Showing " + result.count + " points.";
   });
   document.addEventListener("tumbler-error", function (event) {
@@ -497,14 +488,14 @@ And the script that listens for the events and appends a point:
   });
 
   addButton.addEventListener("click", function () {
-    var viewer = el.handle; // null until the first data has been handed over
+    const viewer = el.handle; // null until the first data has been handed over
     if (!viewer) return;
-    var info = viewer.info();
-    var vector = new Float32Array(info.dimension);
-    for (var i = 0; i < vector.length; i++) vector[i] = Math.sin((added + 1) * (i + 1)) * 0.5;
+    const info = viewer.info();
+    const vector = new Float32Array(info.dimension);
+    for (let i = 0; i < vector.length; i++) vector[i] = Math.sin((added + 1) * (i + 1)) * 0.5;
     added += 1;
     // An append goes through the element's update(): same model and dimension, new ids.
-    var result = el.update({
+    const result = el.update({
       schema_version: 1,
       kind: "embeddings-tumbler/data",
       op: "append",
@@ -515,7 +506,7 @@ And the script that listens for the events and appends a point:
       points: [{ id: "added-" + added, label: "added point " + added, group: "added" }],
       vectors: vector,
     });
-    if (result && result.ok) note.textContent = "Showing " + result.count + " points.";
+    if (result?.ok) note.textContent = "Showing " + result.count + " points.";
   });
 })();
 ```
@@ -672,10 +663,10 @@ viewer.refreshTheme();
 // Several viewers on one page are independent: one element, one viewer, each with its own
 // options. Mounting an element that already has a viewer returns the existing viewer and
 // ignores the new options; to change options, destroy the element's viewer and mount again.
-var left = EmbeddingsTumbler.mount(document.getElementById("left"), { mode: "tumble", seed: 1 });
-var right = EmbeddingsTumbler.mount(document.getElementById("right"), { mode: "lattice", seed: 2 });
+const left = EmbeddingsTumbler.mount(document.getElementById("left"), { mode: "tumble", seed: 1 });
+const right = EmbeddingsTumbler.mount(document.getElementById("right"), { mode: "lattice", seed: 2 });
 
-EmbeddingsTumbler.mount(document.getElementById("left"), { mode: "wander" }) === left; // true
+console.log(EmbeddingsTumbler.mount(document.getElementById("left"), { mode: "wander" }) === left); // true
 
 EmbeddingsTumbler.destroy(document.getElementById("left"));   // true: released
 EmbeddingsTumbler.destroy(document.getElementById("left"));   // false: nothing to release

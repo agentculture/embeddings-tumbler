@@ -15,19 +15,19 @@
 // be one). Query string: ?d=384&n=2000&hold=1500 (milliseconds per mode).
 (function () {
   "use strict";
-  var q = new URLSearchParams(location.search);
-  var D = parseInt(q.get("d") || "384", 10);
-  var N = parseInt(q.get("n") || "2000", 10);
-  var HOLD = parseInt(q.get("hold") || "1500", 10);
-  var out = { steps: {}, violations: [], fatal: null, unavailable: null, done: false };
+  const q = new URLSearchParams(location.search);
+  const D = Number.parseInt(q.get("d") || "384", 10);
+  const N = Number.parseInt(q.get("n") || "2000", 10);
+  const HOLD = Number.parseInt(q.get("hold") || "1500", 10);
+  const out = { steps: {}, violations: [], fatal: null, unavailable: null, done: false };
   window.__viewerResult = out;
 
   document.addEventListener("securitypolicyviolation", function (e) {
     out.violations.push(e.violatedDirective + " " + (e.blockedURI || "") + " " + (e.sample || ""));
   });
 
-  var T = window.EmbeddingsTumbler;
-  var el = document.getElementById("space");
+  const T = window.EmbeddingsTumbler;
+  const el = document.getElementById("space");
 
   function wait(ms) {
     return new Promise(function (resolve) {
@@ -35,36 +35,35 @@
     });
   }
   function until(fn, ms) {
-    var t0 = performance.now();
+    const t0 = performance.now();
     return new Promise(function (resolve) {
       (function poll() {
-        var v = fn();
+        const v = fn();
         if (v || performance.now() - t0 > ms) resolve(v);
         else setTimeout(poll, 50);
       })();
     });
   }
   function lit() {
-    var c = el.querySelector(".tumbler-canvas");
-    var gl = c && c.getContext("webgl2");
+    const gl = el.querySelector(".tumbler-canvas")?.getContext("webgl2");
     if (!gl) return -1;
-    var w = gl.drawingBufferWidth;
-    var h = gl.drawingBufferHeight;
-    var px = new Uint8Array(w * h * 4);
+    const w = gl.drawingBufferWidth;
+    const h = gl.drawingBufferHeight;
+    const px = new Uint8Array(w * h * 4);
     gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    var n = 0;
-    for (var i = 0; i < px.length; i += 4) if (px[i] > 40 || px[i + 1] > 40 || px[i + 2] > 40) n++;
+    let n = 0;
+    for (let i = 0; i < px.length; i += 4) if (px[i] > 40 || px[i + 1] > 40 || px[i + 2] > 40) n++;
     return n;
   }
   function rect(sel) {
-    var e = el.querySelector(sel);
+    const e = el.querySelector(sel);
     if (!e) return null;
-    var r = e.getBoundingClientRect();
+    const r = e.getBoundingClientRect();
     return { left: r.left, top: r.top, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
   }
   function split(data, from, to, op) {
-    var d = data.dimension;
-    var o = {
+    const d = data.dimension;
+    const o = {
       schema_version: data.schema_version,
       kind: data.kind,
       model: data.model,
@@ -78,11 +77,15 @@
     else o.provenance = data.provenance;
     return o;
   }
+  function fail(err) {
+    out.fatal = String(err?.stack || err);
+    out.done = true;
+  }
 
-  var full = T.sample.generate({ dimension: D, count: N + 200 });
-  var base = split(full, 0, N, "replace");
-  var extra = split(full, N, N + 200, "append");
-  var h;
+  const full = T.sample.generate({ dimension: D, count: N + 200 });
+  const base = split(full, 0, N, "replace");
+  const extra = split(full, N, N + 200, "append");
+  let h;
 
   // ?manual=1: mount, show the sample set, and stop; the test drives real input.
   if (q.get("manual") === "1") {
@@ -91,144 +94,152 @@
     out.steps.update = T.update(el, base);
     until(function () {
       return h.info().ready;
-    }, 20000).then(function () {
-      var info = h.info();
-      if (!info.rendering) out.unavailable = info.message;
-      out.done = true;
-    });
+    }, 20000)
+      .then(function () {
+        const info = h.info();
+        if (!info.rendering) out.unavailable = info.message;
+        out.done = true;
+      })
+      .catch(fail);
     return;
   }
 
-  Promise.resolve()
-    .then(function () {
-      var t0 = performance.now();
-      h = T.mount(el, { seed: 3, preserveDrawingBuffer: true, title: "Viewer host check" });
-      out.steps.mountMs = performance.now() - t0;
-      out.steps.childrenAfterMount = el.children.length;
-      out.steps.bodyChildren = document.body.children.length;
-      out.steps.headStyles = document.head.querySelectorAll("style").length;
-      t0 = performance.now();
-      out.steps.update = T.update(el, base);
-      out.steps.updateMs = performance.now() - t0;
-      return until(function () {
-        return h.info().ready;
-      }, 20000);
-    })
-    .then(function () {
-      var info = h.info();
-      if (!info.rendering) {
-        out.unavailable = info.message;
-        return;
-      }
-      out.steps.firstReady = info.timing;
-      out.steps.layout = {
-        root: rect(".tumbler"),
-        stage: rect(".tumbler-stage"),
-        canvas: rect(".tumbler-canvas"),
-        status: rect(".tumbler-status"),
-        controls: rect(".tumbler-controls"),
-        modes: rect(".tumbler-modes"),
-        provenance: rect(".tumbler-provenance"),
-        strip: rect(".tumbler-strip"),
-        element: (function () {
-          var r = el.getBoundingClientRect();
-          return { width: r.width, height: r.height };
-        })(),
-        rootScrollWidth: el.firstChild.scrollWidth,
-        rootClientWidth: el.firstChild.clientWidth,
-        bodyScrollWidth: document.documentElement.scrollWidth,
-        viewportWidth: window.innerWidth,
-        stageBackground: getComputedStyle(el.querySelector(".tumbler-stage")).backgroundImage,
-        blend: getComputedStyle(el.querySelector(".tumbler-canvas")).mixBlendMode,
+  // 1. mount and show the sample set; resolves when the viewer is ready (or after 20 s).
+  function mountAndUpdate() {
+    let t0 = performance.now();
+    h = T.mount(el, { seed: 3, preserveDrawingBuffer: true, title: "Viewer host check" });
+    out.steps.mountMs = performance.now() - t0;
+    out.steps.childrenAfterMount = el.children.length;
+    out.steps.bodyChildren = document.body.children.length;
+    out.steps.headStyles = document.head.querySelectorAll("style").length;
+    t0 = performance.now();
+    out.steps.update = T.update(el, base);
+    out.steps.updateMs = performance.now() - t0;
+    return until(function () {
+      return h.info().ready;
+    }, 20000);
+  }
+
+  function layout() {
+    const r = el.getBoundingClientRect();
+    return {
+      root: rect(".tumbler"),
+      stage: rect(".tumbler-stage"),
+      canvas: rect(".tumbler-canvas"),
+      status: rect(".tumbler-status"),
+      controls: rect(".tumbler-controls"),
+      modes: rect(".tumbler-modes"),
+      provenance: rect(".tumbler-provenance"),
+      strip: rect(".tumbler-strip"),
+      element: { width: r.width, height: r.height },
+      rootScrollWidth: el.firstChild.scrollWidth,
+      rootClientWidth: el.firstChild.clientWidth,
+      bodyScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+      stageBackground: getComputedStyle(el.querySelector(".tumbler-stage")).backgroundImage,
+      blend: getComputedStyle(el.querySelector(".tumbler-canvas")).mixBlendMode,
+    };
+  }
+
+  // 2. one mode: press its button, hold, count frames and lit pixels.
+  async function measureMode(id) {
+    el.querySelector('[data-mode="' + id + '"]').click();
+    const f0 = h.info().frames;
+    const t0 = performance.now();
+    await wait(HOLD);
+    const f1 = h.info().frames;
+    out.steps.modes[id] = {
+      mode: h.mode(),
+      lit: lit(),
+      fps: ((f1 - f0) * 1000) / (performance.now() - t0),
+      status: el.querySelector(".tumbler-status").textContent,
+    };
+  }
+
+  // 3. append while paused: the frame must stay where it is.
+  async function appendWhilePaused() {
+    h.setMode("tumble");
+    await wait(600);
+    h.pause();
+    await wait(200);
+    const v = h._viewer;
+    const before = Array.prototype.slice.call(v.last.frame, 0, 12);
+    const t0 = performance.now();
+    const r = T.update(el, extra);
+    const ms = performance.now() - t0;
+    await wait(300);
+    const after = Array.prototype.slice.call(v.last.frame, 0, 12);
+    let diff = 0;
+    for (let i = 0; i < before.length; i++) diff = Math.max(diff, Math.abs(before[i] - after[i]));
+    out.steps.append = { result: r, ms: ms, frameChange: diff, count: h.info().count, lit: lit() };
+    h.resume();
+  }
+
+  // 4. markup in labels and group names.
+  async function markupInLabels() {
+    const evil = "<img src=/tests/browser/evil-probe.png onerror=alert(1)>";
+    const m = split(full, 0, 300, "replace");
+    m.points = m.points.map(function (p, i) {
+      return {
+        id: p.id,
+        label: i === 0 ? evil : p.label,
+        group: p.group === "cooking" ? "<b>cook</b>" : p.group,
       };
-      out.steps.provenanceText = el.querySelector(".tumbler-provenance").textContent;
-      out.steps.modes = {};
-      var ids = ["tumble", "lattice", "wander"];
-      var chain = Promise.resolve();
-      ids.forEach(function (id) {
-        chain = chain.then(function () {
-          el.querySelector('[data-mode="' + id + '"]').click();
-          var f0 = h.info().frames;
-          var t0 = performance.now();
-          return wait(HOLD).then(function () {
-            var f1 = h.info().frames;
-            out.steps.modes[id] = {
-              mode: h.mode(),
-              lit: lit(),
-              fps: ((f1 - f0) * 1000) / (performance.now() - t0),
-              status: el.querySelector(".tumbler-status").textContent,
-            };
-          });
-        });
+    });
+    out.steps.markup = { result: T.update(el, m) };
+    await wait(800);
+    const labels = el.querySelector(".tumbler-labels").textContent;
+    out.steps.markup.groupShownLiterally = labels.includes("<b>cook</b>");
+    out.steps.markup.imgElements = el.querySelectorAll("img").length;
+    out.steps.markup.bElements = el.querySelectorAll(".tumbler-labels b").length;
+  }
+
+  // 5. an invalid set: a message inside the element, the call returns a refusal.
+  function invalidSet() {
+    const r = T.update(el, { kind: "something else" });
+    const msg = el.querySelector(".tumbler-notice");
+    out.steps.invalid = {
+      result: r,
+      noticeText: msg ? msg.textContent : null,
+      noticeVisible: msg ? msg.getBoundingClientRect().height > 0 : false,
+    };
+    return wait(300);
+  }
+
+  // 6. destroy: the element is empty and the loop stopped.
+  function destroyTwice() {
+    out.steps.framesBeforeDestroy = h.info().frames;
+    out.steps.destroyed = T.destroy(el);
+    out.steps.childrenAfterDestroy = el.children.length;
+    out.steps.animatingAfterDestroy = h.info().animating;
+    out.steps.destroyAgain = T.destroy(el);
+  }
+
+  async function run() {
+    await mountAndUpdate();
+    const info = h.info();
+    if (!info.rendering) {
+      out.unavailable = info.message;
+      return;
+    }
+    out.steps.firstReady = info.timing;
+    out.steps.layout = layout();
+    out.steps.provenanceText = el.querySelector(".tumbler-provenance").textContent;
+    out.steps.modes = {};
+    await ["tumble", "lattice", "wander"].reduce(function (chain, id) {
+      return chain.then(function () {
+        return measureMode(id);
       });
-      return chain
-        .then(function () {
-          // Append while paused: the frame must stay where it is.
-          h.setMode("tumble");
-          return wait(600);
-        })
-        .then(function () {
-          h.pause();
-          return wait(200);
-        })
-        .then(function () {
-          var v = h._viewer;
-          var before = Array.prototype.slice.call(v.last.frame, 0, 12);
-          var t0 = performance.now();
-          var r = T.update(el, extra);
-          var ms = performance.now() - t0;
-          return wait(300).then(function () {
-            var after = Array.prototype.slice.call(v.last.frame, 0, 12);
-            var diff = 0;
-            for (var i = 0; i < before.length; i++) diff = Math.max(diff, Math.abs(before[i] - after[i]));
-            out.steps.append = { result: r, ms: ms, frameChange: diff, count: h.info().count, lit: lit() };
-            h.resume();
-          });
-        })
-        .then(function () {
-          // Markup in labels and group names.
-          var evil = "<img src=/tests/browser/evil-probe.png onerror=alert(1)>";
-          var m = split(full, 0, 300, "replace");
-          m.points = m.points.map(function (p, i) {
-            return {
-              id: p.id,
-              label: i === 0 ? evil : p.label,
-              group: p.group === "cooking" ? "<b>cook</b>" : p.group,
-            };
-          });
-          out.steps.markup = { result: T.update(el, m) };
-          return wait(800).then(function () {
-            var labels = el.querySelector(".tumbler-labels").textContent;
-            out.steps.markup.groupShownLiterally = labels.indexOf("<b>cook</b>") >= 0;
-            out.steps.markup.imgElements = el.querySelectorAll("img").length;
-            out.steps.markup.bElements = el.querySelectorAll(".tumbler-labels b").length;
-          });
-        })
-        .then(function () {
-          var r = T.update(el, { kind: "something else" });
-          var msg = el.querySelector(".tumbler-notice");
-          out.steps.invalid = {
-            result: r,
-            noticeText: msg ? msg.textContent : null,
-            noticeVisible: msg ? msg.getBoundingClientRect().height > 0 : false,
-          };
-          return wait(300);
-        })
-        .then(function () {
-          out.steps.framesBeforeDestroy = h.info().frames;
-          out.steps.destroyed = T.destroy(el);
-          out.steps.childrenAfterDestroy = el.children.length;
-          out.steps.animatingAfterDestroy = h.info().animating;
-          out.steps.destroyAgain = T.destroy(el);
-        });
-    })
-    .then(
-      function () {
-        out.done = true;
-      },
-      function (err) {
-        out.fatal = String(err && err.stack ? err.stack : err);
-        out.done = true;
-      }
-    );
+    }, Promise.resolve());
+    await appendWhilePaused();
+    await markupInLabels();
+    await invalidSet();
+    destroyTwice();
+  }
+
+  Promise.resolve()
+    .then(run)
+    .then(function () {
+      out.done = true;
+    }, fail);
 })();

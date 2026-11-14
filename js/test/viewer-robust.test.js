@@ -99,7 +99,7 @@ function fresh(domOpts, mountOpts) {
   const api = loadSources();
   const dom = makeFakeDom(domOpts);
   const el = dom.host();
-  const h = api.mount(el, Object.assign({ seed: 2 }, mountOpts || {}));
+  const h = api.mount(el, { seed: 2, ...mountOpts });
   return { api, dom, el, h, v: h._viewer };
 }
 
@@ -417,6 +417,6 @@ test("without setTimeout a callback error goes to queueMicrotask, else console.e
   });
   h2.update({});
   assert.strictEqual(logged.length, 1);
-  assert.match(String(logged[0][logged[0].length - 1]), /cb broken 2/);
+  assert.match(String(logged[0].at(-1)), /cb broken 2/);
   h2.destroy();
 });

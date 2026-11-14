@@ -4,62 +4,68 @@
 // loss and restore. The result is left on window.__rendererResult.
 (function () {
   "use strict";
-  var SIZE = 256;
-  var out = { cases: {}, fatal: null, unavailable: null };
+  const SIZE = 256;
+  const out = { cases: {}, fatal: null, unavailable: null };
 
-  function fetchFixture(name) {
-    var base = "/tests/fixtures/contract/";
-    return fetch(base + name + ".json")
-      .then(function (r) {
-        return r.json();
-      })
-      .then(function (meta) {
-        return fetch(base + meta.vectors.file)
-          .then(function (r) {
-            return r.arrayBuffer();
-          })
-          .then(function (buf) {
-            return { meta: meta, vectors: new Float32Array(buf) };
-          });
-      });
+  async function fetchFixture(name) {
+    const base = "/tests/fixtures/contract/";
+    const meta = await (await fetch(base + name + ".json")).json();
+    const buf = await (await fetch(base + meta.vectors.file)).arrayBuffer();
+    return { meta: meta, vectors: new Float32Array(buf) };
+  }
+
+  // The mean of the n points of v (d values each).
+  function meanOf(v, n, d) {
+    const c = new Float32Array(d);
+    for (let i = 0; i < n; i++) for (let k = 0; k < d; k++) c[k] += v[i * d + k] / n;
+    return c;
+  }
+
+  // Row a: point (a + 1) % n minus the centre (rows 1 and 2 nudged off it), then Gram-Schmidt
+  // against the rows before it and normalised.
+  function setRow(f, a, v, n, d, c) {
+    const src = (a + 1) % n;
+    for (let k = 0; k < d; k++) f[a * d + k] = v[src * d + k] - c[k] + (a === 0 ? 0 : 1e-3 * Math.sin(k * (a + 1)));
+    for (let b = 0; b < a; b++) {
+      let dp = 0;
+      for (let k = 0; k < d; k++) dp += f[a * d + k] * f[b * d + k];
+      for (let k = 0; k < d; k++) f[a * d + k] -= dp * f[b * d + k];
+    }
+    let nn = 0;
+    for (let k = 0; k < d; k++) nn += f[a * d + k] * f[a * d + k];
+    nn = 1 / Math.sqrt(nn);
+    for (let k = 0; k < d; k++) f[a * d + k] *= nn;
+  }
+
+  // Sum over points and the three axes of the squared projection of (point - centre).
+  function projectedSquares(v, n, d, c, f) {
+    let sq = 0;
+    for (let p = 0; p < n; p++) {
+      for (let ax = 0; ax < 3; ax++) {
+        let s = 0;
+        for (let k = 0; k < d; k++) s += (v[p * d + k] - c[k]) * f[ax * d + k];
+        sq += s * s;
+      }
+    }
+    return sq;
   }
 
   // Three orthonormal rows spanning the first points' differences, the mean as centre.
   function frameFor(v, n, d) {
-    var c = new Float32Array(d);
-    for (var i = 0; i < n; i++) for (var k = 0; k < d; k++) c[k] += v[i * d + k] / n;
-    var f = new Float32Array(3 * d);
-    for (var a = 0; a < 3; a++) {
-      var src = (a + 1) % n;
-      for (var k2 = 0; k2 < d; k2++) f[a * d + k2] = v[src * d + k2] - c[k2] + (a === 0 ? 0 : 1e-3 * Math.sin(k2 * (a + 1)));
-      for (var b = 0; b < a; b++) {
-        var dp = 0;
-        for (var k3 = 0; k3 < d; k3++) dp += f[a * d + k3] * f[b * d + k3];
-        for (var k4 = 0; k4 < d; k4++) f[a * d + k4] -= dp * f[b * d + k4];
-      }
-      var nn = 0;
-      for (var k5 = 0; k5 < d; k5++) nn += f[a * d + k5] * f[a * d + k5];
-      nn = 1 / Math.sqrt(nn);
-      for (var k6 = 0; k6 < d; k6++) f[a * d + k6] *= nn;
-    }
-    var sq = 0;
-    for (var p = 0; p < n; p++) {
-      for (var ax = 0; ax < 3; ax++) {
-        var s = 0;
-        for (var k7 = 0; k7 < d; k7++) s += (v[p * d + k7] - c[k7]) * f[ax * d + k7];
-        sq += s * s;
-      }
-    }
+    const c = meanOf(v, n, d);
+    const f = new Float32Array(3 * d);
+    for (let a = 0; a < 3; a++) setRow(f, a, v, n, d, c);
+    const sq = projectedSquares(v, n, d, c, f);
     return { frame: f, centre: c, zoom: 0.78 / (Math.sqrt(sq / n) || 1) };
   }
 
   function litPixels(gl) {
-    var px = new Uint8Array(SIZE * SIZE * 4);
+    const px = new Uint8Array(SIZE * SIZE * 4);
     gl.readPixels(0, 0, SIZE, SIZE, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    var lit = 0,
-      max = 0;
-    for (var i = 0; i < px.length; i += 4) {
-      var m = Math.max(px[i], px[i + 1], px[i + 2]);
+    let lit = 0;
+    let max = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      const m = Math.max(px[i], px[i + 1], px[i + 2]);
       if (m > 8) lit++;
       if (m > max) max = m;
     }
@@ -67,7 +73,7 @@
   }
 
   function makeCanvas() {
-    var c = document.createElement("canvas");
+    const c = document.createElement("canvas");
     c.width = SIZE;
     c.height = SIZE;
     document.body.appendChild(c);
@@ -75,91 +81,97 @@
   }
 
   function drawFixture(key, fx, options) {
-    var R = window.EmbeddingsTumbler._internal.renderer;
-    var canvas = makeCanvas();
-    var events = [];
-    var opts = Object.assign({ onContextChange: function (e) { events.push(e.type); } }, options || {});
-    var made = R.create(canvas, opts);
+    const R = window.EmbeddingsTumbler._internal.renderer;
+    const canvas = makeCanvas();
+    const events = [];
+    const opts = {
+      onContextChange: function (e) {
+        events.push(e.type);
+      },
+      ...options,
+    };
+    const made = R.create(canvas, opts);
     if (!made.ok) return { made: made };
-    var r = made.renderer;
-    var d = fx.meta.dimension,
-      n = fx.meta.count;
-    var colours = new Float32Array(n * 3);
-    for (var i = 0; i < n; i++) {
+    const r = made.renderer;
+    const d = fx.meta.dimension;
+    const n = fx.meta.count;
+    const colours = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
       colours[i * 3] = 1;
       colours[i * 3 + 1] = 0.6 + 0.1 * i;
       colours[i * 3 + 2] = 0.3;
     }
-    var set = r.setData({ vectors: fx.vectors, dimension: d, colours: colours });
-    var pairs = new Uint32Array([0, 1, 1, 2]);
+    const set = r.setData({ vectors: fx.vectors, dimension: d, colours: colours });
+    const pairs = new Uint32Array([0, 1, 1, 2]);
     r.setWires(pairs);
-    var view = frameFor(fx.vectors, n, d);
-    var state = { frame: view.frame, centre: view.centre, zoom: view.zoom, wires: 1, time: 0.5, pointSize: 12 };
+    const view = frameFor(fx.vectors, n, d);
+    const state = { frame: view.frame, centre: view.centre, zoom: view.zoom, wires: 1, time: 0.5, pointSize: 12 };
     r.draw(state);
-    var gl = canvas.getContext("webgl2");
-    var res = { made: { ok: true }, set: set.ok, status: r.status(), pixels: litPixels(gl), events: events };
+    const gl = canvas.getContext("webgl2");
+    const res = { made: { ok: true }, set: set.ok, status: r.status(), pixels: litPixels(gl), events: events };
     return { result: res, renderer: r, gl: gl, state: state, events: events };
   }
 
   function waitFor(events, type) {
     return new Promise(function (resolve) {
-      var t0 = performance.now();
+      const t0 = performance.now();
       (function poll() {
-        if (events.indexOf(type) >= 0 || performance.now() - t0 > 5000) resolve(events.indexOf(type) >= 0);
+        if (events.includes(type) || performance.now() - t0 > 5000) resolve(events.includes(type));
         else setTimeout(poll, 20);
       })();
     });
   }
 
-  function run() {
-    var R = window.EmbeddingsTumbler._internal.renderer;
-    var probe = R.create(makeCanvas());
-    if (!probe.ok) {
-      out.unavailable = probe.message;
-      return Promise.resolve();
+  // Context loss and restore on the 1024-d view.
+  async function loseAndRestore(b) {
+    const ext = b.gl.getExtension("WEBGL_lose_context");
+    if (!ext) {
+      out.cases.restore = { skipped: "no WEBGL_lose_context" };
+      return;
     }
-    probe.renderer.dispose();
-    return Promise.all([fetchFixture("valid-384"), fetchFixture("valid-1024")]).then(function (fx) {
-      var a = drawFixture("d384", fx[0]);
-      out.cases.d384 = a.result || { made: a.made };
-      var b = drawFixture("d1024", fx[1]);
-      out.cases.d1024 = b.result || { made: b.made };
-      var c = drawFixture("d1024_nohdr", fx[1], { hdr: false });
-      out.cases.d1024_nohdr = c.result || { made: c.made };
-      if (a.renderer) a.renderer.dispose();
-      if (c.renderer) c.renderer.dispose();
-      if (!b.renderer) return;
-      // context loss and restore on the 1024-d view
-      var ext = b.gl.getExtension("WEBGL_lose_context");
-      if (!ext) {
-        out.cases.restore = { skipped: "no WEBGL_lose_context" };
-        return;
-      }
-      ext.loseContext();
-      return waitFor(b.events, "lost").then(function (gotLost) {
-        var drewWhileLost = b.renderer.draw(b.state);
-        ext.restoreContext();
-        return waitFor(b.events, "restored").then(function (gotRestored) {
-          var drew = b.renderer.draw(b.state);
-          out.cases.restore = {
-            lost: gotLost,
-            drewWhileLost: drewWhileLost,
-            restored: gotRestored,
-            drew: drew,
-            events: b.events.slice(),
-            pixels: litPixels(b.gl),
-          };
-          b.renderer.dispose();
-        });
-      });
-    });
+    ext.loseContext();
+    const gotLost = await waitFor(b.events, "lost");
+    const drewWhileLost = b.renderer.draw(b.state);
+    ext.restoreContext();
+    const gotRestored = await waitFor(b.events, "restored");
+    const drew = b.renderer.draw(b.state);
+    out.cases.restore = {
+      lost: gotLost,
+      drewWhileLost: drewWhileLost,
+      restored: gotRestored,
+      drew: drew,
+      events: b.events.slice(),
+      pixels: litPixels(b.gl),
+    };
+    b.renderer.dispose();
   }
 
-  run()
-    .catch(function (e) {
-      out.fatal = String((e && e.stack) || e);
-    })
-    .then(function () {
-      window.__rendererResult = out;
-    });
+  async function run() {
+    const R = window.EmbeddingsTumbler._internal.renderer;
+    const probe = R.create(makeCanvas());
+    if (!probe.ok) {
+      out.unavailable = probe.message;
+      return;
+    }
+    probe.renderer.dispose();
+    const fx = await Promise.all([fetchFixture("valid-384"), fetchFixture("valid-1024")]);
+    const a = drawFixture("d384", fx[0]);
+    out.cases.d384 = a.result || { made: a.made };
+    const b = drawFixture("d1024", fx[1]);
+    out.cases.d1024 = b.result || { made: b.made };
+    const c = drawFixture("d1024_nohdr", fx[1], { hdr: false });
+    out.cases.d1024_nohdr = c.result || { made: c.made };
+    a.renderer?.dispose();
+    c.renderer?.dispose();
+    if (b.renderer) await loseAndRestore(b);
+  }
+
+  function publish() {
+    window.__rendererResult = out;
+  }
+
+  run().then(publish, function (e) {
+    out.fatal = String(e?.stack || e);
+    publish();
+  });
 })();

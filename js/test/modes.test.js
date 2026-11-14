@@ -57,7 +57,7 @@ test("criterion 1: all three implement the same documented interface", () => {
       assert.ok(s.status.length > 0);
       for (const [k, v] of Object.entries(s.draw)) {
         assert.ok(drawKeys.includes(k), id + " draw key " + k + " is a renderer key");
-        assert.ok(typeof v === "number" && isFinite(v), id + " draw " + k + " is a finite number");
+        assert.ok(Number.isFinite(v), id + " draw " + k + " is a finite number");
       }
       assert.ok(s.wires === null || (s.wires.pairs.length % 2 === 0 && typeof s.wires.version === "number"));
       assert.strictEqual(inst.status(t), s.status);
@@ -89,7 +89,7 @@ test("criterion 2: a fourth dummy mode registers without editing any existing fi
           frame = new Float32Array(3 * s.dimension);
           for (let r = 0; r < 3; r++) frame[r * s.dimension + r] = 1;
           centre = new Float32Array(s.dimension);
-          this.seed = opts && opts.seed;
+          this.seed = opts?.seed;
           this.time = 0;
         },
         prepare() {
@@ -114,7 +114,9 @@ test("criterion 2: a fourth dummy mode registers without editing any existing fi
         describe() {
           return { id: "still", projection: "a fixed linear projection onto three axes", varianceShare: null };
         },
-        leave() {},
+        leave() {
+          // this stand-in mode holds nothing to release
+        },
       };
     },
   });
@@ -141,16 +143,16 @@ test("criterion 2: a fourth dummy mode registers without editing any existing fi
 test("registry refuses malformed and duplicate modes, and unknown ids", () => {
   const ET = F.freshET();
   assert.throws(() => ET.modes.register(null), { name: "TypeError" });
-  assert.throws(() => ET.modes.register({ id: "Bad Id", title: "x", summary: "", create() {} }), { name: "TypeError" });
+  assert.throws(() => ET.modes.register({ id: "Bad Id", title: "x", summary: "", create() { /* never called: registration is refused */ } }), { name: "TypeError" });
   assert.throws(() => ET.modes.register({ id: "nocreate", title: "x", summary: "" }), { name: "TypeError" });
   assert.throws(
-    () => ET.modes.register({ id: "tumble", title: "again", summary: "", create() {} }),
+    () => ET.modes.register({ id: "tumble", title: "again", summary: "", create() { /* never called: registration is refused */ } }),
     /already registered/,
   );
   assert.strictEqual(ET.modes.get("nope"), null);
   assert.throws(() => ET.modes.create("nope"), { name: "RangeError" });
   // create() refuses an instance that lacks interface members
-  ET.modes.register({ id: "broken", title: "Broken", summary: "", create: () => ({ enter() {} }) });
+  ET.modes.register({ id: "broken", title: "Broken", summary: "", create: () => ({ enter() { /* incomplete on purpose: no other methods */ } }) });
   assert.throws(() => ET.modes.create("broken"), /missing/);
 });
 

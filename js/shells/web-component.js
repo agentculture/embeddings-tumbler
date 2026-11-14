@@ -17,27 +17,37 @@
 // environment and adds no request headers. All text it shows goes in as text.
 (function (root) {
   "use strict";
-  var NAME = "embeddings-tumbler";
+  const NAME = "embeddings-tumbler";
   if (!root.customElements || !root.HTMLElement) return;
   // Loading this file twice must not throw: the first definition wins.
   if (root.customElements.get(NAME)) return;
 
-  var PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+  const PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
   // The one place the core global is read. A missing core is a plain message, not an error.
   function getCore() {
-    var T = root.EmbeddingsTumbler;
-    return T && typeof T.mount === "function" ? T : null;
+    const T = root.EmbeddingsTumbler;
+    return typeof T?.mount === "function" ? T : null;
   }
 
   function parseSeed(text) {
     if (text === null || text === "") return undefined;
-    var n = Number(text);
-    return isFinite(n) ? n : text;
+    const n = Number(text);
+    return Number.isFinite(n) ? n : text;
   }
 
   function fail(code, message) {
     return { ok: false, code: code, message: message };
+  }
+
+  // Fetch one same-origin file. A failed status, or a redirect to another origin, throws:
+  // it is not data from this origin.
+  async function fetchSameOrigin(address) {
+    const res = await root.fetch(address, { credentials: "same-origin" });
+    if (!res.ok || new root.URL(res.url || address).origin !== root.location.origin) {
+      throw new Error("unreadable");
+    }
+    return res;
   }
 
   class EmbeddingsTumblerElement extends root.HTMLElement {
@@ -81,15 +91,15 @@
 
     // Forwards to the viewer: this is how a host appends points. Never throws.
     update(data) {
-      var T = getCore();
-      var result = this._handle && T ? T.update(this, data) : fail("not-mounted", "No viewer is mounted in this element.");
+      const T = getCore();
+      const result = this._handle && T ? T.update(this, data) : fail("not-mounted", "No viewer is mounted in this element.");
       this._report(result);
       return result;
     }
 
     _start() {
       if (this._handle) return;
-      var T = getCore();
+      const T = getCore();
       if (!T) {
         // Chosen: say so, retry nothing. Moving the element in the DOM (or re-adding it)
         // runs this again, which is the retry the host controls.
@@ -103,10 +113,10 @@
         return;
       }
       this._clearNote();
-      var options = {};
-      var mode = this.getAttribute("mode");
+      const options = {};
+      const mode = this.getAttribute("mode");
       if (mode) options.mode = mode;
-      var seed = parseSeed(this.getAttribute("seed"));
+      const seed = parseSeed(this.getAttribute("seed"));
       if (seed !== undefined) options.seed = seed;
       try {
         this._handle = T.mount(this, options);
@@ -120,73 +130,75 @@
 
     _stop() {
       this._token++; // a fetch still in flight must not touch the destroyed viewer
-      var T = getCore();
+      const T = getCore();
       if (T && this._handle) T.destroy(this);
       this._handle = null;
       this._clearNote();
     }
 
     // Load src if there is one; otherwise show nothing (the host calls update). Removing
-    // src keeps what is on screen.
+    // src keeps what is on screen. Every expected failure is reported inside _loadSrc; an
+    // unexpected one is reported here through the same path, never dropped.
     _load() {
-      var token = ++this._token;
+      const token = ++this._token;
       if (!this._handle) return;
-      var src = this.getAttribute("src");
-      if (src !== null) this._loadSrc(src, token);
+      const src = this.getAttribute("src");
+      if (src === null) return;
+      this._loadSrc(src, token).catch(() => {
+        this._refuse(token, "src-unreadable", "The data file could not be loaded.");
+      });
+    }
+
+    // True while the load numbered `token` is still the current one and a viewer is mounted.
+    _live(token) {
+      return token === this._token && this._handle !== null;
+    }
+
+    // Show and report a load failure, unless that load has been superseded.
+    _refuse(token, code, message) {
+      if (!this._live(token)) return;
+      this._say(message);
+      this._emit("tumbler-error", { code: code, message: message });
     }
 
     async _loadSrc(src, token) {
-      var self = this;
-      var T = getCore();
-      var live = function () {
-        return token === self._token && self._handle !== null;
-      };
-      var stop = function (code, message) {
-        if (!live()) return;
-        self._say(message);
-        self._emit("tumbler-error", { code: code, message: message });
-      };
-      var url;
+      const T = getCore();
+      let url;
       try {
         url = new root.URL(src, root.document.baseURI);
       } catch (err) {
-        return stop("src-refused", "The src value is not a usable address.");
+        return this._refuse(token, "src-refused", "The src value is not a usable address.");
       }
       // Compared before any request is made. An opaque origin ("null": file:, data:) never matches.
       if (url.origin === "null" || url.origin !== root.location.origin) {
-        return stop(
+        return this._refuse(
+          token,
           "src-refused",
           "The src must be a file on this page's own origin. Nothing was requested."
         );
       }
-      if (typeof root.fetch !== "function") return stop("src-unreadable", "This browser cannot load files.");
-      var fetched = async function (address) {
-        var res = await root.fetch(address, { credentials: "same-origin" });
-        // A redirect to another origin is not data from this one.
-        if (!res.ok || new root.URL(res.url || address).origin !== root.location.origin) {
-          throw new Error("unreadable");
-        }
-        return res;
-      };
-      var records;
-      try {
-        records = await (await fetched(url.href)).json();
-      } catch (err) {
-        return stop("src-unreadable", "The data file could not be read as JSON.");
+      if (typeof root.fetch !== "function") {
+        return this._refuse(token, "src-unreadable", "This browser cannot load files.");
       }
-      if (!live()) return;
-      var vectors = records && typeof records === "object" ? records.vectors : null;
+      let records;
+      try {
+        records = await (await fetchSameOrigin(url.href)).json();
+      } catch (err) {
+        return this._refuse(token, "src-unreadable", "The data file could not be read as JSON.");
+      }
+      if (!this._live(token)) return;
+      const vectors = records && typeof records === "object" ? records.vectors : null;
       if (vectors && typeof vectors === "object" && typeof vectors.file === "string" && PLAIN_NAME.test(vectors.file)) {
-        var block;
+        let block;
         try {
-          block = await (await fetched(new root.URL(vectors.file, url.href).href)).arrayBuffer();
+          block = await (await fetchSameOrigin(new root.URL(vectors.file, url.href).href)).arrayBuffer();
         } catch (err) {
-          return stop("block-unreadable", 'Vector file "' + vectors.file + '" could not be read.');
+          return this._refuse(token, "block-unreadable", 'Vector file "' + vectors.file + '" could not be read.');
         }
-        if (!live()) return;
+        if (!this._live(token)) return;
         // The descriptor stays, with the block beside it: the core checks the file
         // form's own fields (dtype, byte order, declared length) against the block.
-        records = Object.assign({}, records, { vectors: Object.assign({}, vectors, { data: block }) });
+        records = { ...records, vectors: { ...vectors, data: block } };
       }
       // Anything else (no vectors, a file name that is not plain) goes to the viewer as it
       // is: it validates, shows its own plain refusal and returns it.
@@ -195,7 +207,7 @@
     }
 
     _report(result) {
-      if (result && result.ok) this._emit("tumbler-load", result);
+      if (result?.ok) this._emit("tumbler-load", result);
       else if (result) this._emit("tumbler-error", { code: result.code, message: result.message });
     }
 
@@ -205,7 +217,7 @@
 
     _say(message) {
       this._clearNote();
-      var p = root.document.createElement("p");
+      const p = root.document.createElement("p");
       p.className = "tumbler-shell-message";
       p.setAttribute("role", "alert");
       p.textContent = message;
@@ -214,10 +226,10 @@
     }
 
     _clearNote() {
-      if (this._note && this._note.parentNode) this._note.parentNode.removeChild(this._note);
+      this._note?.remove();
       this._note = null;
     }
   }
 
   root.customElements.define(NAME, EmbeddingsTumblerElement);
-})(typeof globalThis !== "undefined" ? globalThis : this);
+})(typeof globalThis === "undefined" ? this : globalThis);

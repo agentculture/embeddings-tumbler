@@ -1,48 +1,94 @@
 // Negative control (deliberately bad): ask ?foreign=<origin> for one thing of ?kind=<kind>.
-// The foreign origin is a second loopback server the test starts, never a real host.
+// The foreign origin is a second loopback server the test starts, never a real host: the
+// address is rebuilt from fixed pieces (scheme and host from the lists below, the port as a
+// number, the path from the kind's own fixed name), so no text from the query string is ever
+// placed in a request.
 (function () {
   "use strict";
-  var q = new URLSearchParams(location.search);
-  var o = q.get("foreign");
-  var kind = q.get("kind");
-  var bad = (window.__bad = { done: false, kind: kind, error: null });
-  var u = o + "/probe-" + kind;
-  try {
-    if (kind === "img") {
-      var img = document.createElement("img");
-      img.src = u + ".png";
+  // The only hosts this page will ask: the loopback test server, and a name that never resolves.
+  const HOSTS = ["127.0.0.1", "elsewhere.invalid"];
+  const KINDS = [
+    "img",
+    "script",
+    "stylesheet",
+    "fetch",
+    "xhr",
+    "beacon",
+    "websocket",
+    "font",
+    "iframe",
+    "eventsource",
+  ];
+  const q = new URLSearchParams(location.search);
+  const kind = KINDS.find((k) => k === q.get("kind")) || null;
+  const bad = (window.__bad = { done: false, kind: kind, error: null, failures: [] });
+
+  // A failure the page expects (the foreign server answers nothing useful) is recorded, not hidden.
+  function failed(err) {
+    bad.failures.push(String(err));
+  }
+
+  // { http, ws } base addresses for a loopback origin such as http://127.0.0.1:41234.
+  function foreignBase(value) {
+    const url = new URL(value);
+    const host = HOSTS.find((h) => h === url.hostname);
+    if (!host || url.protocol !== "http:") throw new Error("not a test origin");
+    const port = url.port === "" ? "" : ":" + Number(url.port);
+    return { http: "http://" + host + port, ws: "ws://" + host + port };
+  }
+
+  const ASK = {
+    img(base) {
+      const img = document.createElement("img");
+      img.src = base.http + "/probe-img.png";
       document.body.appendChild(img);
-    } else if (kind === "script") {
-      var s = document.createElement("script");
-      s.src = u + ".js";
+    },
+    script(base) {
+      const s = document.createElement("script");
+      s.src = base.http + "/probe-script.js";
       document.body.appendChild(s);
-    } else if (kind === "stylesheet") {
-      var l = document.createElement("link");
+    },
+    stylesheet(base) {
+      const l = document.createElement("link");
       l.rel = "stylesheet";
-      l.href = u + ".css";
+      l.href = base.http + "/probe-stylesheet.css";
       document.head.appendChild(l);
-    } else if (kind === "fetch") {
-      fetch(u + ".json", { mode: "no-cors" }).catch(function () {});
-    } else if (kind === "xhr") {
-      var x = new XMLHttpRequest();
-      x.open("GET", u + ".txt");
+    },
+    fetch(base) {
+      fetch(base.http + "/probe-fetch.json", { mode: "no-cors" }).catch(failed);
+    },
+    xhr(base) {
+      const x = new XMLHttpRequest();
+      x.open("GET", base.http + "/probe-xhr.txt");
       x.send();
-    } else if (kind === "beacon") {
-      navigator.sendBeacon(u + ".beacon", "x");
-    } else if (kind === "websocket") {
-      var ws = new WebSocket(o.replace(/^http/, "ws") + "/probe-websocket");
-      ws.onerror = function () {};
-    } else if (kind === "font") {
-      var f = new FontFace("probe", "url(" + u + ".woff2)");
-      f.load().catch(function () {});
-    } else if (kind === "iframe") {
-      var fr = document.createElement("iframe");
-      fr.src = u + ".html";
+    },
+    beacon(base) {
+      navigator.sendBeacon(base.http + "/probe-beacon.beacon", "x");
+    },
+    websocket(base) {
+      const ws = new WebSocket(base.ws + "/probe-websocket");
+      ws.onerror = failed;
+    },
+    font(base) {
+      const f = new FontFace("probe", "url(" + base.http + "/probe-font.woff2)");
+      f.load().catch(failed);
+    },
+    iframe(base) {
+      const fr = document.createElement("iframe");
+      fr.src = base.http + "/probe-iframe.html";
       document.body.appendChild(fr);
-    } else if (kind === "eventsource") {
-      var es = new EventSource(u + ".events");
-      es.onerror = function () { es.close(); };
-    }
+    },
+    eventsource(base) {
+      const es = new EventSource(base.http + "/probe-eventsource.events");
+      es.onerror = function (err) {
+        failed(err);
+        es.close();
+      };
+    },
+  };
+
+  try {
+    if (kind) ASK[kind](foreignBase(q.get("foreign")));
   } catch (err) {
     bad.error = String(err);
   }

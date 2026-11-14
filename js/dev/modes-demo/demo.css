@@ -4,6 +4,5 @@ html, body { margin: 0; height: 100%; background: #04060b; color: #c5cddb; font:
 #fps { position: fixed; top: 8px; right: 12px; font-size: 14px; color: #ffc56b; white-space: pre; text-align: right; }
 #info { position: fixed; top: 8px; left: 12px; max-width: 70vw; white-space: pre-wrap; }
 #status { position: fixed; bottom: 52px; left: 12px; right: 12px; font-size: 13px; color: #ffc56b; white-space: pre-wrap; }
-#keys { position: fixed; bottom: 8px; left: 12px; opacity: 0.6; }
-#keys { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; right: 12px; }
+#keys { position: fixed; bottom: 8px; left: 12px; right: 12px; opacity: 0.6; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 #keys button { font: inherit; color: inherit; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 6px; padding: 6px 10px; }

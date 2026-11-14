@@ -8,22 +8,25 @@
 // group colour: the new points can be told apart in a screenshot by colour as well as by place.
 (function () {
   "use strict";
-  function mulberry32(a) {
+  // The state is kept as an unsigned 32-bit number (>>> 0): the same 32 bits as the usual
+  // signed form, so every draw is identical; the shifts, xors and Math.imul below only ever
+  // read those 32 bits.
+  function mulberry32(seed) {
+    let a = seed >>> 0;
     return function () {
-      a |= 0;
-      a = (a + 0x6d2b79f5) | 0;
-      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
   function arrivals(base, k, seed) {
-    var d = base.dimension;
-    var rnd = mulberry32(seed || 14);
-    var v = new Float32Array(k * d);
-    var points = [];
-    for (var i = 0; i < k; i++) {
-      for (var j = 0; j < Math.min(d, 6); j++) v[i * d + j] = (rnd() - 0.5) * 0.12;
+    const d = base.dimension;
+    const rnd = mulberry32(seed || 14);
+    const v = new Float32Array(k * d);
+    const points = [];
+    for (let i = 0; i < k; i++) {
+      for (let j = 0; j < Math.min(d, 6); j++) v[i * d + j] = (rnd() - 0.5) * 0.12;
       points.push({ id: "arrival-" + i, label: "", group: "arrivals" });
     }
     return {
@@ -34,9 +37,9 @@
       dimension: d,
       count: k,
       text_included: false,
-      points: points,
+      points,
       vectors: v,
     };
   }
-  window.__fixtureData = { arrivals: arrivals };
+  window.__fixtureData = { arrivals };
 })();

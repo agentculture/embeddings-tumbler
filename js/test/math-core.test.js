@@ -6,15 +6,18 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { loadSources, SRC_DIR } = require("./helpers/load.js");
 const { rngFrom } = require("./helpers/math-fixtures.js");
+const { byCodeUnits } = require("./helpers/order.js");
 
 const math = () => loadSources(["10-math.js"])._internal.math;
 const DIMS = [384, 768, 1024, 2560];
 
-// The reference's generator, copied verbatim, to prove the port draws the same stream.
-function referenceMulberry32(a) {
+// The reference's generator, to prove the port draws the same stream. Copied from the
+// reference with its "| 0" state written as ">>> 0": every operation reads only the low
+// 32 bits of the state, so the stream is bit-for-bit the same.
+function referenceMulberry32(seed) {
+  let a = seed >>> 0;
   return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
+    a = (a + 0x6d2b79f5) >>> 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
@@ -162,7 +165,7 @@ test("project is a linear map of the centred data", () => {
 
 test("the module exports exactly the linear tool set and contains no non-linear layout", () => {
   const m = math();
-  assert.deepStrictEqual(Object.keys(m).sort(), [
+  assert.deepStrictEqual(Object.keys(m).sort(byCodeUnits), [
     "alignTo",
     "blendFrames",
     "centre",

@@ -4,6 +4,7 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
 const { loadSources, ROOT } = require("./helpers/load.js");
+const { byCodeUnits } = require("./helpers/order.js");
 
 const DIR = path.join(ROOT, "tests", "fixtures", "contract");
 const INDEX = JSON.parse(fs.readFileSync(path.join(DIR, "index.json"), "utf8"));
@@ -28,7 +29,7 @@ function fixtureFetch(url) {
       : { ok: false, status: 404 }
   );
 }
-// Results come from another vm realm: compare through plain JSON values.
+// Compare results through plain JSON values (the shape, not the objects' prototypes).
 const plain = (v) => JSON.parse(JSON.stringify(v));
 const ids = (set) => plain(set.ids);
 
@@ -105,14 +106,14 @@ for (const c of INDEX.cases) {
   test("file form with its block in memory: " + c.name, async () => {
     const base = await loadBase(c.base);
     const data = readJson(c.file);
-    const file = data.vectors && data.vectors.file;
+    const file = data.vectors?.file;
     let block;
     try {
       block = readBytes(file);
     } catch (err) {
       block = undefined; // a block that cannot be read: no data
     }
-    data.vectors = Object.assign({}, data.vectors, { data: block });
+    data.vectors = { ...data.vectors, data: block };
     checkOutcome(c, C.validate(data, base), base);
   });
 }
@@ -127,23 +128,23 @@ test("the descriptor's dtype, byte order and declared length are checked when it
   ];
   for (const [change, message] of cases) {
     const data = readJson("valid-384.json");
-    data.vectors = Object.assign({}, data.vectors, change, { data: block });
+    data.vectors = { ...data.vectors, ...change, data: block };
     const r = C.validate(data, null);
     assert.strictEqual(r.ok, false, JSON.stringify(change));
     assert.strictEqual(r.message, message);
   }
   const ok = readJson("valid-384.json");
-  ok.vectors = Object.assign({}, ok.vectors, { data: new Float32Array(block) });
+  ok.vectors = { ...ok.vectors, data: new Float32Array(block) };
   assert.ok(C.validate(ok, null).ok, "a Float32Array block works too");
   const none = readJson("valid-384.json");
-  none.vectors = Object.assign({}, none.vectors, { data: "not a block" });
+  none.vectors = { ...none.vectors, data: "not a block" };
   assert.strictEqual(C.validate(none, null).code, "block-unreadable");
 });
 
 test("every index case is covered by this file", () => {
   const names = INDEX.cases.map((c) => c.name);
-  assert.deepStrictEqual([...covered.file].sort(), [...names].sort());
-  assert.deepStrictEqual([...covered.memory].sort(), [...names].sort());
+  assert.deepStrictEqual([...covered.file].sort(byCodeUnits), [...names].sort(byCodeUnits));
+  assert.deepStrictEqual([...covered.memory].sort(byCodeUnits), [...names].sort(byCodeUnits));
   // Every fixture json in the folder is listed.
   const files = fs.readdirSync(DIR).filter((f) => f.endsWith(".json") && f !== "index.json");
   for (const f of files) assert.ok(INDEX.cases.some((c) => c.file === f), f + " not in index");
@@ -243,7 +244,7 @@ test("refusals never throw, and return the held set", () => {
 });
 
 test("schema-version placeholder forms", () => {
-  const f = (v) => C.validate(Object.assign({ kind: "embeddings-tumbler/data" }, v), null).message;
+  const f = (v) => C.validate({ kind: "embeddings-tumbler/data", ...v }, null).message;
   assert.match(f({}), /version missing is not/);
   assert.match(f({ schema_version: "1" }), /version "1" is not/);
   assert.match(f({ schema_version: null }), /version null is not/);
