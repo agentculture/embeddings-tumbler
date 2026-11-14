@@ -234,11 +234,16 @@ leave
 searchChanged
 ```
 
-### `inst.searchChanged(search, t)`
+### `inst.searchChanged(search, t) -> stepper | null`
 
-Called by the viewer whenever the active searches or their results change
-(and once right after `enter` when searches are active). `search` is `null`
-(no search) or:
+Called by the viewer, with `t` the mode's clock, whenever the active searches or
+their results change (a new search, a settings change, a re-run after an
+append, a clear) and once right after the viewer switches into the mode while
+searches are active. When it returns a stepper (or `{ work: stepper }`), the
+viewer queues it with the mode's preparation jobs, pumps it within the frame
+budget, drops it if the mode restarts (as for a refit), and calls
+`inst.mark(clock)` after pumping as every frame. `null` (or nothing): nothing to
+pump. `search` is `null` (no search) or:
 
 ```js
 {
@@ -258,7 +263,9 @@ Called by the viewer whenever the active searches or their results change
   preparation.
 - `onlyResults` true sets the draw key `unlitGain` to 0, so unlit points are
   hidden in Focus only. The viewer also skips hidden points when it hit-tests
-  and labels.
+  and labels: while the mode id is `"focus"`, its `describe().onlyResults` is
+  true, lit values are set and the filter is above 0, a point whose lit value is
+  0 is skipped by the hover name, the group-name centres and the click test.
 - Status: `fitted to the results of A, B` (letters) or `fitted to every point`
   with no search; `describe()` reports `{ id: "focus", projection, seed,
   fittedTo: "results" | "all", searches, onlyResults, varianceShare: null }`.
@@ -420,6 +427,8 @@ search: {
   litCount, sharedCount,              // from ET.searchSets.litValues
   unmatched,           // string[]: words that matched nothing, across every entry
   facing,              // boolean: a swing is in progress
+  faceable,            // boolean: the current mode has a face member (false in Focus), so
+                       // the Face the searches control can be disabled from this alone
   searches: [{
     letter,            // "A" .. "D"
     kind,              // "embedded" | "vector" | "words" | "point"
@@ -465,12 +474,54 @@ Added to the viewer's codes in `js/api/50-viewer.md`; `ET.search`'s codes
 | `rerank-timeout` | No rerank answer within `searchTimeoutMs` (a note). | `The reranker did not answer within {seconds} seconds; the results stay in embedding order.` |
 | `too-many-searches` | More than 4 entries. | `At most 4 searches at once; {found} were given.` |
 | `superseded` | A newer call replaced this one before it finished. | `A newer search replaced this one.` |
+| `bad-search` | `list` is not an array, or an entry is none of the forms above (added by t8). | `A search must be text, { text }, { vector, model } or { point }, given in an array.` |
+| `rerank-no-text` | A note, not a refusal: a vector search with no `label` while reranking is on (added by t8). | `A vector search with no label has no text to send to the reranker; it stays in embedding order.` |
 | `destroyed` | After `destroy` (existing code). | (existing message) |
 
 Decided here: `embed-failed` does not show the error the callback threw, since
 it could carry an address or key the host never meant to put on screen; the
 host sees its own error in its own code. A malformed rerank answer is
 `ET.search`'s `rerank-malformed`. `{seconds}` is `searchTimeoutMs / 1000`.
+
+### Clarifications from the build (t8)
+
+Task t8 added these while implementing the viewer section; the panel, the web
+component and the standalone page build on them.
+
+1. `bad-search` (above) is refused for a `list` that is not an array or an
+   entry of no known form, rather than guessing what was meant.
+2. With no set, or a set of 0 points, `setSearches` is refused with `no-data`
+   before any callback is called. A text entry with no word (`ET.search.tokens`
+   is empty) is refused with `empty-query` before any callback, whatever its
+   `via`.
+3. `embed-malformed` is an answer that is not an object or has no `vector`. An
+   answer with a `vector` but no usable `model` goes to `ET.search.checkQuery`
+   and is `query-model-missing`, as the callback contract says; a wrong length
+   is `query-dimension-mismatch`, a non-finite value `query-non-finite`.
+4. `superseded` and `destroyed` resolve the caller's promise but are not sent
+   to `onError` (they are not refusals of data); every other refusal is.
+5. `pointOfView` accepts only the letter of a search shown now (or `null`); when
+   new searches are fewer than its letter, it goes back to `null`.
+6. `setSearchSettings` while a `setSearches` call is still working stores the
+   settings and resolves at once (`waiting: true`); the new searches are then
+   worked out again with them as soon as they land (no swing). While a re-run
+   or another settings change is working, a newer settings change supersedes
+   it.
+7. Appends that arrive while a run is working do not restart it: when it lands
+   on an older set it is shown stale and worked out once more (so a stream of
+   appends cannot starve the re-run).
+8. `setSearchCallbacks({ rerank: null })` also turns the `rerank` setting off.
+9. The filter eases on frame time, not mode time, so a search fades in and out
+   while paused too.
+10. A replace drops every search with no `searchChanged` call: the mode
+    re-enters on the new set as a new instance with no search.
+11. The panel hook calls `ET.searchPanel.mount(parts, handle, { document,
+    light })` (`light`: the soft-ink stage), `panel.update(info().search)` on
+    every change (before `onSearchChange`), `panel.drawOverlay(ctx, project)`
+    every frame after the viewer's own overlay, and `panel.destroy()` in
+    `destroy`. A panel that throws is reported like a host callback's error and
+    never stops the viewer. With no `ET.searchPanel` in the core file nothing
+    happens.
 
 ### Lifecycle
 

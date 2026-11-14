@@ -80,6 +80,13 @@ All optional.
 | `onError(result)` | none | Called with every refusal `{ ok: false, code, message }` (the same object `update` returns). |
 | `onModeChange(id)` | none | Called when the mode changes (button, key or `setMode`). |
 | `onPauseChange(paused)` | none | Called when play/pause changes. |
+| `embed` | none | Search: the host's `embed(text)` callback (see "Search"). |
+| `rerank` | none | Search: the host's `rerank(query, candidates)` callback. |
+| `searchTimeoutMs` | `15000` | Search: how long a callback may take before its answer is dropped. |
+| `searchPanel` | `true` | Search: `false` mounts no search panel (the handle still does everything). |
+| `searchK` | `8` | Search: results per search (3 to 20). |
+| `searchLit` | `"even"` | Search: the starting lit setting (`"even"`, `"close"`, `"named"`). |
+| `onSearchChange(search)` | none | Search: called with `info().search` whenever it changes. |
 
 A callback that throws does not break the viewer. Its error is rethrown on a
 later task with `setTimeout`, so it reaches the host's error handling, not
@@ -106,10 +113,16 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 | `resetZoom()` | — | User zoom back to 1. |
 | `refreshTheme()` | — | Re-read the `--tumbler-*` custom properties (also done on every `update`). The viewer never polls. |
 | `info()` | object | A snapshot for hosts and tests (below). |
+| `setSearches(list)` | Promise | Search: replace the searches (text, vector or point id); see "Search". |
+| `clearSearches()` | boolean | Search: remove every search. |
+| `setSearchSettings(patch)` | Promise | Search: `k`, `lit`, `distances`, `rerank`, `pointOfView`, `onlyResults`. |
+| `searchSettings()` | object | Search: a copy of the settings. |
+| `faceSearches()` | boolean | Search: swing toward the searches again (false in a mode with no `face`, Focus). |
+| `setSearchCallbacks({ embed?, rerank? })` | object | Search: set or remove the callbacks after mount. |
 
 `info()` returns `{ mode, paused, broken, suspended, hidden, onScreen, destroyed,
 reducedMotion, time, seed, speed, zoom, ready, preparing, count, dimension,
-model, rendering, animating, frames, fps, status, message, timing }`.
+model, rendering, animating, frames, fps, status, message, timing, search }`.
 `suspended` is true while the document is hidden or the element is off screen;
 `animating` is true while an animation frame is requested; `frames` counts
 frames that did work; `fps` is measured once a second; `status` is the status
@@ -119,6 +132,53 @@ firstReadyMs, longestFrameMs, lastAppendMs, refits, lastRefit }` in milliseconds
 last Tumble refit finished (milliseconds since `mount`), the main-thread time its
 work took in all, and its longest single step (`longestFrameMs` is the longest single animation-frame callback of
 this viewer, which is where mode preparation runs).
+
+`search` is the search state, always present (`docs/search-interface.md`,
+"`info().search`"); with no search it is `active: false` with empty lists, and
+every other field above is exactly as it was before search existed.
+
+## Search
+
+The full contract (entries, results, callbacks, codes, lifecycle) is
+`docs/search-interface.md`, "Viewer (t8)" and "Callback contracts", including
+its "Clarifications from the build (t8)". In short:
+
+- `setSearches(list)` takes 0 to 4 entries: a string or `{ text, via? }`
+  (embedded through `embed`, or matched among the loaded points), `{ vector,
+  model, label? }` or `{ point }`. The promise never rejects: `{ ok: true,
+  search }` or `{ ok: false, code, message }`, and a refusal changes nothing.
+  Latest wins: a newer call (or a clear, a replace, `destroy`) resolves an older
+  one with `superseded` (or `destroyed`) and drops its late callback answers.
+- The viewer calls `embed(text)` with the text only, and `rerank(query,
+  candidates)` only with `rerank` on, the set carrying text and the callback
+  set. Every call is guarded and timed out after `searchTimeoutMs`. The core
+  file still makes no request of its own.
+- Ranking, word matching and the facing frame are steppers pumped after the
+  mode's preparation inside `prepareBudgetMs`; the pair reports are one call per
+  change of the searches. The lit values go to `renderer.setLit`; the draw key
+  `filter` is eased toward 1 (time constant 0.35 s) while a search is shown and
+  toward 0 when none is, then `setLit(null)`. With no search the key is left
+  out and the draw state is exactly as before.
+- A new search swings the current mode once (`inst.face(target, t, {
+  searches })`) when the facing frame is ready; a mode with `searchChanged`
+  (Focus) is told after every change and its returned stepper is pumped with
+  its preparation. Settings changes and re-runs do not swing.
+- After an append the results are stale (`stale`, `staleBy`) and are worked out
+  again from the query vectors held, with no new `embed` call and no swing. A
+  replace clears every search.
+- In Focus a click on a point (press and release within 5 px, within 16 px of
+  the point) searches from it; with Only results on, unlit points are skipped
+  by the click, the hover name and the group names.
+- New viewer codes: `no-embedder`, `embed-failed`, `embed-timeout`,
+  `embed-malformed`, `too-many-searches`, `superseded`, `bad-search`, and the
+  notes `rerank-failed`, `rerank-timeout`, `rerank-no-text`; `ET.search`'s codes
+  pass through. Refusals other than `superseded` and `destroyed` go to
+  `onError`; they are not shown as the stage notice.
+- The search panel (`ET.searchPanel`, task t9) is mounted when it is in the core
+  file and `searchPanel` is not `false`; it drives the viewer only through the
+  handle.
+
+Tested in `js/test/viewer-search.test.js`.
 
 ## Results of `update`
 
