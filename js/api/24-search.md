@@ -339,3 +339,21 @@ if (job.done) useRanking(job.result);
 The point-of-view option passes `scale: ET.searchSets.scaleFor(c.vector)` for
 the one search it belongs to. A reranker gets the texts of `ranking.pool`
 (`pointText`) and its scores go through `rerankOrder`.
+
+## Measured and implemented (task t2)
+
+- **Longest unit**, 10,000 points of 1,024 dimensions, node on the development
+  machine (12 cores, load average 3 to 8 from other agents' builds): 1.5 to 2.2
+  ms plain and 1.0 to 1.7 ms with a scale; one run under load showed 4.1 ms plain
+  and 13 ms scaled (a cold, first-run unit). A whole scan is about 20 to 40 ms in
+  20 to 80 units. The unit test asserts under 20 ms and is skipped when the
+  one-minute load average exceeds half the cores.
+- A scan with a scale does two sums per dimension for each row (plain and
+  scaled) and counts the plain rank of each pool entry in a final unit per entry.
+- `tokens` keeps each word once, so the whole-phrase comparison in
+  `makeWordQuery` compares de-duplicated words on both sides ("to be or not to
+  be" is the phrase "to be or not").
+- A word's prefix match is tried only when the word matches no point exactly;
+  a word of at least `PREFIX_MIN` characters counts characters by code point.
+- Refusals from `makeWordQuery` for `no-data` list every word as unmatched.
+- The scale's values are not checked for finiteness (only type and length).
