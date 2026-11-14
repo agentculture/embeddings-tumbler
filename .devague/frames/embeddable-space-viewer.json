@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T05:45:30Z",
+  "updated": "2026-11-14T06:00:11Z",
   "claims": [
     {
       "id": "c1",
@@ -1203,6 +1203,28 @@
       "skipped_check": "the user's own on-screen reading of the 10,000-point real file",
       "refs": [
         "t16"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l27",
+      "code": "assumption-for-measurement",
+      "what": "Refit hardening: the stale-stepper guard was added to Tumble only; Lattice and Wander rely on the viewer dropping queued work on restart, and a caller driving them directly was not measured.",
+      "skipped_check": "the abandoned-preparation test run against Lattice and Wander at mode level",
+      "refs": [
+        "t7"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l28",
+      "code": "n-below-claim",
+      "what": "Refit hardening: the tightened 1.4 peak bound is asserted at seed 3 only; seeds 1-8 (max 1.31) were measured with an uncommitted scratch script.",
+      "skipped_check": "the bound asserted over several seeds in the committed test",
+      "refs": [
+        "t7"
       ],
       "origin": "llm",
       "status": "proposed"
