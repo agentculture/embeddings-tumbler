@@ -48,6 +48,11 @@ ET.viewer = (function () {
     accent: "#a35f00",
     ungrouped: "#8cadff",
   };
+  // The readout strip's three axis colours (horizontal, vertical, depth), 0-255. Fixed, not
+  // themable. The light pair is darker so cells and legend words read on a light panel.
+  var AXIS_RGB_DARK = [[255, 150, 60], [80, 220, 160], [130, 140, 255]];
+  var AXIS_RGB_LIGHT = [[176, 84, 0], [0, 128, 82], [72, 82, 214]];
+  var AXIS_NAMES = ["horizontal", "vertical", "depth"];
   var FONTS = {
     body: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
     data: 'ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
@@ -580,7 +585,16 @@ ET.viewer = (function () {
       fontSize: spaced("readout-caption-size", "11.5px"),
     });
     v.stripFirst = text(v, "span", "", "dimension 1");
-    v.stripMiddle = text(v, "span", "", "how much each dimension contributes to the view right now");
+    v.stripMiddle = make(v, "span", "");
+    v.stripText = text(v, "span", "", "how much each dimension contributes to the view right now");
+    v.stripMiddle.appendChild(v.stripText);
+    v.stripMiddle.appendChild(v.doc.createTextNode(" \u00b7 colour: "));
+    v.stripLegend = AXIS_NAMES.map(function (name, i) {
+      var word = text(v, "b", "tumbler-axis-" + name, name, { fontWeight: "400" });
+      if (i > 0) v.stripMiddle.appendChild(v.doc.createTextNode(" "));
+      v.stripMiddle.appendChild(word);
+      return word;
+    });
     v.stripLast = text(v, "span", "", "");
     caption.appendChild(v.stripFirst);
     caption.appendChild(v.stripMiddle);
@@ -823,7 +837,10 @@ ET.viewer = (function () {
     // stop takes the foreground, so it stays dark ink.
     v.stopColour = t.light ? fg : "rgb(255, 255, 255)";
     v.neighbourColour = cssRgb(mix(t.foreground, t.muted, 0.375));
-    v.accent255 = [Math.round(t.accent[0] * 255), Math.round(t.accent[1] * 255), Math.round(t.accent[2] * 255)];
+    v.axisRgb = t.light ? AXIS_RGB_LIGHT : AXIS_RGB_DARK;
+    v.stripLegend.forEach(function (word, i) {
+      word.style.color = "rgb(" + v.axisRgb[i].join(", ") + ")";
+    });
   }
 
   // Read the host's theme and, only when it differs from the one applied, apply it
@@ -1185,7 +1202,7 @@ ET.viewer = (function () {
     v.mastLine.textContent =
       thousands(set.count) + " embeddings · " + thousands(D) + " dimensions · one restless 3-D window";
     v.stripLast.textContent = "dimension " + thousands(D);
-    v.stripMiddle.textContent = "how much each of the " + thousands(D) + " dimensions contributes to the view right now";
+    v.stripText.textContent = "how much each of the " + thousands(D) + " dimensions contributes to the view right now";
   }
 
   // ---------- modes ----------
@@ -2267,20 +2284,26 @@ ET.viewer = (function () {
 
   // ---------- readout strip ----------
 
-  // One cell per dimension: how much that dimension contributes to the three axes on
-  // screen, relative to an even share (the reference's (f0^2 + f1^2 + f2^2) * D / 3).
+  // One cell per dimension. Its opacity is how much that dimension contributes to the three
+  // axes on screen, relative to an even share (the reference's (f0^2 + f1^2 + f2^2) * D / 3).
+  // Its colour mixes the three axis colours by the dimension's squared component on each
+  // axis, divided by their sum: a dimension that feeds one axis shows that axis's colour.
   function drawStrip(v, F) {
     if (!v.stripCtx || !v.stripImage || !v.set) return;
     var D = v.set.dimension;
     var px = v.stripImage.data;
-    var a = v.accent255;
+    var c = v.axisRgb;
     for (var d = 0; d < D; d++) {
-      var e = ((F[d] * F[d] + F[D + d] * F[D + d] + F[2 * D + d] * F[2 * D + d]) * D) / 3;
+      var ax = F[d] * F[d];
+      var ay = F[D + d] * F[D + d];
+      var az = F[2 * D + d] * F[2 * D + d];
+      var sum = ax + ay + az;
+      var norm = sum > 0 ? sum : 1;
       var o = d * 4;
-      px[o] = a[0];
-      px[o + 1] = Math.max(0, a[1] - Math.min(60, e * 12));
-      px[o + 2] = a[2];
-      px[o + 3] = Math.min(255, e * 80);
+      px[o] = (c[0][0] * ax + c[1][0] * ay + c[2][0] * az) / norm;
+      px[o + 1] = (c[0][1] * ax + c[1][1] * ay + c[2][1] * az) / norm;
+      px[o + 2] = (c[0][2] * ax + c[1][2] * ay + c[2][2] * az) / norm;
+      px[o + 3] = Math.min(255, ((sum * D) / 3) * 80);
     }
     v.stripCtx.putImageData(v.stripImage, 0, 0);
   }

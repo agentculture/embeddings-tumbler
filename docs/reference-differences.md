@@ -279,9 +279,16 @@ not done; see "Not yet compared or not yet decided".
 ### One cell per dimension of the data
 
 - **Reference:** 384 cells, and the caption says "384 dimensions" and "dimension 384".
-- **Build:** one cell per dimension of the loaded data (a canvas that many pixels wide, stretched), and the caption names the real number, with a thousands separator ("2,560"). The formula and the colours are the reference's.
+- **Build:** one cell per dimension of the loaded data (a canvas that many pixels wide, stretched), and the caption names the real number, with a thousands separator ("2,560"). The formula is the reference's (the colours are not; see the next item).
 - **Why:** the dimension comes from the data.
 - **Visible on the sample set:** no. The strip's size (22 px between two 1 px lines) and the 6 px gap before its caption are the reference's (measured at 1280 and 390 px wide).
+
+### The strip's cells are coloured by screen axis
+
+- **Reference:** the demo's strip draws every cell in the one accent colour, its green channel lowered a little where the contribution is large.
+- **Build:** each cell mixes three colours (horizontal orange, vertical green, depth blue-violet) by how much its dimension feeds each of the three screen axes, so a dimension that feeds only one axis shows that axis's colour. The opacity is the reference's formula, unchanged. The caption gains a legend naming the three colours. On a light background the three colours are darker so they stay readable; the colours are fixed and not themable.
+- **Why:** the user asked for it (2026-11-14): it shows which dimensions are carrying which direction of the view.
+- **Visible on the sample set:** yes: the strip is orange, green and blue-violet where the reference's is amber, and the caption ends with the three coloured words *(read from the code; not yet seen in a rendered picture)*.
 
 ## Controls and input
 
@@ -504,7 +511,6 @@ Checked in the screenshots or measured on 2026-11-14; none of these differ.
 | The masthead | the same counts text, the same title size and the same offsets (20 px from the left and 22 px from the top, plus the reference's 8 px margin) |
 | Mode buttons | the same size (28 px titles, 24 px under 600 px), the selected title in italics and amber, summaries hidden under 600 px |
 | Lattice's wires | 1,870 wires on both pages, and the same status wording |
-| The readout strip's colours | the same amber cells *(by eye)* |
 | The text of the three notes and of the closing note | identical, compared as text |
 | The panel's width and position | 1,120 px, centred (x = 80 at 1280 px wide) |
 | The renderer's settings (point size 6.5 px, depth of field 1.1, bloom 0.55, exposure 1.35, gamma 0.92, vignette 0.72, trails 0.17 s, twinkle 0.18) | the reference's values, per the renderer's notes *(read from the code; the renderer's picture could not be compared frame for frame, see below)* |
