@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T00:55:01Z",
+  "updated": "2026-11-14T01:20:56Z",
   "claims": [
     {
       "id": "c1",
@@ -1042,6 +1042,17 @@
       "skipped_check": "more sets and seeds for the append continuity bound; clamp of the share to 1",
       "refs": [
         "t7"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l13",
+      "code": "assumption-for-measurement",
+      "what": "t8: the viewer module was written before its tests; touch input (pinch, double-tap, pan-y scrolling) is tested only with synthetic events in a fake DOM, never on a real phone; context loss and restore, hidden-tab and off-screen pausing and the twenty-cycle mount/destroy leak check run only in the fake DOM, not in the browser test; the light theme was judged from one software-rendered screenshot; GPU frame rates hit the 60 fps display cap so headroom is unmeasured; heap figures include the dev page's sample pool; Firefox, Safari and a screen reader were not checked; the static no-network checks are regex heuristics.",
+      "skipped_check": "real touch device; browser-level pause, context-loss and leak tests; uncapped frame rate; Firefox and Safari",
+      "refs": [
+        "t8"
       ],
       "origin": "llm",
       "status": "proposed"
