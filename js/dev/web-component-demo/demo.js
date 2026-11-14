@@ -26,6 +26,7 @@
   var actions = {
     remove: function () { el.remove(); },
     add: function () { parent.insertBefore(el, next); },
+    sample: function () { el.update(EmbeddingsTumbler.sample.generate()); },
     small: function () { el.setAttribute("src", DATA + "valid-384.json"); },
     large: function () { el.setAttribute("src", DATA + "valid-1024.json"); },
     foreign: function () { el.setAttribute("src", "https://example.org/data.json"); },

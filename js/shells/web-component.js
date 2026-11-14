@@ -1,14 +1,13 @@
 // web-component.js: the <embeddings-tumbler> custom element (task t10).
 //
 // A shell, not a viewer: it holds no rendering and no projection code. It calls the core
-// file's public API (mount, update, destroy; plus sample.generate for the `sample`
-// attribute) and nothing else. Load embeddings-tumbler.js first, then this file:
+// file's public API (mount, update, destroy) and nothing else. Load embeddings-tumbler.js first, then this file:
 //
 //   <script src="embeddings-tumbler.js"></script>
 //   <script src="web-component.js"></script>
 //   <embeddings-tumbler src="data/my-set.json" mode="tumble" seed="7"></embeddings-tumbler>
 //
-// Attributes: src (a data file on the page's own origin), mode, seed, sample (boolean).
+// Attributes: src (a data file on the page's own origin), mode, seed.
 // Events (bubbling): tumbler-load (detail: the update result), tumbler-error (detail:
 // {code, message}). Property `handle` is the viewer handle or null; method update(data)
 // forwards to the viewer. See js/api/web-component.md.
@@ -43,7 +42,7 @@
 
   class EmbeddingsTumblerElement extends root.HTMLElement {
     static get observedAttributes() {
-      return ["src", "mode", "seed", "sample"];
+      return ["src", "mode", "seed"];
     }
 
     constructor() {
@@ -127,38 +126,13 @@
       this._clearNote();
     }
 
-    // Show src, else the sample set, else nothing (the host calls update). Removing src
-    // keeps what is on screen unless the sample attribute asks for the sample.
+    // Load src if there is one; otherwise show nothing (the host calls update). Removing
+    // src keeps what is on screen.
     _load() {
       var token = ++this._token;
       if (!this._handle) return;
       var src = this.getAttribute("src");
-      if (src !== null) {
-        this._loadSrc(src, token);
-      } else if (this.hasAttribute("sample")) {
-        this._loadSample();
-      }
-    }
-
-    _loadSample() {
-      var T = getCore();
-      // The one use of the core object beyond mount, update and destroy: the optional
-      // sample set. Without sample-data.js the attribute explains itself.
-      if (!(T && T.sample && typeof T.sample.generate === "function")) {
-        this._say("The sample attribute needs sample-data.js, loaded after embeddings-tumbler.js.");
-        this._emit("tumbler-error", { code: "sample-missing", message: "sample-data.js is not loaded." });
-        return;
-      }
-      this._clearNote();
-      var data;
-      try {
-        data = T.sample.generate();
-      } catch (err) {
-        this._say("The sample set could not be generated.");
-        this._emit("tumbler-error", { code: "sample-failed", message: "The sample set could not be generated." });
-        return;
-      }
-      this._report(T.update(this, data));
+      if (src !== null) this._loadSrc(src, token);
     }
 
     async _loadSrc(src, token) {

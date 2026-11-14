@@ -4,12 +4,9 @@
 // The file is a shell: it contains no rendering or projection code and reaches the core
 // object only through its public API. What the scan PERMITS on the core object, exactly:
 //
-//   * T.mount, T.update, T.destroy   (the plan's three members), and
-//   * T.sample.generate              (ONE named exception: the interface fixed for wave 5
-//                                     gives the element a `sample` attribute, and the sample
-//                                     set exists only as EmbeddingsTumbler.sample, loaded by the
-//                                     optional sample-data.js. It is read in one place, as a
-//                                     call, only to produce data that goes to T.update.)
+//   * T.mount, T.update, T.destroy   (the plan's three members), and nothing else.
+//     In particular any reference to `sample` fails: a host that wants the built-in
+//     sample set calls el.update(EmbeddingsTumbler.sample.generate()) in its own script.
 //
 // Anything else on the core object fails: get, registerMode, version, _internal, any other
 // member, bracket access, and any alias of the core object (it must be held only by the
@@ -28,7 +25,7 @@ const { ROOT } = require("./helpers/load.js");
 
 const FILE = path.join(ROOT, "js", "shells", "web-component.js");
 const SHIPPED = path.join(ROOT, "embeddings_tumbler", "static", "web-component.js");
-const ALLOWED = new Set(["mount", "update", "destroy", "sample"]);
+const ALLOWED = new Set(["mount", "update", "destroy"]);
 
 // Remove comments, leaving strings. Strings in this file hold plain English messages.
 function stripComments(src) {
@@ -61,13 +58,7 @@ function scan(source) {
   }
   if (/[(,]\s*T\s*[,)]/.test(code)) flag("the core object is passed to a function");
   if (/\{[^}]*\}\s*=\s*T\b/.test(code)) flag("the core object is destructured");
-  // T.sample is allowed only as the guard of T.sample.generate, or that call itself.
-  if (/\bT\s*\.\s*sample\b(?!\s*(&&|\.\s*generate\b))/.test(code)) {
-    flag("T.sample used other than as the guard or T.sample.generate()");
-  }
-  for (const m of code.matchAll(/\bT\s*\.\s*sample\s*\.\s*(\w+)/g)) {
-    if (m[1] !== "generate") flag("T.sample." + m[1]);
-  }
+  if (/\bsample\b/i.test(code)) flag("banned: any reference to sample");
   for (const need of ["mount", "update", "destroy"]) {
     if (!members.has(need)) flag("the shell must use T." + need);
   }
@@ -111,7 +102,7 @@ function scan(source) {
 
 const source = fs.readFileSync(FILE, "utf8");
 
-test("the web component calls only mount, update and destroy on the core (plus sample.generate)", () => {
+test("the web component calls only mount, update and destroy on the core", () => {
   assert.deepStrictEqual(scan(source), []);
 });
 
@@ -127,7 +118,7 @@ test("the scan flags deliberate breaches (it can fail)", () => {
     "bracket access": source.replace("T.destroy(this);", 'T["get"](this);'),
     "an alias": source.replace("var T = getCore();\n      var live", "var T = getCore();\n      var C = T;\n      var live"),
     "direct global use": source.replace("var T = root.EmbeddingsTumbler;", "var T = root.EmbeddingsTumbler; root.EmbeddingsTumbler.get(1);"),
-    "sample other than generate": source.replace("T.sample.generate()", "T.sample.helper()"),
+    "a sample reference": source.replace("_clearNote() {", "_clearNote() { T.sample.generate();"),
     "getContext": source.replace("this._note = null;\n    }\n\n    get handle", "this._note = null;\n      this.getContext('webgl2');\n    }\n\n    get handle"),
     "gl call": source.replace("_clearNote() {", "_clearNote() { gl.drawArrays(0, 0, 1);"),
     "a shader word": source.replace("_clearNote() {", "_clearNote() { var shaderSource = 1;"),

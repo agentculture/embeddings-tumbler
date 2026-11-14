@@ -356,28 +356,7 @@ test("a slow reply for an old src never overwrites a newer src", async () => {
   assert.strictEqual(env.calls.update.length, 1);
 });
 
-// ---------- sample, update, events ----------
-
-test("the sample attribute shows the sample set, and src wins over it", async () => {
-  const env = makeShellEnv({ sample: true });
-  const el = env.connect(env.create({ sample: "" }));
-  assert.strictEqual(env.calls.update.length, 1);
-  assert.strictEqual(el.handle.info().model, "synthetic/reference-sample");
-  serve(env, "a", A);
-  const both = env.connect(env.create({ sample: "", src: "data/a.json" }));
-  await env.settle();
-  assert.strictEqual(both.handle.info().model, A.json.model);
-  assert.strictEqual(env.fetches.length, 2);
-});
-
-test("the sample attribute without sample-data.js explains itself", () => {
-  const env = makeShellEnv();
-  const el = env.create({ sample: "" });
-  const seen = env.listen(el);
-  env.connect(el);
-  assert.match(el.textContent, /sample-data\.js/);
-  assert.strictEqual(seen[0].detail.code, "sample-missing");
-});
+// ---------- update, events ----------
 
 test("update(data) forwards to the viewer and fires the events", async () => {
   const env = makeShellEnv();
