@@ -108,8 +108,9 @@ ET.viewer = (function () {
   var SPIN = 0.06; // rad/s of yaw while running (the reference's)
   // Heavy work's budget per frame (see "Heavy work" in js/api/50-viewer.md): a share of the
   // measured frame interval, between prepareBudgetMs and BUDGET_CEILING times it; cut to half
-  // of prepareBudgetMs for one frame only when the viewer's own script (drawing excluded)
-  // overran: more than OVERRUN_FLOOR_MS, and more than OVERRUN_MS past the budget it had.
+  // of prepareBudgetMs for one frame only when the work itself overran (a unit far longer
+  // than asked: cold code, a collection): more than OVERRUN_FLOOR_MS, and more than
+  // OVERRUN_MS past the budget it had.
   var WORK_SHARE = 1 / 3;
   var BUDGET_CEILING = 3;
   var OVERRUN_FLOOR_MS = 16;
@@ -118,7 +119,7 @@ ET.viewer = (function () {
   var INTERVAL_GAP_MS = 250; // a longer gap between frames is a pause, not a frame interval
   // Drawing-buffer ratio steps (adaptivePixelRatio): ADAPT_SECONDS measured seconds in a row
   // under ADAPT_FPS, while running and not preparing, lower it by ADAPT_STEP (never below 1).
-  var ADAPT_FPS = 30;
+  var ADAPT_FPS = 25; // under a 30 fps cap (iOS Low Power Mode), never below a measured 29.x
   var ADAPT_SECONDS = 2;
   var ADAPT_STEP = 0.5;
   // The most wire light per pixel, where the wires' light lands, before the wires are
@@ -1858,12 +1859,15 @@ ET.viewer = (function () {
   // The budget for this frame's heavy work. Where the time between frames went decides it:
   // on a device whose frames are long because drawing is slow (the GPU, the compositor),
   // the work may take up to WORK_SHARE of the frame interval, so it keeps making progress
-  // at any frame rate; it is cut only when the viewer's own script (drawing excluded) ran
-  // well past what it was given, which is the case a long frame used to stand for.
+  // at any frame rate. It is cut only when the work's own script time ran well past what it
+  // was given. The rest of the frame's script (the mode's state, labels, uploads) is not
+  // made shorter by a smaller budget, so cutting the budget for it only starves the work:
+  // measured with the CPU throttled 6x, a rule on the whole script swung the budget between
+  // 24 and 4 ms every other frame. info().timing reports both (workMs, scriptMs).
   function frameBudget(v) {
     var base = Math.max(1, Number(v.options.prepareBudgetMs) || 8);
     var budget = clamp(v.interval * WORK_SHARE, base, base * BUDGET_CEILING);
-    if (v.lastScript > Math.max(OVERRUN_FLOOR_MS, v.lastBudget + OVERRUN_MS)) budget = Math.max(1, base / 2);
+    if (v.timing.workMs > Math.max(OVERRUN_FLOOR_MS, v.lastBudget + OVERRUN_MS)) budget = Math.max(1, base / 2);
     // A paused view has no motion to keep smooth, so it may spend longer per frame on
     // getting ready (it still answers input every frame).
     if (!v.running) budget = Math.max(budget, PAUSED_BUDGET_MS);
