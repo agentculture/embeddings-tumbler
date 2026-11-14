@@ -205,6 +205,27 @@ Rules (o2, c7, c8):
   `tumbling`, `swapping axes` or `wandering` (the reference's wording).
   `describe().facing` is `null`, or `{ at, until }` in mode time.
 
+As built (t6; details in `js/api/40-modes.md`, "Facing the searches"):
+
+- The drift during a swing is a seeded drift at half the reference tumble's
+  rate (0.21 rad/s per axis, its direction turning), the same in all three
+  modes, as the reference tumbles during a swing in every mode; it is not each
+  mode's own motion. With the pull written literally as `orth((1 - w) own + w
+  target)` the drift dies with `1 - w`, so the view would be held near the
+  target for the last seconds, and Wander's own motion is still while it
+  dwells. The frame is the closed-form solution of the reference's pull with
+  that drift, so it keeps moving about the target.
+- Tumble comes back to its tour with the refit turn (a fixed rotation unwound
+  at a bounded rate), not the entry blend, which turned about five times faster
+  than the tour (measured).
+- `face` also returns `false` when the centre does not have `D` values, a value
+  is not finite, the zoom is not a positive finite number, or `duration` is not
+  a positive finite number. A `t` before the last swing's start is moved up to
+  it. `describe().facing` reports the newest swing, which may have ended.
+- Wander dwells at each stop with the frame still, with or without a search;
+  "differs between every pair of consecutive seconds" holds for it during the
+  swing and outside those dwells.
+
 Lattice and Wander still draw their own wires and spokes during a swing. Wander's
 route is unchanged by search (the spec leaves open whether Wander should visit
 the results; this plan does not).
