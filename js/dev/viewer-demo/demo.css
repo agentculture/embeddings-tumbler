@@ -1,0 +1,58 @@
+/* Dev-only host page styles. The viewer brings none of its own; this is the host. */
+body {
+  margin: 0;
+  background: #e9e6df;
+  color: #1a1a1a;
+  font: 15px/1.45 Georgia, serif;
+}
+.top {
+  padding: 12px 16px 4px;
+}
+.top h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.top small {
+  font-size: 13px;
+  color: #666;
+}
+.top p {
+  margin: 4px 0 0;
+}
+.pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
+  padding: 12px 16px 32px;
+}
+.side {
+  min-width: 0;
+}
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.bar button {
+  font: 13px ui-monospace, Menlo, monospace;
+  padding: 6px 10px;
+  border: 1px solid #999;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+.space {
+  min-height: 40px;
+  outline: 1px dashed #aaa;
+  --tumbler-stage-height: clamp(260px, 50vh, 560px);
+}
+.info {
+  font: 11px/1.4 ui-monospace, Menlo, monospace;
+  background: #fff;
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 8px 0 0;
+}
