@@ -731,3 +731,20 @@ def test_explain_and_learn_describe_the_embed_route(capsys):
     assert "--embed" in serve["summary"]
     main(["viewer", "overview", "--json"])
     assert "--embed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("variable", ["EMBEDDINGS_API_KEY", "COLLEAGUE_API_KEY"])
+def test_serve_embed_refuses_a_key_with_a_line_break_without_printing_it(
+    tmp_path, capsys, monkeypatch, variable
+):
+    _embed_env(monkeypatch, key=None)
+    monkeypatch.setenv(variable, _EMBED_KEY + "\r\nX-Injected: " + _EMBED_KEY)
+    called = []
+    monkeypatch.setattr(_static_server, "make_server", lambda *a, **k: called.append(a))
+    for extra in ([], ["--json"]):
+        assert main(["viewer", "serve", str(tmp_path), "--embed", *extra]) == 2
+        cap = capsys.readouterr()
+        assert variable in cap.err
+        assert _EMBED_KEY not in cap.out + cap.err
+        assert "Traceback" not in cap.err
+    assert called == []
