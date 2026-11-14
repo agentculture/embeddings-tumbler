@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T15:07:24Z",
+  "updated": "2026-11-14T15:10:09Z",
   "claims": [
     {
       "id": "c1",
@@ -958,6 +958,15 @@
       "id": "l5",
       "code": "control-absent",
       "what": "t4: tests were written after the implementation; the old-build-against-new frame comparison was a one-time check, not a permanent test; the relayout path with lit values set is untested (it needs about 16 million points); the light-stage check uses a page that copies the viewer's light treatment, not the viewer; thresholds were set after seeing the numbers, with the tightest margin on the light stage; the object leak count is the agent's own wrapper.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l6",
+      "code": "assumption-for-measurement",
+      "what": "t3: all timings were taken at load averages of 18 to 32 and are noisy; cold first calls of the pair reports exceeded 8 ms under that load, and it stays one blocking call; no test asserts a time, only that work is split into units; the committed tests use hand-built rankings, and the check against the real ranking module was a scratch script; one interface clarification (when the closest pair is null) rests on the agent's reading of the reference.",
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
