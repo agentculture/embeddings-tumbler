@@ -157,7 +157,7 @@ def test_sample_set_renders_with_modes_provenance_and_controls(sample_run):
     assert r["info"]["count"] > 0
     assert r["lit"], "the sky shows no lit points"
     assert r["lit"] > 200, "the sky shows no lit points"
-    assert r["modes"] == ["tumble", "lattice", "wander"]
+    assert r["modes"] == ["tumble", "lattice", "wander", "focus"]
     assert r["controls"] == {"play": 1, "speed": 1, "labels": 1, "trails": 1}
     assert r["readout"] == 1
     assert r["provenance"]
