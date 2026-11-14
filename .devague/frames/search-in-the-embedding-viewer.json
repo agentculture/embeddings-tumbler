@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T12:06:29Z",
+  "updated": "2026-11-14T12:33:07Z",
   "claims": [
     {
       "id": "c1",
@@ -738,6 +738,37 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c44",
+      "kind": "requirement",
+      "text": "A 'from this search's point of view' option on a search. Distances are measured with each dimension scaled by that search's vector, so lit points and their order reflect the search's context. The picture is fitted to that scaled space, and the view states that distances are measured in the search's context.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "The option is linear (a per-dimension scale), the view says when it is on, each result can show where plain distance had it, and the option never applies one search's scaling to another search's results.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "docs/specs/reference/tumbler-focus-view.html shows it on real vectors: scale each dimension by the absolute value of the query's component, renormalise, then rank and fit.",
+      "revisions": []
+    },
+    {
+      "id": "c45",
+      "kind": "assumption",
+      "text": "With several searches active, the point-of-view option belongs to one chosen search at a time: its scaling is used for its own results and for the picture, while the other searches keep plain distance.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -838,6 +869,14 @@
       "surface": "challenge pass / not examined",
       "finding": "Non-Chromium browsers; touch use of the panel on a phone beyond one rendered width; a screen reader on the real panel; memory with four searches on the largest real file; embeddings-cli needs no change as far as read, but its export options were read only from this session's notes, not the code.",
       "seeds": []
+    },
+    {
+      "id": "s11",
+      "surface": "challenge pass / cheap probe: the point-of-view option on real vectors",
+      "finding": "44 words through the gateway's Qwen3 model, query 'water'. Ratio of water-to-other distance over water-to-water distance: 1.24 as embedded, 1.44 with each dimension scaled by the query. On the 124-item Focus reference the option reorders results modestly (water: river moves above flood, salt replaces shower in the first eight). One model, one query set; small sample.",
+      "seeds": [
+        "c44"
+      ]
     }
   ],
   "lapses": [],
@@ -958,6 +997,15 @@
       "source_text": "Query text and results are inserted as text, never as markup, and are sent nowhere by the viewer; only the host's callback sees the query.",
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c44",
+      "seam": "search -> the space as that search sees it",
+      "behavior": "With the option on, ranking, shown distances and the fitted picture all use the same per-dimension scaling by that search's vector; with it off, nothing is scaled; the view states which is in effect.",
+      "source_text": "A 'from this search's point of view' option on a search. Distances are measured with each dimension scaled by that search's vector, so lit points and their order reflect the search's context. The picture is fitted to that scaled space, and the view states that distances are measured in the search's context.",
+      "origin": "llm",
+      "status": "proposed"
     }
   ]
 }

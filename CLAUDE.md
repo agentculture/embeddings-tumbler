@@ -28,7 +28,7 @@ As of 2026-11-13 no repository surveyed for this work (`embeddings-lens`,
 viewer; the only one was a demo page whose data is generated in the page. That
 page is the reference: `docs/specs/reference/embedding-tumbler-demo.html`.
 
-## Current state: built, first release pending
+## Current state: built and released; search specced
 
 The viewer is built from the converged spec and plan (18 tasks, by a workforce
 run that ended 2026-11-14). In the repository: the data contract and its
@@ -43,9 +43,9 @@ harness (`tests/browser/`); the host and producer guides (`docs/guides/`).
 `js/README.md` is the module convention and `js/api/` documents each module's
 interface.
 
-Not done yet: no release has been published. The first npm release needs a
-one-time manual publish before CI's trusted publishing can take over
-(`docs/release.md`). Only Chromium has been tested automatically. Search
+Version 0.11.2 is on npm and PyPI (2026-11-14); the npm copy was the one-time
+manual first publish. Not done yet: the trusted publisher on npmjs.com, without
+which CI cannot publish the next npm version (`docs/release.md`). Only Chromium has been tested automatically. Search
 (type text, or several texts, and see what links to each) is specced but not
 built `(planned)`: `docs/specs/2026-11-14-search-in-the-embedding-viewer.md`,
 its obligations in the file of the same name ending `-obligations.md`, and two

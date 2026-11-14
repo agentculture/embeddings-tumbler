@@ -127,7 +127,13 @@ A TestPyPI `.devN` build has `.devN` in its metadata but the plain version in
 the core file's header. That is expected: TestPyPI builds are previews, not
 releases, and are not compared.
 
-## The one-time first npm release (not done yet)
+## The one-time first npm release (done 2026-11-14, version 0.11.2)
+
+Done as described below, from merge commit `bfebbcf`. The registry copy was
+compared byte for byte with the checked tarball, and PyPI received the same
+version from the re-run CI job. The steps stay here as the record of how it
+was done. The account required a one-time password for publishing; a token
+set to bypass two-factor authentication was used.
 
 npm attaches a trusted publisher only to a package that already exists. The
 very first version of `@culture.dev/embeddings-tumbler` must therefore be
