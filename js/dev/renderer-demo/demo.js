@@ -192,35 +192,49 @@
     return u;
   }
 
-  // True neighbours (full dimension) for the first S points, three wires each.
-  function wires(X, n, d, S) {
-    S = Math.min(n, S);
+  // True neighbours (full dimension) for the first S points, three wires each. The
+  // brute-force cost is S * S * d multiply-adds, so S shrinks as d grows to keep the total
+  // near WIRE_BUDGET, and the rows are done a slice at a time between frames so the page
+  // never freezes. done(pairs, S, ms) is called at the end.
+  var WIRE_BUDGET = 6e7; // multiply-adds in total
+  var SLICE_BUDGET = 3e6; // multiply-adds per slice (a few milliseconds)
+  function wiresInSlices(X, n, d, done) {
+    var S = Math.max(2, Math.min(n, 500, Math.floor(Math.sqrt(WIRE_BUDGET / d))));
+    S = Math.min(S, n);
+    var perSlice = Math.max(1, Math.floor(SLICE_BUDGET / (S * d)));
     var pairs = [],
-      seen = {};
-    var dist = new Float32Array(S),
-      order = [];
-    for (var i = 0; i < S; i++) {
-      order.length = 0;
-      for (var j = 0; j < S; j++) {
-        var s = 0;
-        if (j !== i) for (var k = 0; k < d; k++) {
-          var t = X[i * d + k] - X[j * d + k];
-          s += t * t;
+      seen = {},
+      dist = new Float32Array(S),
+      order = [],
+      i = 0,
+      t0 = performance.now();
+    function slice() {
+      var end = Math.min(S, i + perSlice);
+      for (; i < end; i++) {
+        order.length = 0;
+        for (var j = 0; j < S; j++) {
+          var s = 0;
+          if (j !== i) for (var k = 0; k < d; k++) {
+            var t = X[i * d + k] - X[j * d + k];
+            s += t * t;
+          }
+          dist[j] = j === i ? Infinity : s;
+          order.push(j);
         }
-        dist[j] = j === i ? Infinity : s;
-        order.push(j);
-      }
-      order.sort(function (a, b) { return dist[a] - dist[b]; });
-      for (var m = 0; m < Math.min(3, S - 1); m++) {
-        var o = order[m],
-          key = i < o ? i + ":" + o : o + ":" + i;
-        if (!seen[key]) {
-          seen[key] = 1;
-          pairs.push(i, o);
+        order.sort(function (a, b) { return dist[a] - dist[b]; });
+        for (var m = 0; m < Math.min(3, S - 1); m++) {
+          var o = order[m],
+            key = i < o ? i + ":" + o : o + ":" + i;
+          if (!seen[key]) {
+            seen[key] = 1;
+            pairs.push(i, o);
+          }
         }
       }
+      if (i < S) setTimeout(slice, 0);
+      else done(new Uint32Array(pairs), S, performance.now() - t0);
     }
-    return new Uint32Array(pairs);
+    setTimeout(slice, 0);
   }
 
   function start(set) {
@@ -240,19 +254,25 @@
       stats.error = res.reason;
       return;
     }
-    var t0 = performance.now();
-    r.setWires(wires(set.vectors, n, d, 500));
-    var knnMs = performance.now() - t0;
+    var wireNote = "wires: measuring neighbours ...";
     var U = basis(set.dirs, d);
     var frame = new Float32Array(3 * d);
     var gl = canvas.getContext("webgl2");
     var dbg = gl.getExtension("WEBGL_debug_renderer_info");
     var gpuName = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "unknown GPU";
     var st = r.status();
-    info.textContent =
-      set.source + "\n" + n + " points x " + d + "-d, " + st.wires + " wires (neighbours of the first 500, " + knnMs.toFixed(0) + " ms)\n" +
-      "layout: " + st.layout.texelsPerPoint + " texels/point, " + st.layout.pointsPerRow + " points/row, max " + st.layout.maxPoints +
-      " points; MAX_TEXTURE_SIZE " + st.maxTextureSize + "\nhdr: " + st.hdr + "\n" + gpuName;
+    function showInfo() {
+      info.textContent =
+        set.source + "\n" + n + " points x " + d + "-d, " + wireNote + "\n" +
+        "layout: " + st.layout.texelsPerPoint + " texels/point, " + st.layout.pointsPerRow + " points/row, max " + st.layout.maxPoints +
+        " points; MAX_TEXTURE_SIZE " + st.maxTextureSize + "\nhdr: " + st.hdr + "\n" + gpuName;
+    }
+    showInfo();
+    wiresInSlices(set.vectors, n, d, function (pairs, S, ms) {
+      r.setWires(pairs);
+      wireNote = pairs.length / 2 + " wires (neighbours of the first " + S + ", " + ms.toFixed(0) + " ms in slices)";
+      showInfo();
+    });
     Object.assign(stats, { n: n, d: d, hdr: st.hdr, gpu: gpuName, maxTextureSize: st.maxTextureSize, maxPoints: st.layout.maxPoints });
 
     var dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -354,6 +374,11 @@
   }
 
   var name = q.get("fixture");
+  if (name !== null && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    info.textContent = "fixture must be a plain name such as valid-1024";
+    stats.error = "bad-fixture-name";
+    return;
+  }
   (name ? fixture(name) : Promise.resolve(synthetic(N, D)))
     .then(start)
     .catch(function (e) {

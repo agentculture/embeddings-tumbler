@@ -22,6 +22,7 @@ throws.**
     it returned `null` (no WebGL 2). Show `message` to the user.
   - `"shader-failed"`: a shader did not compile or link. `message` has the log.
     Anything created before the failure has already been deleted.
+  - `"gpu-failed"`: another GL call threw while building. Also cleaned up.
 
 `options` (all optional):
 
@@ -86,16 +87,24 @@ Replaces all points and clears the wires.
   reference); points with weight below 0.99 are scaled by `state.dim`.
 - `count`: optional check that it equals `vectors.length / D`.
 
-Returns `{ ok: true, layout }`, or `{ ok: false, reason, message }` from `layout`
-(too many points for this GPU) or `"shader-failed"`. Shape errors (wrong array
+Returns `{ ok: true, layout, uploaded }`, or `{ ok: false, reason, message }`
+from `layout` (too many points for this GPU), `"shader-failed"` (a shader did
+not compile or link) or `"gpu-failed"` (another GL call threw while
+uploading). On either failure the CPU copy already holds the new data, every
+GPU object is freed, `draw` returns `false` and `status().ok` is `false` until
+`rebuild()` succeeds. `uploaded` is `false` when only the CPU copy changed
+because the context is lost or an earlier build failed; see
+[Data while the GPU is unavailable](#data-while-the-gpu-is-unavailable). Shape errors (wrong array
 type or length) throw `TypeError`: they are programming errors, not data refusals
 (the contract loader refuses bad data before it gets here).
 
-### `renderer.appendData({ vectors, colours?, weights?, dimension?, count? }) -> { ok, reallocated }`
+### `renderer.appendData({ vectors, colours?, weights?, dimension?, count? }) -> { ok, reallocated, uploaded }`
 
 Adds points after the existing ones (indices continue from the current count).
 Wires are kept. Throws `TypeError` before any `setData` or on a dimension that
-differs.
+differs. `uploaded` is as for `setData`; a GL failure during the upload returns
+`{ ok: false, reason: "gpu-failed" | "shader-failed", message }` with the same
+consequences as a failed `setData`.
 
 **Cost.** Capacity starts at the `setData` count and doubles when exceeded. When
 the new points fit, the cost is a copy of the new vectors into the store, one
@@ -108,13 +117,17 @@ size and the whole point texture and colour buffer are re-uploaded:
 widen (past `maxPoints` at the default width). The renderer never re-centres:
 the caller decides what centre to pass to `draw`.
 
-### `renderer.setWires(pairs, lengths?)`
+### `renderer.setWires(pairs, lengths?) -> { ok, uploaded }`
 
 - `pairs`: `Uint32Array` (or `Int32Array`) of point indices, two per wire. Every
   index must be `< count` (else `RangeError`). The renderer never computes
   neighbours.
 - `lengths`: optional `Float32Array`, one true full-dimension distance per wire.
   When absent they are measured from the stored vectors (`O(wires * D)`).
+
+Returns `{ ok: true, uploaded }` (`uploaded` as for `setData`), or
+`{ ok: false, reason, message }` on a GL failure (as for `setData`) or after
+`dispose` (`"disposed"`). (Before this change it returned nothing.)
 
 A wire is coloured by its endpoints' colours. Its brightness rises when its
 projected length nears its true length (the reference's `0.03 + 0.2 t^3`, with
@@ -127,8 +140,9 @@ CSS size by `devicePixelRatio`). The HDR target follows on the next draw.
 
 ### `renderer.draw(state) -> boolean`
 
-Draws one frame. Returns `false` (and draws nothing) when disposed, while the
-context is lost, or after a failed rebuild; otherwise `true`. With no data it
+Draws one frame. Returns `false` (and draws nothing, never throwing for this)
+when disposed, while the context is lost, or after a failed build or upload
+until `rebuild()` succeeds; otherwise `true`. With no data it
 still clears (and fades trails).
 
 `state` is a plain object; any key left out takes its default:
@@ -173,11 +187,22 @@ an incomplete float framebuffer, or `hdr: false`) the renderer draws straight to
 the canvas: no bloom, no tone mapping, no trails, `fallbackGain` applied, and
 `background` used as the clear colour. This is the reference's fallback.
 
+### `renderer.rebuild() -> { ok: true } | { ok: false, reason, message }`
+
+Retries building every GPU object from the CPU copy (points, colours, weights,
+wires, layout). Use it after a `"restore-failed"` context event or after a
+`setData` / `appendData` / `setWires` that returned `"shader-failed"` or
+`"gpu-failed"`. `reason` is `"disposed"`, `"context-lost"` (wait for the
+`"restored"` event instead), `"shader-failed"` or `"gpu-failed"`. `draw` never
+retries by itself, so a caller that wants automatic recovery calls `rebuild`
+on its own schedule.
+
 ### `renderer.status() -> object`
 
 `{ ok, available, disposed, lost, hdr, error, dimension, count, capacity, wires,
-maxTextureSize, layout }`. `ok` is false after a failed rebuild (`error` holds
-the message) or after dispose.
+maxTextureSize, layout }`. `ok` is false after a failed build or upload
+(`error` holds the message) or after dispose. `count`, `wires` and `layout`
+describe the CPU copy, which is what the GPU will show once it is whole again.
 
 ### `renderer.dispose()`
 
@@ -192,8 +217,17 @@ The renderer listens for `webglcontextlost` (and cancels it so the browser may
 restore) and `webglcontextrestored` on the canvas. While lost, `draw` returns
 `false`. On restore it rebuilds every GPU object from its CPU copy (points,
 colours, weights, wires, layout) and reports `"restored"`; if the rebuild fails it
-reports `"restore-failed"` with a message and stays unusable. The caller decides
-what to show.
+reports `"restore-failed"` with a message and stays unusable until `rebuild()`
+succeeds. The caller decides what to show and when to retry.
+
+## Data while the GPU is unavailable
+
+While the context is lost, or after a failed build or upload, `setData`,
+`appendData` and `setWires` still update the CPU copy and return `ok: true`
+with `uploaded: false`. Nothing reaches the GPU then; the next successful
+restore or `rebuild()` uploads the whole CPU copy, so the view shows the
+latest data. Callers can check `uploaded` on each call, or `status()` (`lost`,
+`ok`) at any time.
 
 ## Limits measured on the build machine
 

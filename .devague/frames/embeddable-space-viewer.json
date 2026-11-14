@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-13T19:48:26Z",
+  "updated": "2026-11-14T00:16:14Z",
   "claims": [
     {
       "id": "c1",
@@ -996,6 +996,39 @@
       "code": "assumption-for-measurement",
       "what": "t6: no side-by-side comparison with the reference page (one screenshot looked at); twinkle has no assertion and was not checked by eye; wires are drawn in the browser test but not asserted separately; the no-HDR fallback was exercised only through the hdr:false option, never on a GPU without float render targets; SwiftShader timings are noisy (first page about 4x slower, attributed to warm-up without measurement); whether the browser test skips cleanly on CI is unconfirmed. Main agent loaded the demo in headless Chromium on the Radeon 760M: 60.0 fps at 5,000 x 1024-d, zero console errors; trails look streaky.",
       "skipped_check": "side-by-side with the reference; twinkle and wire assertions; CI run of the browser test",
+      "refs": [
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l9",
+      "code": "assumption-for-measurement",
+      "what": "t9: the browser attach path (window.EmbeddingsTumbler.sample, loaded after the core) was never run in a browser; the fidelity test against the reference generator was not mutation-tested; generate() timings are single runs.",
+      "skipped_check": "browser load of sample-data.js after the core; a deliberately wrong port to show the fidelity test fails",
+      "refs": [
+        "t9"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l10",
+      "code": "n-below-claim",
+      "what": "t7: Tumble's principal-direction fit is one indivisible unit (up to about 525 ms at 1024-d on 12,288 points), not bounded slices; the visual check against the reference was screenshots at different moments and window sizes, not a side-by-side; browser fps is one 6-second sample per mode at the 60 fps display cap, so headroom is unmeasured; REFERENCE_RADIUS is a constant measured on the sample set and hard-coded; no real (non-synthetic) vectors were exercised; Wander's near/leap rules are tested by one assertion on one seed. Main agent loaded the modes demo on the Radeon 760M: 60.0 fps in each mode, zero console errors; Lattice shows very bright dense wire bands.",
+      "skipped_check": "side-by-side with the reference; fps headroom uncapped; real vectors (t16); seed sweep for Wander's route rules",
+      "refs": [
+        "t7"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l11",
+      "code": "control-absent",
+      "what": "t6 was merged before its two colleague reviews returned (main agent's choice, to unblock t7). The reviews then found a real fault: a failed upload in setData can leave a half-built GPU state that makes draw() throw, and the node tests' fake GL accepts any call, so the append row arithmetic was untested outside the browser test. Follow-up fixes are in progress on agent/t6b.",
+      "skipped_check": "independent review before merge",
       "refs": [
         "t6"
       ],

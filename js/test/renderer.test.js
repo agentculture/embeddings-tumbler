@@ -321,3 +321,236 @@ test("defaults are exposed and frozen", () => {
     assert.ok(k in d, k);
   }
 });
+
+// ---------- follow-up review fixes (t6b) ----------
+
+const { constantFor } = require("./helpers/fake-gl.js");
+
+// Results come from a vm context; compare them as plain data.
+const plain = (o) => JSON.parse(JSON.stringify(o));
+
+test("the fake GL throws on a name that is not a WebGL 2 method", () => {
+  const { gl } = makeFakeCanvas();
+  assert.throws(() => gl.texSubImage2d(), /not a WebGL 2 method/);
+  gl.texSubImage2D(0, 0, 0, 0, 1, 1, 0, 0, new Float32Array(4)); // a real one is fine
+});
+
+test("a failed upload in setData frees the GPU state; draw then returns false without throwing", () => {
+  const { canvas, state } = makeFakeCanvas();
+  const r = R().create(canvas).renderer;
+  state.opts.throwOn = "bufferData";
+  const res = r.setData(data(6, 16));
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.reason, "gpu-failed");
+  assert.match(res.message, /bufferData failed/);
+  assert.strictEqual(state.live.size, 0, "no half-built GPU objects left");
+  assert.strictEqual(r.status().ok, false);
+  assert.strictEqual(r.status().count, 6, "the CPU copy holds the data");
+  assert.doesNotThrow(() => assert.strictEqual(r.draw({ frame: frameFor(16) }), false));
+  // a later setData does not reach the GPU until rebuild()
+  assert.strictEqual(r.setData(data(5, 16)).uploaded, false);
+  state.opts.throwOn = null;
+  assert.deepStrictEqual(plain(r.rebuild()), { ok: true });
+  assert.strictEqual(r.status().ok, true);
+  assert.strictEqual(r.status().count, 5);
+  assert.strictEqual(r.draw({ frame: frameFor(16) }), true);
+  r.dispose();
+  assert.strictEqual(state.live.size, 0);
+});
+
+test("a failed upload in appendData or setWires also frees the GPU state", () => {
+  for (const which of ["append", "wires"]) {
+    const { canvas, state } = makeFakeCanvas();
+    const r = R().create(canvas).renderer;
+    r.setData(data(8, 16));
+    state.opts.throwOn = which === "append" ? "bufferData" : "vertexAttribIPointer";
+    const res = which === "append" ? r.appendData(data(9, 16, 2)) : r.setWires(new Uint32Array([0, 1]));
+    assert.strictEqual(res.ok, false, which);
+    assert.strictEqual(state.live.size, 0, which);
+    assert.strictEqual(r.draw({ frame: frameFor(16) }), false, which);
+    state.opts.throwOn = null;
+    assert.strictEqual(r.rebuild().ok, true, which);
+    assert.strictEqual(r.draw({ frame: frameFor(16) }), true, which);
+  }
+});
+
+// Appends at D = 16 with MAX_TEXTURE_SIZE 16: 4 texels per point, 4 points per row,
+// 64 floats per row, 16 bytes of colour per point.
+function appendRig() {
+  const { canvas, state } = makeFakeCanvas({ maxTextureSize: 16 });
+  const r = R().create(canvas).renderer;
+  const lay = r.setData(data(8, 16)).layout;
+  assert.strictEqual(lay.pointsPerRow, 4);
+  assert.strictEqual(lay.width, 16);
+  r.setWires(new Uint32Array([0, 1, 2, 3, 4, 5]));
+  return { r, state };
+}
+
+function lastUpload(state) {
+  const tex = state.texSubImages.filter((u) => u.width === 16); // the point texture (frame texture is 4 wide)
+  return { tex: tex[tex.length - 1], buf: state.bufferSubDatas[state.bufferSubDatas.length - 1] };
+}
+
+function checkDrawCounts(r, state, points, wires) {
+  state.draws.length = 0;
+  assert.strictEqual(r.draw({ frame: frameFor(16), wires: 1 }), true);
+  const points_ = state.draws.filter((d) => d.mode === constantFor("POINTS"));
+  const lines = state.draws.filter((d) => d.mode === constantFor("LINES"));
+  assert.deepStrictEqual(points_.map((d) => d.count), [points]);
+  assert.deepStrictEqual(lines.map((d) => d.count), [wires * 2]);
+}
+
+test("append inside one texture row uploads that row and the new points' colours", () => {
+  const { r, state } = appendRig();
+  assert.strictEqual(r.appendData(data(1, 16, 3)).reallocated, true); // 9 > 8: capacity 16
+  const more = data(2, 16, 4);
+  const res = r.appendData(more); // points 9, 10: row 2
+  assert.deepStrictEqual(plain(res), { ok: true, reallocated: false, uploaded: true });
+  const { tex, buf } = lastUpload(state);
+  assert.strictEqual(tex.y, 2);
+  assert.strictEqual(tex.height, 1);
+  assert.strictEqual(tex.x, 0);
+  assert.strictEqual(tex.length, 64);
+  assert.strictEqual(tex.data[1 * 16], more.vectors[0], "point 9 sits second in row 2");
+  assert.strictEqual(buf.offset, 9 * 16);
+  assert.strictEqual(buf.byteLength, 2 * 16);
+  checkDrawCounts(r, state, 11, 3);
+});
+
+test("append straddling a row boundary uploads both rows", () => {
+  const { r, state } = appendRig();
+  r.appendData(data(3, 16, 3)); // 11 points, capacity 16
+  r.appendData(data(2, 16, 4)); // points 11, 12: rows 2..3
+  const { tex, buf } = lastUpload(state);
+  assert.strictEqual(tex.y, 2);
+  assert.strictEqual(tex.height, 2);
+  assert.strictEqual(tex.length, 128);
+  assert.strictEqual(buf.offset, 11 * 16);
+  assert.strictEqual(buf.byteLength, 2 * 16);
+  checkDrawCounts(r, state, 13, 3);
+});
+
+test("append starting exactly on a row boundary uploads only the new row", () => {
+  const { r, state } = appendRig();
+  r.appendData(data(4, 16, 3)); // 12 points, capacity 16
+  const more = data(1, 16, 4);
+  r.appendData(more); // point 12: row 3 only
+  const { tex, buf } = lastUpload(state);
+  assert.strictEqual(tex.y, 3);
+  assert.strictEqual(tex.height, 1);
+  assert.strictEqual(tex.data[0], more.vectors[0]);
+  assert.strictEqual(buf.offset, 12 * 16);
+  assert.strictEqual(buf.byteLength, 16);
+  checkDrawCounts(r, state, 13, 3);
+});
+
+test("append overflowing capacity re-uploads the whole texture at the larger size", () => {
+  const { r, state } = appendRig();
+  r.appendData(data(5, 16, 3)); // 13 points, capacity 16
+  const subs = state.texSubImages.length;
+  const images = state.texImages.length;
+  const res = r.appendData(data(4, 16, 4)); // 17 > 16: capacity 32, 8 rows
+  assert.deepStrictEqual(plain(res), { ok: true, reallocated: true, uploaded: true });
+  assert.strictEqual(state.texSubImages.length, subs, "no partial upload");
+  const pointTex = state.texImages.slice(images).filter((t) => t.width === 16);
+  assert.deepStrictEqual(
+    pointTex.map((t) => t.height),
+    [8]
+  );
+  const bufData = state.calls.filter((c) => c[0] === "bufferData").pop();
+  assert.strictEqual(bufData[2].byteLength, 32 * 16);
+  checkDrawCounts(r, state, 17, 3);
+});
+
+test("append binds the point texture on unit 0 even when another unit is active", () => {
+  const { canvas, state, gl } = makeFakeCanvas({ maxTextureSize: 16 });
+  const r = R().create(canvas).renderer;
+  r.setData(data(8, 16));
+  r.appendData(data(1, 16, 3)); // capacity 16
+  r.draw({ frame: frameFor(16) });
+  gl.activeTexture(gl.TEXTURE3); // left behind by other code
+  r.appendData(data(1, 16, 4));
+  const { tex } = lastUpload(state);
+  assert.strictEqual(tex.unit, constantFor("TEXTURE0"));
+  const pointTex = state.texImages.filter((t) => t.width === 16).pop().texture;
+  assert.strictEqual(tex.texture, pointTex);
+});
+
+test("rebuild() recovers after a failed restore, and refuses while the context is lost", () => {
+  const events = [];
+  const { canvas, state, gl } = makeFakeCanvas();
+  const r = R().create(canvas, { onContextChange: (e) => events.push(e.type) }).renderer;
+  r.setData(data(5, 16));
+  const ext = gl.getExtension("WEBGL_lose_context");
+  ext.loseContext();
+  const lostTry = r.rebuild();
+  assert.strictEqual(lostTry.ok, false);
+  assert.strictEqual(lostTry.reason, "context-lost");
+  state.opts.failCompile = true;
+  ext.restoreContext();
+  assert.deepStrictEqual(events, ["lost", "restore-failed"]);
+  assert.strictEqual(r.draw({ frame: frameFor(16) }), false, "draw does not retry by itself");
+  const again = r.rebuild();
+  assert.strictEqual(again.ok, false);
+  assert.strictEqual(again.reason, "shader-failed");
+  state.opts.failCompile = false;
+  assert.deepStrictEqual(plain(r.rebuild()), { ok: true });
+  assert.strictEqual(r.status().ok, true);
+  assert.strictEqual(r.draw({ frame: frameFor(16) }), true);
+  r.dispose();
+  assert.strictEqual(r.rebuild().reason, "disposed");
+  assert.strictEqual(state.live.size, 0);
+});
+
+test("data changed while the context is lost reports uploaded: false and appears after restore", () => {
+  const { canvas, state, gl } = makeFakeCanvas();
+  const r = R().create(canvas).renderer;
+  assert.strictEqual(r.setData(data(4, 16)).uploaded, true);
+  const ext = gl.getExtension("WEBGL_lose_context");
+  ext.loseContext();
+  assert.deepStrictEqual(plain(r.appendData(data(3, 16, 2))), { ok: true, reallocated: true, uploaded: false });
+  assert.deepStrictEqual(plain(r.setWires(new Uint32Array([0, 6]))), { ok: true, uploaded: false });
+  const set = r.setData(data(7, 16, 5));
+  assert.strictEqual(set.ok, true);
+  assert.strictEqual(set.uploaded, false);
+  r.setWires(new Uint32Array([1, 6]));
+  ext.restoreContext();
+  state.draws.length = 0;
+  assert.strictEqual(r.draw({ frame: frameFor(16), wires: 1 }), true);
+  assert.deepStrictEqual(
+    state.draws.filter((d) => d.mode === constantFor("POINTS")).map((d) => d.count),
+    [7]
+  );
+  assert.deepStrictEqual(
+    state.draws.filter((d) => d.mode === constantFor("LINES")).map((d) => d.count),
+    [2]
+  );
+});
+
+test("if the HDR target fails mid-frame the fallback clears to the requested background", () => {
+  const { canvas, state } = makeFakeCanvas();
+  const r = R().create(canvas).renderer;
+  assert.strictEqual(r.status().hdr, true);
+  r.setData(data(4, 16));
+  state.opts.fboIncomplete = true;
+  r.resize(64, 32); // the next draw re-sizes the HDR target, which now fails
+  state.clearColors.length = 0;
+  assert.strictEqual(r.draw({ frame: frameFor(16), background: [0.2, 0.3, 0.4] }), true);
+  assert.strictEqual(r.status().hdr, false);
+  assert.deepStrictEqual(state.clearColors, [[0.2, 0.3, 0.4, 1]]);
+  state.clearColors.length = 0;
+  r.draw({ frame: frameFor(16), background: [0.2, 0.3, 0.4] });
+  assert.deepStrictEqual(state.clearColors, [[0.2, 0.3, 0.4, 1]]);
+});
+
+test("append ending exactly at a row end does not upload the row after it", () => {
+  const { r, state } = appendRig();
+  r.appendData(data(1, 16, 3)); // 9 points, capacity 16
+  r.appendData(data(3, 16, 4)); // points 9..11 fill row 2 exactly
+  const { tex, buf } = lastUpload(state);
+  assert.strictEqual(tex.y, 2);
+  assert.strictEqual(tex.height, 1);
+  assert.strictEqual(buf.offset, 9 * 16);
+  assert.strictEqual(buf.byteLength, 3 * 16);
+  checkDrawCounts(r, state, 12, 3);
+});
