@@ -394,3 +394,29 @@ def test_serve_bind_failure_remediation_names_the_cause(tmp_path, capsys, monkey
     assert main(["viewer", "serve", str(tmp_path), "--host", "::1", "--json"]) == 2
     cap = capsys.readouterr()
     assert "--host" in cap.err and "Traceback" not in cap.err and cap.out == ""
+
+
+def test_the_redirect_location_is_rebuilt_never_echoed(tmp_path: Path) -> None:
+    from embeddings_tumbler._static_server import directory_redirect
+
+    (tmp_path / "sub dir").mkdir()
+    (tmp_path / "sub dir" / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    root = tmp_path.resolve()
+    assert directory_redirect(root, "/sub%20dir?data=a.json&mode=wander") == (
+        "/sub%20dir/?data=a.json&mode=wander"
+    )
+    # A header break or control character in the query cannot reach the Location.
+    for raw in (
+        "/sub%20dir?x=%0d%0aSet-Cookie:a=b",
+        "/sub%20dir?x=1\r\nX: y",
+        "/sub%20dir?a b=<c>",
+    ):
+        location = directory_redirect(root, raw)
+        assert location is not None
+        assert location.startswith("/sub%20dir/?")
+        assert "\r" not in location
+        assert "\n" not in location
+        assert " " not in location
+        assert "<" not in location
+    # Never a protocol-relative address.
+    assert directory_redirect(root, "//sub%20dir") in (None, "/sub%20dir/")

@@ -15,7 +15,7 @@ from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit
 
 DEFAULT_HOST = "127.0.0.1"
 
@@ -104,8 +104,11 @@ def directory_redirect(root: Path, raw_path: str) -> str | None:
     real = Path(os.path.realpath(root.joinpath(*parts)))
     if not real.is_dir() or not real.is_relative_to(root):
         return None
-    query = urlsplit(raw_path).query
-    location = "/" + "/".join(quote(p) for p in parts) + "/"
+    # The Location is rebuilt from validated pieces, never echoed: each path part is
+    # percent-encoded again, and the query is parsed and encoded again, so no control
+    # character or header break from the request can reach the response header.
+    query = urlencode(parse_qsl(urlsplit(raw_path).query, keep_blank_values=True))
+    location = "/" + "/".join(quote(p, safe="") for p in parts) + "/"
     return location + ("?" + query if query else "")
 
 
