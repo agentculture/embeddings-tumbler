@@ -455,33 +455,16 @@
       workAhead(h + 1);
       var first = !!hp.first;
       var j = hereRec.target;
+      var prev = h > 0 && !first ? prevRec.target : -1; // the stop flown from, or -1
+      var travelling = hp.local < opt.travel;
+      var e = travelling ? ET.math.smoothstep(hp.local / opt.travel) : 1;
       var from = flightStart(sw, first, prevRec);
-      var fromF = from.frame;
-      var toF = legFrame(sw, hereRec.frame);
-      var fromC = from.centre;
-      var X = set.vectors;
-      var oj = j * D;
-      var phase;
-      var e;
-      if (hp.local < opt.travel) {
-        phase = "travel";
-        e = ET.math.smoothstep(hp.local / opt.travel);
-        var oc = h > 0 && !first ? prevRec.target * D : -1;
-        for (var d = 0; d < D; d++) {
-          var a = oc >= 0 ? X[oc + d] : fromC[d];
-          tmpC[d] = a + (X[oj + d] - a) * e;
-        }
-        for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
-        ET.math.blendFrames(fromF, toF, e, D, out.frame);
-      } else {
-        phase = "dwell";
-        e = 1;
-        for (var d3 = 0; d3 < D; d3++) out.centre[d3] = X[oj + d3];
-        ET.math.blendFrames(fromF, toF, 1, D, out.frame);
-      }
+      if (travelling) travelCentre(prev, from.centre, j, e);
+      else stopCentre(j);
+      ET.math.blendFrames(from.frame, legFrame(sw, hereRec.frame), e, D, out.frame);
       out.focus = {
-        phase: phase,
-        from: h > 0 && !first ? prevRec.target : -1,
+        phase: travelling ? "travel" : "dwell",
+        from: prev,
         to: j,
         e: e,
         neighbours: Int32Array.from(nearVisits(ctx, j, opt.spokes)),
@@ -491,6 +474,26 @@
       if (sw) out.draw.zoom = end.zoom + (out.draw.zoom - end.zoom) * M.swingRelease(sw, t, opt.transition);
       out.status = status(t);
       return out;
+    }
+
+    // The centre during a flight: e of the way from stop `prev` (from `fromC` when there is
+    // no previous stop, prev < 0) to stop j.
+    function travelCentre(prev, fromC, j, e) {
+      var X = set.vectors;
+      var oc = prev * D;
+      var oj = j * D;
+      for (var d = 0; d < D; d++) {
+        var a = prev >= 0 ? X[oc + d] : fromC[d];
+        tmpC[d] = a + (X[oj + d] - a) * e;
+      }
+      for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
+    }
+
+    // The centre while the camera dwells at stop j: the stop itself.
+    function stopCentre(j) {
+      var X = set.vectors;
+      var oj = j * D;
+      for (var d = 0; d < D; d++) out.centre[d] = X[oj + d];
     }
 
     // The state shown at swing sw's end, with the leg's relabelling of route

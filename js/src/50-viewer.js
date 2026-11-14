@@ -2826,7 +2826,7 @@ ET.viewer = (function () {
         onlyResults: false,
       },
       run: null, // the run in progress
-      work: [], // steppers of the run in progress: { run, job, then }
+      work: [], // steppers of the run in progress: { run, job, after }
       shown: [], // the searches shown, in letter order
       shownSet: null, // the set they were worked out on
       shownUsed: null, // the settings they were worked out with: { k, candidates, top, pointOfView, rerank }
@@ -2883,7 +2883,7 @@ ET.viewer = (function () {
     }
     var answer;
     try {
-      answer = Promise.resolve(fn.apply(undefined, args));
+      answer = Promise.resolve(fn(...args));
     } catch (err) {
       // The host's error is the host's own: it may carry an address or a key, so it is
       // not shown; the refusal says only that the callback failed.
@@ -2912,7 +2912,7 @@ ET.viewer = (function () {
       if (typeof entry.text === "string") return textSource(v, entry.text, entry.via);
       if (entry.vector !== undefined) return vectorSource(v, entry);
       if (entry.point !== undefined) return pointSource(v, entry.point);
-    } catch (err) {
+    } catch {
       // A getter on the host's entry threw: the entry is not one of the forms.
       return searchRefusal("bad-search");
     }
@@ -3100,7 +3100,7 @@ ET.viewer = (function () {
       vector = answer.vector;
       model = answer.model;
       form = answer.queryForm;
-    } catch (err) {
+    } catch {
       // A getter on the answer threw: not a vector with a model id.
       return searchRefusal("embed-malformed");
     }
@@ -3139,8 +3139,8 @@ ET.viewer = (function () {
     return { word: u.word, how: u.how, count: u.count };
   }
 
-  function queueWork(v, run, job, then) {
-    v.search.work.push({ run: run, job: job, then: then });
+  function queueWork(v, run, job, after) {
+    v.search.work.push({ run: run, job: job, after: after });
     invalidate(v);
   }
 
@@ -3252,7 +3252,7 @@ ET.viewer = (function () {
     try {
       scores = isObj(outcome.value) ? outcome.value.scores : undefined;
       model = isObj(outcome.value) ? outcome.value.model : undefined;
-    } catch (err) {
+    } catch {
       // A getter on the answer threw: treated as a malformed answer below.
       scores = undefined;
     }
@@ -3350,7 +3350,7 @@ ET.viewer = (function () {
     try {
       r.setLit(lit, shared);
       s.litUploaded = true;
-    } catch (err) {
+    } catch {
       // The renderer holds no data yet: the lit values go up with the next commit.
       s.litUploaded = false;
     }
@@ -3405,7 +3405,7 @@ ET.viewer = (function () {
     }
     if (!item.job.done) return false;
     v.search.work.shift();
-    item.then(item.job.result);
+    item.after(item.job.result);
     return true;
   }
 
@@ -3427,12 +3427,12 @@ ET.viewer = (function () {
         }),
         {
           seed: v.seed,
-          current: cur && cur.length === 3 * v.set.dimension ? new Float32Array(cur) : null,
+          current: cur?.length === 3 * v.set.dimension ? new Float32Array(cur) : null,
           scale: pov ? pov.scale : null,
         }
       );
       s.facingJob = { job: job, swing: swing };
-    } catch (err) {
+    } catch {
       // Fewer than three dimensions: there is no facing frame to swing to.
       s.facingJob = null;
     }
@@ -3529,7 +3529,7 @@ ET.viewer = (function () {
     try {
       var f = m.inst.describe()?.facing;
       return !!f && m.clock < f.until;
-    } catch (err) {
+    } catch {
       // A mode whose describe throws reports no swing.
       return false;
     }
@@ -3956,7 +3956,7 @@ ET.viewer = (function () {
     if (v.modeId !== "focus" || !v.last || !v.lastDraw || !v.set) return;
     if (Math.hypot(e.clientX - pt.sx, e.clientY - pt.sy) > CLICK_SLOP) return;
     var i = nearestPoint(v, at.x * v.dpr, at.y * v.dpr, CLICK_REACH * v.dpr);
-    if (i >= 0) setSearches(v, [{ point: v.set.ids[i] }]);
+    if (i >= 0) void setSearches(v, [{ point: v.set.ids[i] }]); // its answer is the view itself
   }
 
   // The index of the shown point nearest (x, y) in device pixels within reach, or -1.

@@ -112,6 +112,12 @@ def corpus(tmp_path_factory) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _in_the_temporary_folder(tmp_path_factory, monkeypatch):
+    """The script takes paths inside the current folder (or the repository) only."""
+    monkeypatch.chdir(tmp_path_factory.getbasetemp())
+
+
 def _env(endpoint: FakeEndpoint) -> dict[str, str]:
     return {"EMBEDDINGS_API_KEY": KEY, "EMBEDDINGS_EMBED_URL": endpoint.base}
 
@@ -243,7 +249,7 @@ def test_the_key_never_reaches_a_subprocess_run_either(endpoint, corpus, tmp_pat
         capture_output=True,
         text=True,
         env=env,
-        cwd=tmp_path,
+        cwd=tmp_path.parent,  # the folder that holds both the corpus and the output
         check=False,
         timeout=120,
     )
@@ -302,6 +308,69 @@ def test_a_bad_corpus_is_refused(tmp_path, capsys, content, message):
     code, _, err = _run(["--corpus", path, "--stand-in", "--out-dir", tmp_path / "o"], {}, capsys)
     assert code == 1
     assert message in err
+
+
+@pytest.mark.parametrize("option", ["--corpus", "--out-dir"])
+def test_a_path_outside_the_current_folder_and_the_repository_is_refused(
+    corpus, tmp_path, capsys, monkeypatch, option
+):
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    (inside / "c.jsonl").write_bytes(corpus.read_bytes())
+    monkeypatch.chdir(inside)
+    paths = {"--corpus": "c.jsonl", "--out-dir": "out"}
+    paths[option] = str(tmp_path / "elsewhere")
+    args = ["--corpus", paths["--corpus"], "--out-dir", paths["--out-dir"], "--stand-in"]
+    code, _, err = _run([*args, "--apply"], {}, capsys)
+    assert code == 1
+    assert f"{option} must be inside the current folder or the repository" in err
+    assert not (inside / "out").exists()
+    assert not (tmp_path / "elsewhere").exists()
+
+
+def test_relative_paths_and_the_current_folder_itself_are_taken(corpus, tmp_path, capsys):
+    (tmp_path / "c.jsonl").write_bytes(corpus.read_bytes())
+    here = tmp_path.name
+    args = ["--corpus", f"{here}/c.jsonl", "--out-dir", here, "--stand-in", "--limit", "3"]
+    code, _, _ = _run([*args, "--apply"], {}, capsys)
+    assert code == 0
+    assert _pair(tmp_path)[0]["count"] == 3
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "c.jsonl",
+        "demo-wikipedia.f32",
+        "demo-wikipedia.json",
+    ]
+
+
+def test_a_path_inside_the_repository_is_taken_from_any_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert demo.allowed_path(str(CORPUS), "--corpus") == str(CORPUS.resolve())
+    assert demo.allowed_path(".", "--out-dir", folder_ok=True) == str(tmp_path.resolve())
+    with pytest.raises(demo.BuildError, match="--out-dir must be inside"):
+        demo.allowed_path("..", "--out-dir", folder_ok=True)
+
+
+def test_a_file_is_never_written_outside_its_folder(tmp_path):
+    folder = tmp_path / "pair"
+    folder.mkdir()
+    with pytest.raises(demo.BuildError, match="nothing was written there"):
+        demo._write(str(folder), "../x.f32", b"1234")
+    assert not (tmp_path / "x.f32").exists()
+    demo._write(str(folder), "x.f32", b"1234")
+    assert [p.name for p in folder.iterdir()] == ["x.f32"]
+
+
+def test_a_link_that_leads_out_of_the_output_folder_is_refused(corpus, tmp_path, capsys):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "demo-wikipedia.f32").symlink_to(tmp_path / "elsewhere.f32")
+    args = ["--corpus", corpus, "--out-dir", out, "--stand-in", "--limit", "3", "--apply"]
+    code, _, err = _run(args, {}, capsys)
+    assert code == 1
+    assert "nothing was written there" in err
+    assert "Traceback" not in err
+    assert not (tmp_path / "elsewhere.f32").exists()
+    assert not (out / "demo-wikipedia.json").exists()
 
 
 def test_malformed_vectors_are_refused():

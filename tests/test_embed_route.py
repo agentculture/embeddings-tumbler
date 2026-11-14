@@ -768,8 +768,9 @@ def test_bind_accepts_only_the_bound_address_names():
         route._check_caller(
             _message({"Host": host, "Origin": f"http://{host}", "Content-Type": JSON})
         )
+    other_port = _message({"Host": "localhost:81", "Origin": "x", "Content-Type": JSON})
     with pytest.raises(Refusal):
-        route._check_caller(_message({"Host": "localhost:81", "Origin": "x", "Content-Type": JSON}))
+        route._check_caller(other_port)
     remote = EmbedRoute(_config("http://127.0.0.1:9/v1"))
     remote.bind("192.0.2.7", 8000)
     bound = "192.0.2.7:8000"
@@ -777,10 +778,9 @@ def test_bind_accepts_only_the_bound_address_names():
         _message({"Host": bound, "Origin": f"http://{bound}", "Content-Type": JSON})
     )
     for host in ("localhost:8000", "127.0.0.1:8000"):
+        loopback = _message({"Host": host, "Origin": f"http://{host}", "Content-Type": JSON})
         with pytest.raises(Refusal):
-            remote._check_caller(
-                _message({"Host": host, "Origin": f"http://{host}", "Content-Type": JSON})
-            )
+            remote._check_caller(loopback)
 
 
 # --- review follow-ups: header-unsafe settings, unexpected errors, headers ----------
@@ -929,8 +929,9 @@ def test_non_ascii_or_signed_digits_in_the_length_are_too_large(served, length):
 @pytest.mark.parametrize("length", ["١٧", "１７", "¹⁷", "²"])
 def test_parse_length_accepts_ascii_digits_only(length):
     assert EmbedRoute._length(_message({"Content-Length": " 17 "})) == 17
+    message = _message({"Content-Length": length})
     with pytest.raises(Refusal):
-        EmbedRoute._length(_message({"Content-Length": length}))
+        EmbedRoute._length(message)
 
 
 def test_a_long_model_name_from_the_gateway_falls_back_to_the_asked_model(served, gateway):

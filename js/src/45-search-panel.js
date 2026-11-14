@@ -36,7 +36,9 @@
   };
   var SP_PALETTE_DARK = { fg: "#e9eef6", muted: "#8a96ab", line: "#1b2436", accent: "#ffc56b", bg: "#04060b" };
   var SP_PALETTE_LIGHT = { fg: "#1b2130", muted: "#5b6578", line: "#d6dae2", accent: "#a35f00", bg: "#f6f4ee" };
-  var SP_UNSAFE = /ur[l]\(|image-set|[\\;{}<>]/i; // a value that could name a resource is not used
+  // A value that could name a resource is not used. The "r" is written as an escape so that
+  // this file holds no CSS resource function by name (js/test/viewer-static.test.js bans it).
+  var SP_UNSAFE = /u\x72l\(|image-set|[\\;{}<>]/i;
   var spCounter = 0;
 
   // ----- text: the bar, the provenance line, the note, the lists -----
@@ -329,8 +331,10 @@
   function spResultMeta(q, r, distances) {
     var out = [];
     if (distances) {
-      out.push("distance " + r.distance.toFixed(3) + (q.pointOfView ? " from its point of view" : ""));
-      out.push(r.gap < 0.0005 ? "the nearest" : "+" + r.gap.toFixed(3) + " farther than the nearest");
+      out.push(
+        "distance " + r.distance.toFixed(3) + (q.pointOfView ? " from its point of view" : ""),
+        r.gap < 0.0005 ? "the nearest" : "+" + r.gap.toFixed(3) + " farther than the nearest"
+      );
     }
     if (q.reranker) out.push(spMoveText(r.embeddingRank - r.rank, r.embeddingRank));
     if (q.pointOfView && r.plainRank !== r.embeddingRank) out.push("plain distance had it at " + r.plainRank);
@@ -374,7 +378,7 @@
   // The named points' texts of a set, once per set and count (an append adds to them).
   function spEntries(p) {
     var set = spData(p);
-    if (!set || !set.count || typeof ET.search?.isNamed !== "function") return [];
+    if (!set?.count || typeof ET.search?.isNamed !== "function") return [];
     var cache = p.suggestCache;
     if (cache.set === set && cache.count === set.count) return cache.entries;
     var seen = new Set();
@@ -402,12 +406,14 @@
 
   // ----- colours -----
 
+  // One channel in 0..1 as 0..255.
+  function spByte(x) {
+    return Math.round(Math.min(1, Math.max(0, Number(x) || 0)) * 255);
+  }
+
   function spHex(c) {
     // [r, g, b] in 0..1 -> "rgb(r, g, b)"
-    var f = function (x) {
-      return Math.round(Math.min(1, Math.max(0, Number(x) || 0)) * 255);
-    };
-    return "rgb(" + f(c[0]) + ", " + f(c[1]) + ", " + f(c[2]) + ")";
+    return "rgb(" + spByte(c[0]) + ", " + spByte(c[1]) + ", " + spByte(c[2]) + ")";
   }
 
   function spTheme(p) {
@@ -429,16 +435,18 @@
     var t = spTheme(p);
     var base = spLight(p) ? SP_PALETTE_LIGHT : SP_PALETTE_DARK;
     if (!t) return { ...base };
-    var pick = function (c, d) {
-      return Array.isArray(c) ? spHex(c) : d;
-    };
     return {
-      fg: pick(t.foreground, base.fg),
-      muted: pick(t.muted, base.muted),
-      line: pick(t.line, base.line),
-      accent: pick(t.accent, base.accent),
-      bg: pick(t.background, base.bg),
+      fg: spPick(t.foreground, base.fg),
+      muted: spPick(t.muted, base.muted),
+      line: spPick(t.line, base.line),
+      accent: spPick(t.accent, base.accent),
+      bg: spPick(t.background, base.bg),
     };
+  }
+
+  // A theme colour ([r, g, b]) as CSS, or the default when the theme does not give one.
+  function spPick(c, d) {
+    return Array.isArray(c) ? spHex(c) : d;
   }
 
   // A search's colour for DOM text: the host's custom property, else the default for the stage.

@@ -38,7 +38,7 @@ function nameOf(v) {
   if (!isFakeNode(v)) return v === null || typeof v !== "object" ? String(v) : "an object";
   if (v.nodeType === 3) return "text " + JSON.stringify(String(v.data).slice(0, 40));
   if (v.nodeType !== 1) return "a fragment";
-  const cls = v.className ? "." + String(v.className).trim().split(/\s+/).join(".") : "";
+  const cls = v.className ? "." + String(v.className).trim().replaceAll(/\s+/g, ".") : "";
   return "<" + String(v.tagName).toLowerCase() + (v.id ? "#" + v.id : "") + cls + ">";
 }
 
@@ -47,26 +47,30 @@ function sameNodes(a, b) {
   return a === b;
 }
 
+// The assertion `real` (an equality when wantSame, else an inequality) with the guard on.
+function guardedAssertion(real, wantSame) {
+  const guarded = function (actual, expected, message) {
+    if (!holdsFakeNode(actual) && !holdsFakeNode(expected)) return real.apply(this, arguments);
+    if (sameNodes(actual, expected) === wantSame) return undefined;
+    if (message instanceof Error) throw message;
+    const said = wantSame
+      ? "expected " + nameOf(expected) + ", got " + nameOf(actual)
+      : "expected something other than " + nameOf(actual);
+    // No actual/expected on the error, and an operator of our own: node adds a printed
+    // diff for its own equality operators, and a reporter would print the values in full.
+    throw new assert.AssertionError({ message: message ? message + " (" + said + ")" : said, operator: "sameNode", stackStartFn: guarded });
+  };
+  guarded.guardsFakeNodes = true;
+  return guarded;
+}
+
 function guardAssertions(target) {
   const equal = ["equal", "strictEqual", "deepEqual", "deepStrictEqual"];
   const unequal = ["notEqual", "notStrictEqual", "notDeepEqual", "notDeepStrictEqual"];
   for (const name of equal.concat(unequal)) {
     const real = target[name];
     if (typeof real !== "function" || real.guardsFakeNodes) continue;
-    const wantSame = equal.includes(name);
-    const guarded = function (actual, expected, message) {
-      if (!holdsFakeNode(actual) && !holdsFakeNode(expected)) return real.apply(this, arguments);
-      if (sameNodes(actual, expected) === wantSame) return undefined;
-      if (message instanceof Error) throw message;
-      const said = wantSame
-        ? "expected " + nameOf(expected) + ", got " + nameOf(actual)
-        : "expected something other than " + nameOf(actual);
-      // No actual/expected on the error, and an operator of our own: node adds a printed
-      // diff for its own equality operators, and a reporter would print the values in full.
-      throw new assert.AssertionError({ message: message ? message + " (" + said + ")" : said, operator: "sameNode", stackStartFn: guarded });
-    };
-    guarded.guardsFakeNodes = true;
-    target[name] = guarded;
+    target[name] = guardedAssertion(real, equal.includes(name));
   }
 }
 

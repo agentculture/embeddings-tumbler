@@ -193,7 +193,7 @@ ET.searchSets = (function () {
   }
 
   // One pair's report.
-  function* pairGen(X, D, a, b, ra, rb, lengths, wk) {
+  function* pairGen(set, a, b, ra, rb, lengths, wk) {
     var inB = new Set();
     for (const hit of rb.hits) inB.add(hit.index);
     var commonIndices = [];
@@ -202,7 +202,7 @@ ET.searchSets = (function () {
     }
     var shared = sharedBetween(ra, rb);
     if (wk.add(Math.min(ra.distances.length, rb.distances.length))) yield;
-    var closest = yield* closestPairGen(X, D, ra, rb, lengths[a], lengths[b], wk);
+    var closest = yield* closestPairGen(set.vectors, set.dimension, ra, rb, lengths[a], lengths[b], wk);
     return {
       a: a,
       b: b,
@@ -217,7 +217,7 @@ ET.searchSets = (function () {
     var pairs = [];
     for (var a = 0; a < searches.length; a++) {
       for (var b = a + 1; b < searches.length; b++) {
-        pairs.push(yield* pairGen(set.vectors, set.dimension, a, b, searches[a], searches[b], lengths, wk));
+        pairs.push(yield* pairGen(set, a, b, searches[a], searches[b], lengths, wk));
       }
     }
     return pairs;

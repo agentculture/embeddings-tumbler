@@ -279,8 +279,9 @@ def test_the_same_answers_give_the_same_bytes(wiki, tmp_path):
 def test_a_failed_run_resumes_from_its_cache(wiki, tmp_path):
     cache = tmp_path / "cache"
     wiki.fail_titles = "Number 24"  # the second extracts batch fails every time
+    failing = _fetcher(wiki, cache, retries=1)
     with pytest.raises(corpus_script.FetchError, match="did not answer"):
-        corpus_script.build(_fetcher(wiki, cache, retries=1), "2026-11-14")
+        corpus_script.build(failing, "2026-11-14")
     made = len(wiki.requests)
     assert made == 1 + 1 + 2  # the list, batch one, batch two twice
     wiki.fail_titles = None
@@ -338,8 +339,9 @@ def test_an_answer_with_an_error_field_is_retried_and_never_cached(wiki, tmp_pat
 
 def test_a_missing_list_page_is_an_error(wiki, tmp_path):
     wiki.answer = lambda q: (200, {"query": {"pages": [{"title": "x", "missing": True}]}})
+    fetcher = _fetcher(wiki, tmp_path)
     with pytest.raises(corpus_script.FetchError, match="list page"):
-        corpus_script.fetch_list(_fetcher(wiki, tmp_path), revision=5)
+        corpus_script.fetch_list(fetcher, revision=5)
     assert wiki.requests[-1]["revids"] == "5"
 
 
@@ -364,6 +366,7 @@ def test_continuation_is_followed_and_merged(tmp_path):
 
 def test_main_writes_the_corpus_and_reports(wiki, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(corpus_script.time, "sleep", lambda s: None)
+    monkeypatch.chdir(tmp_path)  # paths are taken inside the current folder (or the repository)
     out = tmp_path / "out" / "corpus.jsonl"
     args = ["--api", wiki.api, "--cache", str(tmp_path / "c"), "--out", str(out)]
     assert corpus_script.main(args + ["--retrieved", "2026-11-14", "--interval", "0"]) == 0
@@ -374,6 +377,49 @@ def test_main_writes_the_corpus_and_reports(wiki, tmp_path, capsys, monkeypatch)
     bad = ["--api", wiki.api, "--cache", str(tmp_path / "d"), "--out", str(out)]
     assert corpus_script.main(bad + ["--interval", "0"]) == 1
     assert "error:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("option", ["--out", "--cache"])
+def test_main_refuses_a_path_outside_the_current_folder_and_the_repository(
+    wiki, tmp_path, capsys, monkeypatch, option
+):
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    monkeypatch.chdir(inside)
+    paths = {"--out": "corpus.jsonl", "--cache": "cache"}
+    paths[option] = str(tmp_path / "elsewhere" / "x")
+    args = ["--api", wiki.api, "--out", paths["--out"], "--cache", paths["--cache"]]
+    assert corpus_script.main(args + ["--interval", "0"]) == 1
+    assert (
+        f"{option} must be inside the current folder or the repository" in capsys.readouterr().err
+    )
+    assert not wiki.requests
+    assert not list(inside.iterdir())
+    assert not (tmp_path / "elsewhere").exists()
+
+
+def test_a_path_inside_the_repository_is_taken_from_any_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert corpus_script.allowed_path(str(CORPUS), "--out") == str(CORPUS.resolve())
+    assert corpus_script.allowed_path(".", "--cache", folder_ok=True) == str(tmp_path.resolve())
+    with pytest.raises(ValueError, match="--cache must be inside"):
+        corpus_script.allowed_path(".", "--cache")
+
+
+@pytest.mark.parametrize(
+    "text, cleaned",
+    [
+        (
+            "Ada ( ; ) was , it is said ( born 1815 ) here .",
+            "Ada was, it is said (born 1815) here.",
+        ),
+        ("A [ ] b ( , ) c (  ) d [] e (;) f", "A b c d e f"),
+        ("See ( https://example.org/x ) and www.example.org now !", "See and now!"),
+        ("x" + " " * 4000 + "y" + "( " * 2000, "x y" + "(" * 2000),
+    ],
+)
+def test_clean_text_closes_the_gaps_left_by_removals(text, cleaned):
+    assert corpus_script.clean_text(text) == cleaned
 
 
 def test_read_corpus_refuses_a_file_without_a_header(tmp_path):
