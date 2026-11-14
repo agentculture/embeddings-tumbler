@@ -380,12 +380,28 @@ the build as merged before this correction.
 | Wander, the marked results (two identical searches), white pixels at full size, six moments | 0 at five of six | 6 to 28 at every one |
 | Focus with the search, group names drawn | 11 | 0 |
 
-The 8 results of `tide harbor` lie within 0.03 to 0.07 of each other, so in
-Wander they cover only a few pixels however bright they are; with a ranking that
-lights the nearest named points and every point as near as the last of them
-(about 400 on the sample set) the count is far higher. The tests
+Those figures were taken while the ranking lit 8 points, which lie within 0.03
+to 0.07 of each other, so in Wander they covered only a few pixels however
+bright they were. Measured again on the merged build, where `tide harbor` lights
+the nearest named points and every point as near as the last of them (423
+points), same conditions:
+
+| What | Merged build |
+|------|--------------|
+| Lattice with no search, near white, swap 10% / 90% through (GPU) | 678 to 796 / 586 to 730 |
+| The same on SwiftShader | 674 to 900 / 680 to 743 |
+| Lattice with the search, near white, the same six moments (GPU) | 68 to 456 |
+| Wander with the search, hot pixels at full size not hot without it, six moments (GPU) | 1,051 to 3,307 |
+| Wander with no search, hot pixels at full size, the same moments (GPU) | 127 to 916 |
+| Focus with the search, share of lit pixels changing per second (Tumble: 0.91 to 0.94) | 0.65 to 0.70 |
+| Focus with the search, group names drawn | 0 |
+
+In Focus the eight named results now spread over much of the stage with the
+panel's ranks, links and query marker; in Wander the result set shows as a bright
+cluster with its labels at every moment measured; in Lattice the wires among the
+results are bright and every other wire is faint. The tests
 (`tests/browser/test_search_look.py`, `tests/browser/test_renderer_render.py`)
-assert ratios and floors that hold for both.
+assert ratios and floors.
 
 ## Viewer (t8): options, handle and `info()`
 
