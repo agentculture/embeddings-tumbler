@@ -226,6 +226,113 @@ def test_an_unquoted_punctuation_bearing_credential_is_caught(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
+# The assignment match is made in steps (key name, separator, value form).
+# These pin the steps to what the single pattern they replaced matched.
+# ---------------------------------------------------------------------------
+
+_LITERAL = "Xk9Lm2Pq7Rt4Vw8Zb3Nc6Yd1"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "api_key",
+        "api-key",
+        "apiKey",
+        "API_KEY",
+        "access_key",
+        "access-key",
+        "AccessKey",
+        "secret",
+        "secret_key",
+        "secret-key",
+        "SECRETKEY",
+        "token",
+        "password",
+        "passwd",
+        "pwd",
+    ],
+)
+def test_every_secretish_key_name_is_recognised(key: str) -> None:
+    assert list(scan_secrets._assignments(f"{key} = {_LITERAL}")) == [(key, _LITERAL)]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f'token = "{_LITERAL}"',
+        f"token = '{_LITERAL}'",
+        f"token = {_LITERAL}",
+        f"token={_LITERAL}",
+        f"token: {_LITERAL}",
+        f'"token": "{_LITERAL}"',
+        f"'token' : '{_LITERAL}'",
+        f"token\t=\t{_LITERAL};",
+    ],
+)
+def test_every_separator_and_value_form_is_recognised(line: str) -> None:
+    assert list(scan_secrets._assignments(line)) == [("token", _LITERAL)]
+
+
+def test_a_quoted_value_keeps_its_spaces_and_a_bare_one_stops_at_a_delimiter() -> None:
+    quoted = 'password = "correct horse battery staple"'
+    assert list(scan_secrets._assignments(quoted)) == [("password", "correct horse battery staple")]
+    bare = f"connect(password={_LITERAL}, retries=3)"
+    assert list(scan_secrets._assignments(bare)) == [("password", _LITERAL)]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "token = short",
+        'token = "too short to count"',
+        f"token {_LITERAL}",
+        f"tokens = {_LITERAL}",
+        f"mytoken = {_LITERAL}",
+        f"api key = {_LITERAL}",
+        f'token = "{_LITERAL}',
+    ],
+)
+def test_lines_the_single_pattern_did_not_match_still_do_not(line: str) -> None:
+    assert list(scan_secrets._assignments(line)) == []
+
+
+def test_a_word_boundary_inside_an_identifier_still_starts_a_key() -> None:
+    """``-`` and ``.`` end a word, so the key after them is a key (``_`` does not)."""
+    assert list(scan_secrets._assignments(f"my-token = {_LITERAL}")) == [("token", _LITERAL)]
+    assert list(scan_secrets._assignments(f"my_token = {_LITERAL}")) == []
+
+
+def test_several_assignments_on_one_line_are_each_reported_in_order() -> None:
+    line = f"api_key = {_LITERAL} password: 'another-Zq7Wx2Ey9Rt4Uv8Ip3' pwd=short"
+    assert list(scan_secrets._assignments(line)) == [
+        ("api_key", _LITERAL),
+        ("password", "another-Zq7Wx2Ey9Rt4Uv8Ip3"),
+    ]
+    findings = scan_secrets._scan_credentials("x.env", line)
+    assert [f.detail for f in findings] == [
+        "api_key-shaped assignment with a literal value",
+        "password-shaped assignment with a literal value",
+    ]
+
+
+def test_a_key_name_inside_a_value_already_matched_is_not_matched_again() -> None:
+    inner = f"password={_LITERAL}"
+    assert list(scan_secrets._assignments(f'token = "{inner}"')) == [("token", inner)]
+
+
+def test_a_key_without_a_value_does_not_hide_a_later_assignment() -> None:
+    line = f"secret-token = {_LITERAL}"
+    assert list(scan_secrets._assignments(line)) == [("token", _LITERAL)]
+    line = f"the password is kept in token = {_LITERAL}"
+    assert list(scan_secrets._assignments(line)) == [("token", _LITERAL)]
+
+
+def test_the_longer_secret_key_name_is_the_one_reported() -> None:
+    assert list(scan_secrets._assignments(f"secret_key = {_LITERAL}")) == [("secret_key", _LITERAL)]
+
+
+# ---------------------------------------------------------------------------
 # Placeholder exemption is a whole-value judgement. A high-entropy literal
 # that merely CONTAINS an English label like `example` or `fake` is still a
 # committed secret.

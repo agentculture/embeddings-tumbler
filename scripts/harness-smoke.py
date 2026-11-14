@@ -225,81 +225,80 @@ SKILLS_WIRING: dict[str, Callable[[Path], list[str]]] = {
 }
 
 
-def stage_config(repo: Path, harnesses: dict[str, Any]) -> list[Result]:
-    results: list[Result] = []
-    by_backend = registry_prompts_by_backend(repo)
-
-    for name in HARNESSES:
-        spec = harnesses[name]
-        resolves = [str(p) for p in (spec.get("resolves") or [])]
-        problems: list[str] = []
-
-        if not resolves:
-            problems.append("the YAML lists no `resolves` paths for this harness")
-        for rel in resolves:
-            path = repo / rel
-            if not path.is_file():
-                problems.append(f"{rel} is missing")
-            elif not path.read_text(encoding="utf-8").strip():
-                problems.append(f"{rel} is empty")
-            backend = HARNESS_BACKEND[name]
-            if rel not in by_backend.get(backend, ()):
-                problems.append(
-                    f"{rel} is not registered under backend '{backend}' in {FINGERPRINTS_REL}"
-                )
-
-        problems.extend(SKILLS_WIRING[name](repo))
-
-        if problems:
-            results.append(Result("config", name, FAIL, "; ".join(problems)))
-        else:
-            results.append(
-                Result(
-                    "config",
-                    name,
-                    PASS,
-                    f"resolves {', '.join(resolves)}; skills discovery wired",
-                )
+def _resolve_problems(repo: Path, name: str, resolves: list[str], by_backend: dict) -> list[str]:
+    """What is wrong with one harness's ``resolves`` paths (empty when nothing is)."""
+    problems: list[str] = []
+    if not resolves:
+        problems.append("the YAML lists no `resolves` paths for this harness")
+    for rel in resolves:
+        path = repo / rel
+        if not path.is_file():
+            problems.append(f"{rel} is missing")
+        elif not path.read_text(encoding="utf-8").strip():
+            problems.append(f"{rel} is empty")
+        backend = HARNESS_BACKEND[name]
+        if rel not in by_backend.get(backend, ()):
+            problems.append(
+                f"{rel} is not registered under backend '{backend}' in {FINGERPRINTS_REL}"
             )
+    return problems
 
+
+def _config_harness_result(repo: Path, name: str, spec: dict[str, Any], by_backend: dict) -> Result:
+    """The config-stage verdict for one harness."""
+    resolves = [str(p) for p in (spec.get("resolves") or [])]
+    problems = _resolve_problems(repo, name, resolves, by_backend)
+    problems.extend(SKILLS_WIRING[name](repo))
+    if problems:
+        return Result("config", name, FAIL, "; ".join(problems))
+    return Result(
+        "config",
+        name,
+        PASS,
+        f"resolves {', '.join(resolves)}; skills discovery wired",
+    )
+
+
+def _fingerprint_registry_result(by_backend: dict[str, tuple[str, ...]]) -> Result:
+    """The config-stage verdict for the vendored fingerprint registry."""
     if by_backend:
         total = sum(len(v) for v in by_backend.values())
-        results.append(
-            Result(
-                "config",
-                "fingerprint-registry",
-                PASS,
-                f"{FINGERPRINTS_REL} registers {total} prompt path(s) "
-                f"across {len(by_backend)} backend(s)",
-            )
+        return Result(
+            "config",
+            "fingerprint-registry",
+            PASS,
+            f"{FINGERPRINTS_REL} registers {total} prompt path(s) "
+            f"across {len(by_backend)} backend(s)",
         )
-    else:
-        results.append(
-            Result(
-                "config",
-                "fingerprint-registry",
-                FAIL,
-                f"{FINGERPRINTS_REL} is missing, unreadable, or registers no prompt paths",
-            )
-        )
+    return Result(
+        "config",
+        "fingerprint-registry",
+        FAIL,
+        f"{FINGERPRINTS_REL} is missing, unreadable, or registers no prompt paths",
+    )
 
-    bare = repo / "AGENTS.md"
-    if bare.exists():
-        results.append(
-            Result(
-                "config",
-                "no-bare-agents-md",
-                FAIL,
-                "AGENTS.md exists; this template ships none on purpose — it would "
-                "shadow AGENTS.override.md / AGENTS.colleague.md in the Pi and "
-                "colleague prompt cascades",
-            )
-        )
-    else:
-        results.append(
-            Result("config", "no-bare-agents-md", PASS, "no bare AGENTS.md, as intended")
-        )
 
+def _bare_agents_md_result(repo: Path) -> Result:
+    """The config-stage verdict on a bare ``AGENTS.md`` (there must be none)."""
+    if (repo / "AGENTS.md").exists():
+        return Result(
+            "config",
+            "no-bare-agents-md",
+            FAIL,
+            "AGENTS.md exists; this template ships none on purpose — it would "
+            "shadow AGENTS.override.md / AGENTS.colleague.md in the Pi and "
+            "colleague prompt cascades",
+        )
+    return Result("config", "no-bare-agents-md", PASS, "no bare AGENTS.md, as intended")
+
+
+def stage_config(repo: Path, harnesses: dict[str, Any]) -> list[Result]:
+    by_backend = registry_prompts_by_backend(repo)
+    results = [
+        _config_harness_result(repo, name, harnesses[name], by_backend) for name in HARNESSES
+    ]
+    results.append(_fingerprint_registry_result(by_backend))
+    results.append(_bare_agents_md_result(repo))
     return results
 
 
@@ -525,6 +524,101 @@ def check_steward_doctor(repo: Path, timeout: int) -> Result:
     )
 
 
+def _guild_payload_result(name: str, guild_name: str, expected: str, payload: dict) -> Result:
+    """Judge the plan a successful ``guild create --json`` dry-run printed."""
+    label = f"guild-create/{name}"
+    if payload.get("applied"):
+        return Result("toolchain", label, FAIL, "guild create reported applied=true for a dry-run")
+    named = payload.get("prompt_file")
+    steps = " ".join(str(s) for s in (payload.get("plan") or {}).get("steps") or [])
+    if named != expected:
+        return Result(
+            "toolchain",
+            label,
+            FAIL,
+            f"--harness {guild_name} named prompt_file {named!r}, expected {expected!r}",
+        )
+    if expected not in steps:
+        return Result(
+            "toolchain",
+            label,
+            FAIL,
+            f"--harness {guild_name} declares prompt_file {expected!r} but no "
+            f"planned step writes it: {steps[:300]}",
+        )
+    return Result(
+        "toolchain",
+        label,
+        PASS,
+        f"--harness {guild_name} names and writes {expected}",
+    )
+
+
+def _guild_exit_result(name: str, guild_name: str, proc: subprocess.CompletedProcess) -> Result:
+    """The verdict for a ``guild create`` dry-run that exited nonzero.
+
+    A dry-run that exits nonzero did not succeed, whatever it wrote to
+    stdout: with no payload the tool is unavailable (SKIP, never a pass), and
+    with a payload it ran and failed (FAIL). Neither may reach the plan-shape
+    checks.
+    """
+    status = SKIP if not proc.stdout.strip() else FAIL
+    detail = (
+        f"guild create unavailable (exit {proc.returncode})"
+        if status == SKIP
+        else f"guild create exited {proc.returncode} for --harness {guild_name}"
+    )
+    return Result(
+        "toolchain",
+        f"guild-create/{name}",
+        status,
+        f"{detail}: {proc.stderr.strip()[:300]}",
+    )
+
+
+def _guild_create_result(
+    repo: Path, base: list[str], name: str, harnesses: dict[str, Any], timeout: int
+) -> Result:
+    """Run one harness's ``guild create`` dry-run and judge it."""
+    label = f"guild-create/{name}"
+    guild_name, expected = GUILD_HARNESS[name]
+    resolves = [str(p) for p in harnesses[name].get("resolves") or []]
+    if expected not in resolves:
+        return Result(
+            "toolchain",
+            label,
+            FAIL,
+            f"{expected} is not among this harness's resolves {resolves} in {INVOCATIONS_REL}",
+        )
+
+    argv = base + [
+        "create",
+        "--agent",
+        "agentculture/harness-smoke-probe",
+        "--desc",
+        "dry-run probe for the embeddings-tumbler harness smoke check",
+        "--harness",
+        guild_name,
+        "--json",
+    ]
+    try:
+        proc = _run(argv, repo, timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return Result("toolchain", label, SKIP, f"could not run guild: {exc}")
+    if proc.returncode != 0:
+        return _guild_exit_result(name, guild_name, proc)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return Result(
+            "toolchain",
+            label,
+            FAIL,
+            f"guild create --json emitted unparseable output: {proc.stdout[:300]}",
+        )
+    return _guild_payload_result(name, guild_name, expected, payload)
+
+
 def check_guild_create(repo: Path, harnesses: dict[str, Any], timeout: int) -> list[Result]:
     base = _tool_argv("guild", "guild-cli")
     if base is None:
@@ -537,114 +631,7 @@ def check_guild_create(repo: Path, harnesses: dict[str, Any], timeout: int) -> l
                 "create` dry-runs were NOT run",
             )
         ]
-
-    results: list[Result] = []
-    for name in HARNESSES:
-        guild_name, expected = GUILD_HARNESS[name]
-        resolves = [str(p) for p in harnesses[name].get("resolves") or []]
-        if expected not in resolves:
-            results.append(
-                Result(
-                    "toolchain",
-                    f"guild-create/{name}",
-                    FAIL,
-                    f"{expected} is not among this harness's resolves {resolves} in "
-                    f"{INVOCATIONS_REL}",
-                )
-            )
-            continue
-
-        argv = base + [
-            "create",
-            "--agent",
-            "agentculture/harness-smoke-probe",
-            "--desc",
-            "dry-run probe for the embeddings-tumbler harness smoke check",
-            "--harness",
-            guild_name,
-            "--json",
-        ]
-        try:
-            proc = _run(argv, repo, timeout)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            results.append(
-                Result("toolchain", f"guild-create/{name}", SKIP, f"could not run guild: {exc}")
-            )
-            continue
-        if proc.returncode != 0:
-            # A dry-run that exits nonzero did not succeed, whatever it wrote
-            # to stdout: with no payload the tool is unavailable (SKIP, never
-            # a pass), and with a payload it ran and failed (FAIL). Neither
-            # may fall through to the plan-shape checks below.
-            status = SKIP if not proc.stdout.strip() else FAIL
-            detail = (
-                f"guild create unavailable (exit {proc.returncode})"
-                if status == SKIP
-                else f"guild create exited {proc.returncode} for --harness {guild_name}"
-            )
-            results.append(
-                Result(
-                    "toolchain",
-                    f"guild-create/{name}",
-                    status,
-                    f"{detail}: {proc.stderr.strip()[:300]}",
-                )
-            )
-            continue
-        try:
-            payload = json.loads(proc.stdout)
-        except json.JSONDecodeError:
-            results.append(
-                Result(
-                    "toolchain",
-                    f"guild-create/{name}",
-                    FAIL,
-                    f"guild create --json emitted unparseable output: {proc.stdout[:300]}",
-                )
-            )
-            continue
-
-        if payload.get("applied"):
-            results.append(
-                Result(
-                    "toolchain",
-                    f"guild-create/{name}",
-                    FAIL,
-                    "guild create reported applied=true for a dry-run",
-                )
-            )
-            continue
-        named = payload.get("prompt_file")
-        steps = " ".join(str(s) for s in (payload.get("plan") or {}).get("steps") or [])
-        if named != expected:
-            results.append(
-                Result(
-                    "toolchain",
-                    f"guild-create/{name}",
-                    FAIL,
-                    f"--harness {guild_name} named prompt_file {named!r}, expected {expected!r}",
-                )
-            )
-        elif expected not in steps:
-            results.append(
-                Result(
-                    "toolchain",
-                    f"guild-create/{name}",
-                    FAIL,
-                    f"--harness {guild_name} declares prompt_file {expected!r} but no "
-                    f"planned step writes it: {steps[:300]}",
-                )
-            )
-        else:
-            results.append(
-                Result(
-                    "toolchain",
-                    f"guild-create/{name}",
-                    PASS,
-                    f"--harness {guild_name} names and writes {expected}",
-                )
-            )
-    return results
+    return [_guild_create_result(repo, base, name, harnesses, timeout) for name in HARNESSES]
 
 
 def stage_toolchain(repo: Path, harnesses: dict[str, Any], timeout: int) -> list[Result]:
