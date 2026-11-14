@@ -131,27 +131,29 @@ function q(letter, kind, extra) {
   };
 }
 
-test("usedText names the measure, k, the lit setting, each query's model and where its text went", () => {
+test("usedText names the measure, the counts, the lit setting, each query's model and where its text went", () => {
   assert.strictEqual(SP.usedText(null), "no search");
   const s = fakeSearch({
-    settings: { k: 8, lit: "close", pointOfView: "A" },
+    settings: { k: 8, candidates: 50, top: 20, lit: "close", pointOfView: "A" },
     searches: [
-      q("A", "embedded", { queryForm: "query", reranker: "r/1" }),
+      q("A", "embedded", { queryForm: "query", reranker: "r/1", sent: 50 }),
       q("B", "words"),
       q("C", "point"),
       q("D", "vector"),
     ],
   });
   const t = SP.usedText(s);
-  assert.match(t, /^cosine distance \(1 minus cosine similarity\) · 8 results per search · lit: by closeness/);
-  assert.match(t, /A "a text": embedded by m\/1 \(query form query\); text sent to the host's embedder; reranked by r\/1: query and candidate texts sent to the reranker/);
-  assert.match(t, /B "b text": words matched among the loaded points \(m\/1\); nothing sent/);
+  // Both counts are stated: the candidates and how many the reranker kept (settings and per search).
+  assert.match(t, /^cosine distance \(1 minus cosine similarity\) · the 50 nearest as candidates, the reranker's top 20 kept · lit: by closeness/);
+  assert.match(t, /A "a text": embedded by m\/1 \(query form query\); text sent to the host's embedder; reranked by r\/1 \(top 2 of 50 candidates\): query and candidate texts sent to the reranker/);
+  assert.match(t, /B "b text": words matched among the loaded points \(m\/1\); nothing sent; not reranked: the 2 nearest kept/);
   assert.match(t, /C "c text": the loaded point p1 \(m\/1\); nothing sent/);
   assert.match(t, /D "d text": a vector from the host \(m\/1\); nothing sent by the viewer/);
   assert.doesNotMatch(t, /no reranker/);
   assert.match(t, /point of view: A/);
   const plain = SP.usedText(fakeSearch({ settings: { k: 1, lit: "weird" }, searches: [q("A", "words")] }));
-  assert.match(plain, /1 result per search · lit: the results, evenly/);
+  assert.match(plain, /· the 1 nearest kept \(1 result per search\) · lit: the results, evenly/);
+  assert.doesNotMatch(plain, /not reranked/);
   assert.match(plain, /no reranker$/);
 });
 

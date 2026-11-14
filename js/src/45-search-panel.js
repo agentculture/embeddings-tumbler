@@ -22,7 +22,11 @@
   var SP_SUGGEST_MAX = 8; // the Focus reference lists up to eight suggestions
   var SP_SUGGEST_CHARS = 60; // a suggestion's button text is cut here; the click uses all of it
   var SP_STAGE_TEXT = 28; // a result's text on the stage is cut here; the list carries all of it
-  var SP_LABEL_POOL = 96; // 4 searches x 20 results, plus the four letters and some distances
+  // Labels on the stage at most. With 4 searches of up to 100 results the overlap rule leaves
+  // most out long before this; the lists carry every result.
+  var SP_LABEL_POOL = 160;
+  var SP_MAX_COUNT = 100; // the most results, candidates or kept a search can ask for
+  var SP_K_RERANKED = "With the reranker on, Keep top sets how many results are kept.";
   var SP_CHAR_W = 6.7; // estimated width of one 11 px monospace character, CSS px
   var SP_LABEL_H = 12; // height of one stage label box, CSS px
   var SP_LIT_TEXT = {
@@ -84,23 +88,42 @@
     return "a vector from the host (" + q.model + "); nothing sent by the viewer";
   }
 
-  function spRerankedBy(q) {
-    return q.reranker ? "; reranked by " + q.reranker + ": query and candidate texts sent to the reranker" : "";
+  // `others`: some other search was reranked, so a search that was not says what it kept.
+  function spRerankedBy(q, others) {
+    if (!q.reranker) return others ? "; not reranked: the " + spThousands(q.results.length) + " nearest kept" : "";
+    return (
+      "; reranked by " +
+      q.reranker +
+      " (" +
+      spKeptOf(q) +
+      "): query and candidate texts sent to the reranker"
+    );
+  }
+
+  // "top 20 of 50 candidates": what one reranked search kept, as it happened.
+  function spKeptOf(q) {
+    return "top " + spThousands(q.results.length) + " of " + spPlural(q.sent, "candidate", "candidates");
+  }
+
+  // The counts the searches used: candidates and kept when a search was reranked, k otherwise
+  // (a search the reranker failed on keeps the k nearest, and says so in its note).
+  function spCountsUsed(search, reranked) {
+    var st = search.settings || {};
+    var plain = "the " + spThousands(st.k) + " nearest kept (" + spPlural(st.k, "result", "results") + " per search)";
+    if (!reranked) return plain;
+    return "the " + spThousands(st.candidates) + " nearest as candidates, the reranker's top " + spThousands(st.top) + " kept";
   }
 
   // What the searches used, for the provenance row.
   function usedText(search) {
     if (!spActive(search)) return "no search";
     var st = search.settings || {};
-    var parts = [
-      search.measure,
-      spPlural(st.k, "result per search", "results per search"),
-      "lit: " + (SP_LIT_TEXT[st.lit] || SP_LIT_TEXT.even),
-    ];
-    var reranked = false;
+    var reranked = search.searches.some(function (q) {
+      return !!q.reranker;
+    });
+    var parts = [search.measure, spCountsUsed(search, reranked), "lit: " + (SP_LIT_TEXT[st.lit] || SP_LIT_TEXT.even)];
     search.searches.forEach(function (q) {
-      if (q.reranker) reranked = true;
-      parts.push(q.letter + ' "' + q.text + '": ' + spMadeBy(q) + spRerankedBy(q));
+      parts.push(q.letter + ' "' + q.text + '": ' + spMadeBy(q) + spRerankedBy(q, reranked));
     });
     if (!reranked) parts.push("no reranker");
     if (st.pointOfView) parts.push("point of view: " + st.pointOfView + " (each dimension scaled by its query)");
@@ -234,6 +257,7 @@
             " is measured from its own point of view: every dimension is scaled by the size of its query's value there (a linear change); the other searches keep plain distance."
         );
       }
+      if (q.counts) parts.push(q.letter + ": " + q.counts);
       if (q.note) parts.push(q.letter + ": " + q.note);
     });
   }
@@ -296,7 +320,7 @@
       spCountsText(q) +
       " · " +
       spKindText(q) +
-      (q.reranker ? " · embedding order, then the reranker " + q.reranker : "") +
+      (q.reranker ? " · embedding order, then the reranker " + q.reranker + " (" + spKeptOf(q) + ")" : "") +
       (q.pointOfView ? " · from its point of view" : "")
     );
   }
@@ -635,6 +659,34 @@
     return o;
   }
 
+  // A labelled range from 3 to 100 with its value beside it; moving it sets `key`.
+  function spRange(p, cls, words, key, value) {
+    var label = spLabelled(p, cls, words);
+    var input = spEl(p, "input", "", { width: "110px" });
+    input.type = "range";
+    input.min = "3";
+    input.max = String(SP_MAX_COUNT);
+    input.step = "1";
+    input.value = String(value);
+    var out = spText(p, "output", "", String(value), { minWidth: "3ch" });
+    label.appendChild(input);
+    label.appendChild(out);
+    spListen(p, input, "input", function () {
+      out.textContent = String(input.value);
+      spSetting(p, key, Number(input.value));
+    });
+    return { label: label, input: input, out: out };
+  }
+
+  // Show a range's value from the settings (never while it is the same, so a drag is not reset).
+  function spRangeValue(r, value, max) {
+    if (max && r.input.max !== String(max)) r.input.max = String(max);
+    if (value && String(r.input.value) !== String(value)) {
+      r.input.value = String(value);
+      r.out.textContent = String(value);
+    }
+  }
+
   function spBuildControls(p) {
     var row = spEl(p, "div", "tumbler-search-controls", { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 22px",
       fontSize: "12px" });
@@ -654,20 +706,13 @@
     });
     p.rerank = spCheckbox(p, "tumbler-search-rerank", "Reranker", "rerank");
     p.distances = spCheckbox(p, "tumbler-search-distances", "Distance difference", "distances");
-    p.kLabel = spLabelled(p, "tumbler-search-k", "Results");
-    p.k = spEl(p, "input", "", { width: "110px" });
-    p.k.type = "range";
-    p.k.min = "3";
-    p.k.max = "20";
-    p.k.step = "1";
-    p.k.value = "8";
-    p.kOut = spText(p, "output", "", "8", { minWidth: "2ch" });
-    p.kLabel.appendChild(p.k);
-    p.kLabel.appendChild(p.kOut);
-    spListen(p, p.k, "input", function () {
-      p.kOut.textContent = String(p.k.value);
-      spSetting(p, "k", Number(p.k.value));
-    });
+    var k = spRange(p, "tumbler-search-k", "Results", "k", 8);
+    p.kLabel = k.label;
+    p.k = k.input;
+    p.kOut = k.out;
+    // Beside the Reranker, and like it in the row only while a reranker is offered.
+    p.cand = spRange(p, "tumbler-search-candidates", "Candidates", "candidates", 50);
+    p.top = spRange(p, "tumbler-search-top", "Keep top", "top", 20);
     var pov = spSelect(p, "tumbler-search-pov", "From this search's point of view", [["", "off"]]);
     p.pov = pov.input;
     p.povLabel = pov.label;
@@ -681,7 +726,7 @@
       spClear(p);
     });
     p.litLabel = lit.label;
-    [p.face, lit.label, p.rerank.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
+    [p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
       row.appendChild(c);
     });
     return row;
@@ -733,7 +778,7 @@
     [p.face, p.clear].forEach(function (b) {
       spStyle(b, spButtonStyle(pal));
     });
-    [p.rerank.input, p.distances.input, p.only.input, p.k].forEach(function (c) {
+    [p.rerank.input, p.distances.input, p.only.input, p.k, p.cand.input, p.top.input].forEach(function (c) {
       c.style.accentColor = pal.accent;
     });
     p.note.style.color = pal.muted;
@@ -931,20 +976,26 @@
     var active = spActive(search);
     p.face.disabled = !active || !search.faceable;
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
-    if (st.k && String(p.k.value) !== String(st.k)) {
-      p.k.value = String(st.k);
-      p.kOut.textContent = String(st.k);
-    }
+    spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
     p.distances.input.checked = !!st.distances;
     var offered = !!search?.reranker?.offered;
     spPlace(p.rerank.label, offered, p.distances.label);
+    spPlace(p.cand.label, offered, p.distances.label);
+    spPlace(p.top.label, offered, p.distances.label);
     p.rerank.input.checked = offered && !!st.rerank;
+    spRangeValue(p.cand, st.candidates, 0);
+    spRangeValue(p.top, st.top, st.candidates);
+    // With the reranker on, Keep top decides how many results there are, not Results.
+    var reranking = offered && !!st.rerank;
+    p.k.disabled = reranking;
+    p.k.title = reranking ? SP_K_RERANKED : "";
     p.only.input.checked = !!st.onlyResults;
     spShow(p.only.label, p.focus, "inline-flex");
     spRenderPov(p, search);
   }
 
-  // The Reranker control is in the row only when a reranker is offered (absent, not hidden).
+  // The Reranker, Candidates and Keep top controls are in the row only when a reranker is
+  // offered (absent, not hidden).
   function spPlace(label, present, before) {
     if (present && !label.parentNode && before.parentNode) before.parentNode.insertBefore(label, before);
     if (!present && label.parentNode) label.remove();
@@ -1054,7 +1105,15 @@
   function spListStyle(layout) {
     var base = { listStyle: "none", margin: "0", padding: "0" };
     if (layout === "grid") {
-      return { ...base, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: "6px 22px" };
+      // Up to 100 results: the list scrolls inside its own box, so the panel stays usable.
+      return {
+        ...base,
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+        gap: "6px 22px",
+        maxHeight: "var(--tumbler-search-list-height, 320px)",
+        overflowY: "auto",
+      };
     }
     return { ...base, display: "flex", flexDirection: "column" };
   }
@@ -1250,7 +1309,7 @@
     var q = search.searches[0];
     var parts = search.searches.map(function (s) {
       var how = s.pointOfView ? "from its point of view" : "plain distance";
-      return s.letter + ": " + s.results.length + " named results, " + how + (s.reranker ? ", then the reranker" : "");
+      return s.letter + ": " + s.results.length + " named results, " + how + (s.reranker ? ", then the reranker (" + spKeptOf(s) + ")" : "");
     });
     return (search.searches.length === 1 ? parts[0].slice(q.letter.length + 2) : parts.join("; ")) + " · " + search.measure;
   }
@@ -1394,13 +1453,16 @@
     var order = view.queue.slice().sort(function (a, b) {
       return a.r.rank - b.r.rank || a.j - b.j;
     });
-    order.forEach(function (it) {
+    // Stop once every label element is used: with 400 results the rest would only be tested.
+    for (var it of order) {
+      if (used >= SP_LABEL_POOL) break;
       used = spPlaceResult(p, view, boxes, used, it, many);
-    });
+    }
     if (view.distances) {
-      order.forEach(function (it) {
-        used = spPlaceDistance(p, view, boxes, used, it);
-      });
+      for (var link of order) {
+        if (used >= SP_LABEL_POOL) break;
+        used = spPlaceDistance(p, view, boxes, used, link);
+      }
     }
     spHideLabels(p, used);
   }

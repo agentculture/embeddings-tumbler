@@ -175,7 +175,9 @@ ET.searchSets = (function () {
     return shared;
   }
 
-  function closestPair(X, D, ra, rb, la, lb) {
+  // The closest pair of different named results, one from each search; pauses when a unit
+  // of work ends (counted, so the pauses fall at the same places on every run).
+  function* closestPairGen(X, D, ra, rb, la, lb, wk) {
     var best = null;
     for (var x = 0; x < ra.hits.length; x++) {
       var ia = ra.hits[x].index;
@@ -184,39 +186,64 @@ ET.searchSets = (function () {
         if (ia === ib) continue;
         var dist = rowDistance(X, D, ia, ib, la[x], lb[y]);
         if (best === null || dist < best.distance) best = { a: ia, b: ib, distance: dist };
+        if (wk.add(D)) yield;
       }
     }
     return best;
   }
 
-  function pairReports(set, searches) {
-    checkSearches(searches);
-    var X = set.vectors;
-    var D = set.dimension;
-    var lengths = [];
-    for (const search of searches) lengths.push(hitLengths(X, D, set.count, search.hits));
+  // One pair's report.
+  function* pairGen(X, D, a, b, ra, rb, lengths, wk) {
+    var inB = new Set();
+    for (const hit of rb.hits) inB.add(hit.index);
+    var commonIndices = [];
+    for (const hit of ra.hits) {
+      if (inB.has(hit.index)) commonIndices.push(hit.index);
+    }
+    var shared = sharedBetween(ra, rb);
+    if (wk.add(Math.min(ra.distances.length, rb.distances.length))) yield;
+    var closest = yield* closestPairGen(X, D, ra, rb, lengths[a], lengths[b], wk);
+    return {
+      a: a,
+      b: b,
+      shared: shared,
+      common: commonIndices.length,
+      commonIndices: commonIndices,
+      closest: closest,
+    };
+  }
+
+  function* pairsGen(set, searches, lengths, wk) {
     var pairs = [];
     for (var a = 0; a < searches.length; a++) {
       for (var b = a + 1; b < searches.length; b++) {
-        var ra = searches[a];
-        var rb = searches[b];
-        var inB = new Set();
-        for (const hit of rb.hits) inB.add(hit.index);
-        var commonIndices = [];
-        for (const hit of ra.hits) {
-          if (inB.has(hit.index)) commonIndices.push(hit.index);
-        }
-        pairs.push({
-          a: a,
-          b: b,
-          shared: sharedBetween(ra, rb),
-          common: commonIndices.length,
-          commonIndices: commonIndices,
-          closest: closestPair(X, D, ra, rb, lengths[a], lengths[b]),
-        });
+        pairs.push(yield* pairGen(set.vectors, set.dimension, a, b, searches[a], searches[b], lengths, wk));
       }
     }
     return pairs;
+  }
+
+  // The pair reports as a stepper (the facing frame's convention). The rows' lengths and the
+  // checks of every index are worked out here, so a bad index throws at once.
+  function makePairReports(set, searches) {
+    checkSearches(searches);
+    var D = set.dimension;
+    var lengths = [];
+    for (const search of searches) lengths.push(hitLengths(set.vectors, D, set.count, search.hits));
+    var total = 1;
+    for (var a = 0; a < searches.length; a++) {
+      for (var b = a + 1; b < searches.length; b++) {
+        total += searches[a].hits.length * searches[b].hits.length * D + set.count;
+      }
+    }
+    var wk = new FaceWork(total);
+    return faceStepper(pairsGen(set, searches, lengths, wk), wk);
+  }
+
+  function pairReports(set, searches) {
+    var st = makePairReports(set, searches);
+    st.step();
+    return st.result;
   }
 
   // ----- the facing frame: vector helpers (double precision) -----------------
@@ -333,16 +360,21 @@ ET.searchSets = (function () {
   // The rows of every search (its query and its named results), unscaled, each
   // search's centre scaled and unscaled, and each scaled row's offset from its
   // search's scaled centre.
-  function gatherRows(fit) {
+  // Pauses after each search's centres and whenever a unit of work ends among its offsets, so
+  // searches of 100 results keep units short.
+  function* gatherRows(fit, wk) {
     var out = { scaledCentres: [], plainCentres: [], offsets: [], plainRows: [] };
     for (const search of fit.searches) {
       var mine = searchRows(fit.X, fit.D, search);
       var c = meanOfRows(mine, fit.D, fit.scale);
       out.scaledCentres.push(c);
       out.plainCentres.push(meanOfRows(mine, fit.D, null));
+      wk.add(2 * mine.length * fit.D);
+      yield;
       for (const row of mine) {
         out.plainRows.push(row);
         out.offsets.push(offsetOf(row, fit.D, fit.scale, c));
+        if (wk.add(fit.D)) yield;
       }
     }
     return out;
@@ -429,13 +461,14 @@ ET.searchSets = (function () {
   }
 
   // Steps 8 and 9: signs against the current frame, then centre and zoom.
-  function finish(fit, rows, axes, origins) {
+  function* finish(fit, rows, axes, origins, wk) {
     var D = fit.D;
     var frame = signedFrame(axes, fit.current, D);
     var centre = Float32Array.from(meanOfRows(rows.plainCentres, D, null));
     var reach = FACE_MIN_REACH;
     for (const row of rows.plainRows) {
       reach = Math.max(reach, shownLength(frame, row, centre, D));
+      if (wk.add(3 * D)) yield;
     }
     return {
       frame: frame,
@@ -449,9 +482,7 @@ ET.searchSets = (function () {
 
   function* facingGen(fit, wk) {
     var D = fit.D;
-    var rows = gatherRows(fit);
-    wk.add(rows.offsets.length * D);
-    yield;
+    var rows = yield* gatherRows(fit, wk);
     var axes = [];
     var origins = [];
     var cs = rows.scaledCentres;
@@ -470,7 +501,7 @@ ET.searchSets = (function () {
       }
     }
     if (fit.scale) axes = mapBack(axes, origins, fit.scale, D);
-    return finish(fit, rows, axes, origins);
+    return yield* finish(fit, rows, axes, origins, wk);
   }
 
   function now() {
@@ -532,7 +563,7 @@ ET.searchSets = (function () {
     }
     var rowCount = 0;
     for (const search of searches) rowCount += 1 + search.hits.length;
-    var wk = new FaceWork(rowCount * D * (1 + 2 * FACE_ITERATIONS * 3));
+    var wk = new FaceWork(rowCount * D * (6 + 2 * FACE_ITERATIONS * 3));
     return faceStepper(facingGen(fit, wk), wk);
   }
 
@@ -558,6 +589,7 @@ ET.searchSets = (function () {
     scaleFor: scaleFor,
     litValues: litValues,
     pairReports: pairReports,
+    makePairReports: makePairReports,
     makeFacingFrame: makeFacingFrame,
     facingFrame: facingFrame,
   };

@@ -139,7 +139,7 @@ for (const D of [768, 1024]) {
     assert.ok(b.named.length > 100 && b.named.length < 200);
     assert.strictEqual(res.named, b.named.length);
     assert.deepStrictEqual(res.hits.map((h) => h.index), b.named.slice(0, 10).map((x) => x.i));
-    assert.deepStrictEqual(res.pool.map((h) => h.index), b.named.slice(0, 30).map((x) => x.i));
+    assert.deepStrictEqual(res.pool.map((h) => h.index), b.named.slice(0, 50).map((x) => x.i));
     res.pool.forEach((h, n) => {
       assert.ok(Math.abs(h.distance - b.named[n].d) < 1e-12);
       assert.strictEqual(h.embeddingRank, n + 1);
@@ -164,7 +164,7 @@ test("with a scale, ranks among named points: embeddingRank and plainRank count 
   const res = S.rank(set, q, { k: 6, scale });
   const scaled = bruteNamed(set, q, scale).named;
   const plain = bruteNamed(set, q).named;
-  assert.deepStrictEqual(res.pool.map((h) => h.index), scaled.slice(0, 18).map((x) => x.i));
+  assert.deepStrictEqual(res.pool.map((h) => h.index), scaled.slice(0, 50).map((x) => x.i));
   for (const h of res.pool) {
     assert.strictEqual(h.plainRank, 1 + plain.findIndex((x) => x.i === h.index));
     assert.ok(Math.abs(h.plainDistance - plain.find((x) => x.i === h.index).d) < 1e-12);
@@ -181,7 +181,7 @@ test("no named point: every point is a candidate, as before; fewer named than k:
   const all = S.rank(none, q, { k: 8 });
   assert.strictEqual(all.named, 0);
   assert.strictEqual(all.hits.length, 8);
-  assert.strictEqual(all.pool.length, 24);
+  assert.strictEqual(all.pool.length, 50);
   assert.strictEqual(S.pointText(none, all.hits[0].index), all.hits[0].id, "results show ids");
   // labels-only: every label is the id
   const labelsOnly = { ...none, points: none.points.map((p) => ({ ...p, label: p.id })) };

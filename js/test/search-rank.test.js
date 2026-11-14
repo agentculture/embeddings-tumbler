@@ -66,7 +66,8 @@ for (const D of [768, 1024]) {
     const res = S.rank(set, q, { k: 12 });
     const b = brute(set, q);
     assert.deepStrictEqual(res.hits.map((h) => h.index), b.slice(0, 12).map((x) => x.i));
-    assert.deepStrictEqual(res.pool.map((h) => h.index), b.slice(0, 36).map((x) => x.i));
+    // the reranker's pool is the 50 nearest by default (DEFAULT_CANDIDATES)
+    assert.deepStrictEqual(res.pool.map((h) => h.index), b.slice(0, 50).map((x) => x.i));
     res.hits.forEach((h, n) => {
       assert.ok(Math.abs(h.distance - b[n].d) < 1e-12);
       assert.strictEqual(h.embeddingRank, n + 1);
@@ -118,7 +119,7 @@ test("zero rows sit at distance 1, ties go to the lower index, k is clamped and 
   assert.deepStrictEqual(res.hits.map((h) => h.index), [1, 2, res.hits[2].index]);
   assert.strictEqual(res.distances[0], 1);
   assert.strictEqual(res.hits[0].distance, 0);
-  assert.strictEqual(res.pool.length, 9);
+  assert.strictEqual(res.pool.length, 10); // 50 candidates asked, 10 points in the set
   assert.strictEqual(S.rank(set, Float32Array.of(0, 0, 0, 0), { k: 3 }).hits.length, 3);
   assert.strictEqual(S.rank(set, Float32Array.of(1, 0, 0, 0), { k: 1 }).k, 3);
   assert.strictEqual(S.rank(set, Float32Array.of(1, 0, 0, 0)).hits.length, 8);
@@ -206,7 +207,8 @@ test("clampK, format and the constants", () => {
   assert.strictEqual(S.clampK(NaN), 8);
   assert.strictEqual(S.clampK("5"), 8);
   assert.strictEqual(S.clampK(1), 3);
-  assert.strictEqual(S.clampK(99), 20);
+  assert.strictEqual(S.clampK(99), 99);
+  assert.strictEqual(S.clampK(101), 100);
   assert.strictEqual(S.clampK(7.6), 8);
   assert.strictEqual(S.MEASURE_TEXT, "cosine distance (1 minus cosine similarity)");
   assert.ok(Object.isFrozen(S.MESSAGES));
@@ -272,7 +274,8 @@ test("checkQuery accepts arrays and typed arrays and returns a copy", () => {
 test("rerankOrder reorders the pool, refuses malformed scores, leaves the ranking alone", () => {
   const set = makeSet(60, 8, 4);
   const q = Float32Array.from({ length: 8 }, (_, i) => i - 3);
-  const ranking = S.rank(set, q, { k: 3 });
+  const ranking = S.rank(set, q, { k: 3, candidates: 9, top: 3 });
+  assert.strictEqual(ranking.pool.length, 9);
   const before = JSON.stringify(ranking.hits);
   const scores = ranking.pool.map((_, i) => (i === 7 ? 5 : i === 4 ? 5 : 0));
   const re = S.rerankOrder(ranking, scores);

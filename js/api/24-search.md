@@ -29,9 +29,11 @@ wrapper, or as `api._internal.search` from tests.
   Decided here: it keeps the scan total and finite, and puts such a point at
   "unrelated" rather than nearest or farthest.
 - **Results** are the `k` nearest **named** points in the full space by that
-  measure, `k` from 3 to 20, 8 by default. Ties are broken by the lower point
-  index, so a ranking is a pure function of the set, the query vector, `k` and
-  the scale. On-screen position is never an input to any function in this
+  measure, `k` from 3 to 100, 8 by default (it was 3 to 20 before the owner
+  asked for more; see "Candidates and top" below). With a reranker the results
+  are instead the `top` best of the `candidates` nearest by the reranker's
+  scores. Ties are broken by the lower point index, so a ranking is a pure
+  function of the set, the query vector, `k`, `candidates` and the scale. On-screen position is never an input to any function in this
   module.
 - **Named points** (`isNamed`, below): a point is named when it carries
   something a person can read that is not just its id: its `metadata.text`, or
@@ -51,8 +53,9 @@ wrapper, or as `api._internal.search` from tests.
   a set whose labels are empty): every point is a candidate, as if all were
   named, and the result list shows ids. **Fewer named points than `k`**: the
   results are all the named points, nearest first (`hits` is shorter than `k`).
-- **A reranker's pool** is taken from the candidates too: the `3 x k` nearest
-  named points (every point when none is named).
+- **A reranker's pool** is taken from the candidates too: the `candidates`
+  nearest named points (3 to 100, 50 by default; every point is a candidate when
+  none is named).
 - **The query may be any point.** Search from a picked point and word search
   make a query from unnamed points as well; only the results are named points.
   A named picked point is its own first result at distance 0.
@@ -87,12 +90,16 @@ A **ranking** (the result of `rank` and of the stepper from `makeRank`):
 {
   measure: "cosine",
   k,                       // the clamped k asked for
+  candidates,              // the clamped number of candidates asked for (clampCandidates)
+  top,                     // the clamped number of reranked candidates to keep (clampTop)
   count,                   // N when the scan ran
   named,                   // how many points are named; 0 means every point was a candidate
   scaled,                  // true when a scale was given
   hits,                    // Hit[], min(k, C) of them, ordered by rank (C: candidates, below)
-  pool,                    // Hit[], the min(3k, C) nearest candidates, in embeddingRank order;
-                           // hits are pool[0 .. k) (the same objects) until rerankOrder runs
+  pool,                    // Hit[], the min(candidates, C) nearest candidates, in embeddingRank
+                           // order: exactly what a reranker is sent. Hits and pool are cut from
+                           // the same nearest list, so hit n and pool entry n are the same object
+                           // for n < min(k, candidates) until rerankOrder runs
   near,                    // the smallest distance among hits, or null when there are none
   radius,                  // the largest distance among hits (the result radius), or null
   distances,               // Float64Array(N): every point's distance in this search's measure
@@ -113,8 +120,10 @@ filled template from `MESSAGES` (plain text, never markup: insert it with
 |----------|-------|---------|
 | `ET.search.DEFAULT_K` | `8` | results asked for when none is given |
 | `ET.search.MIN_K` | `3` | fewest results that can be asked for |
-| `ET.search.MAX_K` | `20` | most results that can be asked for |
-| `ET.search.POOL_FACTOR` | `3` | the reranking pool holds `POOL_FACTOR * k` candidates (the reference's) |
+| `ET.search.MAX_K` | `100` | most results that can be asked for (was 20) |
+| `ET.search.DEFAULT_CANDIDATES` | `50` | candidates handed to a reranker when none is given |
+| `ET.search.MAX_CANDIDATES` | `100` | most candidates that can be asked for (the helper route admits 100) |
+| `ET.search.DEFAULT_TOP` | `20` | reranked candidates kept when none is given (cut to `candidates`) |
 | `ET.search.PREFIX_MIN` | `3` | a word of at least this many characters may match the start of a word (below) |
 | `ET.search.MEASURE` | `"cosine"` | the measure's id, as in `ranking.measure` |
 | `ET.search.MEASURE_TEXT` | `"cosine distance (1 minus cosine similarity)"` | the measure's name wherever it is shown |
@@ -125,7 +134,9 @@ filled template from `MESSAGES` (plain text, never markup: insert it with
 DEFAULT_K
 MIN_K
 MAX_K
-POOL_FACTOR
+DEFAULT_CANDIDATES
+MAX_CANDIDATES
+DEFAULT_TOP
 PREFIX_MIN
 MEASURE
 MEASURE_TEXT
@@ -166,6 +177,8 @@ more than four searches) are listed in `docs/search-interface.md`.
 <!-- interface-names module="24-search.js" object="ET.search" match="exact" task="t2" prefix="ET.search." -->
 ```text
 clampK
+clampCandidates
+clampTop
 format
 checkSameSpace
 checkQuery
@@ -186,8 +199,20 @@ exists). Private helpers stay local to the module.
 
 ### `ET.search.clampK(k) -> integer`
 
-`k` rounded to the nearest integer and clamped into `MIN_K .. MAX_K`. A value
-that is not a finite number gives `DEFAULT_K`. Never throws.
+`k` rounded to the nearest integer and clamped into `MIN_K .. MAX_K` (3 to
+100). A value that is not a finite number gives `DEFAULT_K`. Never throws.
+
+### `ET.search.clampCandidates(n) -> integer`
+
+`n` rounded and clamped into `MIN_K .. MAX_CANDIDATES` (3 to 100). A value that
+is not a finite number gives `DEFAULT_CANDIDATES` (50). Never throws.
+
+### `ET.search.clampTop(top, candidates) -> integer`
+
+`top` rounded and clamped into `MIN_K .. clampCandidates(candidates)`: never
+more than the candidates. A value that is not a finite number gives
+`min(DEFAULT_TOP, clampCandidates(candidates))` (20 with the default 50
+candidates). Never throws.
 
 ### `ET.search.format(code, values?) -> string`
 
@@ -233,7 +258,9 @@ The exact scan for the nearest points, sliced. `vector` is a checked query
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `k` | `DEFAULT_K` | results asked for; passed through `clampK` |
+| `k` | `DEFAULT_K` | results asked for with no reranker; passed through `clampK` |
+| `candidates` | `DEFAULT_CANDIDATES` | candidates for a reranker (the `pool`); passed through `clampCandidates` |
+| `top` | `min(DEFAULT_TOP, candidates)` | reranked candidates to keep (`rerankOrder`); passed through `clampTop` with `candidates` |
 | `scale` | `null` | `Float32Array(D)`: rank with every dimension of both the query and each point multiplied by `scale[d]` (the point-of-view option, `js/api/26-search-sets.md`). With a scale, `plainDistances` and each hit's `plainRank` and `plainDistance` are filled from the unscaled vectors in the same pass. |
 
 The stepper is `ET.math`'s: `{ step(budgetMs?) -> done, done, progress,
@@ -270,8 +297,9 @@ per entry of `ranking.pool`, in pool order (the order the candidates were sent
 in); higher means more relevant. Anything else is refused with
 `rerank-malformed`, and the caller keeps the embedding order.
 
-On success the new `hits` are the `k` (`ranking.k`, at most the pool's length)
-pool entries with the highest scores, ties broken by the lower `embeddingRank`.
+On success the new `hits` are the `top` (`ranking.top`, at most the pool's
+length; `ranking.k` for a ranking without `top`) pool entries with the highest
+scores, ties broken by the lower `embeddingRank`.
 Each new hit is a copy of its pool entry with `rank` (its position, from 1),
 `moved = embeddingRank - rank`, `score` and `gap` (distance minus the smallest
 distance among the new hits) filled in. `near` and `radius` are the smallest
@@ -408,3 +436,30 @@ runs was up to 4.8 ms before and up to 12 ms after (one scaled round; the
 others 1.6 to 4.2 ms), both at that load. Finding the named points costs one
 string test per point, counted as 64 multiply-adds of work, inside the same
 units; the row loop adds one byte test per row.
+
+## Candidates and top (the owner's request, 2026-11-14)
+
+The owner asked, after trying the build: "we need more results, 50 or 100, and
+add reranker and top x out of that (top 20?)", and chose "50 candidates, top
+20". Recorded in the spec: the nearest N by embedding are the candidates (3 to
+100, 50 by default), and with the reranker on the top X of them are kept (20 by
+default); with no reranker the results stay at 8 by default and can be raised
+to 100. This replaces the range of 3 to 20 results and the hidden pool of
+`3 x k` (`POOL_FACTOR`, removed: nothing needs it any more).
+
+- The scan keeps the `max(k, candidates)` nearest candidates (at most 100) in
+  one sorted list; `hits` are its first `min(k, C)`, `pool` its first
+  `min(candidates, C)`. So with no reranker the results are the `k` nearest,
+  and a reranker is sent exactly `pool` (never more than the stated number).
+- `rerankOrder` keeps the `top` best of `pool` by score; `radius` is the
+  farthest **kept** result, so the lit radius follows the results kept, and
+  each kept hit carries its `embeddingRank` among the candidates and `moved`.
+- With fewer named points than a number asks for, the number is cut to what
+  there is (`hits` and `pool` are shorter); the ranking still reports the
+  numbers asked (`k`, `candidates`, `top`) and `named`, so the viewer can say
+  so.
+
+Measured after this change (node 24, development machine, load average 1 to 6
+on 12 cores, 10,000 points of 1,024 dimensions, a third named, a fresh set
+object each run, median of 20): see "Measured with 100 candidates" in
+`docs/search-interface.md`.

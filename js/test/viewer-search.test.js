@@ -186,7 +186,7 @@ test("with no search, info().search is the empty shape, nothing reaches setLit a
   assert.strictEqual(s.code, null);
   assert.strictEqual(s.message, null);
   assert.strictEqual(s.measure, ET.search.MEASURE_TEXT);
-  assert.deepStrictEqual(s.settings, { k: 8, lit: "even", distances: false, rerank: false, pointOfView: null, onlyResults: false });
+  assert.deepStrictEqual(s.settings, { k: 8, candidates: 50, top: 20, lit: "even", distances: false, rerank: false, pointOfView: null, onlyResults: false });
   assert.deepStrictEqual(s.embedder, { available: false });
   assert.deepStrictEqual(s.reranker, { available: false, offered: false });
   assert.deepStrictEqual(s.sameSpace, { ok: true, kind: "none" });
@@ -659,12 +659,13 @@ test("with a rerank callback each result carries its move and the reranker's nam
   assert.deepStrictEqual(h.info().search.reranker, { available: true, offered: true });
   await settle(dom, h.setSearches(["word3"]));
   assert.strictEqual(seen.length, 0, "rerank is off until asked for");
-  const r = await settle(dom, h.setSearchSettings({ rerank: true }));
+  // 24 candidates, top 8 (before the owner's request the pool was 3 x k = 24 and k results kept)
+  const r = await settle(dom, h.setSearchSettings({ rerank: true, candidates: 24, top: 8 }));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(seen.length, 1);
   assert.strictEqual(seen[0].args, 2);
   assert.strictEqual(seen[0].query, "word3");
-  const pool = ET.search.rank(v.set, v.search.shown[0].query, { k: 8 }).pool;
+  const pool = ET.search.rank(v.set, v.search.shown[0].query, { k: 8, candidates: 24 }).pool;
   assert.deepStrictEqual(seen[0].candidates, pool.map((x) => ET.search.pointText(v.set, x.index)));
   const q = h.info().search.searches[0];
   assert.strictEqual(q.reranker, "test/reranker");
@@ -826,19 +827,20 @@ test("entering a mode with searchChanged while searches are shown tells it at on
 
 test("settings: lit, k and point of view work the searches out again; invalid values are ignored", async () => {
   const { h, v, dom, lit } = setup({ searchK: 4, searchLit: "named" });
-  assert.deepStrictEqual(h.searchSettings(), { k: 4, lit: "named", distances: false, rerank: false, pointOfView: null, onlyResults: false });
+  assert.deepStrictEqual(h.searchSettings(), { k: 4, candidates: 50, top: 20, lit: "named", distances: false, rerank: false, pointOfView: null, onlyResults: false });
   await settle(dom, h.setSearches([{ point: v.set.ids[0] }, { point: v.set.ids[1] }]));
   assert.strictEqual(h.info().search.litCount, 8, "named only: the hits of both searches");
   const n = lit.length;
   await settle(dom, h.setSearchSettings({ lit: "even" }));
   assert.strictEqual(lit.length, n + 1, "a lit change uploads new values");
   assert.deepStrictEqual(litIndices(lit.at(-1).lit), Array.from(new Set([...expectedLitIndices(v, rowOf(v.set, 0), 4), ...expectedLitIndices(v, rowOf(v.set, 1), 4)])).sort((a, b) => a - b));
-  const r = await settle(dom, h.setSearchSettings({ k: 30 }));
-  assert.strictEqual(r.search.settings.k, 20);
-  assert.strictEqual(r.search.searches[0].results.length, 20);
+  // k goes to 100 (it was 20 before the owner asked for more); the set has 40 named points.
+  const r = await settle(dom, h.setSearchSettings({ k: 130 }));
+  assert.strictEqual(r.search.settings.k, 100);
+  assert.strictEqual(r.search.searches[0].results.length, 40);
   await settle(dom, h.setSearchSettings({ pointOfView: "A" }));
   const s = h.info().search;
-  const scaled = ET.search.rank(v.set, rowOf(v.set, 0), { k: 20, scale: ET.searchSets.scaleFor(rowOf(v.set, 0)) });
+  const scaled = ET.search.rank(v.set, rowOf(v.set, 0), { k: 100, scale: ET.searchSets.scaleFor(rowOf(v.set, 0)) });
   assert.deepStrictEqual(idsOf(s, 0), scaled.hits.map((x) => x.id));
   assert.deepStrictEqual(s.searches[0].results.map((x) => x.plainRank), scaled.hits.map((x) => x.plainRank));
   assert.strictEqual(s.searches[0].pointOfView, true);
