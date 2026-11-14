@@ -27,12 +27,17 @@ can use it in three ways, which all run the same file:
 All three work from any folder you copy the files into, because every reference
 between the files is relative and in the same folder.
 
-The viewer shows three views of the same data, which you can switch between:
+The viewer shows four views of the same data, which you can switch between:
 **Tumble** (the viewing window drifts through the space on a guided tour),
 **Lattice** (points are wired to their true nearest neighbours, measured in the
-full space) and **Wander** (the camera flies from point to neighbouring point).
-All three use linear projections only, so what you see is always a shadow of the
-real space (see [What the viewer tells your visitors](#what-the-viewer-tells-your-visitors)).
+full space), **Wander** (the camera flies from point to neighbouring point) and
+**Focus** (the view is fitted to what was searched for). All four use linear
+projections only, so what you see is always a shadow of the real space (see
+[What the viewer tells your visitors](#what-the-viewer-tells-your-visitors)).
+
+The viewer can also **search** the points it shows: a visitor types text and
+the nearest points are lit and listed. That works with no code from you; what
+you can add is in [Search](#search).
 
 ## Getting the files
 
@@ -57,8 +62,8 @@ package, side by side:
 | `web-component.js` | The `<embeddings-tumbler>` element. Only for the web component form. |
 | `index.html`, `page.css`, `page.js` | The standalone page. Only for that form. |
 
-The npm package `@culture.dev/embeddings-tumbler` (planned; not published yet)
-will carry the same unmodified file.
+The npm package `@culture.dev/embeddings-tumbler` carries the same unmodified
+file.
 
 Copy only the files you need into your site. Nothing needs to be edited.
 
@@ -72,7 +77,9 @@ serves the folder as static files on `http://127.0.0.1:8000/` (add
 `--port 8080` to change the port). It binds to your own machine only; it warns
 if you ask for another address. Open the printed address in a browser. A page
 opened straight from disk with a `file://` address cannot fetch its data
-file, so always serve the folder.
+file, so always serve the folder. With `--embed` the same command also lets the
+standalone page search by meaning; see
+[Search in the standalone page, and the local helper](#search-in-the-standalone-page-and-the-local-helper).
 
 ## The example pages
 
@@ -361,6 +368,9 @@ const viewer = EmbeddingsTumbler.mount(document.getElementById("space"), {
 });
 ```
 
+`mode` also accepts `"focus"`. The options for search are listed under
+[Search options at mount](#search-options-at-mount).
+
 Other options: `speed`, `labels`, `trails`, `readout`, `masthead`,
 `maxPixelRatio`, `modeOptions`, `prepareBudgetMs`, `refitQuietSeconds`,
 `refitShare`, `preserveDrawingBuffer`, `onModeChange`, `onPauseChange`. They
@@ -406,7 +416,7 @@ Attributes:
 | Attribute | Meaning |
 |-----------|---------|
 | `src` | URL of a data JSON file on your own origin. Changing it loads the new file as a replace. Removing it keeps what is on screen. An address on another origin is refused before any request is made. |
-| `mode` | `tumble`, `lattice` or `wander`. Changing it switches the view in place. |
+| `mode` | `tumble`, `lattice`, `wander` or `focus`. Changing it switches the view in place. |
 | `seed` | The view's seed (see [Reproducible views](#reproducible-views)). Changing it re-mounts the viewer and reloads `src`, so points added through `update()` are lost. |
 
 On the element: `el.update(data)` forwards to the viewer (this is how you
@@ -541,6 +551,706 @@ mounts one viewer through the script API described above. The example folder
 on a copy of it, serve it, and open `index.html?data=space.json`.
 
 This is also the quickest way to check a data file you have just produced.
+
+## Search
+
+The viewer can search the points it shows. A visitor types text, or several
+texts, and the viewer lights the points nearest to each and lists them. You get
+this without writing anything: every viewer has a search panel under the
+picture. This section says what you can add, and how to drive search from your
+own code. What each control in the panel does is in the
+[search guide](search.md), which is written for the person using the page.
+
+A few words used below, each with one meaning:
+
+- A **search** is one query and the points found for it. Up to four can be
+  shown at once. They are lettered A to D in the order given.
+- **Distance** is always cosine distance (1 minus cosine similarity), measured
+  over every dimension of the data. It is never a length in the picture.
+- A **named point** is a point with text a person can read: a label or a
+  `metadata.text` that is not just its id. In a real data file that is usually
+  every point.
+- The **results** of a search are the named points nearest to its query: 8 by
+  default.
+- The **result radius** is the distance of the farthest result. Every point at
+  most that far from the query is **lit**, named or not. Every other point is
+  dimmed.
+
+There are four kinds of search, and they differ in where the query comes from:
+
+| Kind | The query is | Needs | Where the typed text goes |
+|------|--------------|-------|---------------------------|
+| `words` | The typed words, matched against the labels and texts of the loaded points. The query is the mean of the vectors of the points that matched. | Nothing. | Nowhere. |
+| `point` | A loaded point's own vector, chosen by its id. | Nothing. | There is no typed text. |
+| `vector` | A vector your code already has. | Your code. | There is no typed text. |
+| `embedded` | The typed text, turned into a vector by an embedding model. | An `embed` callback that you supply. | To your `embed` callback, and nowhere else. |
+
+So with no code from you, search works among the loaded points: a visitor can
+find points by the words in their labels and texts. To let a visitor search by
+meaning with free text, you supply an `embed` callback. You may also supply a
+`rerank` callback, which lets a second model reorder the nearest candidates.
+With reranking on, the query text and the candidate texts go to that callback,
+for every kind of search that has a query text.
+
+**The viewer still makes no network request.** It calls your callbacks; what
+they do is yours to decide. The address and the key of your embedding service
+belong on your server, never in a page or a data file.
+
+### Search in the script form
+
+The folder `examples/script-search/` is a complete page that uses everything in
+this section: both callbacks, every search method of the handle, and the report
+the viewer gives back. First the HTML. The buttons carry a `data-action` name
+that the script acts on.
+
+<!-- file: examples/script-search/example.html -->
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embeddings viewer: script form with search</title>
+  <link rel="stylesheet" href="host.css">
+</head>
+<body>
+  <main>
+    <h1>My vectors, with search</h1>
+    <p class="row">
+      <label for="query">Text</label>
+      <input id="query" type="text" value="alpha" autocomplete="off">
+      <button type="button" data-action="words">Match words</button>
+      <button type="button" data-action="embed">Embed and search</button>
+    </p>
+    <p class="row">
+      <button type="button" data-action="two">Two searches</button>
+      <button type="button" data-action="point">From point p0007</button>
+      <button type="button" data-action="vector">From a vector</button>
+      <button type="button" data-action="settings">12 results, lit by closeness</button>
+      <button type="button" data-action="rerank">Reranker on or off</button>
+      <button type="button" data-action="face">Face the searches</button>
+      <button type="button" data-action="clear">Clear</button>
+    </p>
+    <p><output id="note">Loading.</output></p>
+    <pre id="report"></pre>
+    <div id="space" class="space"></div>
+  </main>
+  <script src="embeddings-tumbler.js"></script>
+  <script src="host.js"></script>
+</body>
+</html>
+```
+
+The script. Read it from the top: the two callbacks, the function that turns
+the viewer's report into text, the `mount` call, and one action per button.
+
+<!-- file: examples/script-search/host.js -->
+
+```js
+(function () {
+  "use strict";
+
+  const el = document.getElementById("space");
+  const note = document.getElementById("note");
+  const report = document.getElementById("report");
+  const field = document.getElementById("query");
+  let known = null; // what this page loaded: { model, byName: lower-case id or label -> vector }
+
+  function say(text) {
+    note.textContent = text;
+  }
+
+  // ---------- the two callbacks ----------
+
+  // THE EMBED CALLBACK. The viewer calls it with the typed text and nothing else. It answers
+  // { vector, model, queryForm? }: a vector of the data's dimension, the id of the model that
+  // made it (required, and it must equal the data's model), and optionally which input form
+  // the model was given ("query", "plain", ...).
+  //
+  // This example has no model, so it stands in for one: it knows the ids and labels of its own
+  // points and answers with that point's vector. Nothing leaves the page. A real host calls its
+  // OWN server here and returns its answer; that server holds the address and the key of the
+  // embedding service, which must never reach a page.
+  async function embed(text) {
+    const vector = known.byName.get(text.trim().toLowerCase());
+    if (!vector) throw new Error("This stand-in embedder only knows this page's ids and labels.");
+    return { vector: vector, model: known.model, queryForm: "plain" };
+  }
+
+  // THE RERANK CALLBACK. The viewer calls it with the query text and the candidate texts (the
+  // nearest named points, nearest first). It answers { scores, model }: one finite number per
+  // candidate, in the order given, higher meaning more relevant, and the reranker's own id.
+  //
+  // This stand-in counts the words a candidate shares with the query. A real host sends both
+  // to its own server, as for embed.
+  async function rerank(query, candidates) {
+    const wanted = new Set(query.toLowerCase().match(/[a-z0-9]+/g) || []);
+    const scores = candidates.map(function (candidate) {
+      const words = new Set(candidate.toLowerCase().match(/[a-z0-9]+/g) || []);
+      let shared = 0;
+      for (const word of wanted) if (words.has(word)) shared += 1;
+      return shared;
+    });
+    return { scores: scores, model: "example/shared-words" };
+  }
+
+  // ---------- what a search reports ----------
+
+  // onSearchChange gets info().search each time it changes. Everything the picture shows is
+  // in it as numbers and text, so a host (or a test) never has to read pixels.
+  function describe(search) {
+    if (search.waiting) return "Working out the search.";
+    if (!search.active) return "No search: every point is shown.";
+    const lines = [search.litCount + " points lit. Distances are " + search.measure + "."];
+    for (const one of search.searches) {
+      lines.push(
+        one.letter + ": " + one.kind + ' search for "' + one.text + '", text sent to ' + one.sentTo +
+          (one.reranker ? ", reranked by " + one.reranker : "") + ". " + one.results.length +
+          " results, " + one.insideCount + " points within " + one.radius.toFixed(3) + "."
+      );
+      for (const hit of one.results.slice(0, 3)) {
+        lines.push("   " + hit.rank + ". " + hit.text + " (" + hit.distance.toFixed(3) + ")");
+      }
+    }
+    for (const pair of search.pairs) {
+      lines.push(pair.a + " and " + pair.b + ": " + pair.shared + " points inside both, " +
+        pair.common + " results in common.");
+    }
+    return lines.join("\n");
+  }
+
+  // ---------- the viewer ----------
+
+  const viewer = EmbeddingsTumbler.mount(el, {
+    seed: 7,
+    title: "My vectors",
+    embed: embed, // without it, typed text is matched among the loaded points
+    rerank: rerank, // without it, there is no reranking and no Reranker control
+    searchK: 8, // results per search, 3 to 100
+    onSearchChange: function (search) {
+      report.textContent = describe(search);
+    },
+  });
+
+  // The host does the fetching. The viewer never makes a request of its own.
+  async function loadData(jsonUrl) {
+    const meta = await (await fetch(jsonUrl)).json();
+    const file = meta?.vectors?.file;
+    if (typeof file !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file)) return { ...meta };
+    const block = await (await fetch(new URL(file, new URL(jsonUrl, location.href)))).arrayBuffer();
+    return { ...meta, vectors: { ...meta.vectors, data: block } };
+  }
+
+  function remember(data) {
+    const flat = new Float32Array(data.vectors.data);
+    const byName = new Map();
+    data.points.forEach(function (point, i) {
+      const vector = flat.slice(i * data.dimension, (i + 1) * data.dimension);
+      byName.set(point.id.toLowerCase(), vector);
+      byName.set(String(point.label).toLowerCase(), vector);
+    });
+    known = { model: data.model, byName: byName };
+  }
+
+  // A vector the host already has: here, the middle of two loaded points.
+  function between(a, b) {
+    const one = known.byName.get(a);
+    const two = known.byName.get(b);
+    return one.map(function (value, i) {
+      return (value + two[i]) / 2;
+    });
+  }
+
+  // ---------- the handle's search methods ----------
+
+  const actions = {
+    // Typed text matched among the labels and texts of the loaded points. Nothing is sent.
+    words: function () {
+      return viewer.setSearches([{ text: field.value, via: "words" }]);
+    },
+    // Typed text through the embed callback. A plain string does the same when a callback is set.
+    embed: function () {
+      return viewer.setSearches([{ text: field.value, via: "embed" }]);
+    },
+    // Up to four searches at once. They get the letters A to D in the order given.
+    two: function () {
+      return viewer.setSearches([{ text: "alpha", via: "words" }, { text: "beta", via: "words" }]);
+    },
+    // From a loaded point, by its id.
+    point: function () {
+      return viewer.setSearches([{ point: "p0007" }]);
+    },
+    // From a vector the host has. The model id is required and is checked against the data's.
+    vector: function () {
+      return viewer.setSearches([
+        { vector: between("p0000", "p0001"), model: known.model, label: "between p0000 and p0001" },
+      ]);
+    },
+    // Settings work the searches out again from the query vectors held: no new embed call.
+    settings: function () {
+      return viewer.setSearchSettings({ k: 12, lit: "close", distances: true });
+    },
+    rerank: function () {
+      return viewer.setSearchSettings({ rerank: !viewer.searchSettings().rerank });
+    },
+    // The next two answer at once with true or false.
+    face: function () {
+      return { ok: viewer.faceSearches(), code: "not-faced", message: "There is no search to face." };
+    },
+    clear: function () {
+      return { ok: viewer.clearSearches(), code: "nothing-to-clear", message: "There was no search." };
+    },
+  };
+
+  // setSearches and setSearchSettings return promises that never reject. They resolve to
+  // { ok: true, search } or { ok: false, code, message }, and a refusal changes nothing.
+  document.addEventListener("click", async function (event) {
+    const action = actions[event.target.dataset?.action];
+    if (!action || !known) return;
+    const result = await action();
+    if (result.ok) say("Done: " + event.target.textContent + ".");
+    else if (result.code !== "superseded") say("Refused (" + result.code + "): " + result.message);
+  });
+
+  loadData("space.json")
+    .then(function (data) {
+      const result = viewer.update(data);
+      if (result.ok) {
+        remember(data);
+        say("Showing " + result.count + " points.");
+      } else {
+        say("The viewer refused the data (" + result.code + "): " + result.message);
+      }
+    })
+    .catch(function (error) {
+      say("Could not load the data: " + error.message);
+    });
+})();
+```
+
+The stylesheet sets the colours of the first two searches. The property names
+are in [Theming](#theming).
+
+<!-- file: examples/script-search/host.css -->
+
+```css
+body {
+  margin: 0;
+  padding: 16px;
+  background: #0b0f1a;
+  color: #e9eef6;
+  font: 16px/1.5 system-ui, sans-serif;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+button,
+input {
+  font: inherit;
+  padding: 6px 12px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+pre {
+  min-height: 6em;
+  margin: 0 0 16px;
+  white-space: pre-wrap;
+  font: 13px/1.5 ui-monospace, monospace;
+}
+
+.space {
+  --tumbler-stage-height: 420px;
+  /* The colours of searches A and B: ring, links, letters and list numbers. */
+  --tumbler-search-1: #ffd27a;
+  --tumbler-search-2: #7ad7ff;
+}
+```
+
+What to notice:
+
+- The callbacks are **mount options**: `embed` and `rerank`. You can also set
+  or remove them later with `viewer.setSearchCallbacks({ embed, rerank })`.
+- This example has no embedding model, so its callbacks stand in for one, and
+  they answer from data the page already has. Yours will call your own server.
+- A search is started with `viewer.setSearches([...])`, which replaces every
+  search shown. The same call is what the panel makes when a visitor types.
+- Nothing here reads the picture. Everything the picture shows is in
+  `viewer.info().search` as numbers and text.
+
+### The callback contracts
+
+**`embed(text)`** is called with one argument, the query text as a string. It
+returns, or returns a promise of, an object:
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `vector` | yes | An array of numbers, a `Float32Array` or a `Float64Array`, as long as the data's dimension. |
+| `model` | yes | The id of the model that made the vector. It must equal the data's `model` exactly. An answer with no model is refused, not assumed to match. |
+| `queryForm` | no | A word for how the text was given to the model, for models that treat queries and documents differently (for example `"query"`, `"prefixed"` or `"plain"`). It is shown beside the search. |
+
+The viewer checks the answer before using it: the model, the dimension, that
+every value is a finite number, and that the vector is not all zeros. If any
+check fails, the search is refused with a plain message and the earlier
+searches stay.
+
+**`rerank(query, candidates)`** is called with the query text and an array of
+candidate texts, nearest first. It returns, or returns a promise of, an object:
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `scores` | yes | One finite number per candidate, in the order given. Higher means more relevant. |
+| `model` | yes | The reranker's id. It is shown as the reranker in use. |
+
+The reranker is used only while the `rerank` setting is on. It is sent the
+nearest named points as candidates (50 by default, 3 to 100) and the best of
+them by its scores are kept as the results (20 by default). A data file with
+`text_included: false` has no texts to send, so it is never reranked.
+
+Rules for both callbacks:
+
+- Either may be a plain function or an `async` function.
+- If one throws, rejects or takes longer than 15 seconds (the `searchTimeoutMs`
+  option), the viewer carries on. A failed `embed` refuses that search
+  (`embed-failed`, `embed-timeout`) and the earlier searches stay. A failed
+  `rerank` is not a refusal: the search keeps its order by distance and says so
+  in its `note`.
+- The message of an error your callback throws is never shown on the page,
+  because it could carry an address or a key. You see your own error in your
+  own code.
+- The typed text is passed to `embed` and to nothing else. The viewer does not
+  log it, store it or send it.
+
+### The handle's search methods
+
+| Method | Returns | What it does |
+|--------|---------|--------------|
+| `setSearches(list)` | a promise | Replaces every search with the 0 to 4 entries of `list`. |
+| `clearSearches()` | `true` or `false` | Removes every search. `false` when there was none. |
+| `setSearchSettings(patch)` | a promise | Changes settings and works the searches out again from the queries held. `embed` is not called again. |
+| `searchSettings()` | an object | A copy of the current settings. |
+| `faceSearches()` | `true` or `false` | Turns the view toward the searches again. `false` with no search, and always in Focus. |
+| `setSearchCallbacks({ embed, rerank })` | `{ embedder, reranker }` | Sets or replaces a callback after mount. `null` removes one. A key you leave out is kept. |
+
+An entry of `setSearches` is one of:
+
+| Entry | Kind of search |
+|-------|----------------|
+| `"some text"` or `{ text: "some text" }` | `embedded` when an `embed` callback is set, otherwise `words`. |
+| `{ text: "some text", via: "words" }` | `words`, even when a callback is set. |
+| `{ text: "some text", via: "embed" }` | `embedded`. Refused with `no-embedder` when no callback is set. |
+| `{ point: "an-id" }` | `point`. |
+| `{ vector: [...], model: "the-model-id", label: "a name" }` | `vector`. `label` is optional; it names the search in the panel and is the query text for a reranker. |
+
+The promises of `setSearches` and `setSearchSettings` never reject. They
+resolve to `{ ok: true, search }`, where `search` is the report described
+below, or to `{ ok: false, code, message }`.
+
+- **A refusal changes nothing.** If any entry is refused, none takes effect and
+  the earlier searches and the view stay as they were.
+- **The latest call wins.** A call still waiting when a newer one arrives
+  resolves with the code `superseded`, and its late answers are dropped. The
+  example ignores that code for this reason.
+- **Words that match nothing are not an error** unless nothing at all matched.
+  A `words` entry with no match is left out and its words are listed in
+  `search.unmatched`. If every entry is left out, the result is `words-none`.
+
+The settings that `setSearchSettings` accepts:
+
+| Setting | Values | Default | Meaning |
+|---------|--------|---------|---------|
+| `k` | 3 to 100 | 8 | Results per search when no reranker runs. |
+| `candidates` | 3 to 100 | 50 | Nearest named points sent to the reranker. |
+| `top` | 3 to `candidates` | 20 | Reranked candidates kept as the results. |
+| `lit` | `"even"`, `"close"`, `"named"` | `"even"` | What is lit: every point within the result radius, evenly; the same with nearer points lit more strongly; or the results only. |
+| `distances` | `true`, `false` | `false` | Show each result's distance, and how much farther it is than the nearest. |
+| `rerank` | `true`, `false` | `false` | Use the `rerank` callback. Stays `false` when there is no callback or the data carries no text. |
+| `pointOfView` | `"A"` to `"D"`, or `null` | `null` | Measure one search from its own point of view: every dimension is scaled by the size of that search's query there. |
+| `onlyResults` | `true`, `false` | `false` | In Focus only: hide the points that are not lit, where the other views dim them. |
+
+Unknown keys and values out of range are ignored or brought into range. The
+starting values of `k`, `candidates`, `top` and `lit` can be given at mount.
+
+### Search options at mount
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `embed` | none | The `embed` callback. |
+| `rerank` | none | The `rerank` callback. |
+| `searchTimeoutMs` | `15000` | How long a callback may take. |
+| `searchPanel` | `true` | `false` leaves the search panel out. The handle still does everything. |
+| `searchK` | `8` | The starting `k`. |
+| `searchCandidates` | `50` | The starting `candidates`. |
+| `searchTop` | `20` | The starting `top`. |
+| `searchLit` | `"even"` | The starting `lit`. |
+| `onSearchChange(search)` | none | Called with the report each time it changes. |
+
+### What `info()` reports about search
+
+`viewer.info().search` is always present. With no search it has
+`active: false` and empty lists. The same object is passed to
+`onSearchChange` and is the `search` of a successful `setSearches`.
+
+| Field | Meaning |
+|-------|---------|
+| `active` | `true` while at least one search is shown. |
+| `waiting` | `true` while a callback has not answered or a search is still being worked out. |
+| `stale`, `staleBy` | `true` when points were appended after the results were worked out, and how many. The viewer works the searches out again by itself. |
+| `code`, `message` | The latest refusal or note, or `null`. |
+| `measure` | The name of the distance: `cosine distance (1 minus cosine similarity)`. |
+| `settings` | The settings, as `searchSettings()` gives them. |
+| `embedder.available` | Whether an `embed` callback is set. |
+| `reranker.available`, `reranker.offered` | Whether a `rerank` callback is set, and whether it can be used on this data (the data carries text). |
+| `sameSpace.ok` | Whether a query vector can be compared with this data. `false` for a reduced data file; see [What search does not do](#what-search-does-not-do). |
+| `litCount`, `sharedCount` | How many points are lit, and how many lie within the result radius of two or more searches. |
+| `unmatched` | Words that matched nothing. |
+| `facing`, `faceable` | Whether the view is turning toward the searches now, and whether the current view can (`false` in Focus). |
+| `searches` | One entry per search, described next. |
+| `pairs` | One entry per pair of searches: `a` and `b` (letters), `shared` (points within both radii), `common` and `commonIds` (results the two have in common), `closest` (the nearest two different results, one from each, and their distance). |
+
+Each entry of `searches`:
+
+| Field | Meaning |
+|-------|---------|
+| `letter` | `"A"` to `"D"`. |
+| `kind` | `"embedded"`, `"vector"`, `"words"` or `"point"`. |
+| `text` | The typed text, the vector's label, or the point's id. |
+| `model`, `queryForm` | The model the query vector came from, and the query form your `embed` callback reported (or `null`). |
+| `sentTo` | `"embedder"` when the typed text went to your `embed` callback, otherwise `"nowhere"`. |
+| `reranker` | The reranker's id when this search was reranked, otherwise `null`. |
+| `sent` | How many candidate texts went to the reranker for this search (0 when none). |
+| `words`, `point` | For a `words` search, which words were used and how many points each matched. For a `point` search, the id. |
+| `k`, `candidates`, `top`, `available`, `counts` | The counts this search used, how many points could be results, and a sentence when a count had to be cut to what there is. |
+| `note` | A message about this search, or `null`: for example that the reranker failed. |
+| `radius`, `insideCount` | The result radius, and how many points are within it. |
+| `pointOfView` | Whether this search is the one measured from its own point of view. |
+| `results` | The results in order. Each has `id`, `index`, `rank`, `distance`, `gap` (how much farther than the nearest), `text`, and, after reranking, `score`, `embeddingRank` and `moved`. |
+
+A test can check a search without looking at the picture: the results are
+`searches[i].results`, and the points lit by search `i` (with the `"even"`
+setting) are those whose distance to its query is at most `searches[i].radius`.
+
+### Search in the web component
+
+The `<embeddings-tumbler>` element has two **properties**, `embed` and
+`rerank`, which take the same callbacks. One assignment adds search by
+embedding. They are properties and never attributes: an `embed="..."` attribute
+in markup does nothing, so markup cannot supply code. Everything else goes
+through `el.handle`, which has the methods above. The folder
+`examples/web-component-search/` is a complete page:
+
+<!-- file: examples/web-component-search/example.html -->
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embeddings viewer: web component with search</title>
+  <link rel="stylesheet" href="host.css">
+</head>
+<body>
+  <main>
+    <h1>My vectors, with search</h1>
+    <form id="ask">
+      <label for="query">Point id to search from (for example p0007)</label>
+      <input id="query" name="query" type="text" value="p0007" autocomplete="off">
+      <button type="submit">Search</button>
+    </form>
+    <p><output id="note">Loading.</output></p>
+    <embeddings-tumbler id="space" src="space.json" mode="tumble" seed="7"></embeddings-tumbler>
+  </main>
+  <script src="embeddings-tumbler.js"></script>
+  <script src="web-component.js"></script>
+  <script src="host.js"></script>
+</body>
+</html>
+```
+
+<!-- file: examples/web-component-search/host.js -->
+
+```js
+(function () {
+  "use strict";
+
+  const el = document.getElementById("space");
+  const note = document.getElementById("note");
+
+  // The vectors this page already has, read once from its own files, by point id.
+  const table = fetch("space.json")
+    .then((res) => res.json())
+    .then(async (data) => {
+      const block = await (await fetch(data.vectors.file)).arrayBuffer();
+      const flat = new Float32Array(block);
+      const byId = new Map();
+      data.points.forEach((p, i) => {
+        byId.set(p.id, flat.slice(i * data.dimension, (i + 1) * data.dimension));
+      });
+      return { model: data.model, byId: byId };
+    });
+
+  // THE ONE ASSIGNMENT THAT ADDS SEARCH. The viewer calls this with the typed text, and
+  // wants back { vector, model }: a vector of the data's dimension and the id of the model
+  // that made it.
+  //
+  // This example answers from vectors already in the page: it looks the text up among the
+  // point ids and returns that point's own vector. Nothing leaves the page. A real host
+  // would call its OWN server here (for example fetch("/my/embed", { method: "POST", ... })
+  // and return its answer), and that server would hold the key to the embedding model. The
+  // viewer itself never makes a request, and the key must never reach the page.
+  el.embed = async function (text) {
+    const known = await table;
+    const vector = known.byId.get(text.trim());
+    if (!vector) throw new Error("This example only knows its own point ids.");
+    return { vector: vector, model: known.model };
+  };
+
+  document.addEventListener("tumbler-load", function (event) {
+    note.textContent = "Showing " + event.detail.count + " points.";
+  });
+  document.addEventListener("tumbler-error", function (event) {
+    note.textContent = "The viewer refused the data (" + event.detail.code + "): " + event.detail.message;
+  });
+
+  document.getElementById("ask").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const viewer = el.handle; // null until the element has mounted
+    if (!viewer) return;
+    const result = await viewer.setSearches([document.getElementById("query").value]);
+    if (result.ok) note.textContent = "Searched for " + result.search.searches[0].text + ".";
+    else note.textContent = "No search (" + result.code + "): " + result.message;
+  });
+})();
+```
+
+You can assign the property at any time: before the element is in the page,
+before its data has loaded, or afterwards. Assigning `null` removes the
+callback, and typed text is then matched among the loaded points again. The
+element's `mode` attribute also accepts `focus`.
+
+### Search in the standalone page, and the local helper
+
+The standalone page needs no code for search either. Served as plain static
+files, it searches among the loaded points. To search by meaning, the page
+needs something that can embed the typed text, and a static file server cannot.
+The package brings a local helper for this:
+
+```text
+embeddings-tumbler viewer serve my-site/viewer --embed
+```
+
+With `--embed` the server also answers one route on its own origin,
+`POST /_tumbler/search`. The standalone page asks its own origin whether that
+route is there. When it is, the page gives the viewer `embed` and `rerank`
+callbacks that post to it. The page never asks any other address, and no query
+parameter or data file can change that.
+
+The helper is where the embedding service's address and key live. They are read
+from the **environment of the server process**, and only when `--embed` is
+given:
+
+| Variable | Meaning |
+|----------|---------|
+| `EMBEDDINGS_EMBED_URL` | The base address of an OpenAI-compatible embedding service, including `/v1`. Default `http://localhost:8001/v1`. |
+| `EMBEDDINGS_API_KEY`, or else `COLLEAGUE_API_KEY` | The key. With neither set, the command stops with exit code 2 and a message that names the variables. |
+| `EMBEDDINGS_EMBED_MODEL` | The embedding model, unless `--embed-model` names one. Default `Qwen/Qwen3-Embedding-0.6B`. |
+
+Neither the address nor the key is ever sent to a page: not in an answer, not
+in a header, not in a log line, and not in the command's `--json` output. The
+helper answers with the vector, the model id and the query form, and nothing
+else about the service.
+
+| Flag | Meaning |
+|------|---------|
+| `--embed` | Turn the route on. Without it the server is static only and reads no variable. |
+| `--embed-model MODEL` | The embedding model to ask for. It must be the model that made your data, or every search is refused with `query-model-mismatch`. |
+| `--rerank-model MODEL` | Also offer reranking, with this model. Without it there is no Reranker control. |
+| `--query-prefix TEXT` | Text put before every query before it is embedded, for models that expect one. The query form is then reported as `prefixed`, otherwise `plain`. |
+| `--embed-allow-remote` | Allow `--embed` together with a `--host` that is not your own machine. |
+
+**The route stays on loopback** (your own machine) unless you pass
+`--embed-allow-remote`. `--embed` with any other `--host` is refused with exit
+code 1 before anything is served, because whoever can reach the route can spend
+your key. The route also answers only a `POST` with a JSON body from a page of
+its own origin, limits the length of a text (8,000 characters), the number of
+candidates (100) and the number of requests (120 a minute), and sends no
+cross-origin headers.
+
+The helper is for trying things on your own machine. On a real site, write the
+same small route on your own server and call it from your `embed` callback.
+
+The standalone page's default data is a real set, so that search has something
+to find: 999 articles from English Wikipedia's list of vital articles
+(Level 3), each embedded from the first sentences of its introduction by
+`Qwen/Qwen3-Embedding-0.6B`, which is also the helper's default model. The
+titles and texts are Wikipedia's, under the Creative Commons
+Attribution-ShareAlike 4.0 licence (CC BY-SA 4.0), not this package's licence;
+the package's `NOTICE` file gives the source, the revision and the changes
+made. If you publish the page with that data, the licence's terms apply to you
+too. The generated set is at `index.html?sample=synthetic`.
+
+### Search refusals
+
+A search that cannot be made faithfully is refused with a code and a plain
+message. The message is shown in the search panel, returned by the promise, and
+passed to `onError`. A refused search changes nothing on screen.
+
+| Code | Meaning | What a host should do |
+|------|---------|-----------------------|
+| `no-data` | There are no points to search yet. | Search after `update`. |
+| `bad-search` | The list is not an array, or an entry is none of the forms above. | Fix the call. |
+| `too-many-searches` | More than four entries. | Send at most four. |
+| `empty-query` | The text has no letter or digit. | Nothing; the visitor typed no word. |
+| `words-none` | No word matched a label or text among the loaded points. | Nothing; the message names the words. |
+| `point-unknown` | No point has that id. | Check the id. |
+| `no-embedder` | `via: "embed"` with no `embed` callback. | Supply the callback, or leave `via` out. |
+| `embed-failed` | The `embed` callback threw or rejected. | Look at your own error. |
+| `embed-timeout` | The `embed` callback did not answer in time. | Answer faster, or raise `searchTimeoutMs`. |
+| `embed-malformed` | The answer is not an object with a `vector`. | Fix the callback. |
+| `query-model-missing` | The answer has no `model`. | Return the model id. |
+| `query-model-mismatch` | The query was embedded by another model than the data. | Embed queries with the model that made the data. |
+| `query-not-vector` | The vector is not a list of numbers. | Fix the callback or the vector. |
+| `query-dimension-mismatch` | The vector's length is not the data's dimension. | Use the same model and settings as the data. |
+| `query-non-finite` | The vector holds NaN or an infinity. | Fix the callback or the vector. |
+| `query-zero` | The vector is all zeros, so it has no direction. | Fix the callback or the vector. |
+| `reduction-not-searchable` | The data file's vectors were rotated or cut after embedding, so a query vector cannot be compared with them. | Use a file with the vectors as the model made them; see below. |
+| `superseded` | A newer call replaced this one. Not sent to `onError`. | Ignore it. |
+
+Four more codes are notes on a search that still stands, in its `note`:
+`rerank-failed`, `rerank-timeout` and `rerank-malformed` (the reranker threw,
+was late, or did not return one score per candidate; the results stay in order
+of distance) and `rerank-no-text` (a `vector` search with no `label` has no
+text to send to a reranker).
+
+### What search does not do
+
+- **Reduced data files cannot be searched by embedding.** A data file may
+  carry vectors that were rotated or cut to their strongest directions after
+  embedding (the producer guide calls these reductions). A fresh query vector
+  is not in that changed space, and the file does not carry what would be
+  needed to change the query the same way. So on such a file an `embedded` or
+  `vector` search is refused with `reduction-not-searchable`, and plain typed
+  text falls back to matching words, with a note that says why. `words` and
+  `point` searches work on every file, because their queries are made from the
+  file's own vectors.
+- **It is an exact scan, not an index.** Each search compares the query with
+  every loaded point. It runs in small slices so the picture keeps moving. On
+  a development machine, one search over 10,000 points of 1,024 dimensions
+  took about 8 ms in all.
+- **It does not answer questions.** It finds near points. There is no
+  generated answer and no chat.
+- **Only Chromium has been tested automatically**, as for the rest of the
+  viewer.
 
 ## Theming
 
@@ -846,3 +1556,12 @@ page can fetch both. If the texts are private, leave them out when you write the
 file; the producer guide says how, and why the vectors can still reveal the
 texts. The viewer sends your text, labels and vectors nowhere, and your page
 fetches the files from your own origin.
+
+Search adds one thing that can leave the page, and only if you supply the
+callbacks. Text that a visitor types goes to your `embed` callback, and with
+reranking on, the query text and the texts of the candidates go to your
+`rerank` callback. Where they go from there is your code's decision; say so to
+your visitors if it matters. The viewer itself states it beside the picture
+whenever a search is shown: either that the text was sent to the host's
+embedder, or that the search was made among the loaded points and nothing was
+sent. With no callbacks, nothing a visitor types leaves the page.
