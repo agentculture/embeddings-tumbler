@@ -1060,8 +1060,11 @@
     // A schedule of swaps: during cycle c = floor(t / period), axis c mod 3
     // turns a quarter turn into a hidden direction drawn from the stream
     // mixSeed(seed ^ SALT_SWAP, c). frameAt(t) is a pure function of (frame0, seed, period,
-    // basis, t); it replays cycle starts from frame0 when time goes backwards.
+    // basis, t); when time goes backwards it replays cycle starts from the nearest
+    // kept one (bounded memory: at most 33 kept frames).
     // opts: { seed (0), period (3.4 s, the reference's), basis, basisRows }
+    var SWAP_CHECKPOINT_SPACING = 16; // cycles between kept cycle starts at first
+    var SWAP_CHECKPOINTS = 32;
     function makeSwapTour(frame0, D, opts) {
       checkDim(D);
       if (D < 4) throw new RangeError("axis swaps need a dimension of at least four");
@@ -1083,21 +1086,48 @@
       var start = new Float32Array(first);
       var hidden = new Float32Array(D);
       var cycle = -1;
+      // Cycle starts kept so that a backward seek replays from the nearest one, not
+      // from frame0: at most SWAP_CHECKPOINTS (besides cycle 0), spaced further
+      // apart as the tour goes on. A replay from one gives the same bits as a
+      // replay from frame0 (the same steps on the same values).
+      var marks = [{ c: 0, start: first }];
+      var spacing = SWAP_CHECKPOINT_SPACING;
+      var steps = 0; // swap steps computed in all, for tests
+
+      function keep() {
+        if (cycle % spacing !== 0) return;
+        var at = marks.length;
+        while (at > 0 && marks[at - 1].c > cycle) at--;
+        if (marks[at - 1].c === cycle) return;
+        marks.splice(at, 0, { c: cycle, start: new Float32Array(start) });
+        if (marks.length > SWAP_CHECKPOINTS + 1) {
+          spacing *= 2;
+          marks = marks.filter(function (m) {
+            return m.c % spacing === 0;
+          });
+        }
+      }
 
       function enterCycle(c) {
-        if (c < cycle) {
-          start.set(first);
-          cycle = -1;
+        var near = marks[0];
+        for (var i = marks.length - 1; i >= 0; i--) {
+          if (marks[i].c <= c) {
+            near = marks[i];
+            break;
+          }
         }
-        if (cycle < 0) {
-          cycle = 0;
-          hiddenDirection(start, D, makeRandom(mixSeed(seed ^ SALT_SWAP, 0)), basis, basisRows, hidden);
+        if (c < cycle || cycle < 0 || near.c > cycle) {
+          start.set(near.start);
+          cycle = near.c;
+          hiddenDirection(start, D, makeRandom(mixSeed(seed ^ SALT_SWAP, cycle)), basis, basisRows, hidden);
         }
         while (cycle < c) {
           swapStep(start, cycle % 3, hidden, 1, D, start);
           orthonormalize(start, 3, D);
           cycle++;
+          steps++;
           hiddenDirection(start, D, makeRandom(mixSeed(seed ^ SALT_SWAP, cycle)), basis, basisRows, hidden);
+          keep();
         }
       }
 
@@ -1124,6 +1154,12 @@
         hiddenAt: function (t) {
           stateAt(t);
           return new Float32Array(hidden);
+        },
+        steps: function () {
+          return steps;
+        },
+        checkpoints: function () {
+          return marks.length;
         },
       };
     }
@@ -1509,7 +1545,10 @@
     if (v !== null && typeof v === "object") {
       var o = {};
       var keys = Object.keys(v);
-      for (var j = 0; j < keys.length; j++) o[keys[j]] = clone(v[keys[j]]);
+      // defineProperty, not assignment: a key named "__proto__" stays a key.
+      for (var j = 0; j < keys.length; j++) {
+        Object.defineProperty(o, keys[j], { value: clone(v[keys[j]]), writable: true, enumerable: true, configurable: true });
+      }
       return o;
     }
     return v;
@@ -1609,7 +1648,7 @@
     if (d.count !== d.points.length) {
       return refuse("count-mismatch", { count: d.count, found: d.points.length }, base);
     }
-    var seen = {};
+    var seen = Object.create(null); // ids are untrusted: no inherited names
     for (var i = 0; i < d.points.length; i++) {
       var id = d.points[i].id;
       if (has(seen, id)) return refuse("duplicate-id", { id: id }, base);
@@ -1727,7 +1766,7 @@
       if (red.kind !== base.reduction.kind) {
         return refuse("reduction-mismatch", { found: red.kind, expected: base.reduction.kind }, base);
       }
-      var held = {};
+      var held = Object.create(null);
       for (var b = 0; b < base.points.length; b++) held[base.points[b].id] = true;
       for (var n = 0; n < points.length; n++) {
         if (has(held, points[n].id)) return refuse("id-exists", { id: points[n].id }, base);
@@ -1777,10 +1816,20 @@
     }
   }
 
+  // A file-form descriptor carrying its fetched block: { file, dtype, byte_order,
+  // byte_length, data }, as a host or a shell hands update() a data file it fetched.
+  function isDescriptorWithBlock(v) {
+    return isObject(v) && !isFloat32Array(v) && !isArrayBuffer(v) && has(v, "data");
+  }
+
   // validate(data, base): in-memory form. Returns { ok: true, set } or
-  // { ok: false, code, message, set: base || null }.
+  // { ok: false, code, message, set: base || null }. When `vectors` is the file
+  // form's descriptor with the fetched block in `vectors.data`, the data is checked
+  // as the file form (the descriptor's dtype, byte order and declared length too),
+  // exactly as finish() would.
   function validate(data, base) {
     return guarded(base, function () {
+      if (isObject(data) && isDescriptorWithBlock(data.vectors)) return finishFile(data, data.vectors.data, base);
       var r = checkRecordsInner(data, "memory", base);
       if (!r.ok) return r;
       return finishInner(data, data.vectors, base);
@@ -1800,13 +1849,17 @@
   // Float32Array). Runs checks 1 to 11. A missing or wrong-typed block is block-unreadable.
   function finish(records, block, base) {
     return guarded(base, function () {
-      var r = checkRecordsInner(records, "file", base);
-      if (!r.ok) return r;
-      if (!isArrayBuffer(block) && !isFloat32Array(block)) {
-        return refuse("block-unreadable", { file: records.vectors.file }, base);
-      }
-      return finishInner(records, block, base);
+      return finishFile(records, block, base);
     });
+  }
+
+  function finishFile(records, block, base) {
+    var r = checkRecordsInner(records, "file", base);
+    if (!r.ok) return r;
+    if (!isArrayBuffer(block) && !isFloat32Array(block)) {
+      return refuse("block-unreadable", { file: records.vectors.file }, base);
+    }
+    return finishInner(records, block, base);
   }
 
   function siblingUrl(jsonUrl, file) {
@@ -4168,6 +4221,7 @@ ET.modes = (function () {
     var glide = null;
     var swap = null;
     var guided = false; // the swap tour draws from the fitted directions
+    var fitAtEntry = false; // decided once per entry: the entry waits for the fit
     var fitShare = null; // share of variance in those directions
     var epoch = 0; // bumped by enter and leave: work queued for an earlier entry does nothing
     var hold = null;
@@ -4201,6 +4255,7 @@ ET.modes = (function () {
       swap = ET.math.makeSwapTour(hold, D, { seed: seed, period: opt.period });
       guided = false;
       fitShare = null;
+      fitAtEntry = wantsGuided(s);
       epoch++;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
     }
@@ -4221,9 +4276,11 @@ ET.modes = (function () {
       };
     }
 
-    // Does this set get hidden directions from its strongest directions?
-    function wantsGuided() {
-      return opt.hidden !== "full" && Math.min(opt.subspace, D) >= 4 && set.count > 1;
+    // Does set `s` get hidden directions from its strongest directions? Decided
+    // once, at entry (fitAtEntry), so an append never leaves the mode waiting for a
+    // fit that was not scheduled.
+    function wantsGuided(s) {
+      return opt.hidden !== "full" && Math.min(opt.subspace, s.dimension) >= 4 && s.count > 1;
     }
 
     // The fit, in small units: centring, then the strongest directions (the same
@@ -4350,13 +4407,13 @@ ET.modes = (function () {
         ]);
       }
       var tasks = [statsTask()];
-      if (wantsGuided()) tasks = tasks.concat(fitTasks());
+      if (fitAtEntry) tasks = tasks.concat(fitTasks());
       tasks.push(knnTask());
       return M.stepper(tasks);
     }
 
     function isReady() {
-      return empty ? emptyReady : glide !== null && (guided || !wantsGuided());
+      return empty ? emptyReady : glide !== null && (guided || !fitAtEntry);
     }
 
     function lastT() {
@@ -4440,12 +4497,14 @@ ET.modes = (function () {
     // Append: the swap tour goes on unchanged and the camera glides to the new
     // mean. If new points fall inside the neighbour limit, neighbours are
     // measured again (the old wires stay until the new ones are shown). The
-    // first points onto an empty set, a replace, or another dimension: start
+    // first points onto an empty set, the points that make a set entered without a
+    // fit (one point) big enough for one, a replace, or another dimension: start
     // over from the current view.
     function dataChanged(newSet, info) {
       var i = info || {};
       var t = i.t === undefined ? self.time : M.checkTime(i.t);
-      if (i.op !== "append" || newSet.dimension !== D || empty || !isReady()) {
+      var fitNow = !fitAtEntry && newSet.dimension === D && wantsGuided(newSet);
+      if (i.op !== "append" || newSet.dimension !== D || empty || fitNow || !isReady()) {
         var from = entry;
         if (isReady()) {
           var s = stateAt(t);
@@ -4513,11 +4572,23 @@ ET.modes = (function () {
 // another group. The route is drawn from the seed and the data only, hop by
 // hop from its own random stream, so the frame at time t depends only on the
 // data, the seed, the entry view and t. See js/api/40-modes.md.
+//
+// Hop h depends on hop h - 1 (its stop, its frame and the recent stops), so a
+// far query must replay the route; what is kept is bounded: the last WINDOW
+// hops, plus at most MAX_CHECKPOINTS checkpoints (a hop's frame and recent
+// stops), spaced further apart as the route grows. Replays start from the
+// nearest checkpoint. An append only records which point count was in force
+// from which hop (`segs`): the points of a set never change on append, so the
+// neighbour pool and the visit list in force at any earlier hop can be rebuilt
+// from the current set and that count.
 // ---------------------------------------------------------------------------
 (function () {
   var M = ET.modes;
   var SALT_WANDER = 0x3a7d3e;
   var SCAN_WORK = 1 << 17; // values compared per piece of a neighbour scan done ahead of need
+  var WINDOW = 64; // hops kept after the newest one computed
+  var CHECKPOINT_SPACING = 16; // hops between checkpoints at first (doubles as the route grows)
+  var MAX_CHECKPOINTS = 32; // checkpoints kept, besides the route's start
 
   var DEFAULTS = {
     neighbours: 24, // neighbours a local frame is fitted to (the reference's K)
@@ -4549,6 +4620,7 @@ ET.modes = (function () {
       describe: describe,
       route: route,
       neighboursOf: neighboursOf,
+      retained: retained,
       mark: function () {}, // Wander has no events to fix
       leave: leave,
     };
@@ -4563,14 +4635,18 @@ ET.modes = (function () {
     var scale = 1;
     var ready = false;
     var empty = false;
-    var visit = null; // Int32Array: points the route may stop at
-    var labelledCount = 0;
-    var inVisit = null; // Uint8Array(N): 1 when the point is a visit candidate
-    var pool = null; // Int32Array: points searched for neighbours
-    var nbrCache = {};
-    var targets = []; // stop of hop h
-    var toFrames = []; // aligned local frame of hop h
-    var ahead = null; // the next hop's work in progress: { h, j, scan, fit }
+    // The data context of a point count n: { n, visit, inVisit, pool, labelled, nbr }
+    // (visit: Int32Array, the points the route may stop at; inVisit: Uint8Array(n);
+    // pool: Int32Array, the points searched for neighbours; nbr: neighbour cache).
+    var ctx = null; // the current set's
+    var oldCtx = null; // one earlier count's, for replays across an append
+    var segs = []; // [{ from, n }]: from hop `from` on, stops were chosen among the first n points
+    var win = null; // Map hop -> { target, frame }: the last WINDOW hops computed
+    var cps = []; // checkpoints [{ h, prev, recent, frame }], by hop; cps[0] is the start (h -1)
+    var spacing = CHECKPOINT_SPACING;
+    var cur = null; // the route's cursor: the newest hop computed { h, prev, recent, frame }
+    var hopsComputed = 0; // hops computed in all (replays included), for retained()
+    var ahead = null; // the next hop's work in progress: { h, j, c, scan, fit }
     var out = null;
     var tmpC = null;
 
@@ -4586,9 +4662,14 @@ ET.modes = (function () {
       startCentre = null;
       ready = false;
       empty = s.count === 0;
-      nbrCache = {};
-      targets = [];
-      toFrames = [];
+      ctx = null;
+      oldCtx = null;
+      segs = [{ from: 0, n: s.count }];
+      win = new Map();
+      cps = [{ h: -1, prev: -1, recent: [], frame: startFrame }];
+      spacing = CHECKPOINT_SPACING;
+      cur = { h: -1, prev: -1, recent: [], frame: startFrame };
+      hopsComputed = 0;
       ahead = null;
       self.time = 0;
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
@@ -4596,12 +4677,10 @@ ET.modes = (function () {
     }
 
     // Visit candidates (labelled points, or every pooled point when fewer than
-    // two are labelled) and the neighbour pool. O(N).
-    function buildPool() {
-      var N = set.count;
+    // two are labelled) and the neighbour pool, among the first N points. O(N).
+    function makeCtx(N) {
       var lab = [];
       for (var i = 0; i < N; i++) if (M.isLabelled(set.points[i])) lab.push(i);
-      labelledCount = lab.length;
       var limit = Math.min(N, opt.neighbourLimit);
       var p = [];
       var mark = new Uint8Array(N);
@@ -4615,10 +4694,19 @@ ET.modes = (function () {
           mark[lab[b]] = 1;
         }
       }
-      pool = Int32Array.from(p);
-      visit = lab.length >= 2 ? Int32Array.from(lab) : Int32Array.from(p);
-      inVisit = new Uint8Array(N);
+      var visit = lab.length >= 2 ? Int32Array.from(lab) : Int32Array.from(p);
+      var inVisit = new Uint8Array(N);
       for (var c = 0; c < visit.length; c++) inVisit[visit[c]] = 1;
+      return { n: N, visit: visit, inVisit: inVisit, pool: Int32Array.from(p), labelled: lab.length, nbr: new Map() };
+    }
+
+    // The context stops of hop h were chosen in.
+    function ctxFor(h) {
+      var n = segs[0].n;
+      for (var i = 1; i < segs.length && segs[i].from <= h; i++) n = segs[i].n;
+      if (n === ctx.n) return ctx;
+      if (!oldCtx || oldCtx.n !== n) oldCtx = makeCtx(n);
+      return oldCtx;
     }
 
     // Preparation: the set's statistics (sliced), the visit list and the
@@ -4657,7 +4745,7 @@ ET.modes = (function () {
           weight: 1,
           run: function () {
             if (!pooled) {
-              buildPool();
+              ctx = makeCtx(set.count);
               pooled = true;
               return false;
             }
@@ -4675,23 +4763,25 @@ ET.modes = (function () {
 
     // The point's `neighbours` nearest points in the pool, in the full space,
     // nearest first, ties to the lower index. O(pool * D), cached per point.
-    function nearest(j) {
-      if (nbrCache[j]) return nbrCache[j];
-      var sc = scanStart(j);
-      scanRows(sc, pool.length);
+    function nearest(c, j) {
+      var got = c.nbr.get(j);
+      if (got) return got;
+      var sc = scanStart(c, j);
+      scanRows(sc, c.pool.length);
       return scanFinish(sc);
     }
 
     // The same search, resumable: scanRows(sc, rows) measures the next `rows`
     // pool points. The pool is scanned in order, so the result does not depend
     // on how the scan was sliced.
-    function scanStart(j) {
-      var K = Math.max(0, Math.min(opt.neighbours, pool.length - 1));
-      return { j: j, K: K, q: 0, filled: 0, bestD: new Float64Array(K), bestI: new Int32Array(K) };
+    function scanStart(c, j) {
+      var K = Math.max(0, Math.min(opt.neighbours, c.pool.length - 1));
+      return { c: c, j: j, K: K, q: 0, filled: 0, bestD: new Float64Array(K), bestI: new Int32Array(K) };
     }
 
     function scanRows(sc, rows) {
       var X = set.vectors;
+      var pool = sc.c.pool;
       var K = sc.K;
       var bestD = sc.bestD;
       var bestI = sc.bestI;
@@ -4725,14 +4815,15 @@ ET.modes = (function () {
     }
 
     function scanFinish(sc) {
-      nbrCache[sc.j] = sc.bestI.subarray(0, sc.filled);
-      return nbrCache[sc.j];
+      var nb = sc.bestI.subarray(0, sc.filled);
+      sc.c.nbr.set(sc.j, nb);
+      return nb;
     }
 
-    function nearVisits(i, max) {
-      var nb = nearest(i);
+    function nearVisits(c, i, max) {
+      var nb = nearest(c, i);
       var res = [];
-      for (var q = 0; q < nb.length && res.length < max; q++) if (inVisit[nb[q]]) res.push(nb[q]);
+      for (var q = 0; q < nb.length && res.length < max; q++) if (c.inVisit[nb[q]]) res.push(nb[q]);
       return res;
     }
 
@@ -4740,14 +4831,16 @@ ET.modes = (function () {
       return i >= 0 && set.points[i] ? set.points[i].group || "" : "";
     }
 
-    // The stop of hop h, from hop h's own random stream (the reference's rules).
-    function pick(h) {
+    // The stop of hop h = cur.h + 1, from hop h's own random stream (the
+    // reference's rules), among the points of context c.
+    function pick(h, c) {
       var rng = ET.math.makeRandom(ET.math.mixSeed(seedU ^ SALT_WANDER, h));
-      var i = h > 0 ? targets[h - 1] : -1;
-      var recent = targets.slice(Math.max(0, h - opt.recent), h);
+      var i = h > 0 ? cur.prev : -1;
+      var recent = cur.recent;
+      var visit = c.visit;
       var hopNo = h + 1;
       if (i >= 0 && hopNo % opt.leapEvery !== 0) {
-        var near = nearVisits(i, opt.neighbours).filter(function (j) {
+        var near = nearVisits(c, i, opt.neighbours).filter(function (j) {
           return recent.indexOf(j) < 0;
         });
         if (near.length) return near[Math.floor(rng.next() * Math.min(near.length, opt.nearChoices))];
@@ -4762,39 +4855,98 @@ ET.modes = (function () {
       return visit[idx];
     }
 
-    function ensure(h) {
-      while (targets.length <= h) {
-        var n = targets.length;
-        addStop(n, pick(n));
+    // Hop k's stop and frame, if kept (the window or a checkpoint), else null.
+    // Hop -1 is the start: no stop, the entry frame.
+    function rec(k) {
+      if (k < 0) return { target: -1, frame: startFrame };
+      var w = win.get(k);
+      if (w) return w;
+      for (var i = cps.length - 1; i >= 0 && cps[i].h >= k; i--) if (cps[i].h === k) return { target: cps[i].prev, frame: cps[i].frame };
+      return null;
+    }
+
+    // Move the cursor back to the newest checkpoint before hop k.
+    function resetBefore(k) {
+      var c = cps[0];
+      for (var i = cps.length - 1; i >= 0; i--) {
+        if (cps[i].h < k) {
+          c = cps[i];
+          break;
+        }
       }
-    }
-
-    // Hop n's local frame (fitted to stop j and its neighbours, aligned to the
-    // previous hop's), appended to the route.
-    function stopIds(j) {
-      return [j].concat(Array.prototype.slice.call(nearest(j)));
-    }
-
-    function addStop(n, j, fitted) {
-      var lf = fitted || ET.math.localFrame(set.vectors, set.count, D, stopIds(j));
-      targets.push(j);
-      toFrames.push(ET.math.alignTo(lf, n > 0 ? toFrames[n - 1] : startFrame, D));
+      cur = { h: c.h, prev: c.prev, recent: c.recent.slice(), frame: c.frame };
+      win = new Map();
       ahead = null;
+    }
+
+    // Make hop k available through rec(k): from the cursor when it is behind k and
+    // no checkpoint is nearer, else from the newest checkpoint before k.
+    function ensure(k) {
+      if (rec(k)) return;
+      var near = cps[0];
+      for (var i = cps.length - 1; i >= 0; i--) {
+        if (cps[i].h < k) {
+          near = cps[i];
+          break;
+        }
+      }
+      if (cur.h >= k || near.h > cur.h) resetBefore(k);
+      while (cur.h < k) advance(null, -1);
+    }
+
+    function stopIds(c, j) {
+      return [j].concat(Array.prototype.slice.call(nearest(c, j)));
+    }
+
+    // Compute hop cur.h + 1: its stop (j, or picked when j is -1) and its local
+    // frame (fitted to the stop and its neighbours, or `fitted`), aligned to the
+    // previous hop's. Keeps it in the window and, on the spacing, as a checkpoint.
+    function advance(fitted, j) {
+      var n = cur.h + 1;
+      var c = ctxFor(n);
+      if (j < 0) j = pick(n, c);
+      var lf = fitted || ET.math.localFrame(set.vectors, set.count, D, stopIds(c, j));
+      var frame = ET.math.alignTo(lf, cur.frame, D);
+      var recent = cur.recent;
+      recent.push(j);
+      while (recent.length > Math.max(0, opt.recent)) recent.shift();
+      cur.h = n;
+      cur.prev = j;
+      cur.frame = frame;
+      hopsComputed++;
+      win.set(n, { target: j, frame: frame });
+      win.delete(n - WINDOW);
+      if ((n + 1) % spacing === 0) checkpoint();
+      ahead = null;
+    }
+
+    function checkpoint() {
+      var at = cps.length;
+      while (at > 0 && cps[at - 1].h > cur.h) at--;
+      if (at > 0 && cps[at - 1].h === cur.h) return;
+      cps.splice(at, 0, { h: cur.h, prev: cur.prev, recent: cur.recent.slice(), frame: cur.frame });
+      if (cps.length > MAX_CHECKPOINTS + 1) {
+        spacing *= 2;
+        cps = cps.filter(function (c) {
+          return c.h < 0 || (c.h + 1) % spacing === 0;
+        });
+      }
     }
 
     // One small piece of the work for hop h, ahead of need: pick its stop,
     // then scan the pool for the stop's neighbours SCAN_WORK values at a time,
     // then fit its frame (ET.math.makeLocalFrame, one unit per call) and align
-    // it. Returns true once hop h is in the route.
+    // it. Returns true once hop h is kept.
     // stateAt calls it every frame for the next hop, so by the time the flight
     // reaches a stop (4.8 s later) nothing is left to compute in that frame.
     // The pieces compute exactly what ensure(h) computes in one go.
     function workAhead(h) {
-      if (targets.length > h) return true;
-      if (targets.length < h) return false; // only the next hop is worked on ahead
+      if (rec(h)) return true;
+      if (cur.h !== h - 1) return false; // only the hop after the cursor is worked on ahead
       if (!ahead || ahead.h !== h) {
-        var j = pick(h);
-        ahead = { h: h, j: j, scan: nbrCache[j] ? null : scanStart(j), fit: null };
+        var c = ctxFor(h);
+        var j = pick(h, c);
+        ahead = { h: h, j: j, c: c, scan: c.nbr.has(j) ? null : scanStart(c, j), fit: null };
         return false;
       }
       if (ahead.scan) {
@@ -4804,9 +4956,9 @@ ET.modes = (function () {
         }
         return false;
       }
-      if (!ahead.fit) ahead.fit = ET.math.makeLocalFrame(set.vectors, set.count, D, stopIds(ahead.j));
+      if (!ahead.fit) ahead.fit = ET.math.makeLocalFrame(set.vectors, set.count, D, stopIds(ahead.c, ahead.j));
       if (!ahead.fit.step(0)) return false;
-      addStop(h, ahead.j, ahead.fit.result);
+      advance(ahead.fit.result, ahead.j);
       return true;
     }
 
@@ -4821,10 +4973,14 @@ ET.modes = (function () {
       if (!ready || empty) return M.holdState(out, startFrame, entry, t, status(t));
       var hp = hopAt(t);
       var h = hp.h;
+      ensure(h - 1);
       ensure(h);
+      var prevRec = rec(h - 1);
+      var hereRec = rec(h);
       workAhead(h + 1);
-      var j = targets[h];
-      var fromF = h > 0 ? toFrames[h - 1] : startFrame;
+      var j = hereRec.target;
+      var fromF = prevRec.frame;
+      var toF = hereRec.frame;
       var X = set.vectors;
       var oj = j * D;
       var phase;
@@ -4832,25 +4988,25 @@ ET.modes = (function () {
       if (hp.local < opt.travel) {
         phase = "travel";
         e = ET.math.smoothstep(hp.local / opt.travel);
-        var oc = h > 0 ? targets[h - 1] * D : -1;
+        var oc = h > 0 ? prevRec.target * D : -1;
         for (var d = 0; d < D; d++) {
           var a = oc >= 0 ? X[oc + d] : startCentre[d];
           tmpC[d] = a + (X[oj + d] - a) * e;
         }
         for (var d2 = 0; d2 < D; d2++) out.centre[d2] = tmpC[d2];
-        ET.math.blendFrames(fromF, toFrames[h], e, D, out.frame);
+        ET.math.blendFrames(fromF, toF, e, D, out.frame);
       } else {
         phase = "dwell";
         e = 1;
         for (var d3 = 0; d3 < D; d3++) out.centre[d3] = X[oj + d3];
-        ET.math.blendFrames(fromF, toFrames[h], 1, D, out.frame);
+        ET.math.blendFrames(fromF, toF, 1, D, out.frame);
       }
       out.focus = {
         phase: phase,
-        from: h > 0 ? targets[h - 1] : -1,
+        from: h > 0 ? prevRec.target : -1,
         to: j,
         e: e,
-        neighbours: Int32Array.from(nearVisits(j, opt.spokes)),
+        neighbours: Int32Array.from(nearVisits(ctx, j, opt.spokes)),
       };
       var draw = {
         zoom: opt.zoom / scale,
@@ -4877,12 +5033,12 @@ ET.modes = (function () {
     }
 
     function describeStop(h, phase) {
-      var j = targets[h];
+      var j = rec(h).target;
       if (phase === "dwell") {
         var g = groupOf(j);
         return 'at "' + nameOf(j) + '"' + (g ? " · " + g : "") + " · stop " + (h + 1);
       }
-      var i = h > 0 ? targets[h - 1] : -1;
+      var i = h > 0 ? rec(h - 1).target : -1;
       var gj = groupOf(j);
       var far = i >= 0 && gj !== "" && groupOf(i) !== gj;
       return (i >= 0 ? '"' + nameOf(i) + '" → ' : "heading to ") + '"' + nameOf(j) + '"' + (far ? " · long leap to " + gj : "");
@@ -4898,6 +5054,7 @@ ET.modes = (function () {
       if (empty) return M.EMPTY_STATUS;
       if (!ready) return "getting ready to wander …";
       var hp = hopAt(t);
+      ensure(hp.h - 1);
       ensure(hp.h);
       return describeStop(hp.h, hp.local < opt.travel ? "travel" : "dwell");
     }
@@ -4919,24 +5076,51 @@ ET.modes = (function () {
         return M.changed(prepare(), true);
       }
       var h = hopAt(t).h;
+      // Keep the route up to hop h (computed with the data so far); drop the rest.
       ensure(h);
-      targets.length = h + 1;
-      toFrames.length = h + 1;
+      if (cur.h > h) {
+        resetBefore(h + 1);
+        while (cur.h < h) advance(null, -1);
+      }
+      cps = cps.filter(function (c) {
+        return c.h <= h;
+      });
+      segs = segs.filter(function (sg) {
+        return sg.from <= h;
+      });
+      segs.push({ from: h + 1, n: newSet.count });
       ahead = null;
+      if (!oldCtx || oldCtx.n !== ctx.n) oldCtx = ctx; // the route so far may be replayed with it
       set = newSet;
-      nbrCache = {};
-      buildPool();
+      ctx = makeCtx(set.count);
       return M.changed(null, false);
     }
 
     function route(n) {
       if (!ready || empty) return new Int32Array(0);
-      if (n > 0) ensure(n - 1);
-      return Int32Array.from(targets.slice(0, n));
+      var res = new Int32Array(Math.max(0, n));
+      for (var k = 0; k < n; k++) {
+        ensure(k);
+        res[k] = rec(k).target;
+      }
+      return res;
     }
 
     function neighboursOf(j) {
-      return ready && !empty ? Int32Array.from(nearest(j)) : new Int32Array(0);
+      return ready && !empty ? Int32Array.from(nearest(ctx, j)) : new Int32Array(0);
+    }
+
+    // What the route keeps (for tests and diagnostics): hops in the window,
+    // checkpoints, the Float32 values their frames hold, append segments, and
+    // the hops computed in all.
+    function retained() {
+      return {
+        hops: win ? win.size : 0,
+        checkpoints: cps.length,
+        floats: ((win ? win.size : 0) + cps.length) * 3 * D,
+        segments: segs.length,
+        hopsComputed: hopsComputed,
+      };
     }
 
     function describe() {
@@ -4948,8 +5132,8 @@ ET.modes = (function () {
         neighbourLimit: opt.neighbourLimit,
         travel: opt.travel,
         dwell: opt.dwell,
-        labelled: labelledCount,
-        visiting: labelledCount >= 2 ? "labelled points" : "any point",
+        labelled: ctx ? ctx.labelled : 0,
+        visiting: ctx && ctx.labelled >= 2 ? "labelled points" : "any point",
         empty: empty,
         varianceShare: null,
       };
@@ -4957,9 +5141,10 @@ ET.modes = (function () {
 
     function leave() {
       set = null;
-      nbrCache = {};
-      targets = [];
-      toFrames = [];
+      ctx = null;
+      oldCtx = null;
+      win = new Map();
+      cps = [];
       ahead = null;
       ready = false;
     }
@@ -5062,6 +5247,7 @@ ET.viewer = (function () {
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
   var CROWD_POWER = 1;
+  var BRIGHT_WEIGHT = 0.7; // a point painted at this weight or more counts toward the light load
   var LABEL_SAMPLE = 300; // labelled points projected on the CPU per frame for labels
   var LABEL_POOL = 64; // label elements at most
   var STATUS_EVERY = 0.12; // seconds between status-line updates (the reference's)
@@ -5810,7 +5996,21 @@ ET.viewer = (function () {
     v.stopColour = st.light ? sfg : "rgb(255, 255, 255)";
     v.neighbourColour = cssRgb(mix(st.foreground, st.muted, 0.375));
     v.accent255 = [Math.round(t.accent[0] * 255), Math.round(t.accent[1] * 255), Math.round(t.accent[2] * 255)];
+  }
+
+  // Read the host's theme and, only when it differs from the one applied, apply it
+  // and clear the trails (drawn in the old colours). An update or a refreshTheme()
+  // with the theme unchanged leaves the trails, label styles and colours alone.
+  // Returns true when the theme changed.
+  function syncTheme(v) {
+    var t = readTheme(v);
+    var key = JSON.stringify(t);
+    if (key === v.themeKey) return false;
+    v.theme = t;
+    v.themeKey = key;
+    applyTheme(v);
     v.needClear = true;
+    return true;
   }
 
   // The dark outline under every name, in the stage's background colour.
@@ -5872,8 +6072,7 @@ ET.viewer = (function () {
 
   function refreshTheme(v) {
     if (v.destroyed) return;
-    v.theme = readTheme(v);
-    applyTheme(v);
+    syncTheme(v);
     if (v.set && paintKey(v) !== v.paintKey) recolour(v);
     invalidate(v);
   }
@@ -5900,10 +6099,13 @@ ET.viewer = (function () {
   // weight from their index. When no point is labelled at all (a labels-only set
   // whose labels are its ids), every point gets a middle weight so the view is not
   // all dust.
+  // Also returns `bright`: the sum of the weights of the bright points painted (weight
+  // BRIGHT_WEIGHT or more), which crowding() reads as the light load.
   function paint(v, set, from, to) {
     var n = to - from;
     var colours = new Float32Array(n * 3);
     var weights = new Float32Array(n);
+    var bright = 0;
     var isLabelled = ET.modes.isLabelled;
     for (var i = from; i < to; i++) {
       var p = set.points[i];
@@ -5924,8 +6126,9 @@ ET.viewer = (function () {
       colours[o + 1] = c[1];
       colours[o + 2] = c[2];
       weights[i - from] = w;
+      if (w >= BRIGHT_WEIGHT) bright += w;
     }
-    return { colours: colours, weights: weights };
+    return { colours: colours, weights: weights, bright: bright };
   }
 
   // Coloured ink: the hue fully saturated and darkened (labelled points a little
@@ -5964,6 +6167,7 @@ ET.viewer = (function () {
     if (!set || !v.renderer || set.count === 0) return;
     var pc = paint(v, set, 0, set.count);
     var res = v.renderer.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
+    v.lightLoad = pc.bright;
     if (res && res.ok === false) fatal(v, res.message);
     if (v.mode) v.mode.wiresVersion = -1;
     v.paintKey = paintKey(v);
@@ -6167,13 +6371,14 @@ ET.viewer = (function () {
   // Options for a mode instance: the viewer's defaults (none today), then the host's
   // modeOptions. Tumble's refit turns onto the new tour over its own
   // refitTransition ("auto": sized to the turn); mode entry keeps the mode's 1.5 s.
-  var MODE_DEFAULTS = {};
+  var MODE_DEFAULTS = Object.create(null);
   function modeOptionsFor(v, id) {
     var out = {};
     var k;
     var d = MODE_DEFAULTS[id];
     if (d) for (k in d) if (Object.prototype.hasOwnProperty.call(d, k)) out[k] = d[k];
-    var host = v.options.modeOptions && v.options.modeOptions[id];
+    var mo = v.options.modeOptions;
+    var host = mo && Object.prototype.hasOwnProperty.call(mo, id) ? mo[id] : null;
     if (host && typeof host === "object") {
       for (k in host) if (Object.prototype.hasOwnProperty.call(host, k)) out[k] = host[k];
     }
@@ -6307,9 +6512,8 @@ ET.viewer = (function () {
       // invalid-field refusal), so anything caught here is a fault, not the data's.
       res = { ok: false, code: "internal", message: "Internal error while checking the data: " + errorText(err, String(err)) };
     }
-    // Re-read the host's theme on every update (no polling).
-    v.theme = readTheme(v);
-    applyTheme(v);
+    // Re-read the host's theme on every update (no polling); applied only if changed.
+    syncTheme(v);
     if (v.set && paintKey(v) !== v.paintKey) recolour(v);
     if (!res || !res.ok) {
       return refuse(v, { ok: false, code: res ? res.code : "internal", message: res ? res.message : "Data refused." });
@@ -6329,13 +6533,7 @@ ET.viewer = (function () {
       // loop is left to the frame guard, and the host gets a result.
       out = { ok: false, code: "internal", message: "Internal error while showing the data: " + errorText(err, String(err)) };
     }
-    if (!out.ok) {
-      if (!out.accepted) return refuse(v, out);
-      clearNotice(v);
-      call(v, v.options.onError, strip(out));
-      invalidate(v);
-      return strip(out);
-    }
+    if (!out.ok) return refuse(v, out);
     if (v.fatalKind === "data") clearFatal(v);
     if (v.fatalKind === "gpu" && v.rendering) clearFatal(v);
     if (op === "replace") recover(v);
@@ -6361,13 +6559,14 @@ ET.viewer = (function () {
 
   // What a failed update restores.
   function snapshot(v) {
-    var gi = {};
-    for (var k in v.groupIndex) if (Object.prototype.hasOwnProperty.call(v.groupIndex, k)) gi[k] = v.groupIndex[k];
+    var gi = Object.create(null); // group names are untrusted: no inherited names
+    for (var k in v.groupIndex) gi[k] = v.groupIndex[k];
     return {
       set: v.set,
       groupIndex: gi,
       groupNames: v.groupNames.slice(),
       labelledCount: v.labelledCount,
+      lightLoad: v.lightLoad,
       labelSample: v.labelSample.slice(),
       last: v.last,
       spin: v.spin,
@@ -6381,6 +6580,7 @@ ET.viewer = (function () {
     v.groupIndex = snap.groupIndex;
     v.groupNames = snap.groupNames;
     v.labelledCount = snap.labelledCount;
+    v.lightLoad = snap.lightLoad;
     v.labelSample = snap.labelSample;
     v.last = snap.last;
     v.spin = snap.spin;
@@ -6402,7 +6602,9 @@ ET.viewer = (function () {
       if (set) {
         var pc = paint(v, set, 0, set.count);
         r.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
+        v.lightLoad = pc.bright;
       } else {
+        v.lightLoad = 0;
         var D = r.status().dimension || 1;
         r.setData({ vectors: new Float32Array(0), dimension: D });
       }
@@ -6425,19 +6627,28 @@ ET.viewer = (function () {
 
   function applyReplace(v, set) {
     var snap = snapshot(v);
-    v.groupIndex = {};
+    v.groupIndex = Object.create(null);
     v.groupNames = [];
     v.labelledCount = countLabelled(set, 0, set.count);
     v.labelSample = [];
     extendLabelSample(v, set, 0);
-    var gpu = null;
+    v.lightLoad = 0;
     if (v.renderer) {
+      var gpu;
       try {
         var pc = paint(v, set, 0, set.count);
         gpu = v.renderer.setData({ vectors: set.vectors, dimension: set.dimension, colours: pc.colours, weights: pc.weights });
+        v.lightLoad = pc.bright;
       } catch (err) {
         restore(v, snap);
         return gpuThrew(err);
+      }
+      if (gpu && gpu.ok === false) {
+        // This GPU cannot take the set (too many points, too wide, a failed build or
+        // upload): the renderer may still hold the previous set, or nothing usable,
+        // so the view goes back exactly to what it was, renderer copy included.
+        restore(v, snap);
+        return { ok: false, code: gpu.reason || "gpu-failed", message: gpu.message || "The graphics card could not take the data." };
       }
     }
     v.set = set;
@@ -6466,11 +6677,6 @@ ET.viewer = (function () {
     sizeStrip(v);
     describeSet(v);
     renderProvenance(v);
-    if (gpu && gpu.ok === false) {
-      // Accepted, but this GPU cannot draw it: the data and provenance stand.
-      fatal(v, gpu.message);
-      return { ok: false, accepted: true, code: gpu.reason, message: gpu.message };
-    }
     return { ok: true, op: "replace", count: set.count, added: set.count };
   }
 
@@ -6510,6 +6716,7 @@ ET.viewer = (function () {
         restore(v, snap);
         return { ok: false, code: gpu && gpu.reason ? gpu.reason : "gpu-failed", message: gpu && gpu.message ? gpu.message : "append failed" };
       }
+      v.lightLoad += pc.bright;
     }
     v.set = set;
     if (v.mode) {
@@ -6595,7 +6802,14 @@ ET.viewer = (function () {
   }
 
   // No media queries without a stylesheet, so the layout reacts to the element's width.
+  // Two breakpoints, each evaluated on its own: 520 px for the provenance grid (one
+  // column below it) and 600 px for the rest of the narrow layout.
   function layoutForWidth(v, width) {
+    var oneColumn = width < 520;
+    if (oneColumn !== v.oneColumn) {
+      v.oneColumn = oneColumn;
+      v.provList.style.gridTemplateColumns = oneColumn ? "minmax(0, 1fr)" : "max-content minmax(0, 1fr)";
+    }
     var narrow = width < 600;
     if (narrow === v.narrow) return;
     v.narrow = narrow;
@@ -6603,7 +6817,6 @@ ET.viewer = (function () {
       mb.summary.style.display = narrow ? "none" : "";
       mb.title.style.fontSize = narrow ? "20px" : "24px";
     });
-    v.provList.style.gridTemplateColumns = width < 520 ? "minmax(0, 1fr)" : "max-content minmax(0, 1fr)";
     v.panel.style.padding = narrow ? "6px 12px 14px" : "6px 16px 16px";
     v.playButton.style.minHeight = narrow ? TOUCH_HEIGHT : BUTTON_HEIGHT;
     v.zoomResetButton.style.minHeight = narrow ? TOUCH_HEIGHT : BUTTON_HEIGHT;
@@ -6832,11 +7045,16 @@ ET.viewer = (function () {
     return out;
   }
 
-  // Brightness factor for crowded sets, 1 for sets up to CROWD_REF bright points. A
-  // bright point is a labelled one (weight 1), or any point of a set with no labelled
-  // point at all (weight 0.7). The built-in sample set has 290, so it is unchanged.
+  // Brightness factor for crowded sets, 1 up to a light load of CROWD_REF. The light
+  // load is the sum of the weights of the bright points actually uploaded (weight
+  // BRIGHT_WEIGHT or more): a labelled point counts 1, a point of a set with no
+  // labelled point 0.7, the dim unlabelled points of a labelled set nothing. So it
+  // is the labelled count, or 0.7 times the point count when nothing is labelled;
+  // points uploaded at 0.7 before the first labelled point arrived by append keep
+  // counting 0.7, as they are still drawn at that weight. The built-in sample set
+  // has 290, so it is unchanged.
   function crowding(v) {
-    var n = v.labelledCount > 0 ? v.labelledCount : 0.7 * (v.set ? v.set.count : 0);
+    var n = v.set ? v.lightLoad : 0;
     return n > CROWD_REF ? Math.pow(CROWD_REF / n, CROWD_POWER) : 1;
   }
 
@@ -7473,9 +7691,10 @@ ET.viewer = (function () {
       statusClock: STATUS_EVERY,
       statusText: "",
       sinceAppend: Infinity,
-      groupIndex: {},
+      groupIndex: Object.create(null), // group name -> index; names are untrusted
       groupNames: [],
       labelledCount: 0,
+      lightLoad: 0, // see crowding()
       labelSample: [],
       labelPool: [],
       sx: new Float32Array(LABEL_SAMPLE),
@@ -7491,6 +7710,7 @@ ET.viewer = (function () {
       fpsAt: null,
       fpsFrames: 0,
       narrow: null,
+      oneColumn: null,
       dpr: 1,
       W: 2,
       H: 2,
@@ -7509,6 +7729,7 @@ ET.viewer = (function () {
       lastSpent: 0,
       lostTime: false,
       paintKey: null,
+      themeKey: null,
     };
     v.timing.mountAt = now(v);
     v.tick = function (t) {
@@ -7516,8 +7737,7 @@ ET.viewer = (function () {
     };
     build(v);
     el.appendChild(v.root);
-    v.theme = readTheme(v); // read once the root inherits the host's properties
-    applyTheme(v);
+    syncTheme(v); // read once the root inherits the host's properties
     v.playButton.textContent = v.running ? "Pause" : "Play";
     v.playButton.setAttribute("aria-pressed", v.running ? "false" : "true");
     paintModeButtons(v);

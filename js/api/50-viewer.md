@@ -22,7 +22,7 @@ const el = document.getElementById("space");
 const viewer = EmbeddingsTumbler.mount(el, { mode: "tumble", seed: 7 });
 const meta = await (await fetch("data/atlas.json")).json();
 const block = await (await fetch("data/" + meta.vectors.file)).arrayBuffer();
-const result = viewer.update({ ...meta, vectors: block }); // the block replaces the file-form descriptor
+const result = viewer.update({ ...meta, vectors: { ...meta.vectors, data: block } }); // the block beside its descriptor
 if (!result.ok) console.warn(result.code, result.message); // also shown inside el
 // later, live points:
 viewer.update({ ...appendMeta, op: "append", vectors: newVectors });
@@ -31,8 +31,12 @@ EmbeddingsTumbler.destroy(el);
 ```
 
 (`update` takes the contract's **in-memory form**: the same fields as the JSON
-file, with `vectors` a `Float32Array` or a little-endian `ArrayBuffer`. See
-`docs/data-contract.md`, "The in-memory form". The contract module's
+file, with `vectors` a `Float32Array` or a little-endian `ArrayBuffer`; or a
+fetched data file as it is, with the block put beside its descriptor in
+`vectors.data`, as above, in which case the descriptor's `file`, `dtype`,
+`byte_order` and `byte_length` are checked too, with the contract's own codes
+and messages (a descriptor declaring `"dtype": "float64"` is refused, not drawn).
+See `docs/data-contract.md`, "The in-memory form". The contract module's
 `loadFile(jsonUrl, fetchFn)` does the two fetches for you if you hand it your own
 fetch-like function; the viewer itself never calls one.)
 
@@ -153,11 +157,13 @@ Refusal (nothing changes in the view):
     validation. It is reported as a fault, never as bad data. A hostile getter
     in the data stays the contract's own `invalid-field` with
     `(unreadable data)`.
-- From the GPU, after a replace was accepted: `too-many-points`,
-  `dimension-too-large`, `shader-failed`, `gpu-failed`, the renderer's reasons
-  from `setData` (see `js/api/30-renderer.md`). In this one case the data and
-  provenance stand, and a message over the stage says this GPU cannot draw them.
-  Every other refusal changes nothing.
+- From the GPU: `too-many-points`, `dimension-too-large`, `shader-failed`,
+  `gpu-failed`, the renderer's reasons from `setData` or `appendData` (see
+  `js/api/30-renderer.md`): this GPU cannot take the set. Like every other
+  refusal it changes nothing: the previous set, its labels, provenance and mode
+  stay, the renderer's copy is put back, and drawing goes on. (In 0.11.0 a
+  replace refused here was kept as data under a message over the stage, while
+  the renderer still held the previous points.)
 - The message is also shown **inside the element** as text: as a notice at the
   top of the stage (with a Dismiss button) while a view is showing, which keeps
   running unchanged; or over the whole stage when there is nothing to show yet.
@@ -322,12 +328,18 @@ with no inline styles allows it (checked with zero CSP violations in
 `tests/browser/test_viewer_render.py`). The layout reacts to the element's width
 (a `ResizeObserver`), since there are no media queries: below 600 px the mode
 summaries are hidden; below 520 px the provenance list stacks; the status line
-and the controls wrap. Checked at 390 px wide.
+and the controls wrap. The two breakpoints are evaluated on their own at every
+size change (a resize from 560 px to 360 px stacks the list). Checked at 390 px
+wide.
 
 ## Theming: CSS custom properties
 
 Set them on the host element or any ancestor. Read with `getComputedStyle` on
-the viewer's root at mount, on every `update`, and on `refreshTheme()`.
+the viewer's root at mount, on every `update`, and on `refreshTheme()`. Only a
+theme that differs from the one applied is applied again: then the trails
+(drawn in the old colours) are cleared and the labels re-styled. An `update`
+(an append, a refusal) or a `refreshTheme()` with the theme unchanged leaves
+the trails and the colours alone.
 
 | Property | Default (dark) | Default when the background is light | Used for |
 |----------|----------------|--------------------------------------|----------|
@@ -518,10 +530,15 @@ name and its ring use the stop's colour.
 A point with a label is drawn at full weight; a set with no labelled point at
 all draws every point at weight 0.7. Many such bright points pile up into a
 featureless ball, so the overall brightness (`gain` in the renderer's draw
-state) is multiplied by `600 / n` when the number of bright points `n`
-is above 600 (`n` is the labelled count, or 0.7 times the point count when
-nothing is labelled). At 600 or fewer nothing changes; the built-in sample set
-has 290. Found on a real 10,000-point Atlas, where every point carries text:
+state) is multiplied by `600 / n` when the light load `n` is above 600. `n` is
+the sum of the weights of the bright points actually uploaded to the GPU
+(weight 0.7 or more): the labelled count, or 0.7 times the point count when
+nothing is labelled. Points uploaded at 0.7 before the first labelled point
+arrived by append are still drawn at 0.7 and keep counting 0.7 each, so that
+append does not brighten the view (5,000 unlabelled points then one labelled:
+`n` goes from 3,500 to 3,501); the dim unlabelled points of a labelled set
+count nothing. `n` is updated with every upload and rolled back with a failed
+one. At 600 or fewer nothing changes; the built-in sample set has 290. Found on a real 10,000-point Atlas, where every point carries text:
 `docs/evidence/2026-11-14-real-atlas-proof.md`.
 
 ## Measured frame rates

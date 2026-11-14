@@ -184,7 +184,9 @@
           return stop("block-unreadable", 'Vector file "' + vectors.file + '" could not be read.');
         }
         if (!live()) return;
-        records = Object.assign({}, records, { vectors: block });
+        // The descriptor stays, with the block beside it: the core checks the file
+        // form's own fields (dtype, byte order, declared length) against the block.
+        records = Object.assign({}, records, { vectors: Object.assign({}, vectors, { data: block }) });
       }
       // Anything else (no vectors, a file name that is not plain) goes to the viewer as it
       // is: it validates, shows its own plain refusal and returns it.

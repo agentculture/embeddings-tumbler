@@ -31,9 +31,10 @@ Examples: `index.html`, `index.html?data=sets/atlas.json`,
 `page.js` fetches the JSON with the browser's `fetch` (same origin only; a
 response redirected to another origin is refused), reads `vectors.file`,
 fetches that block beside the JSON into an `ArrayBuffer`, and calls
-`update` with the in-memory form (`Object.assign({}, records, { vectors:
-block })`). The viewer validates it and shows any refusal itself, over the
-stage.
+`update` with the records and the block beside the descriptor
+(`vectors: { file, dtype, byte_order, byte_length, data: block }`). The viewer
+validates it as the file form, the descriptor's fields included, and shows any
+refusal itself, over the stage.
 
 The records file (the `.json`) may be at most **64 MB**: a response whose
 `Content-Length` is larger is refused before its body is read, and one sent

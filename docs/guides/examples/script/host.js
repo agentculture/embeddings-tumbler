@@ -39,8 +39,9 @@
             return response.arrayBuffer();
           })
           .then(function (block) {
-            // The block replaces the file-form descriptor.
-            return Object.assign({}, meta, { vectors: block });
+            // The block goes beside the file-form descriptor, so the viewer checks
+            // the descriptor's dtype, byte order and length against it.
+            return Object.assign({}, meta, { vectors: Object.assign({}, meta.vectors, { data: block }) });
           });
       });
   }

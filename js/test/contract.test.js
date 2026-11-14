@@ -98,6 +98,48 @@ for (const c of INDEX.cases) {
   });
 }
 
+// The file form handed to validate() as the descriptor with its fetched block in
+// `vectors.data` (what the shells and the guide's host do): every case gives the
+// file form's outcome, refusal codes and messages included.
+for (const c of INDEX.cases) {
+  test("file form with its block in memory: " + c.name, async () => {
+    const base = await loadBase(c.base);
+    const data = readJson(c.file);
+    const file = data.vectors && data.vectors.file;
+    let block;
+    try {
+      block = readBytes(file);
+    } catch (err) {
+      block = undefined; // a block that cannot be read: no data
+    }
+    data.vectors = Object.assign({}, data.vectors, { data: block });
+    checkOutcome(c, C.validate(data, base), base);
+  });
+}
+
+test("the descriptor's dtype, byte order and declared length are checked when it carries its block", () => {
+  const block = readBytes("valid-384.f32");
+  const cases = [
+    [{ dtype: "float64" }, 'Field "vectors.dtype" is missing or not valid.'],
+    [{ byte_order: "big" }, 'Field "vectors.byte_order" is missing or not valid.'],
+    [{ byte_length: 9212 }, 'Field "vectors.byte_length" is missing or not valid.'],
+    [{ file: "../valid-384.f32" }, 'Vector file "../valid-384.f32" must be a plain file name in the same folder as the data file.'],
+  ];
+  for (const [change, message] of cases) {
+    const data = readJson("valid-384.json");
+    data.vectors = Object.assign({}, data.vectors, change, { data: block });
+    const r = C.validate(data, null);
+    assert.strictEqual(r.ok, false, JSON.stringify(change));
+    assert.strictEqual(r.message, message);
+  }
+  const ok = readJson("valid-384.json");
+  ok.vectors = Object.assign({}, ok.vectors, { data: new Float32Array(block) });
+  assert.ok(C.validate(ok, null).ok, "a Float32Array block works too");
+  const none = readJson("valid-384.json");
+  none.vectors = Object.assign({}, none.vectors, { data: "not a block" });
+  assert.strictEqual(C.validate(none, null).code, "block-unreadable");
+});
+
 test("every index case is covered by this file", () => {
   const names = INDEX.cases.map((c) => c.name);
   assert.deepStrictEqual([...covered.file].sort(), [...names].sort());

@@ -239,8 +239,17 @@ variance in the data it is `0` and the frames are still orthonormal.
   `makeRandom(mixSeed(seed ^ SALT_SWAP, c))`, where `SALT_SWAP` is a fixed
   internal constant. Calls may come in any time order (forwards, backwards,
   repeated); each answer equals what a fresh tour gives. `stateAt(t)` returns
-  `{ cycle, axis, u }`. Pure in `t`: going backwards in time replays from
-  `frame0` (cheap: about `5 * D` operations per cycle). `D >= 4` required.
+  `{ cycle, axis, u }`. Pure in `t`: going backwards in time replays from the
+  nearest kept cycle start at or before the target (a replay gives the same
+  bits as one from `frame0`). It keeps at most 33 cycle starts (`3 * D` floats
+  each): one every 16 cycles at first, the spacing doubling whenever more than
+  32 would be kept, so a backward seek costs at most one spacing of cycles
+  (for a tour at hour ten, about 330 cycles) and memory stays bounded. A seek
+  forward costs the cycles in between, once. Measured in node (seed 1, period
+  3.4 s): ten hours ahead at 2560-d with hidden directions from the full space,
+  12 s once (1.1 ms per cycle); with an 8-row basis (Lattice's default), one
+  hour ahead at 2560-d took 0.16 s. `steps()` (swap steps computed in all) and
+  `checkpoints()` (cycle starts kept) are for tests. `D >= 4` required.
 
 ## True nearest neighbours
 

@@ -193,7 +193,11 @@ append (tested for all three: frame bit-identical, centre within 1e-7).
   behaviour: an append costs `O(k * D)` here, a refit costs a full fit.
 - **Lattice** keeps its swap schedule and the directions fitted when it was
   entered (they are not fitted again on an append): no jump; the centre glides
-  to the new mean. If the set had fewer than `neighbourLimit` points, new points fall
+  to the new mean. Whether an entry waits for that fit is decided once, at
+  entry; a set entered with one point has nothing to fit, so the first append
+  that gives it two or more points re-enters from the current view (as the
+  first points onto an empty set do) and fits then. (Before, such an append
+  left the mode waiting for a fit nobody scheduled: never ready again.) If the set had fewer than `neighbourLimit` points, new points fall
   inside the limit, so neighbours are measured again (returned stepper); the
   old wires stay drawn until the new list is ready (a new `version`), which is
   then shown at full strength. Otherwise nothing is re-measured.
@@ -207,11 +211,14 @@ append (tested for all three: frame bit-identical, centre within 1e-7).
   0.0061 against 0.0077), and the change at the next hop's start is 0 to five
   decimals. The route is fixed by the data history (the same sets appended at
   the same times) and the seed, not by how the instance was queried (tested).
+  The append records only the point count in force from the next hop on: a
+  set's earlier points never change on append, so the stops and neighbours of
+  any earlier hop can be computed again from the current set and that count.
 
 These return `{ work, restart: false }`. Any other change re-enters the mode
 from the current view and returns `{ work: prepare(), restart: true }`: the
-first points arriving on an **empty** set, `op: "replace"`, or another
-dimension.
+first points arriving on an **empty** set, (Lattice) the points that give a
+one-point set something to fit, `op: "replace"`, or another dimension.
 
 The mean and spread are kept as running sums (`ET.modes.stats(set, previous)`),
 so an append updates them in `O(k * D)`.
@@ -428,6 +435,22 @@ at the stop for `dwell` seconds with the centre exactly on the point.
   with `textContent`.
 - `inst.route(n) -> Int32Array`: the first `n` stops. `inst.neighboursOf(j) ->
   Int32Array`: the neighbours a stop's frame is fitted to.
+- **Long sessions and far seeks.** Hop `h` depends on hop `h - 1` (its stop,
+  its frame, the recent stops), so a time far from the hops computed must be
+  replayed hop by hop. What is kept is bounded: the last 64 hops computed (stop
+  and frame), plus at most 33 checkpoints (a hop's frame and its recent stops),
+  one every 16 hops at first, the spacing doubling whenever more than 32 would
+  be kept, plus one record (two numbers) per append. A backward seek replays
+  from the newest checkpoint before it, so it costs at most one spacing of hops;
+  a seek forward costs the hops in between, once, and is not capped: measured
+  in node on a 3,000-point set, one hour ahead (750 hops) took 1.1 s at 384-d
+  and 2.2 s at 2560-d, and the seek back to hop 400 afterwards 21 ms and 39 ms.
+  Normal running computes each hop ahead of need in small pieces, as before.
+  Answers equal a fresh instance's whatever the order of queries (tested over
+  1,500 hops). `inst.retained() -> { hops, checkpoints, floats, segments,
+  hopsComputed }` reports what is kept (for tests). Before, every hop's stop and
+  frame were kept for the life of the instance (`3 * D` floats per hop: about
+  23 MB per hour at 2560-d).
 - `describe()`: `{ id, projection, seed, neighbours, neighbourLimit, travel,
   dwell, labelled, visiting, empty, varianceShare: null }`.
 - `mark(t)` does nothing: Wander has no events.

@@ -75,7 +75,13 @@ at 10,000 points); the duplicate-id check builds an index of the base's ids
 
 - `validate(data, base)`: the in-memory form (what `update(data)` receives).
   `data.vectors` is a `Float32Array` (values; its own range only) or an
-  `ArrayBuffer` (little-endian float32 bytes whatever the platform). `base` is
+  `ArrayBuffer` (little-endian float32 bytes whatever the platform), or the
+  file form's descriptor with the fetched block in `vectors.data`, which is
+  checked exactly as `finish(data, data.vectors.data, base)` (the descriptor's
+  `file`, `dtype`, `byte_order` and `byte_length` included). Ids, group names
+  and metadata keys are untrusted strings: `"__proto__"`, `"constructor"` and
+  the like are ordinary names in every check (duplicate ids, `id-exists`) and a
+  metadata key `"__proto__"` stays a key of the copy. `base` is
   the set the view holds, or `null`/`undefined`. `op` `"replace"` (default)
   ignores `base` except to return it on refusal; `"append"` needs it.
 - `checkRecords(records, base)`: file form, checks 1 to 7 only (no block

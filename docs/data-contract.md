@@ -45,10 +45,10 @@ There are two forms of the same data set:
 | Form | Record part | Vector block | Used by |
 |------|-------------|--------------|---------|
 | File form | `<name>.json`, UTF-8 | `<name>.f32` beside it, named by `vectors.file` | producers, the standalone page, the web component's `src`, the Python CLI |
-| In-memory form | a JavaScript object | `vectors` is a `Float32Array` or an `ArrayBuffer` | `update(data)` |
+| In-memory form | a JavaScript object | `vectors` is a `Float32Array` or an `ArrayBuffer`, or the file form's descriptor with the fetched block in `vectors.data` | `update(data)` |
 
-The loader turns the file form into the in-memory form; `update()` validates the
-in-memory form with the same rules.
+`update()` validates the in-memory form with the same rules; given a fetched
+file with its block in `vectors.data`, it runs the file form's checks too.
 
 ## The file form
 
@@ -288,17 +288,20 @@ same rules as the JSON file**, except `vectors`:
 |--------------|---------|
 | a `Float32Array` | values in the array's order; its `length` must be `count` × `dimension` (its `byteLength` must be `count` × `dimension` × 4). Endianness does not arise: these are values, not bytes. |
 | an `ArrayBuffer` | raw bytes of the block, interpreted as **little-endian** float32 whatever the platform's byte order; its `byteLength` must be `count` × `dimension` × 4. |
-| anything else (including the file form's descriptor object) | refused with `invalid-field` on `vectors`. |
+| the file form's descriptor with the fetched block in `data` (`{file, dtype, byte_order, byte_length, data}`) | the file form: every file-form check runs (`vectors.file`, `vectors.dtype`, `vectors.byte_order`, `vectors.byte_length`, `vector-file-path`), then `data` is read as the block (an `ArrayBuffer` or a `Float32Array`; anything else is `block-unreadable`). |
+| anything else (including the descriptor without `data`) | refused with `invalid-field` on `vectors`. |
 
-In the in-memory form there is no `file`, `dtype`, `byte_order` or
-`byte_length`, so `vector-file-path`, `block-unreadable` and the `vectors.*`
-field checks do not apply. A `Float32Array` that is a view into a larger buffer is read from its own
+With a `Float32Array` or an `ArrayBuffer` there is no `file`, `dtype`,
+`byte_order` or `byte_length`, so `vector-file-path`, `block-unreadable` and
+the `vectors.*` field checks do not apply. A `Float32Array` that is a view into a larger buffer is read from its own
 offset and length only.
 
-The loader turns a file pair into this form: it validates the JSON part,
-fetches the block named by `vectors.file` into an `ArrayBuffer`, and puts that
-`ArrayBuffer` in `vectors`. A host that builds data in the page passes the
-in-memory form to `update()` directly.
+A host (or the viewer's own shells) that fetched a file pair hands it over with
+the block beside the descriptor in `vectors.data`, so that a file declaring
+another `dtype`, `byte_order` or `byte_length` is refused with the same code and
+message as in the file form, never drawn from bytes it does not describe. The
+contract module's loader does the same checks itself. A host that builds data
+in the page passes a `Float32Array` or an `ArrayBuffer` directly.
 
 The viewer does not keep a reference to the host's object or array after
 `update()` returns; it copies what it needs. A host may reuse or change its

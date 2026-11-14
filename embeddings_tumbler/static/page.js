@@ -325,7 +325,9 @@
           .then(function (block) {
             if (!live() || block === null) return;
             load.done = true;
-            var data = Object.assign({}, records, { vectors: block });
+            // The descriptor stays, with the block beside it: the viewer checks the
+            // file form's own fields (dtype, byte order, declared length) against it.
+            var data = Object.assign({}, records, { vectors: Object.assign({}, v, { data: block }) });
             show(data, options, { sample: false, name: name });
           });
       })
