@@ -1222,9 +1222,21 @@
 
   // ----- Focus: the ranked lists beside the stage -----
 
+  function spFreshSearch(p) {
+    try {
+      return typeof p.handle.info === "function" ? p.handle.info().search : null;
+    } catch {
+      // A handle whose info() throws: keep the snapshot the panel has.
+      return null;
+    }
+  }
+
   function spSetFocus(p, focus) {
     if (focus === p.focus) return;
     p.focus = focus;
+    // What a search reports depends on the view (whether it can be faced), so the kept
+    // snapshot is read again; otherwise Face the searches keeps the other view's state.
+    if (p.search) p.search = spFreshSearch(p) || p.search;
     var root = p.parts.stage.parentNode;
     if (focus) {
       if (!p.side) p.side = spBuildSide(p);

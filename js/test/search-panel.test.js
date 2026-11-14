@@ -517,6 +517,32 @@ test("Face the searches: enabled with a search in a mode with face, disabled in 
   t.h.destroy();
 });
 
+test("Face the searches follows the view when only the view changes", async () => {
+  const t = setup();
+  await ready(t);
+  await type(t, "word3");
+  const face = t.q(".tumbler-search-face");
+  assert.strictEqual(face.disabled, false);
+  t.h.setMode("focus");
+  await until(t.dom, () => t.h.info().ready);
+  t.dom.frames(3);
+  assert.strictEqual(face.disabled, true, "off in Focus with no new search");
+  assert.match(textOf(t.q(".tumbler-search-note")), /Face the searches is off here/);
+  t.h.setMode("tumble");
+  await until(t.dom, () => t.h.info().ready);
+  t.dom.frames(3);
+  assert.strictEqual(face.disabled, false, "on again outside Focus");
+  const real = t.h.info;
+  t.h.info = () => {
+    throw new Error("no info");
+  };
+  t.h.setMode("focus");
+  t.dom.frames(3);
+  t.h.info = real;
+  assert.strictEqual(face.disabled, false, "a failing info() keeps the snapshot the panel had");
+  t.h.destroy();
+});
+
 test("Focus: the ranked lists sit beside the stage; leaving Focus puts the layout back", async () => {
   const t = setup({ mode: "focus" });
   await ready(t);
