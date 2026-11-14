@@ -23,7 +23,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - README and CLAUDE.md describe the viewer as built.
 - Lattice draws its hidden directions from the data's strongest directions (the reference draws them from the full space); `hidden: "full"` keeps the reference's rule.
-- On a light background the default treatment is `soft` ink.
+- A light background is drawn as soft coloured ink. The two other light treatments tried during development (a dark stage panel and stronger coloured ink) were removed, with the `lightStyle` option and the `--tumbler-light-style` property that chose between them.
 
 ### Fixed
 

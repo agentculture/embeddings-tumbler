@@ -16,9 +16,8 @@ button {
   padding: 6px 12px;
 }
 
-/* A light page: tell the viewer so, and pick how the picture is drawn on it. */
+/* A light page: tell the viewer so, and it draws the points as soft coloured ink. */
 embeddings-tumbler {
   --tumbler-background: #f6f3ec;
-  --tumbler-light-style: soft;
   --tumbler-stage-height: 420px;
 }

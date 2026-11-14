@@ -87,7 +87,6 @@ test("on a light stage the outline takes the host's background colour, not a nig
   const dom = makeFakeDom();
   const el = dom.host();
   el.style.setProperty("--tumbler-background", "#f6f4ee");
-  el.style.setProperty("--tumbler-light-style", "ink");
   const h = api.mount(el, { seed: 3 });
   const v = h._viewer;
   h.update(makeSet({ n: 60, d: 16, labelEvery: 1 }));
@@ -140,7 +139,6 @@ test("on a light stage Wander's names use the host's foreground, not white", () 
   const el = dom.host();
   el.style.setProperty("--tumbler-background", "#f6f4ee");
   el.style.setProperty("--tumbler-foreground", "#1b2130");
-  el.style.setProperty("--tumbler-light-style", "ink");
   const h = api.mount(el, { seed: 3, mode: "wander" });
   const v = h._viewer;
   h.update(makeSet({ n: 60, d: 16, labelEvery: 1 }));

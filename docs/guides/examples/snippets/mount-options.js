@@ -7,7 +7,6 @@ const viewer = EmbeddingsTumbler.mount(document.getElementById("space"), {
   title: "Support tickets",
   controls: true,          // false hides the play, zoom, speed and label controls
   provenanceOpen: false,   // start the provenance block collapsed (it cannot be removed)
-  lightStyle: null,        // "panel", "ink" or "soft" on a light page
   onError: function (result) {
     console.warn("refused:", result.code, result.message);
   }
