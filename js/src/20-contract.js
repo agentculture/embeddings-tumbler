@@ -40,7 +40,7 @@
 
   function fill(code, values) {
     return MESSAGES[code].replace(/\{(\w+)\}/g, function (m, name) {
-      return Object.prototype.hasOwnProperty.call(values || {}, name) ? String(values[name]) : m;
+      return Object.hasOwn(values || {}, name) ? String(values[name]) : m;
     });
   }
 
@@ -56,14 +56,14 @@
     return typeof v === "object" && v !== null && !Array.isArray(v);
   }
   function isInt(v) {
-    return typeof v === "number" && isFinite(v) && Math.floor(v) === v && Math.abs(v) <= MAX_INT;
+    return typeof v === "number" && Number.isFinite(v) && Math.floor(v) === v && Math.abs(v) <= MAX_INT;
   }
   function isNonEmptyString(v) {
     return typeof v === "string" && v.length > 0;
   }
   function isStringList(v) {
     if (!Array.isArray(v)) return false;
-    for (var i = 0; i < v.length; i++) if (typeof v[i] !== "string") return false;
+    for (const item of v) if (typeof item !== "string") return false;
     return true;
   }
   function isFloat32Array(v) {
@@ -73,14 +73,17 @@
     return tag(v) === "[object ArrayBuffer]";
   }
   function has(o, k) {
-    return Object.prototype.hasOwnProperty.call(o, k);
+    return Object.hasOwn(o, k);
   }
 
   function jsonText(v) {
     try {
       var s = JSON.stringify(v);
       return s === undefined ? "missing" : s;
-    } catch (e) {
+    } catch {
+      // JSON.stringify throws for a value it cannot write (a BigInt, a cycle, a
+      // throwing toJSON); the message then shows the plain string form instead,
+      // and the error itself carries nothing the message needs.
       return String(v);
     }
   }
@@ -89,15 +92,14 @@
   function clone(v) {
     if (Array.isArray(v)) {
       var a = [];
-      for (var i = 0; i < v.length; i++) a.push(clone(v[i]));
+      for (const item of v) a.push(clone(item));
       return a;
     }
     if (v !== null && typeof v === "object") {
       var o = {};
-      var keys = Object.keys(v);
       // defineProperty, not assignment: a key named "__proto__" stays a key.
-      for (var j = 0; j < keys.length; j++) {
-        Object.defineProperty(o, keys[j], { value: clone(v[keys[j]]), writable: true, enumerable: true, configurable: true });
+      for (const key of Object.keys(v)) {
+        Object.defineProperty(o, key, { value: clone(v[key]), writable: true, enumerable: true, configurable: true });
       }
       return o;
     }
@@ -105,79 +107,125 @@
   }
 
   // Returns the path of the first invalid field, or null. `form` is "memory" or "file".
+  // The checks run in the contract's field order; each helper returns the path
+  // of its first invalid field, or null to go on to the next.
   function firstInvalidField(d, op, form) {
+    return (
+      invalidTopField(d, op) ??
+      invalidProvenance(d.provenance, op === "append") ??
+      invalidReduction(d.reduction, d) ??
+      invalidVectors(d.vectors, d, form) ??
+      invalidPoints(d.points)
+    );
+  }
+
+  function invalidTopField(d, op) {
     if (op !== undefined && op !== "replace" && op !== "append") return "op";
-    var isAppend = op === "append";
     if (!isNonEmptyString(d.model)) return "model";
     if (!isInt(d.dimension) || d.dimension < 1) return "dimension";
     if (!isInt(d.count) || d.count < 0) return "count";
     if (typeof d.text_included !== "boolean") return "text_included";
+    return null;
+  }
 
-    var p = d.provenance;
-    if (p !== undefined || !isAppend) {
-      if (!isObject(p)) return "provenance";
-      if (!isNonEmptyString(p.source)) return "provenance.source";
-      if (!isNonEmptyString(p.producer)) return "provenance.producer";
-      if (typeof p.synthetic !== "boolean") return "provenance.synthetic";
-      if (!has(p, "seed") || !(p.seed === null || isInt(p.seed))) return "provenance.seed";
-      if (!isStringList(p.limitations)) return "provenance.limitations";
-      if (!isStringList(p.uncertain)) return "provenance.uncertain";
-      if (p.created !== undefined && typeof p.created !== "string") return "provenance.created";
-      if (p.endpoint !== undefined && !isNonEmptyString(p.endpoint)) return "provenance.endpoint";
-      if (p.params !== undefined && !isObject(p.params)) return "provenance.params";
+  // Provenance is required, except on an append, where it may be left out.
+  function invalidProvenance(p, isAppend) {
+    if (p === undefined && isAppend) return null;
+    return invalidProvenanceRequired(p) ?? invalidProvenanceOptional(p);
+  }
+
+  function invalidProvenanceRequired(p) {
+    if (!isObject(p)) return "provenance";
+    if (!isNonEmptyString(p.source)) return "provenance.source";
+    if (!isNonEmptyString(p.producer)) return "provenance.producer";
+    if (typeof p.synthetic !== "boolean") return "provenance.synthetic";
+    if (!has(p, "seed") || !(p.seed === null || isInt(p.seed))) return "provenance.seed";
+    if (!isStringList(p.limitations)) return "provenance.limitations";
+    if (!isStringList(p.uncertain)) return "provenance.uncertain";
+    return null;
+  }
+
+  function invalidProvenanceOptional(p) {
+    if (p.created !== undefined && typeof p.created !== "string") return "provenance.created";
+    if (p.endpoint !== undefined && !isNonEmptyString(p.endpoint)) return "provenance.endpoint";
+    if (p.params !== undefined && !isObject(p.params)) return "provenance.params";
+    return null;
+  }
+
+  // The reduction is optional; when given, its fields must be valid and agree
+  // with the data's dimension.
+  function invalidReduction(r, d) {
+    if (r === undefined) return null;
+    return invalidReductionField(r) ?? invalidReductionAgreement(r, d);
+  }
+
+  function invalidReductionField(r) {
+    if (!isObject(r)) return "reduction";
+    if (r.kind !== "none" && r.kind !== "rotation" && r.kind !== "top-k") return "reduction.kind";
+    if (!isInt(r.source_dimension) || r.source_dimension < 1) return "reduction.source_dimension";
+    if (!isInt(r.directions_kept) || r.directions_kept < 1) return "reduction.directions_kept";
+    if (
+      typeof r.variance_dropped !== "number" ||
+      !Number.isFinite(r.variance_dropped) ||
+      r.variance_dropped < 0 ||
+      r.variance_dropped > 1
+    )
+      return "reduction.variance_dropped";
+    return null;
+  }
+
+  // Runs after invalidReductionField and invalidTopField passed, so every value
+  // compared here is a finite number (no NaN can make a comparison false both ways).
+  function invalidReductionAgreement(r, d) {
+    if (r.directions_kept !== d.dimension) return "reduction";
+    if (r.kind === "top-k") {
+      if (d.dimension >= r.source_dimension || r.variance_dropped >= 1) return "reduction";
+    } else if (r.source_dimension !== d.dimension || r.variance_dropped !== 0) {
+      return "reduction";
     }
+    return null;
+  }
 
-    var r = d.reduction;
-    if (r !== undefined) {
-      if (!isObject(r)) return "reduction";
-      if (r.kind !== "none" && r.kind !== "rotation" && r.kind !== "top-k") return "reduction.kind";
-      if (!isInt(r.source_dimension) || r.source_dimension < 1) return "reduction.source_dimension";
-      if (!isInt(r.directions_kept) || r.directions_kept < 1) return "reduction.directions_kept";
-      if (
-        typeof r.variance_dropped !== "number" ||
-        !isFinite(r.variance_dropped) ||
-        r.variance_dropped < 0 ||
-        r.variance_dropped > 1
-      )
-        return "reduction.variance_dropped";
-      if (r.directions_kept !== d.dimension) return "reduction";
-      if (r.kind === "top-k") {
-        if (!(d.dimension < r.source_dimension) || !(r.variance_dropped < 1)) return "reduction";
-      } else if (r.source_dimension !== d.dimension || r.variance_dropped !== 0) {
-        return "reduction";
-      }
+  function invalidVectors(v, d, form) {
+    if (form === "file") return invalidVectorFile(v, d);
+    return isFloat32Array(v) || isArrayBuffer(v) ? null : "vectors";
+  }
+
+  function invalidVectorFile(v, d) {
+    if (!isObject(v)) return "vectors";
+    if (!isNonEmptyString(v.file)) return "vectors.file";
+    if (v.dtype !== "float32") return "vectors.dtype";
+    if (v.byte_order !== "little") return "vectors.byte_order";
+    if (!isInt(v.byte_length) || v.byte_length !== d.count * d.dimension * 4) {
+      return "vectors.byte_length";
     }
+    return null;
+  }
 
-    var v = d.vectors;
-    if (form === "file") {
-      if (!isObject(v)) return "vectors";
-      if (!isNonEmptyString(v.file)) return "vectors.file";
-      if (v.dtype !== "float32") return "vectors.dtype";
-      if (v.byte_order !== "little") return "vectors.byte_order";
-      if (!isInt(v.byte_length) || v.byte_length !== d.count * d.dimension * 4) {
-        return "vectors.byte_length";
-      }
-    } else if (!isFloat32Array(v) && !isArrayBuffer(v)) {
-      return "vectors";
-    }
-
-    var pts = d.points;
+  function invalidPoints(pts) {
     if (!Array.isArray(pts)) return "points";
     for (var i = 0; i < pts.length; i++) {
-      var pt = pts[i];
-      if (!isObject(pt)) return "points[" + i + "]";
-      if (!isNonEmptyString(pt.id)) return "points[" + i + "].id";
-      if (typeof pt.label !== "string") return "points[" + i + "].label";
-      if (pt.group !== undefined && typeof pt.group !== "string") return "points[" + i + "].group";
-      if (pt.metadata !== undefined && !isObject(pt.metadata)) return "points[" + i + "].metadata";
+      var bad = invalidPoint(pts[i]);
+      if (bad !== null) return "points[" + i + "]" + bad;
     }
+    return null;
+  }
+
+  // The invalid field of one point record as a path suffix ("" for the record
+  // itself, ".id" and so on), or null.
+  function invalidPoint(pt) {
+    if (!isObject(pt)) return "";
+    if (!isNonEmptyString(pt.id)) return ".id";
+    if (typeof pt.label !== "string") return ".label";
+    if (pt.group !== undefined && typeof pt.group !== "string") return ".group";
+    if (pt.metadata !== undefined && !isObject(pt.metadata)) return ".metadata";
     return null;
   }
 
   // Checks 1 to 7 of the contract (everything that needs no vector block).
   function checkRecordsInner(d, form, base) {
     if (!isObject(d) || d.kind !== KIND) return refuse("wrong-kind", {}, base);
-    if (!isInt(d.schema_version) || SUPPORTED.indexOf(d.schema_version) < 0) {
+    if (!isInt(d.schema_version) || !SUPPORTED.includes(d.schema_version)) {
       return refuse(
         "schema-version",
         {
@@ -192,15 +240,16 @@
     if (form === "file" && !PLAIN_NAME.test(d.vectors.file)) {
       return refuse("vector-file-path", { file: d.vectors.file }, base);
     }
-    if (d.provenance !== undefined && d.provenance.endpoint !== undefined) {
-      if (!ENDPOINT_NAME.test(d.provenance.endpoint)) return refuse("endpoint-is-address", {}, base);
+    // After firstInvalidField, provenance is either an object or (on an append) absent.
+    if (d.provenance?.endpoint !== undefined && !ENDPOINT_NAME.test(d.provenance.endpoint)) {
+      return refuse("endpoint-is-address", {}, base);
     }
     if (d.count !== d.points.length) {
       return refuse("count-mismatch", { count: d.count, found: d.points.length }, base);
     }
     var seen = Object.create(null); // ids are untrusted: no inherited names
-    for (var i = 0; i < d.points.length; i++) {
-      var id = d.points[i].id;
+    for (const point of d.points) {
+      var id = point.id;
       if (has(seen, id)) return refuse("duplicate-id", { id: id }, base);
       seen[id] = true;
     }
@@ -241,7 +290,7 @@
     var n1 = n0 + values.length;
     var buf = baseValues.buffer;
     var off = baseValues.byteOffset / 4;
-    if (head && head.get(buf) === off + n0 && off + n1 <= buf.byteLength / 4) {
+    if (head?.get(buf) === off + n0 && off + n1 <= buf.byteLength / 4) {
       var grown = new Float32Array(buf, baseValues.byteOffset, n1);
       grown.set(values, n0);
       head.set(buf, off + n1);
@@ -256,12 +305,12 @@
 
   function copyPoints(pts) {
     var out = [];
-    for (var i = 0; i < pts.length; i++) {
+    for (const p of pts) {
       out.push({
-        id: pts[i].id,
-        label: pts[i].label,
-        group: pts[i].group === undefined ? "" : pts[i].group,
-        metadata: pts[i].metadata === undefined ? {} : clone(pts[i].metadata),
+        id: p.id,
+        label: p.label,
+        group: p.group === undefined ? "" : p.group,
+        metadata: p.metadata === undefined ? {} : clone(p.metadata),
       });
     }
     return out;
@@ -295,50 +344,15 @@
       );
     }
     var values = readValues(block);
-    for (var i = 0; i < values.length; i++) {
-      if (!isFinite(values[i])) {
-        var row = Math.floor(i / d.dimension);
-        return refuse("non-finite", { id: d.points[row].id }, base);
-      }
+    var bad = firstNonFinite(values);
+    if (bad >= 0) {
+      var row = Math.floor(bad / d.dimension);
+      return refuse("non-finite", { id: d.points[row].id }, base);
     }
 
     var points = copyPoints(d.points);
     var red = reductionOf(d);
-
-    if (d.op === "append") {
-      if (!isObject(base)) return refuse("append-without-base", {}, null);
-      if (d.model !== base.model) {
-        return refuse("model-mismatch", { found: d.model, expected: base.model }, base);
-      }
-      if (d.dimension !== base.dimension) {
-        return refuse("dimension-mismatch", { found: d.dimension, expected: base.dimension }, base);
-      }
-      if (red.kind !== base.reduction.kind) {
-        return refuse("reduction-mismatch", { found: red.kind, expected: base.reduction.kind }, base);
-      }
-      var held = Object.create(null);
-      for (var b = 0; b < base.points.length; b++) held[base.points[b].id] = true;
-      for (var n = 0; n < points.length; n++) {
-        if (has(held, points[n].id)) return refuse("id-exists", { id: points[n].id }, base);
-      }
-      var merged = appendValues(base.vectors, values);
-      var allPoints = base.points.concat(points);
-      return {
-        ok: true,
-        set: {
-          schema_version: 1,
-          model: base.model,
-          dimension: base.dimension,
-          count: allPoints.length,
-          text_included: base.text_included || d.text_included,
-          provenance: base.provenance,
-          reduction: base.reduction,
-          vectors: merged,
-          ids: idsOf(allPoints),
-          points: allPoints,
-        },
-      };
-    }
+    if (d.op === "append") return mergeAppend(d, values, points, red, base);
 
     return {
       ok: true,
@@ -357,11 +371,56 @@
     };
   }
 
+  // Index of the first value that is not a finite number, or -1.
+  function firstNonFinite(values) {
+    for (var i = 0; i < values.length; i++) if (!Number.isFinite(values[i])) return i;
+    return -1;
+  }
+
+  // Check 11 (an append agrees with the set it extends) and the merge.
+  function mergeAppend(d, values, points, red, base) {
+    if (!isObject(base)) return refuse("append-without-base", {}, null);
+    if (d.model !== base.model) {
+      return refuse("model-mismatch", { found: d.model, expected: base.model }, base);
+    }
+    if (d.dimension !== base.dimension) {
+      return refuse("dimension-mismatch", { found: d.dimension, expected: base.dimension }, base);
+    }
+    if (red.kind !== base.reduction.kind) {
+      return refuse("reduction-mismatch", { found: red.kind, expected: base.reduction.kind }, base);
+    }
+    var held = Object.create(null);
+    for (const p of base.points) held[p.id] = true;
+    for (const p of points) {
+      if (has(held, p.id)) return refuse("id-exists", { id: p.id }, base);
+    }
+    var merged = appendValues(base.vectors, values);
+    var allPoints = base.points.concat(points);
+    return {
+      ok: true,
+      set: {
+        schema_version: 1,
+        model: base.model,
+        dimension: base.dimension,
+        count: allPoints.length,
+        text_included: base.text_included || d.text_included,
+        provenance: base.provenance,
+        reduction: base.reduction,
+        vectors: merged,
+        ids: idsOf(allPoints),
+        points: allPoints,
+      },
+    };
+  }
+
   // Never throws into the caller: an unexpected failure becomes a refusal.
   function guarded(base, fn) {
     try {
       return fn();
-    } catch (e) {
+    } catch {
+      // Whatever threw (a hostile getter or proxy in the host's data, a value no
+      // check foresaw), the caller gets a refusal, never the exception; the
+      // refusal is the whole report, so the error itself is not kept.
       return refuse("invalid-field", { field: "(unreadable data)" }, base);
     }
   }
@@ -422,36 +481,19 @@
   // string and returns a promise of { ok, json(), arrayBuffer() }. The block is fetched
   // beside the JSON file only. Resolves (never rejects) to the same result as validate.
   function loadFile(jsonUrl, fetchFn, base) {
-    var records;
     return Promise.resolve()
       .then(function () {
         return fetchFn(String(jsonUrl));
       })
       .then(function (res) {
-        if (!res || !res.ok) throw new Error("unreadable");
+        if (!res?.ok) throw new Error("unreadable");
         return res.json();
       })
       .then(
-        function (json) {
-          records = json;
+        function (records) {
           var c = checkRecords(records, base);
           if (!c.ok) return c;
-          return Promise.resolve()
-            .then(function () {
-              return fetchFn(siblingUrl(jsonUrl, c.file));
-            })
-            .then(function (res) {
-              if (!res || !res.ok) throw new Error("unreadable");
-              return res.arrayBuffer();
-            })
-            .then(
-              function (buf) {
-                return finish(records, buf, base);
-              },
-              function () {
-                return refuse("block-unreadable", { file: c.file }, base);
-              }
-            );
+          return loadBlock(records, jsonUrl, c.file, fetchFn, base);
         },
         function () {
           // The data file itself could not be fetched or is not JSON: the document defines
@@ -462,6 +504,28 @@
       .catch(function () {
         return refuse("wrong-kind", {}, base);
       });
+  }
+
+  // The second half of loadFile, once the records have passed checks 1 to 7: fetch
+  // the block `file` beside the JSON file and run finish(). Resolves (never
+  // rejects); any failure to fetch or read the block is block-unreadable.
+  function loadBlock(records, jsonUrl, file, fetchFn, base) {
+    return Promise.resolve()
+      .then(function () {
+        return fetchFn(siblingUrl(jsonUrl, file));
+      })
+      .then(function (res) {
+        if (!res?.ok) throw new Error("unreadable");
+        return res.arrayBuffer();
+      })
+      .then(
+        function (buf) {
+          return finish(records, buf, base);
+        },
+        function () {
+          return refuse("block-unreadable", { file: file }, base);
+        }
+      );
   }
 
   ET.contract = {
