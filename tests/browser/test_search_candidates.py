@@ -62,7 +62,7 @@ def base_url(tmp_path_factory):
 def run(browser, base_url):
     tab = harness.Tab(browser, viewport=(1280, 900))
     try:
-        tab.goto(base_url + "/index.html")
+        tab.goto(base_url + "/index.html?sample=synthetic")
         tab.wait_for(READY, timeout=WAIT, what="the viewer and its panel")
         out = {"callbacks": tab.evaluate(FAKE_RERANKER)}
         out["controls"] = tab.wait_for(
