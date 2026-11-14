@@ -10,6 +10,9 @@ Usage:
       [--synthetic] [--seed N] [--endpoint NAME] [--limitation TEXT ...]
       [--uncertain TEXT ...] [--labels-only] [--keep-groups]
 Output is deterministic (no timestamp is written).
+INPUT and OUTDIR must be inside the folder you run the script from (OUTDIR may be
+"." itself): the script reads and writes nowhere else, so a mistyped or generated
+path such as ../../somewhere cannot read or overwrite files outside that folder.
 --labels-only: text_included=false, label:=id, no metadata, group kept only
 with --keep-groups (you assert group names are not corpus text).
 """
@@ -28,6 +31,23 @@ PLAIN_NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
 def fail(msg):
     sys.stderr.write("error: " + msg + "\n")
     sys.exit(1)
+
+
+def inside_here(path, folder_ok=False):
+    """The real path of PATH; stop unless it is inside the current folder.
+
+    Symlinks are followed first, so a link cannot point the script elsewhere.
+    With folder_ok, the current folder itself is accepted too.
+    """
+    here = os.path.realpath(os.getcwd())
+    full = os.path.realpath(os.path.join(here, path))
+    if full.startswith(here + os.sep) or (folder_ok and full == here):
+        return full
+    # Like fail(): prints "error: ..." on stderr and exits with status 1.
+    raise SystemExit(
+        f"error: {path} is outside the current folder {here}; "
+        "run the script from a folder that holds it"
+    )
 
 
 def parse_args():
@@ -119,9 +139,10 @@ def parse_line(n, line, seen, dim, a):
     return make_record(n, o, pid, a), fv
 
 
-def read_points(path, a):
+def read_points(given, a):
     """(point records, float32 vectors, dimension) from the JSON-lines input."""
     points, vecs, seen, dim = [], [], set(), None
+    path = inside_here(given)
     try:
         fh = open(path, encoding="utf-8")
     except OSError as e:
@@ -161,14 +182,17 @@ def main():
         "points": points,
     }  # fmt: skip
     text = json.dumps(doc, allow_nan=False, ensure_ascii=False, indent=1) + "\n"
-    os.makedirs(a.outdir, exist_ok=True)
-    jp, bp = os.path.join(a.outdir, a.name + ".json"), os.path.join(a.outdir, f32name)
+    outdir = inside_here(a.outdir, folder_ok=True)
+    os.makedirs(outdir, exist_ok=True)
+    jp = inside_here(os.path.join(outdir, a.name + ".json"))
+    bp = inside_here(os.path.join(outdir, f32name))
     with open(jp, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     with open(bp, "wb") as f:
         f.write(block)
     verify(jp, bp)
-    print(f"wrote {jp} and {bp}: {len(points)} points x {dim} dims")
+    shown = os.path.join(a.outdir, a.name)
+    print(f"wrote {shown}.json and {shown}.f32: {len(points)} points x {dim} dims")
 
 
 def layout_errors(d, raw, bp):
@@ -206,8 +230,9 @@ def content_errors(d, raw):
     return errs
 
 
-def verify(jp, bp):
+def verify(written_json, written_block):
     """Re-read the written files and check them against the guide's rules."""
+    jp, bp = inside_here(written_json), inside_here(written_block)
     with open(jp, encoding="utf-8") as f:
         d = json.load(f)
     with open(bp, "rb") as f:

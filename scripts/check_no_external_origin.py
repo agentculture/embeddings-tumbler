@@ -251,7 +251,7 @@ def check_file(path: Path, label: str | None = None) -> list[str]:
     return check_js_text(text, label)
 
 
-def collect(paths: list[Path]) -> list[Path]:
+def collect(paths: list[Path], name=str) -> list[Path]:
     files: list[Path] = []
     for p in paths:
         if p.is_dir():
@@ -263,16 +263,24 @@ def collect(paths: list[Path]) -> list[Path]:
         elif p.is_file():
             files.append(p)
         else:
-            raise FileNotFoundError(str(p))
+            raise FileNotFoundError(name(p))
     return files
 
 
-def check_paths(paths: list[Path], expect: list[str] = ()) -> tuple[list[Path], list[str]]:
-    """Scan every file under ``paths``. Returns ``(files scanned, findings)``."""
-    files = collect(paths)
+def check_paths(
+    paths: list[Path], expect: list[str] = (), name=str
+) -> tuple[list[Path], list[str]]:
+    """Scan every file under ``paths``. Returns ``(files scanned, findings)``.
+
+    ``name`` gives the label a file's findings carry (default: the path as found).
+    """
+    files = collect(paths, name)
     findings: list[str] = []
     for f in files:
-        findings += check_file(f)
+        try:
+            findings += check_file(f, name(f))
+        except OSError as exc:
+            raise OSError(exc.errno, exc.strerror, name(f)) from exc
     if not files:
         findings.append("no files to scan [S1]")
     names = {f.name for f in files}
@@ -286,19 +294,32 @@ class OutsideFolder(OSError):
     """A path given on the command line resolves outside the current folder."""
 
 
-def inside_current_folder(path: Path) -> Path:
-    """``path`` checked to resolve (symlinks followed) inside the current folder.
+def inside_current_folder(value: str) -> str:
+    """The real path of ``value`` (symlinks followed), checked to be inside the current folder.
 
-    Returns the resolved path, relative to the current folder when ``path`` was relative,
-    so that findings name files as they were given. OutsideFolder when it is not inside.
+    SonarSource's documented path-traversal check: both paths through ``os.path.realpath``,
+    then a plain ``startswith(base + os.sep)``; the current folder itself is accepted too, so
+    ``.`` scans it. OutsideFolder when the path is not inside.
     """
-    base = Path(os.path.realpath(os.getcwd()))
-    real = Path(os.path.realpath(path))
-    if not real.is_relative_to(base):
-        raise OutsideFolder(
-            f"{path}: outside the current folder {base}; run from a folder that contains it"
-        )
-    return real if path.is_absolute() else real.relative_to(base)
+    base = os.path.realpath(os.getcwd())
+    full = os.path.realpath(os.path.join(base, value))
+    if full == base or full.startswith(base + os.sep):
+        return full
+    raise OutsideFolder(
+        f"{value}: outside the current folder {base}; run from a folder that contains it"
+    )
+
+
+def as_given(file: Path, relative_roots: list[str]) -> str:
+    """``file`` relative to the current folder when it lies under a root given as relative.
+
+    So findings and the file list name files as they were given on the command line.
+    """
+    text = str(file)
+    for root in relative_roots:
+        if text == root or text.startswith(root + os.sep):
+            return os.path.relpath(text, os.path.realpath(os.getcwd()))
+    return text
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -306,22 +327,27 @@ def main(argv: list[str] | None = None) -> int:
         prog="check_no_external_origin.py",
         description="Fail if shipped viewer files reference an external origin.",
     )
-    parser.add_argument("paths", nargs="*", type=Path, help="files or folders to scan")
+    parser.add_argument("paths", nargs="*", help="files or folders to scan")
     parser.add_argument("--expect", action="append", default=[], help="a file that must exist")
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
     args = parser.parse_args(argv)
     try:
-        paths = [inside_current_folder(p) for p in args.paths] or [DEFAULT_ROOT]
+        roots = [inside_current_folder(p) for p in args.paths]
     except OutsideFolder as exc:
         print(f"error: refused {exc}", file=sys.stderr)
         return 2
+    relative_roots = [r for p, r in zip(args.paths, roots) if not os.path.isabs(p)]
+
+    def name(file: Path) -> str:
+        return as_given(file, relative_roots)
+
     try:
-        files, findings = check_paths(paths, args.expect)
+        files, findings = check_paths([Path(r) for r in roots] or [DEFAULT_ROOT], args.expect, name)
     except OSError as exc:
         print(f"error: cannot read {exc}", file=sys.stderr)
         return 2
     if args.json:
-        print(json.dumps({"files": [str(f) for f in files], "findings": findings}, indent=2))
+        print(json.dumps({"files": [name(f) for f in files], "findings": findings}, indent=2))
     elif findings:
         print("FAIL - external origin(s) referenced:", file=sys.stderr)
         for f in findings:
@@ -329,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"ok   - {len(files)} file(s) reference no external origin")
         for f in files:
-            print(f"       {f}")
+            print(f"       {name(f)}")
     return 1 if findings else 0
 
 

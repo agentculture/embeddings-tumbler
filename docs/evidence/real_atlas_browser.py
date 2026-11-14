@@ -51,6 +51,8 @@ from tests.browser import harness  # noqa: E402
 EXAMPLES = ROOT / "docs" / "guides" / "examples"
 POLICY = "default-src 'self'"
 MODES = ["tumble", "lattice", "wander"]
+TEMPORARY = "the temporary folder"
+CURRENT = "the current folder"
 # docs/data-contract.md: vectors.file is one path segment that cannot be "." or "..".
 PLAIN_FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -63,38 +65,54 @@ INFO = (
 ) % HANDLE
 
 
-def _inside_current_folder(path: Path) -> Path:
-    """The real path of ``path``; SystemExit unless it is inside the current folder."""
-    base = Path(os.path.realpath(os.getcwd()))
-    real = Path(os.path.realpath(path))
-    if not real.is_relative_to(base):
-        raise SystemExit(f"{path} is outside the current folder {base}")
-    return real
+def _confined(base_dir: str, value: str, where: str, folder_ok: bool = False) -> str:
+    """The real path of ``value`` taken under ``base_dir``; SystemExit unless it is inside.
+
+    SonarSource's documented path-traversal check: both paths through ``os.path.realpath``,
+    then a plain ``startswith(base + os.sep)``. With ``folder_ok`` the base folder itself is
+    accepted too (a folder argument given as ``.``).
+    """
+    base = os.path.realpath(base_dir)
+    full = os.path.realpath(os.path.join(base, value))
+    if full.startswith(base + os.sep) or (folder_ok and full == base):
+        return full
+    raise SystemExit(f"{value} is outside {where} {base}")
 
 
-def _block_path(data: Path, meta: dict) -> Path:
+def _block_path(data: str, meta: dict) -> str:
     """The vector block beside ``data``, named by a contract-valid ``vectors.file``."""
     name = meta["vectors"]["file"]
     if not isinstance(name, str) or not PLAIN_FILE_NAME.fullmatch(name):
         raise SystemExit(f"{data}: vectors.file {name!r} is not a plain file name")
-    return data.parent / name
+    return _confined(os.path.dirname(data), name, "the data file's folder")
 
 
-def _copy_pair(data: Path, folder: Path, name: str | None = None) -> str:
+def _copy_pair(data: str, folder: Path, name: str | None = None) -> str:
     """Copy <data>.json and its vector block into ``folder``; return the JSON file name."""
-    meta = json.loads(data.read_text(encoding="utf-8"))
+    with open(data, encoding="utf-8") as fh:
+        meta = json.load(fh)
     block = _block_path(data, meta)
     if name is None:
-        shutil.copyfile(data, folder / data.name)
-        shutil.copyfile(block, folder / block.name)
-        return data.name
+        data_name, block_name = os.path.basename(data), os.path.basename(block)
+        shutil.copyfile(data, _confined(str(folder), data_name, TEMPORARY))
+        shutil.copyfile(block, _confined(str(folder), block_name, TEMPORARY))
+        return data_name
     meta["vectors"]["file"] = name + ".f32"
-    (folder / (name + ".json")).write_text(json.dumps(meta), encoding="utf-8")
-    shutil.copyfile(block, folder / (name + ".f32"))
+    with open(_confined(str(folder), name + ".json", TEMPORARY), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(meta))
+    shutil.copyfile(block, _confined(str(folder), name + ".f32", TEMPORARY))
     return name + ".json"
 
 
-def _site(form: str, data: Path, tmp: Path) -> tuple[Path, str]:
+def _screenshot(tab, shots: str | None, name: str) -> None:
+    """Save the page as ``<shots>/<name>.png`` when a shots folder was given."""
+    if shots:
+        os.makedirs(shots, exist_ok=True)
+        with open(os.path.join(shots, name + ".png"), "wb") as fh:
+            fh.write(tab.page.screenshot())
+
+
+def _site(form: str, data: str, tmp: Path) -> tuple[Path, str]:
     folder = tmp / form
     shutil.copytree(EXAMPLES / form, folder)
     for old in ("space.json", "space.f32"):
@@ -121,7 +139,7 @@ def _wait_ready(tab, mode: str, timeout: float = 180):
     )  # fmt: skip
 
 
-def _visit(browser, form: str, data: Path, tmp: Path, expect: int, shots: Path | None) -> dict:
+def _visit(browser, form: str, data: str, tmp: Path, expect: int, shots: str | None) -> dict:
     folder, path = _site(form, data, tmp)
     with harness.Server(folder, csp=POLICY) as server:
         tab = harness.Tab(browser, viewport=(1280, 800))
@@ -137,9 +155,7 @@ def _visit(browser, form: str, data: Path, tmp: Path, expect: int, shots: Path |
                 info = tab.evaluate(INFO)
                 seen[mode] = {"status": info["status"], "message": info["message"],
                               "frames": info["frames"]}  # fmt: skip
-                if shots:
-                    shots.mkdir(parents=True, exist_ok=True)
-                    (shots / f"{form}-{mode}.png").write_bytes(tab.page.screenshot())
+                _screenshot(tab, shots, f"{form}-{mode}")
             text = tab.evaluate("() => document.getElementById('space').innerText")
             return {
                 "form": form,
@@ -161,7 +177,7 @@ def _visit(browser, form: str, data: Path, tmp: Path, expect: int, shots: Path |
             tab.close()
 
 
-def _frame_rate(browser, data: Path, tmp: Path, seconds: float, shots: Path | None) -> dict:
+def _frame_rate(browser, data: str, tmp: Path, seconds: float, shots: str | None) -> dict:
     folder, path = _site("standalone", data, tmp / "large")
     out: dict = {"page": path, "modes": {}}
     with harness.Server(folder, csp=POLICY) as server:
@@ -188,9 +204,7 @@ def _frame_rate(browser, data: Path, tmp: Path, seconds: float, shots: Path | No
                 out["modes"][mode] = {"fps": round(fps, 1), "viewer_fps": round(b["fps"], 1),
                                       "switch_to_ready_s": round(ready_s, 2),
                                       "status": b["status"]}  # fmt: skip
-                if shots:
-                    shots.mkdir(parents=True, exist_ok=True)
-                    (shots / f"large-{mode}.png").write_bytes(tab.page.screenshot())
+                _screenshot(tab, shots, f"large-{mode}")
             out["timing"] = b["timing"]
             out["foreign_requests"] = tab.foreign_requests(server.origin)
             out["console_errors"] = tab.console_errors()
@@ -201,20 +215,22 @@ def _frame_rate(browser, data: Path, tmp: Path, seconds: float, shots: Path | No
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("data", type=Path)
-    ap.add_argument("--large", type=Path)
+    ap.add_argument("data")
+    ap.add_argument("--large")
     ap.add_argument("--seconds", type=float, default=10)
-    ap.add_argument("--out", type=Path)
-    ap.add_argument("--shots", type=Path)
+    ap.add_argument("--out")
+    ap.add_argument("--shots")
     args = ap.parse_args()
-    data = _inside_current_folder(args.data)
-    large = _inside_current_folder(args.large) if args.large else None
-    out = _inside_current_folder(args.out) if args.out else None
-    shots = _inside_current_folder(args.shots) if args.shots else None
+    cwd = os.getcwd()
+    data = _confined(cwd, args.data, CURRENT)
+    large = _confined(cwd, args.large, CURRENT) if args.large else None
+    out = _confined(cwd, args.out, CURRENT) if args.out else None
+    shots = _confined(cwd, args.shots, CURRENT, folder_ok=True) if args.shots else None
 
     from playwright.sync_api import sync_playwright
 
-    expect = json.loads(data.read_text(encoding="utf-8"))["count"]
+    with open(data, encoding="utf-8") as fh:
+        expect = json.load(fh)["count"]
     result: dict = {"renderer": harness.renderer(), "policy": POLICY, "forms": []}
     with tempfile.TemporaryDirectory() as tmp, sync_playwright() as pw:
         browser = harness.launch(pw)
@@ -230,7 +246,8 @@ def main() -> int:
             browser.close()
     text = json.dumps(result, indent=2)
     if out:
-        out.write_text(text + "\n", encoding="utf-8")
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
     print(text)
     bad = [f["form"] for f in result["forms"]
            if f["foreign_requests"] or f["console_errors"] or f["csp_violations"]]  # fmt: skip

@@ -128,6 +128,9 @@ def test_main_needs_a_package_and_a_version():
         ["@culture.dev/embeddings-tumbler", "--json"],
         ["@culture.dev/embeddings-tumbler", "latest"],
         ["../pkg", "1.0.0"],
+        # Non-ASCII digits (ARABIC-INDIC DIGIT ONE, FULLWIDTH DIGIT ONE) are not a version.
+        ["@culture.dev/embeddings-tumbler", "\u0661.0.0"],
+        ["@culture.dev/embeddings-tumbler", "1.0.\uff11"],
     ],
 )
 def test_main_refuses_anything_but_a_package_and_an_exact_version(argv, capsys):

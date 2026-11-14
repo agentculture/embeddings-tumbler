@@ -505,6 +505,9 @@ def test_registry_tarball_is_packed_by_spec(tmp_path, monkeypatch):
         "@culture.dev/embeddings-tumbler@latest",
         "@culture.dev/embeddings-tumbler@1.0.0 --foo",
         "../x@1.0.0",
+        # Non-ASCII digits (ARABIC-INDIC DIGIT ONE, FULLWIDTH DIGIT ONE) are not a version.
+        "@culture.dev/embeddings-tumbler@\u0661.0.0",
+        "@culture.dev/embeddings-tumbler@1.0.\uff11",
     ],
 )
 def test_registry_tarball_spec_must_be_a_package_at_an_exact_version(tmp_path, monkeypatch, spec):

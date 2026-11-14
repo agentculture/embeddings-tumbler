@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -156,19 +158,47 @@ def test_the_three_example_folders_carry_the_same_data() -> None:
             assert (EXAMPLES / d / n).read_bytes() == first
 
 
-def test_second_producer_output_is_accepted(tmp_path: Path) -> None:
-    script = EXAMPLES / "producer" / "write_data_file.py"
-    sample = EXAMPLES / "producer" / "sample-input.jsonl"
-    done = subprocess.run(
-        [sys.executable, "-I", str(script), str(sample), str(tmp_path), "out",
+SECOND_PRODUCER = EXAMPLES / "producer" / "write_data_file.py"
+SAMPLE_NAME = "sample-input.jsonl"
+SAMPLE_INPUT = EXAMPLES / "producer" / SAMPLE_NAME
+
+
+def _run_second_producer(cwd: Path, source: str, outdir: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-I", str(SECOND_PRODUCER), source, outdir, "out",
          "--model", "synthetic/cold-test", "--source", "synthetic 4-cluster sample",
          "--synthetic", "--seed", "7", "--limitation", "made-up vectors"],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, cwd=cwd,
     )  # fmt: skip
+
+
+def test_second_producer_output_is_accepted(tmp_path: Path) -> None:
+    # The script reads and writes only inside the folder it runs in.
+    shutil.copyfile(SAMPLE_INPUT, tmp_path / SAMPLE_NAME)
+    done = _run_second_producer(tmp_path, SAMPLE_NAME, "pair")
     assert done.returncode == 0, done.stderr
-    data, block = _read_pair(tmp_path / "out.json")
+    assert done.stdout.startswith(f"wrote {os.path.join('pair', 'out')}.json and ")
+    data, block = _read_pair(tmp_path / "pair" / "out.json")
     assert validate(data, block, None, _index()["messages"]) == []
     assert data["count"] == 320
     assert data["dimension"] == 12
     # The committed example data is that output with the block renamed to space.f32.
     assert block == (EXAMPLES / "script" / "space.f32").read_bytes()
+
+
+@pytest.mark.parametrize("which", ["input", "outdir"])
+def test_second_producer_refuses_paths_outside_its_folder(tmp_path: Path, which: str) -> None:
+    here = tmp_path / "here"
+    here.mkdir()
+    shutil.copyfile(SAMPLE_INPUT, here / SAMPLE_NAME)
+    shutil.copyfile(SAMPLE_INPUT, tmp_path / "outside.jsonl")
+    source, outdir = SAMPLE_NAME, "."
+    if which == "input":
+        source = "../outside.jsonl"
+    else:
+        outdir = str(tmp_path / "elsewhere")
+    done = _run_second_producer(here, source, outdir)
+    assert done.returncode == 1
+    assert "is outside the current folder" in done.stderr
+    assert not (tmp_path / "elsewhere").exists()
+    assert not (here / "out.json").exists()

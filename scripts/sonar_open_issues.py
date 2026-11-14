@@ -44,10 +44,11 @@ class CheckError(Exception):
     """The check could not be made (distinct from "open issues were found")."""
 
 
-def project_key(properties: Path) -> str:
+def project_key(properties: str | Path) -> str:
     """``sonar.projectKey`` from a ``sonar-project.properties`` file."""
     try:
-        lines = properties.read_text(encoding="utf-8").splitlines()
+        with open(properties, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
     except OSError as err:
         raise CheckError(f"cannot read {properties}: {err}") from err
     for line in lines:
@@ -57,12 +58,18 @@ def project_key(properties: Path) -> str:
     raise CheckError(f"{properties} has no sonar.projectKey")
 
 
-def in_repository(path: Path) -> Path:
-    """``path`` resolved (symlinks followed); CheckError unless it is inside this repository."""
-    real = Path(os.path.realpath(path))
-    if not real.is_relative_to(REPO_ROOT):
-        raise CheckError(f"{path} is outside this repository ({REPO_ROOT})")
-    return real
+def in_repository(value: str) -> str:
+    """``value`` resolved (symlinks followed); CheckError unless it is inside this repository.
+
+    A relative ``value`` is taken from the current folder. SonarSource's documented
+    path-traversal check: both paths through ``os.path.realpath``, then a plain
+    ``startswith(base + os.sep)``.
+    """
+    base = os.path.realpath(REPO_ROOT)
+    full = os.path.realpath(os.path.join(os.getcwd(), value))
+    if full.startswith(base + os.sep):
+        return full
+    raise CheckError(f"{value} is outside this repository ({REPO_ROOT})")
 
 
 def fetch_json(url: str, token: str | None) -> dict:
@@ -126,8 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     scope.add_argument("--branch", metavar="<name>", help="check this branch")
     parser.add_argument(
         "--properties",
-        type=Path,
-        default=REPO_ROOT / "sonar-project.properties",
+        default=str(REPO_ROOT / "sonar-project.properties"),
         help="the sonar-project.properties (inside this repository) to read the project key from",
     )
     args = parser.parse_args(argv)

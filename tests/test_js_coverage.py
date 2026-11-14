@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "js_coverage.py"
+RAW, OUT = "raw.lcov", "out.lcov"
 
 spec = importlib.util.spec_from_file_location("js_coverage", SCRIPT)
 cov = importlib.util.module_from_spec(spec)
@@ -85,12 +86,38 @@ def test_convert_adds_a_record_per_module_and_keeps_the_others() -> None:
 
 
 def test_a_report_longer_than_the_file_is_refused(tmp_path: Path) -> None:
-    bad = tmp_path / "raw.lcov"
+    bad = tmp_path / RAW
     bad.write_text(_report(10_000_000), encoding="utf-8")
-    done = subprocess.run(
-        [sys.executable, str(SCRIPT), str(bad), str(tmp_path / "out.lcov")],
-        capture_output=True, text=True, check=False,
-    )  # fmt: skip
+    done = _run(tmp_path, RAW, OUT)
     assert done.returncode == 1
     assert "beyond the end" in done.stderr
-    assert not (tmp_path / "out.lcov").exists()
+    assert not (tmp_path / OUT).exists()
+
+
+def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    # Both paths must be inside the folder the script runs from.
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args], capture_output=True, text=True, check=False, cwd=cwd
+    )
+
+
+def test_a_report_is_converted_and_written(tmp_path: Path) -> None:
+    first = cov.layout()[2][1]
+    (tmp_path / RAW).write_text(_report(first), encoding="utf-8")
+    done = _run(tmp_path, RAW, OUT)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == f"js_coverage: wrote {OUT} (3 files)\n"
+    assert (tmp_path / OUT).read_text(encoding="utf-8") == cov.convert(_report(first))
+
+
+def test_paths_outside_the_current_folder_are_refused(tmp_path: Path) -> None:
+    here = tmp_path / "here"
+    here.mkdir()
+    (tmp_path / RAW).write_text(_report(cov.layout()[2][1]), encoding="utf-8")
+    (here / RAW).write_text(_report(cov.layout()[2][1]), encoding="utf-8")
+    for args in (("../" + RAW, OUT), (RAW, str(tmp_path / OUT))):
+        done = _run(here, *args)
+        assert done.returncode == 1
+        assert "is outside the current folder" in done.stderr
+    assert not (here / OUT).exists()
+    assert not (tmp_path / OUT).exists()

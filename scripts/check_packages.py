@@ -55,8 +55,9 @@ CREDENTIAL_FILES = frozenset({".npmrc", ".pypirc", ".env"})
 _HEADER_RE = re.compile(rb"^/\*! embeddings-tumbler (\S+) ")
 #: What --registry-tarball accepts: an npm package name (scope optional) at an exact version.
 #: Nothing else reaches the npm command line, so no option can be smuggled in as a spec.
+#: re.ASCII keeps \d to the digits 0-9 (in a str pattern it would also match other scripts' digits).
 NPM_SPEC = re.compile(
-    r"(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?"
+    r"(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", re.ASCII
 )
 
 
