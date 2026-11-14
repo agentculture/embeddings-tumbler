@@ -18,6 +18,7 @@ import io
 import json
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -31,6 +32,8 @@ ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "embeddings_tumbler" / "static"
 CORE = "embeddings-tumbler.js"
 SHIPPED_STATIC = (
+    "demo-wikipedia.f32",
+    "demo-wikipedia.json",
     "embeddings-tumbler.js",
     "index.html",
     "page.css",
@@ -39,7 +42,7 @@ SHIPPED_STATIC = (
     "web-component.js",
 )
 TARBALL_FILES = sorted(
-    ["package.json", "README.md", "LICENSE"]
+    ["package.json", "README.md", "LICENSE", "NOTICE"]
     + [f"embeddings_tumbler/static/{name}" for name in SHIPPED_STATIC]
 )
 
@@ -234,6 +237,7 @@ def _make_tarball(path: Path, version: str, statics: dict[str, bytes], extra=Non
         ).encode(),
         "package/README.md": b"readme\n",
         "package/LICENSE": b"license\n",
+        "package/NOTICE": b"notice\n",
     }
     for name, data in statics.items():
         members[f"package/embeddings_tumbler/static/{name}"] = data

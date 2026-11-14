@@ -30,6 +30,8 @@
     "./index.html": "./embeddings_tumbler/static/index.html",
     "./page.css": "./embeddings_tumbler/static/page.css",
     "./page.js": "./embeddings_tumbler/static/page.js",
+    "./demo-wikipedia.json": "./embeddings_tumbler/static/demo-wikipedia.json",
+    "./demo-wikipedia.f32": "./embeddings_tumbler/static/demo-wikipedia.f32",
     "./package.json": "./package.json"
   },
   "files": [
@@ -39,8 +41,11 @@
     "embeddings_tumbler/static/index.html",
     "embeddings_tumbler/static/page.css",
     "embeddings_tumbler/static/page.js",
+    "embeddings_tumbler/static/demo-wikipedia.json",
+    "embeddings_tumbler/static/demo-wikipedia.f32",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "sideEffects": true,
   "publishConfig": {

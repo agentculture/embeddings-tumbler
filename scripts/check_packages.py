@@ -19,7 +19,7 @@ package.json's ``files``. Fails (exit 1) unless all of these hold:
   in its header equals pyproject.toml's and package.json's;
 - each artefact's files under ``embeddings_tumbler/static/`` are exactly the expected set
   (flat, nothing missing, nothing extra), byte-identical to the wheel's;
-- the npm tarball carries nothing beyond package.json, README.md, LICENSE and that set;
+- the npm tarball carries nothing beyond package.json, README.md, LICENSE, NOTICE and that set;
 - the wheel carries nothing beyond its own ``.dist-info/``, the static set and ``.py``
   modules of the ``embeddings_tumbler`` package (no ``js/``, ``tests/``, ``docs/``,
   ``.devague/`` or dev pages);
@@ -50,7 +50,7 @@ STATIC_PREFIX = "embeddings_tumbler/static/"
 CORE = "embeddings-tumbler.js"
 PACKAGE_JSON = "package.json"
 NPM_TARBALL = "npm tarball"
-TARBALL_FIXED = (PACKAGE_JSON, "README.md", "LICENSE")
+TARBALL_FIXED = (PACKAGE_JSON, "README.md", "LICENSE", "NOTICE")
 CREDENTIAL_FILES = frozenset({".npmrc", ".pypirc", ".env"})
 _HEADER_RE = re.compile(rb"^/\*! embeddings-tumbler (\S+) ")
 #: What --registry-tarball accepts: an npm package name (scope optional) at an exact version.
