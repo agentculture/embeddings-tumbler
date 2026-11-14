@@ -561,7 +561,7 @@ element it is mounted in, or any ancestor. It reads them at mount, on every
 | `--tumbler-font` | system UI sans-serif | same | body text |
 | `--tumbler-font-data` | system monospace | same | status, labels, controls, provenance |
 | `--tumbler-font-display` | an old-style serif stack | same | title, mode names |
-| `--tumbler-light-style` | `panel` | same | how a light background is drawn (below); ignored on a dark background |
+| `--tumbler-light-style` | `soft` | same | how a light background is drawn (below); ignored on a dark background |
 | `--tumbler-stage-height` | `clamp(300px, 62vh, 860px)` | same | height of the picture (any CSS length) |
 
 Colours accept hex, `rgb()`, `hsl()` and anything else the browser understands.

@@ -750,7 +750,7 @@ ET.viewer = (function () {
       v.root.appendChild(probe);
       var c = parseColour(String(v.win.getComputedStyle(probe).color || ""));
       return c;
-    } catch (err) {
+    } catch {
       // A colour the browser cannot resolve is no colour: the caller falls back to the default.
       return null;
     } finally {
@@ -1656,7 +1656,7 @@ ET.viewer = (function () {
     try {
       v.stripCtx = v.strip.getContext("2d");
       if (v.stripCtx) v.stripImage = v.stripCtx.createImageData(D, 1);
-    } catch (err) {
+    } catch {
       // No 2-D context for the strip: the readout is simply not drawn.
       v.stripCtx = null;
     }
@@ -1669,7 +1669,7 @@ ET.viewer = (function () {
       var r = v.stage.getBoundingClientRect();
       w = r.width;
       h = r.height;
-    } catch (err) {
+    } catch {
       // No layout box yet: fall back to the element's client size below.
       w = 0;
     }
@@ -2649,11 +2649,11 @@ ET.viewer = (function () {
     }
   }
 
-  // The view seed: a finite number or a non-empty string as given, otherwise 1.
-  function seedOf(seed) {
-    if (typeof seed === "number" && Number.isFinite(seed)) return seed;
-    if (typeof seed === "string" && seed !== "") return seed;
-    return 1;
+  // A usable view seed is a finite number or a non-empty string. It is kept exactly as
+  // given (7 and "7" are different seeds, and seed() hands it back unchanged).
+  function isSeed(seed) {
+    if (typeof seed === "number") return Number.isFinite(seed);
+    return typeof seed === "string" && seed !== "";
   }
 
   function mount(el, options) {
@@ -2664,7 +2664,7 @@ ET.viewer = (function () {
     var win = doc.defaultView || null;
     var opts = readOptions(options);
     var reduced = prefersReducedMotion(win);
-    var seed = seedOf(opts.seed);
+    var seed = isSeed(opts.seed) ? opts.seed : 1;
     var v = {
       el: el,
       doc: doc,
