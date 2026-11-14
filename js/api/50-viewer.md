@@ -372,8 +372,35 @@ pumps it every frame within a budget that follows where the time went:
   30 seconds.
 - Paused: at least 40 ms. Hidden or off screen: no frames, so no work; a gap of
   more than 250 ms between frames is not taken as a frame interval.
-- No unit is longer than the steppers already promise (a few milliseconds), and
-  the results are bit-identical however the work is sliced.
+- A unit ends once a millisecond has passed, and the clock is looked at every
+  4,096 multiply-adds or so, with no piece of work between two looks much
+  larger than that. So a frame's work runs past its budget by one such piece
+  at most, also on a device that runs JavaScript without a compiler (see
+  "Slow devices": up to 0.12.0 a piece could be 2^20 multiply-adds, 50 to
+  90 ms there). The results are bit-identical however the work is sliced.
+- The strongest directions of a set are fitted once per set, seed and number
+  of directions and kept with the set (`ET.modes.fittedDirections`): Lattice
+  entered after Tumble does not fit them again. It is the result the fit
+  would give again, so nothing shown depends on it.
+
+Outside the budget, a frame does a fixed amount of work of its own, and none
+of it is a pass over points in full dimension:
+
+- **Names and hover.** The label sample (300 named points at most) needs its
+  screen positions on every frame. A projector (`ET.viewer.makeProjector`)
+  keeps an orthonormal basis of the directions the frames shown lately lay in
+  (32 at most) and each sample point's coordinate along each. A frame row
+  inside that span costs its coefficients in the basis and a short sum per
+  point; a row with a part outside it adds that part to the basis with one
+  pass over the sample; a full basis starts again from the frame shown. A row
+  counts as inside when less than a millionth of its length is outside, so a
+  name sits within a hundredth of a pixel of where the direct projection puts
+  it (tested), and it follows its points on every frame as before.
+- **Framing.** Tumble and Lattice frame through a zoom basis built while they
+  prepare (`ET.modes.zoomWith`, `js/api/40-modes.md`): `autoZoom`'s rule from
+  the sample's coordinates in the directions their frames move in.
+- The screen mapping of the sample merges the draw state once per frame
+  (`ET.renderer.placer`), not once per point.
 
 Until the mode is ready the mode clock waits and the status shows the mode's
 preparing line (for Tumble, `finding the strongest directions in 1,024-d … 40%`);
@@ -756,6 +783,10 @@ On the GPU the display's 60 fps cap is reached, so the headroom is not measured.
 
 ## Slow devices
 
+Two reports from the owner's iPhone, both 2026-11-14. The first was about
+drawing and the budget rule; the second, further down ("A device that runs
+JavaScript slowly"), about the viewer's own arithmetic.
+
 Found on the owner's iPhone (Chrome on iOS, so WebKit), 2026-11-14: the standalone
 page with the built-in sample set drew at 17 frames per second, stood still for
 seconds at start, and Lattice's neighbours were at 22 percent after 30 seconds.
@@ -797,3 +828,99 @@ drawing buffer, spreads twice as far in CSS pixels and shows its coarse levels a
 soft blocks. The ratio is lowered only after two seconds under 25 frames per
 second (a 30 fps cap such as iOS Low Power Mode does not trigger it) and is never
 raised again in that mount, so it cannot flicker.
+
+### A device that runs JavaScript slowly
+
+The second report, the same day (Safari on the same phone): the default page,
+then 999 named points in 1,024-d, at 6.7 frames per second while Tumble
+prepared, drawing-buffer ratio 2. `info().timing` read: 150.3 ms between
+frames, 144.0 ms of script per frame, 90.0 ms of it preparation against a
+budget of 4.0 ms, 0.0 ms in the draw call. The built-in sample set (12,288
+points in 384-d, 290 named) had run at about 17. The smaller set was the
+slower one: the cost followed the dimension, not the point count.
+
+What the readings mean. One unit of the fit then was one row of the Gram
+matrix, up to 999 x 1,024 multiply-adds. 90 ms for that is about 90 ns per
+multiply-add, where compiled JavaScript takes about 1. That is the speed of a
+JavaScript engine running without its compiler. This is an inference from the
+numbers: nobody looked at the phone's settings (iOS Lockdown Mode turns the
+compiler off; so do some in-app browsers), and nothing here was run on WebKit
+on a phone. JavaScriptCore on the development machine (the system's
+`libjavascriptcoregtk`, driven from Python) gives the same picture: with its
+compiler, units of 1 ms and the whole fit in under a second; with
+`JSC_useJIT=0`, 37 to 50 ns per multiply-add, the fit 45 s, units of 40 to
+50 ms (99th percentile and longest) before the change and 1 ms and 10 ms
+after, the directions the same bit for bit.
+
+Three things did a million multiply-adds or more in one go, which nothing
+notices at 1 ns each:
+
+| What | Multiply-adds at 999 x 1,024 | How often | Now |
+|------|------------------------------|-----------|-----|
+| A unit of preparation (a row of the Gram matrix; a group of four rows against 16 directions; a query row of Lattice's neighbours; 2^19 values of the mean and spread) | up to 1,048,576, with the clock looked at once per row | every frame while preparing | pieces of about 4,096 between two looks at the clock |
+| The label sample through the frame in full dimension (300 points), with the draw state merged once per point | 921,600 | every frame, in every mode, also while preparing | the projector: about 50,000 |
+| The zoom sample through the frame in full dimension (512 points; Tumble and Lattice) | 1,572,864 | every frame once ready | the zoom basis: about 50,000 |
+
+Lattice also fitted the strongest directions a second time (700 million
+multiply-adds, the fit Tumble had just made); it now takes the kept ones.
+
+Measured in Chromium (Playwright, headless, SwiftShader) started with
+`--js-flags=--jitless` and the CPU throttled 3x, 390 x 844 window at device
+scale 2, the shipped standalone page with the Wikipedia pair lifted to 1,024-d
+(999 points, all named; the 768-d vectors plus 256 linear combinations of
+them), `info().timing` read on every frame, median (90th percentile, largest)
+in milliseconds. This setting gives the phone's readings almost exactly, which
+is why it was chosen:
+
+| While Tumble prepares (30 s) | Phone | Before | Now |
+|------------------------------|-------|--------|-----|
+| Frames per second | 6.7 | 6.1 | 12.7 |
+| Between frames (`intervalMs`) | 150.3 | 165.3 | 78.0 |
+| Script (`scriptMs`) | 144.0 | 164.5 (174.6, 329.8) | 29.6 (33.5, 94.6) |
+| Work (`workMs`) | 90.0 | 100.0 (108.7, 247.2) | 24.4 (25.7, 34.8) |
+| Budget (`budgetMs`) | 4.0 | 4.0 | 24.0 |
+| Script less work | 54.0 | 64.7 | 5.9 |
+| Progress shown after 30 s | | 37% | 25% |
+
+| Once ready (8 s) | Before | Now |
+|------------------|--------|-----|
+| Tumble: script per frame | 205.9 (254.3, 299.8) | 24.8 (34.8, 88.0) |
+| Tumble: frames per second | 4.7 | 14.0 |
+| Lattice: script per frame | 193.5 (198.1, 204.0) | 19.4 (22.5, 29.3) |
+| Lattice, 25 s after the switch | still fitting, neighbours at 0%; work 101.4 (110.5, 115.6) at a budget of 4 | ready at once, neighbours at 9%; work 24.3 (25.0, 27.2) at a budget of 24 |
+
+Read with care:
+
+- About 14 frames per second is all this stand-in draws: software rendering
+  takes about 70 ms a frame whatever the script does (with the compiler on and
+  no throttle the same page also ran at 14.5). So "frames per second" now
+  shows the stand-in's drawing, not the script, and says nothing about what
+  the phone will reach.
+- **Preparation takes longer than before on such a device**, because it now
+  keeps to its budget. Before, the work ran 100 ms in a 165 ms frame (about
+  610 ms of work per second); now 24 ms in a 78 ms frame (about 310 ms per
+  second). The fit itself is unchanged: about 700 million multiply-adds for
+  999 points in 1,024-d (most of it the Gram matrix, N x N x D / 2), 33 s of
+  arithmetic with node `--jitless` on the development machine against one
+  second compiled. Lattice's neighbours are another thousand million. On a
+  device without a compiler that is minutes of wall time whatever the slicing.
+  Making it short needs something else: directions and neighbours worked out
+  by the producer and carried in the data file (an idea, not specced), a cheaper fit, or a
+  larger share of the frame for the work while a mode prepares. None of these
+  was done here.
+- With the compiler on, nothing got slower: the fit of 999 x 1,024 took
+  1,083 ms before and 1,085 ms now in node (12,288 x 384: 1,500 and 1,536),
+  and with the CPU throttled 6x the same page was ready after 19.3 s before
+  and 18.5 s now, with 16.0 ms of script per ready frame before and 2.9 ms now.
+- The facing frame of a search (`ET.searchSets`) still works in units of 2^17
+  multiply-adds with no look at the clock (about 12 ms each at 90 ns), and a
+  click in Focus still projects every point directly. Neither runs on every
+  frame; neither was changed.
+
+`tests/browser/test_slow_script.py` runs the stand-in (300 named points in
+1,024-d, `--jitless`, CPU throttled 4x) and fails on the old code: 191 of 623
+preparing frames ran more than 12 ms past their budget (now none of 2,149),
+and a ready frame's script was 178 ms where one direct pass over the two
+samples took 158 ms on the same page (now 30 ms against 178 ms).
+`js/test/slow-device.test.js` checks each piece, and that no result depends on
+the slicing.

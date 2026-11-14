@@ -429,6 +429,32 @@ ET.renderer = (function () {
     return { x: width / 2 + x1 * k * R, y: height / 2 - y2 * k * R, scale: k, depth: z2 - s.focus };
   }
 
+  // place() for many points under one state: the state is merged once, not per point
+  // (a merge copies every draw parameter into a new object). placer(...)(x, y, z, out)
+  // writes out.x and out.y, the same numbers place() returns, and returns out.
+  function placer(state, width, height) {
+    var s = merge(state);
+    var cy = Math.cos(s.yaw),
+      sy = Math.sin(s.yaw),
+      cp = Math.cos(s.pitch),
+      sp = Math.sin(s.pitch);
+    var R = Math.min(width, height) * s.radius;
+    var zoom = s.zoom;
+    return function (p0, p1, p2, out) {
+      var x = p0 * zoom,
+        y = p1 * zoom,
+        z = p2 * zoom;
+      var x1 = x * cy + z * sy,
+        z1 = -x * sy + z * cy;
+      var y2 = y * cp - z1 * sp,
+        z2 = y * sp + z1 * cp;
+      var k = 3 / Math.max(0.6, 3 + z2);
+      out.x = width / 2 + x1 * k * R;
+      out.y = height / 2 - y2 * k * R;
+      return out;
+    };
+  }
+
   function merge(state) {
     var out = {};
     var key;
@@ -1370,6 +1396,7 @@ ET.renderer = (function () {
     shaderSources: shaderSources,
     wireDensity: wireDensity,
     place: place,
+    placer: placer,
     create: create,
   };
 })();

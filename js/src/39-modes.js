@@ -157,6 +157,12 @@ ET.modes = (function () {
   var statsCache = typeof WeakMap === "function" ? new WeakMap() : null;
 
   function addRows(st, X, from, to, D) {
+    sumRows(st, X, from, to, D);
+    finishStats(st, D);
+  }
+
+  // The sums over rows [from, to), without the mean and spread (finishStats).
+  function sumRows(st, X, from, to, D) {
     for (var i = from; i < to; i++) {
       var o = i * D;
       for (var d = 0; d < D; d++) {
@@ -166,7 +172,6 @@ ET.modes = (function () {
       }
     }
     st.count = to;
-    finishStats(st, D);
   }
 
   function finishStats(st, D) {
@@ -224,11 +229,14 @@ ET.modes = (function () {
   }
 
   // A sliced form of stats(set) for a stepper task. run() adds the next rows
-  // (about STATS_WORK values, so about half a millisecond) and returns true
+  // (about STATS_WORK values: a few microseconds of compiled arithmetic, under a
+  // millisecond on a device that runs JavaScript without a compiler, where the
+  // 2^19 values it used to add took 20 to 45 ms) and returns true
   // once the statistics are complete and cached; job.result is then the same
   // object stats(set) returns, with the same values bit for bit (the rows are
-  // added in the same order). A set whose statistics are cached finishes at once.
-  var STATS_WORK = 1 << 19;
+  // added in the same order, and the mean and spread are worked out from the
+  // finished sums). A set whose statistics are cached finishes at once.
+  var STATS_WORK = 1 << 13;
   function statsJob(set) {
     var D = set.dimension;
     var rows = Math.max(1, Math.floor(STATS_WORK / Math.max(1, D)));
@@ -246,14 +254,47 @@ ET.modes = (function () {
           return true;
         }
         if (!st) st = { count: 0, dimension: D, sum: new Float64Array(D), sumSq: 0, mean: new Float32Array(D) };
-        addRows(st, set.vectors, st.count, Math.min(set.count, st.count + rows), D);
+        sumRows(st, set.vectors, st.count, Math.min(set.count, st.count + rows), D);
         if (st.count < set.count) return false;
+        finishStats(st, D);
         if (statsCache && !statsCache.has(set)) statsCache.set(set, st);
         job.result = statsCache ? statsCache.get(set) : st;
         return true;
       },
     };
     return job;
+  }
+
+  // ----- the fitted directions, kept per set -----------------------------------
+  //
+  // Tumble and Lattice fit the same strongest directions of the same set (the
+  // same seed, the same number of directions, the same rows). The fit is by far
+  // the longest preparation there is (700 million multiply-adds for 999 points
+  // in 1,024-d: half a second compiled, over a minute on a device that runs
+  // JavaScript without a compiler), so a finished fit is kept with its set and
+  // the next mode to ask for the same one gets it at once. It is the very result
+  // the fit would produce again (ET.math.makeGuidedTour takes it as `pca`), so
+  // nothing a mode shows depends on whether it was kept.
+
+  var fitCache = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function sameFit(e, seed, subspace, sampleRows) {
+    return e.seed === seed && e.subspace === subspace && e.sampleRows === sampleRows;
+  }
+
+  // The kept fit of `set` for these options, or undefined.
+  function fittedDirections(set, seed, subspace, sampleRows) {
+    var list = fitCache?.get(set);
+    if (!list) return undefined;
+    for (var e of list) if (sameFit(e, seed, subspace, sampleRows)) return e.pca;
+    return undefined;
+  }
+
+  function keepDirections(set, seed, subspace, sampleRows, pca) {
+    if (!fitCache || !pca || fittedDirections(set, seed, subspace, sampleRows)) return;
+    var list = fitCache.get(set) || [];
+    list.push({ seed: seed, subspace: subspace, sampleRows: sampleRows, pca: pca });
+    fitCache.set(set, list);
   }
 
   // ----- shared motion helpers ------------------------------------------------
@@ -392,6 +433,11 @@ ET.modes = (function () {
       sq += r2;
       radii[i] = r2;
     }
+    return zoomFromRadii(n, sq);
+  }
+
+  // The zoom from the first n squared radii (in `radii`) and their sum.
+  function zoomFromRadii(n, sq) {
     var rms = Math.sqrt(sq / n);
     var spread = rms > 0; // false for NaN too
     if (!spread) return 1;
@@ -400,6 +446,230 @@ ET.modes = (function () {
     var p98 = Math.sqrt(view[Math.min(n - 1, Math.floor(0.98 * (n - 1)))]);
     var zoom = 0.78 / rms;
     return p98 > 0 && AUTO_FIT / p98 < zoom ? AUTO_FIT / p98 : zoom;
+  }
+
+  // ----- auto-framing inside a known subspace ---------------------------------
+  //
+  // autoZoom projects its sample through the frame in full dimension: 3 * n * D
+  // multiply-adds on every frame (1.5 million for 512 points in 1,024-d), which
+  // on a device that runs JavaScript without a compiler is most of a tenth of a
+  // second per frame. A mode whose frames stay inside the span of a few fixed
+  // directions (Tumble: the tour's basis; Lattice: the fitted directions and its
+  // starting frame) hands those directions over once. A zoom basis keeps them
+  // orthonormal (B) with the sample's coordinates along each (Z, one column per
+  // direction), and zoomWith() then needs the frame's coefficients in B
+  // (3 * k * D) and 3 * k * n more: about a thirtieth of the work.
+  //
+  // It is a pure function of the data, the directions, the frame and the centre,
+  // so the rule that a frame depends on data, seed and time alone still holds.
+  // A frame that is not inside the span (a row keeps more than ZOOM_TOL of its
+  // length outside it: an entry blend from another view, a turn onto a refitted
+  // tour, a swing) is framed by autoZoom itself; which of the two answers
+  // depends on the frame and the basis only. Inside the span the two agree to
+  // about ZOOM_TOL times the ratio of a point's distance to its projected
+  // radius (measured: within 2e-5 of each other, relative, on the demo sets).
+
+  var ZOOM_TOL2 = 1e-10; // a frame row may keep this share of its squared length outside the span
+  var ZOOM_PIECE = 1 << 12; // multiply-adds between two pauses while a basis is built
+
+  function removeFrom(q, b, D) {
+    var dp = 0;
+    for (var d = 0; d < D; d++) dp += q[d] * b[d];
+    for (var d2 = 0; d2 < D; d2++) q[d2] -= dp * b[d2];
+  }
+
+  // col[i] = (row i of X) . q for i in [from, to).
+  function columnPart(X, D, q, col, from, to) {
+    for (var i = from; i < to; i++) {
+      var o = i * D;
+      var s = 0;
+      for (var d = 0; d < D; d++) s += X[o + d] * q[d];
+      col[i] = s;
+    }
+  }
+
+  // Add `count` directions (rows of `rows`, D values each) to the basis zb: each
+  // is made orthogonal to the ones before it (twice) and normalised, then the
+  // sample's coordinates along it are worked out. A direction already inside
+  // the span adds a zero row. Pauses (yields) every ZOOM_PIECE multiply-adds or
+  // so; where they fall changes nothing.
+  function* zoomRowsGen(zb, X, rows, count, work) {
+    var D = zb.D;
+    var n = zb.n;
+    var per = Math.max(1, Math.floor(ZOOM_PIECE / D));
+    for (var r = 0; r < count; r++) {
+      var q = new Float64Array(D);
+      var before = loadDirection(rows, r, D, q);
+      for (var pass = 0; pass < 2; pass++) {
+        for (var b of zb.B) {
+          removeFrom(q, b, D);
+          work.done += 2 * D;
+          yield;
+        }
+      }
+      var col = new Float64Array(n);
+      if (unitOrZero(q, D, before)) {
+        for (var i = 0; i < n; i += per) {
+          columnPart(X, D, q, col, i, Math.min(n, i + per));
+          work.done += per * D;
+          yield;
+        }
+      }
+      zb.B.push(q);
+      zb.Z.push(col);
+    }
+    return zb;
+  }
+
+  // Row r of `rows` into q; returns its squared length.
+  function loadDirection(rows, r, D, q) {
+    var before = 0;
+    for (var d = 0; d < D; d++) {
+      q[d] = rows[r * D + d];
+      before += q[d] * q[d];
+    }
+    return before;
+  }
+
+  // q scaled to unit length (true), or set to zero when nothing of the
+  // direction it started as (squared length `before`) is left (false).
+  function unitOrZero(q, D, before) {
+    var nn = 0;
+    for (var d = 0; d < D; d++) nn += q[d] * q[d];
+    var left = nn > 1e-24 && nn > 1e-12 * before; // false for NaN too
+    if (!left) {
+      q.fill(0);
+      return false;
+    }
+    var inv = 1 / Math.sqrt(nn);
+    for (var d2 = 0; d2 < D; d2++) q[d2] *= inv;
+    return true;
+  }
+
+  function newZoomBasis(n, D) {
+    return { n: n, D: D, B: [], Z: [], coef: null, fast: 0, exact: 0 };
+  }
+
+  // A stepper task's job that builds a zoom basis over the first min(N, sample)
+  // rows of X from `count` directions (rows of `rows`): { run() -> done,
+  // progress(), result }. Each run() is one small piece.
+  function zoomBasisJob(X, N, D, rows, count, sample) {
+    var n = Math.max(0, Math.min(N, sample || 512));
+    return zoomJob(newZoomBasis(n, D), X, rows, count);
+  }
+
+  // The same for a copy of `base` with `count` more directions (the base is
+  // not changed; the two share what they have in common).
+  function zoomExtendJob(base, X, rows, count) {
+    var zb = newZoomBasis(base.n, base.D);
+    zb.B = base.B.slice();
+    zb.Z = base.Z.slice();
+    return zoomJob(zb, X, rows, count);
+  }
+
+  function zoomJob(zb, X, rows, count) {
+    var work = { done: 0 };
+    var total = Math.max(1, count * (zb.n * zb.D + 4 * (zb.B.length + count) * zb.D));
+    var gen = zoomRowsGen(zb, X, rows, count, work);
+    var job = {
+      result: null,
+      progress: function () {
+        return job.result ? 1 : Math.min(0.99, work.done / total);
+      },
+      run: function () {
+        if (job.result) return true;
+        if (!gen.next().done) return false;
+        job.result = zb;
+        return true;
+      },
+    };
+    return job;
+  }
+
+  // zoomExtendJob run to the end in one call: `base` with `count` more
+  // directions (3 by default: a frame's rows).
+  function extendZoomBasis(base, X, rows, count) {
+    var job = zoomExtendJob(base, X, rows, count === undefined ? 3 : count);
+    var done = job.run();
+    while (!done) done = job.run();
+    return job.result;
+  }
+
+  // The frame's coefficients in the basis, into zb.coef (3 rows of k); false
+  // when a row is not inside the span (or is not finite).
+  function zoomCoefficients(zb, frame) {
+    var D = zb.D;
+    var k = zb.B.length;
+    if (zb.coef?.length !== 3 * k) zb.coef = new Float64Array(3 * k);
+    for (var r = 0; r < 3; r++) {
+      var o = r * D;
+      var nf = 0;
+      for (var d = 0; d < D; d++) nf += frame[o + d] * frame[o + d];
+      var got = 0;
+      for (var j = 0; j < k; j++) {
+        var b = zb.B[j];
+        var c = 0;
+        for (var d2 = 0; d2 < D; d2++) c += frame[o + d2] * b[d2];
+        zb.coef[r * k + j] = c;
+        got += c * c;
+      }
+      var inside = nf - got <= ZOOM_TOL2 * nf; // false for NaN too
+      if (!inside) return false;
+    }
+    return true;
+  }
+
+  var zoomA = new Float64Array(0);
+  var zoomB = new Float64Array(0);
+  var zoomC = new Float64Array(0);
+
+  // autoZoom's answer for a frame inside the basis's span, from the sample's
+  // coordinates in the basis; autoZoom itself otherwise (no basis, another
+  // sample size, a frame outside the span).
+  function zoomWith(zb, X, N, D, frame, centre, sample) {
+    var n = Math.min(N, sample || 512);
+    var usable = !!zb && zb.n === n && zb.D === D && n > 0;
+    if (!usable || !zoomCoefficients(zb, frame)) {
+      if (zb) zb.exact++;
+      return autoZoom(X, N, D, frame, centre, sample);
+    }
+    zb.fast++;
+    var k = zb.B.length;
+    if (zoomA.length < n) {
+      zoomA = new Float64Array(n);
+      zoomB = new Float64Array(n);
+      zoomC = new Float64Array(n);
+    }
+    if (radii.length < n) radii = new Float64Array(n);
+    var f0 = 0;
+    var f1 = 0;
+    var f2 = 0;
+    for (var d = 0; d < D; d++) {
+      f0 += centre[d] * frame[d];
+      f1 += centre[d] * frame[D + d];
+      f2 += centre[d] * frame[2 * D + d];
+    }
+    zoomA.fill(-f0, 0, n);
+    zoomB.fill(-f1, 0, n);
+    zoomC.fill(-f2, 0, n);
+    for (var j = 0; j < k; j++) {
+      var col = zb.Z[j];
+      var c0 = zb.coef[j];
+      var c1 = zb.coef[k + j];
+      var c2 = zb.coef[2 * k + j];
+      for (var i = 0; i < n; i++) {
+        zoomA[i] += c0 * col[i];
+        zoomB[i] += c1 * col[i];
+        zoomC[i] += c2 * col[i];
+      }
+    }
+    var sq = 0;
+    for (var i2 = 0; i2 < n; i2++) {
+      var r2 = zoomA[i2] * zoomA[i2] + zoomB[i2] * zoomB[i2] + zoomC[i2] * zoomC[i2];
+      sq += r2;
+      radii[i2] = r2;
+    }
+    return zoomFromRadii(n, sq);
   }
 
   // The sample set's typical radius (root mean squared distance from the mean,
@@ -663,6 +933,8 @@ ET.modes = (function () {
     now: now,
     stats: stats,
     statsJob: statsJob,
+    fittedDirections: fittedDirections,
+    keepDirections: keepDirections,
     makeGlide: makeGlide,
     alignment: alignment,
     applyAlignment: applyAlignment,
@@ -670,6 +942,10 @@ ET.modes = (function () {
     blendDraw: blendDraw,
     startFrame: startFrame,
     autoZoom: autoZoom,
+    zoomBasisJob: zoomBasisJob,
+    zoomExtendJob: zoomExtendJob,
+    extendZoomBasis: extendZoomBasis,
+    zoomWith: zoomWith,
     AUTO_FIT: AUTO_FIT,
     REFERENCE_RADIUS: REFERENCE_RADIUS,
     thousands: thousands,
