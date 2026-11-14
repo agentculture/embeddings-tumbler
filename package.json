@@ -1,6 +1,6 @@
 {
   "name": "@culture.dev/embeddings-tumbler",
-  "version": "0.11.4",
+  "version": "0.11.5",
   "description": "Drop-in viewer for embedding spaces: a moving 3-D window through the full-dimensional space. One dependency-free script with mount, update and destroy.",
   "keywords": [
     "embeddings",

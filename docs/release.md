@@ -219,7 +219,15 @@ Notes:
 - Never paste the token into a command line, a file or a chat, and do not add it
   to the repository's GitHub secrets. CI does not need it.
 
-### Add the trusted publisher on npmjs.com (not done yet)
+### Add the trusted publisher on npmjs.com (done 2026-11-14)
+
+Set up by the owner, and proven by version 0.11.4, which CI published with no
+token and with provenance. One lesson from doing it: every field is
+case-sensitive and npm does not check them when you save. The first attempt
+had the repository entered as `Embeddings-tumbler`; the exchange was refused
+with "package not found" and the job failed with only `ENEEDAUTH` until the
+publish step was made to log verbosely. Version 0.11.3 was lost to that and was
+never published.
 
 On <https://www.npmjs.com/package/@culture.dev/embeddings-tumbler>, open
 **Settings**, then **Trusted Publisher**, choose **GitHub Actions** and enter:
