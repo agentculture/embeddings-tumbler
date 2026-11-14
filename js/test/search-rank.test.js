@@ -3,9 +3,10 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const os = require("node:os");
-const { loadSources } = require("./helpers/load.js");
+const { loadAssembled } = require("./helpers/load.js");
 
-const S = loadSources(["24-search.js"])._internal.search;
+// Through the assembled file, so that line coverage is counted (the CI report is taken on it).
+const S = loadAssembled()._internal.search;
 
 function rng(seed) {
   let a = seed >>> 0;
