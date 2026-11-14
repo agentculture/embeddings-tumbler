@@ -110,6 +110,7 @@
     if (dimension > 0) fill("dimension", thousands(dimension));
     if (count >= 1000) fill("lattice-count", "A thousand");
     else if (count > 1) fill("lattice-count", "All " + thousands(count));
+    else fill("lattice-count", "In a larger set, a thousand");
     if (source.sample) {
       fill("ring", "The ring of months");
       fill("ring-lower", "the ring of months");

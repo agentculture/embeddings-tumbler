@@ -240,6 +240,7 @@ body[data-page-state="error"] .wait-text::before {
 }
 
 body[data-page-state="loading"] .notes,
+body[data-page-state="refused"] .notes,
 body[data-page-state="error"] .notes {
   display: none;
 }
