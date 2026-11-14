@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T12:33:07Z",
+  "updated": "2026-11-14T12:36:11Z",
   "claims": [
     {
       "id": "c1",
@@ -769,6 +769,25 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c46",
+      "kind": "requirement",
+      "text": "Search has a choice of what is lit, including a variable lit power option in which a closer point is lit more strongly.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "Brightness by closeness is computed from full-space distance by the stated measure, the setting in use is named in the panel, and the count of points lit matches what is drawn.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "docs/specs/reference/tumbler-sky-search.html shows three settings: the results evenly; by closeness (every point glows in proportion to how near it is, fading out a little beyond the last result); named results only.",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -1004,6 +1023,15 @@
       "seam": "search -> the space as that search sees it",
       "behavior": "With the option on, ranking, shown distances and the fitted picture all use the same per-dimension scaling by that search's vector; with it off, nothing is scaled; the view states which is in effect.",
       "source_text": "A 'from this search's point of view' option on a search. Distances are measured with each dimension scaled by that search's vector, so lit points and their order reflect the search's context. The picture is fitted to that scaled space, and the view states that distances are measured in the search's context.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o15",
+      "claim_id": "c46",
+      "seam": "search -> what is lit",
+      "behavior": "The lit setting decides which points are lit and how strongly; with brightness by closeness, a nearer point is never dimmer than a farther one for the same search; the panel names the setting in use.",
+      "source_text": "Search has a choice of what is lit, including a variable lit power option in which a closer point is lit more strongly.",
       "origin": "llm",
       "status": "proposed"
     }
