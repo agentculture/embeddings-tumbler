@@ -31,7 +31,7 @@
   }
 
   function loadBuild(mode) {
-    buildFrame.src = BUILD + "?mode=" + mode;
+    buildFrame.src = BUILD + "?sample=synthetic&mode=" + mode;
   }
 
   function loadRef(mode) {

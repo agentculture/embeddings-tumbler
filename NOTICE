@@ -1,0 +1,35 @@
+embeddings-tumbler
+Copyright AgentCulture. Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The demo data set is NOT under the Apache License. It carries text from Wikipedia.
+
+Files:
+  embeddings_tumbler/static/demo-wikipedia.json   (the records: titles and short texts)
+  embeddings_tumbler/static/demo-wikipedia.f32    (the vectors embedded from those texts)
+  data/wikipedia-vital-3/corpus.jsonl             (the corpus they were built from; source
+                                                   distribution and repository only)
+
+Source: English Wikipedia, https://en.wikipedia.org/ . The articles are those linked
+from the list "Wikipedia:Vital articles/Level 3",
+https://en.wikipedia.org/wiki/Wikipedia:Vital_articles/Level/3 , revision 1385567416
+(https://en.wikipedia.org/w/index.php?oldid=1385567416), retrieved 2026-11-14.
+
+Authors: Wikipedia contributors. Each point records the Wikipedia page id and the
+revision id its text was read from; the article and the list of its authors (its
+history) are at https://en.wikipedia.org/?curid=<page id> and
+https://en.wikipedia.org/w/index.php?oldid=<revision id>&action=history .
+
+Licence: the article titles and texts are licensed under the Creative Commons
+Attribution-ShareAlike 4.0 International licence (CC BY-SA 4.0),
+https://creativecommons.org/licenses/by-sa/4.0/ (also available under the GNU Free
+Documentation License). The three files above, as adapted material, are offered under
+CC BY-SA 4.0. There is no warranty: the material is provided as-is, as section 5 of
+that licence states.
+
+Changes made: each text is the first one or two sentences of the article's
+introduction, as plain text without markup, with web addresses removed, cut to at most
+280 characters at a word boundary (an ellipsis marks a cut). The vectors are the
+output of an embedding model given those texts; the data file names the model.
+
+To rebuild: python3 scripts/build_demo_corpus.py --revision 1385567416 and then
+python3 scripts/build_demo_set.py --apply (see the scripts' own documentation).

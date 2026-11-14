@@ -22,7 +22,7 @@ function el(id) {
   return {
     id,
     textContent: "",
-    hidden: id === "note-sample" || id === "note-file",
+    hidden: ["note-sample", "note-file", "note-demo", "set-switch"].includes(id),
     parentNode: null,
     attrs,
     setAttribute(k, v) {
@@ -56,10 +56,13 @@ function el(id) {
 
 // Run page.js with `search` and a fetch stand-in. Returns the fake world.
 // `extra.route(url, init)` answers the helper route's requests (default: a network error);
-// `extra.protocol` and `extra.origin` change where the page is "served" from.
+// `extra.protocol` and `extra.origin` change where the page is "served" from;
+// `extra.update(data)` answers the viewer's update (default: accepted); `extra.noSample`
+// leaves sample-data.js out.
 function runPage(search, fetchImpl, extra = {}) {
   const els = {};
-  ["space", "wait", "wait-text", "note-sample", "note-file"].forEach((id) => (els[id] = el(id)));
+  const ids = ["space", "wait", "wait-text", "note-sample", "note-file", "note-demo", "set-switch"];
+  ids.concat(["set-switch-text", "set-switch-link"]).forEach((id) => (els[id] = el(id)));
   els.wait.parentNode = els.space;
   els["wait-text"].textContent = "Loading the viewer…";
   const body = el("body");
@@ -67,18 +70,18 @@ function runPage(search, fetchImpl, extra = {}) {
   const listeners = {};
   const world = {
     els, body, mounted: 0, generated: 0, fetches: [], listeners, updates: [],
-    routeFetches: [], timers: [], mountOptions: [], cleared: [],
+    routeFetches: [], timers: [], mountOptions: [], cleared: [], fills: {},
   };
   const handle = {
     update(data) {
       world.updates.push(data);
-      return { ok: true };
+      return extra.update ? extra.update(data) : { ok: true };
     },
     mode() {
       return "tumble";
     },
     info() {
-      return { dimension: 8, count: 10 };
+      return { dimension: 8, count: 10, model: "m-demo" };
     },
   };
   const api = {
@@ -88,18 +91,22 @@ function runPage(search, fetchImpl, extra = {}) {
       world.mounted++;
       return handle;
     },
-    sample: {
-      generate() {
-        world.generated++;
-        return { kind: "embeddings-tumbler/data" };
-      },
-    },
+    sample: extra.noSample
+      ? undefined
+      : {
+          generate() {
+            if (extra.generateThrows) throw new Error("generator failed");
+            world.generated++;
+            return { kind: "embeddings-tumbler/data", synthetic: true };
+          },
+        },
   };
   const origin = extra.origin || ORIGIN;
   const window = {
     location: {
       search,
       href: origin + "/index.html" + search,
+      pathname: "/index.html",
       protocol: extra.protocol || "http:",
       origin,
     },
@@ -135,7 +142,13 @@ function runPage(search, fetchImpl, extra = {}) {
   const document = {
     body,
     getElementById: (id) => els[id] || null,
-    querySelectorAll: () => [],
+    // Only the page's fill-ins are looked up by selector; each is a fake element.
+    querySelectorAll: (sel) => {
+      const m = /^\[data-fill="([a-z-]+)"\]$/.exec(sel);
+      if (!m) return [];
+      world.fills[m[1]] ??= el("fill-" + m[1]);
+      return [world.fills[m[1]]];
+    },
   };
   const globals = {
     window,
@@ -173,12 +186,12 @@ function response(body, headers) {
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-test("a whitespace-only ?data= shows the sample set, like an empty one", async () => {
+test("a whitespace-only ?data= shows the default set, like an empty one", async () => {
   for (const q of ["?data=", "?data=%20%20", "?data=+", "?data=%09"]) {
-    const w = runPage(q, () => Promise.reject(new Error("no request expected")));
+    const w = runPage(q, () => Promise.reject(new Error("no demo set here")));
     await settle();
-    assert.strictEqual(w.fetches.length, 0, q + ": nothing is requested");
-    assert.strictEqual(w.generated, 1, q + ": the sample set is generated");
+    assert.deepStrictEqual(w.fetches.map((f) => f.url), [ORIGIN + "/demo-wikipedia.json"], q);
+    assert.strictEqual(w.generated, 1, q + ": the demo set could not be read, so the sample set is generated");
     assert.strictEqual(w.mounted, 1, q);
     assert.strictEqual(w.body.getAttribute("data-page-state"), "ready", q);
   }
@@ -509,4 +522,157 @@ test("the rerank callback reads the candidate limit from describe and refuses mo
   await assert.rejects(opts.rerank("q", ["a", "b", "c", "d"]), /Too many candidates were sent to the reranker/);
   assert.strictEqual(route.seen.length, before, "nothing was sent");
   assert.deepStrictEqual((await opts.rerank("q", ["a", "b", "c"])).scores, [0, 1, 2]);
+});
+
+// ---------- the default set: the Wikipedia pair shipped beside the page ----------
+
+const DEMO_RECORDS = {
+  kind: "embeddings-tumbler/data",
+  schema_version: 1,
+  model: "m-demo",
+  dimension: 2,
+  count: 1,
+  provenance: { synthetic: false },
+  vectors: { file: "demo-wikipedia.f32", dtype: "float32", byte_order: "little", byte_length: 8 },
+  points: [{ id: "wp-1", label: "Moon" }],
+};
+
+// Serves the demo pair (or answers `status` for every request).
+function demoFetch(records = DEMO_RECORDS, status = 200) {
+  return (url) => {
+    if (status !== 200) return Promise.resolve({ ...response(""), ok: false, status });
+    return Promise.resolve(url.endsWith(".json") ? response(JSON.stringify(records)) : response(""));
+  };
+}
+
+async function settled(w) {
+  for (let i = 0; i < 4; i++) await settle();
+  return w;
+}
+
+test("with no address the page shows the Wikipedia pair from its own folder", async () => {
+  const w = await settled(runPage("", demoFetch()));
+  assert.deepStrictEqual(
+    w.fetches.map((f) => f.url),
+    [ORIGIN + "/demo-wikipedia.json", ORIGIN + "/demo-wikipedia.f32"]
+  );
+  assert.strictEqual(w.fetches[0].init.credentials, "same-origin");
+  assert.strictEqual(w.generated, 0, "the synthetic set is not generated");
+  assert.strictEqual(w.updates.length, 1);
+  assert.strictEqual(w.updates[0].model, "m-demo");
+  assert.strictEqual(Object.prototype.toString.call(w.updates[0].vectors.data), "[object ArrayBuffer]");
+  assert.strictEqual(w.body.getAttribute("data-page-state"), "ready");
+  assert.strictEqual(w.els["note-demo"].hidden, false);
+  assert.strictEqual(w.els["note-sample"].hidden, true);
+  assert.strictEqual(w.els["note-file"].hidden, true);
+  assert.strictEqual(w.fills["demo-count"].textContent, "10", "the count comes from the viewer's info");
+  assert.strictEqual(w.fills["demo-model"].textContent, "m-demo");
+  assert.strictEqual(w.fills["demo-kind"], undefined, "a real set keeps the page's own words");
+  assert.strictEqual(w.els["set-switch"].hidden, false);
+  assert.strictEqual(w.els["set-switch-link"].href, "?sample=synthetic");
+  assert.match(w.els["set-switch-link"].textContent, /synthetic sample set/);
+});
+
+test("a stand-in default set says it is not a model's output", async () => {
+  const records = { ...DEMO_RECORDS, provenance: { synthetic: true } };
+  const w = await settled(runPage("", demoFetch(records)));
+  assert.match(w.fills["demo-kind"].textContent, /stand-in/);
+  assert.strictEqual(w.els["note-demo"].hidden, false);
+});
+
+test("the switch keeps the mode and the seed", async () => {
+  const w = await settled(runPage("?mode=lattice&seed=7", demoFetch()));
+  assert.strictEqual(w.els["set-switch-link"].href, "?mode=lattice&seed=7&sample=synthetic");
+});
+
+test("?sample=synthetic shows the synthetic set and requests nothing", async () => {
+  const w = await settled(runPage("?sample=synthetic", () => Promise.reject(new Error("no request expected"))));
+  assert.strictEqual(w.fetches.length, 0);
+  assert.strictEqual(w.generated, 1);
+  assert.strictEqual(w.body.getAttribute("data-page-state"), "ready");
+  assert.strictEqual(w.els["note-sample"].hidden, false);
+  assert.strictEqual(w.els["note-demo"].hidden, true);
+  assert.strictEqual(w.els["set-switch-text"].textContent, "Showing the synthetic sample set.");
+  assert.strictEqual(w.els["set-switch-link"].href, "/index.html", "back to the default address");
+  const kept = await settled(runPage("?sample=synthetic&mode=wander", () => Promise.reject(new Error("none"))));
+  assert.strictEqual(kept.els["set-switch-link"].href, "?mode=wander");
+});
+
+test("a missing or unreachable Wikipedia pair falls back to the synthetic set and says so", async () => {
+  const cases = {
+    "404 records": demoFetch(DEMO_RECORDS, 404),
+    "network error": () => Promise.reject(new TypeError("Failed to fetch")),
+    "404 block": (url) =>
+      Promise.resolve(url.endsWith(".json") ? response(JSON.stringify(DEMO_RECORDS)) : { ...response(""), ok: false, status: 404 }),
+    "not JSON": () => Promise.resolve(response("<html>")),
+  };
+  for (const [name, fetchImpl] of Object.entries(cases)) {
+    const w = await settled(runPage("", fetchImpl));
+    assert.strictEqual(w.generated, 1, name);
+    assert.strictEqual(w.mounted, 1, name);
+    assert.strictEqual(w.body.getAttribute("data-page-state"), "ready", name);
+    assert.strictEqual(w.els["note-sample"].hidden, false, name);
+    assert.strictEqual(w.els["note-demo"].hidden, true, name);
+    assert.match(w.els["set-switch-text"].textContent, /demo-wikipedia\.json\) could not be read/, name);
+    assert.strictEqual(w.els["set-switch-link"].hidden, true, name);
+  }
+});
+
+test("a Wikipedia pair the viewer refuses is replaced by the synthetic set", async () => {
+  const w = await settled(runPage("", demoFetch(), { update: (data) => ({ ok: data.synthetic === true }) }));
+  assert.strictEqual(w.updates.length, 2, "the refused set, then the synthetic one");
+  assert.strictEqual(w.updates[1].synthetic, true);
+  assert.strictEqual(w.mounted, 1, "one viewer");
+  assert.strictEqual(w.body.getAttribute("data-page-state"), "ready");
+  assert.match(w.els["set-switch-text"].textContent, /the viewer refused the Wikipedia set/);
+  assert.strictEqual(w.els["note-sample"].hidden, false);
+});
+
+test("a refused Wikipedia pair with no sample-data.js leaves the viewer's refusal", async () => {
+  const w = await settled(runPage("", demoFetch(), { noSample: true, update: () => ({ ok: false }) }));
+  assert.strictEqual(w.updates.length, 1);
+  assert.strictEqual(w.body.getAttribute("data-page-state"), "refused");
+});
+
+test("a page opened as a file shows the synthetic set without trying to read the pair", async () => {
+  const w = await settled(
+    runPage("", () => Promise.reject(new Error("no request expected")), { protocol: "file:", origin: "null" })
+  );
+  assert.strictEqual(w.fetches.length, 0);
+  assert.strictEqual(w.generated, 1);
+  assert.match(w.els["set-switch-text"].textContent, /opened as a file/);
+});
+
+test("with neither the Wikipedia pair nor sample-data.js the page says plainly that nothing can be shown", async () => {
+  const w = await settled(runPage("", demoFetch(DEMO_RECORDS, 404), { noSample: true }));
+  assert.strictEqual(w.mounted, 0);
+  assert.strictEqual(w.body.getAttribute("data-page-state"), "error");
+  assert.match(w.els["wait-text"].textContent, /^Nothing can be shown: the Wikipedia set .* sample-data\.js is missing/);
+});
+
+test("a data address still wins over the default and shows no switch", async () => {
+  const w = await settled(runPage("?data=x.json&sample=synthetic", demoFetch()));
+  assert.deepStrictEqual(w.fetches.map((f) => f.url), [ORIGIN + "/x.json", ORIGIN + "/demo-wikipedia.f32"]);
+  assert.strictEqual(w.generated, 0);
+  assert.strictEqual(w.els["set-switch"].hidden, true);
+  assert.strictEqual(w.els["note-file"].hidden, false);
+});
+
+test("a refused Wikipedia pair whose fallback generator fails leaves the viewer's refusal", async () => {
+  const w = await settled(runPage("", demoFetch(), { update: () => ({ ok: false }) }));
+  // The fake generator succeeds; make a second page whose generator throws.
+  assert.strictEqual(w.updates.length, 2);
+  const bad = runPage("", demoFetch(), {
+    update: () => ({ ok: false }),
+    generateThrows: true,
+  });
+  await settled(bad);
+  assert.strictEqual(bad.updates.length, 1, "no synthetic set to fall back to");
+  assert.strictEqual(bad.body.getAttribute("data-page-state"), "refused");
+});
+
+test("a viewer that fails to start on the default set is reported plainly", async () => {
+  const w = await settled(runPage("", demoFetch(), { mountThrows: true }));
+  assert.strictEqual(w.body.getAttribute("data-page-state"), "error");
+  assert.match(w.els["wait-text"].textContent, /could not start the viewer/);
 });

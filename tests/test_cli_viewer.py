@@ -98,8 +98,17 @@ def test_write_preview_reports_existing(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["applied"] is False
     assert payload["would_overwrite"] == ["embeddings-tumbler.js"]
-    assert payload["files"][0]["exists"] is True
+    rows = {row["path"]: row for row in payload["files"]}
+    assert rows["embeddings-tumbler.js"]["exists"] is True
     assert (target / "embeddings-tumbler.js").read_text() == "mine"
+
+
+def test_write_writes_the_wikipedia_pair_and_it_matches_the_package(tmp_path, capsys):
+    target = tmp_path / "o"
+    assert main(["viewer", "write", str(target), "--apply"]) == 0
+    static = Path(__file__).resolve().parent.parent / "embeddings_tumbler" / "static"
+    for name in ("demo-wikipedia.json", "demo-wikipedia.f32"):
+        assert (target / name).read_bytes() == (static / name).read_bytes(), name
 
 
 def test_write_json_apply(tmp_path, capsys):

@@ -141,7 +141,7 @@ def look(browser, webgl, site) -> dict:
     tab = harness.Tab(browser, viewport=(1280, 900))
     out: dict = {}
     try:
-        tab.goto(server.url("/index.html"))
+        tab.goto(server.url("/index.html?sample=synthetic"))
         run = _Run(tab)
         run.ready()
         # Wander, in one visit (the camera's path depends on the view it was entered from):

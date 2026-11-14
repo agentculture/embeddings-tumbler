@@ -366,6 +366,13 @@ not done; see "Not yet compared or not yet decided".
 - **Why:** the contract carries labels and groups only.
 - **Visible on the sample set:** slightly: the same kinds of point in the same proportions, but not the same individual points, and bridges are not graded in colour *(read from the code; not isolated in a picture)*.
 
+### The page opens on real vectors, and the generated set is one choice away
+
+- **Reference:** the page always shows its generated sample set (12,288 points, 384 dimensions); none of its numbers come from a model.
+- **Build:** with no address the page shows about a thousand English Wikipedia articles (the Level 3 list of vital articles), each embedded from the first sentences of its introduction by a real model, and says so in a note, with the source, the model and the licence of the text (CC BY-SA 4.0) in the provenance block. The generated set is shown with `?sample=synthetic` or by the link under the notes ("Show the synthetic sample set instead"), and it is shown, with a line saying why, when the Wikipedia pair is missing beside the page, when the page is opened as a file, or when the viewer refuses the pair.
+- **Why:** the owner searched the generated set and asked whether "sear" and "searing" were unconnected because the numbers are fake; they are. A real model puts the two words next to each other. The owner asked for real vectors as the default, about 1,000 items and about 4 MB, with the generated set kept.
+- **Visible on the sample set:** slightly: chosen with `?sample=synthetic`, the sample set looks as before, with one extra line under the notes that links back to the Wikipedia set.
+
 ### A view seed
 
 - **Reference:** none; nothing about the view is repeatable.

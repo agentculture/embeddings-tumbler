@@ -79,7 +79,7 @@ def base_url(tmp_path_factory):
         yield server.origin
 
 
-def _open(browser, base_url, query="", viewport=VIEWPORTS["desktop"]):
+def _open(browser, base_url, query="?sample=synthetic", viewport=VIEWPORTS["desktop"]):
     tab = harness.Tab(browser, viewport=viewport)
     tab.goto(base_url + "/index.html" + query)
     info = tab.wait_for(READY, timeout=WAIT, what="the viewer and its panel")
@@ -217,7 +217,7 @@ def test_the_lit_menu_changes_the_lit_count(sky_run):
 
 @pytest.mark.parametrize("name", list(VIEWPORTS))
 def test_focus_lists_results_beside_the_stage_and_disables_face(browser, base_url, name):
-    tab = _open(browser, base_url, "?mode=focus", VIEWPORTS[name])
+    tab = _open(browser, base_url, "?sample=synthetic&mode=focus", VIEWPORTS[name])
     try:
         s = _search(tab, "tide harbor")
         assert s["faceable"] is False

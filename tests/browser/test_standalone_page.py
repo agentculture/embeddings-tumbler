@@ -6,7 +6,10 @@ contract fixture pair (``valid-384.json`` and ``valid-384.f32``) is copied next
 to it, and the folder is served on a loopback port. So the test also proves the
 shipped set is complete and self-contained.
 
-Checked: with no query the sample set renders (lit pixels on the canvas) with
+Checked: with no query the shipped Wikipedia pair (``demo-wikipedia.json``) is shown, its
+count and dimension in the masthead, with a link to the synthetic set; without the pair the
+page falls back to the synthetic set and says so; ``?sample=synthetic`` renders the sample
+set (lit pixels on the canvas) with
 all three mode buttons, the provenance block and the controls; ``?data=``
 shows that file's model and count in the provenance; a ``data`` address on
 another origin is refused with a plain message and no request to it; a missing
@@ -70,6 +73,12 @@ PROBE = """() => {
       lattice: visible('.explain[data-for="lattice"]'),
       wander: visible('.explain[data-for="wander"]') },
     noteText: (document.querySelector('.explain[data-for="tumble"]') || {}).textContent || '',
+    masthead: (el.querySelector('.tumbler-masthead') || {}).textContent || '',
+    demoNote: visible('#note-demo'),
+    sampleNote: visible('#note-sample'),
+    switchText: (document.getElementById('set-switch') || {}).textContent || '',
+    switchHref: (document.getElementById('set-switch-link') || {}).getAttribute
+      ? document.getElementById('set-switch-link').getAttribute('href') : null,
     scrollWidth: document.documentElement.scrollWidth,
     clientWidth: document.documentElement.clientWidth,
   };
@@ -151,7 +160,9 @@ def _drawn(r):
 
 @pytest.fixture(scope="module", params=list(VIEWPORTS))
 def sample_run(request, browser, base_url):
-    return request.param, _open(browser, base_url, "", VIEWPORTS[request.param], _drawn)
+    return request.param, _open(
+        browser, base_url, "?sample=synthetic", VIEWPORTS[request.param], _drawn
+    )
 
 
 def test_sample_set_renders_with_modes_provenance_and_controls(sample_run):
@@ -179,6 +190,68 @@ def test_sample_page_is_clean_and_fits_the_width(sample_run):
     assert r["console_errors"] == []
     assert r["foreign"] == []
     assert r["scrollWidth"] <= r["clientWidth"], f"horizontal overflow at {name}"
+
+
+def test_sample_set_is_the_explicit_choice_and_links_back(sample_run):
+    _, r = sample_run
+    assert r["sampleNote"]
+    assert not r["demoNote"]
+    assert "Showing the synthetic sample set." in r["switchText"]
+    assert r["switchHref"] == "/index.html"
+    assert not any(u.endswith("/demo-wikipedia.json") for u in r["requests"])
+
+
+DEMO = json.loads(
+    (ROOT / "embeddings_tumbler" / "static" / "demo-wikipedia.json").read_text(encoding="utf-8")
+)
+
+
+def _thousands(n: int) -> str:
+    return f"{n:,}"
+
+
+def test_with_no_query_the_wikipedia_pair_is_shown_with_its_own_numbers(browser, base_url):
+    r = _open(browser, base_url, "", settle=_drawn)
+    assert r["state"] == "ready", r["wait"]
+    assert r["info"]["model"] == DEMO["model"]
+    assert r["info"]["count"] == DEMO["count"]
+    assert r["info"]["dimension"] == DEMO["dimension"]
+    expected = (
+        f"{_thousands(DEMO['count'])} embeddings · {_thousands(DEMO['dimension'])} dimensions"
+    )
+    assert expected in r["masthead"], r["masthead"]
+    assert "Wikipedia" in r["provenance"]["text"]
+    assert "CC BY-SA 4.0" in r["provenance"]["text"]
+    assert r["demoNote"]
+    assert not r["sampleNote"]
+    assert r["switchHref"] == "?sample=synthetic"
+    assert any(u.endswith("/demo-wikipedia.f32") for u in r["requests"])
+    assert r["csp"] == []
+    assert r["console_errors"] == []
+    assert r["foreign"] == []
+
+
+@pytest.fixture(scope="module")
+def bare_url(tmp_path_factory, host_folder):
+    """The shipped set without the Wikipedia pair: a host that copied only some files."""
+    folder = tmp_path_factory.mktemp("bare")
+    for path in host_folder.iterdir():
+        if not path.name.startswith("demo-wikipedia."):
+            shutil.copy(path, folder / path.name)
+    with harness.Server(folder) as server:
+        yield server.origin
+
+
+def test_without_the_pair_the_page_falls_back_to_the_synthetic_set(browser, bare_url):
+    r = _open(browser, bare_url, "", settle=_drawn)
+    assert r["state"] == "ready", r["wait"]
+    assert r["info"]["model"] == "synthetic/reference-sample"
+    assert r["sampleNote"]
+    assert "could not be read from this folder" in r["switchText"]
+    # The browser's own line for the missing file is the only console entry.
+    assert all("404" in e for e in r["console_errors"]), r["console_errors"]
+    assert r["csp"] == []
+    assert r["foreign"] == []
 
 
 def test_data_file_shows_its_model_and_count(browser, base_url):

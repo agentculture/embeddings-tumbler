@@ -108,6 +108,16 @@ one turns out to be wrong, stop and use the `deviate` skill.
 
 ## Shipping
 
+Both packages ship the same static files: the core file, `web-component.js`,
+`sample-data.js`, the standalone page (`index.html`, `page.css`, `page.js`) and
+the page's default data pair, `demo-wikipedia.json` and `demo-wikipedia.f32`
+(Wikipedia's Level 3 vital articles; text under CC BY-SA 4.0, see `NOTICE`, which
+ships too). The pair is written straight into `embeddings_tumbler/static/` by
+`scripts/build_demo_set.py` from the committed corpus
+`data/wikipedia-vital-3/corpus.jsonl` (built by `scripts/build_demo_corpus.py`).
+The pair committed now is a 30-item stand-in with hash vectors; the real
+1,000-item pair is embedded through the gateway (planned).
+
 Two channels carry the same unmodified core file: the Python wheel (package
 data, with CLI verbs that write the files into a host folder or serve a folder
 locally) and an npm package under the `culture.dev` organisation. Both are
