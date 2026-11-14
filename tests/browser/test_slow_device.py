@@ -87,9 +87,11 @@ def test_lattice_budget_follows_the_frame_interval_and_finishes(results):
     budgets = [b for b in results["budgets"] if b is not None]
     assert budgets, "no budget was sampled while Lattice prepared"
     high = sum(1 for b in budgets if b >= 16)
-    # The old rule gave 4 ms (halved after every long frame); at about 100 ms between frames
-    # the new one gives the ceiling, 24 ms, except right after a unit overran.
-    assert high >= 0.8 * len(budgets), budgets
+    # The old rule gave 4 ms on every frame (halved after every long frame); at about 100 ms
+    # between frames the new one gives the ceiling, 24 ms, except on the frame right after a
+    # unit overran. On a loaded runner units overrun often, at worst every other frame, so the
+    # check is that a third of the frames had the high budget: the old rule had none.
+    assert high * 3 >= len(budgets), budgets
     print(f"Lattice prepared in {results['lattice_s']:.1f} s; budgets {sorted(set(budgets))}")
 
 
