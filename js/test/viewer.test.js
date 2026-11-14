@@ -978,14 +978,14 @@ test("a set with thousands of labelled points is drawn dimmer, a small one is no
   const big = setup();
   big.h.update(makeSet({ n: 4800, d: 8, labelEvery: 1 }));
   big.dom.frames(3);
-  // 600 bright points are shown at full brightness; beyond that (600 / n) ^ 0.75.
-  assert.ok(Math.abs(big.v.lastDraw.gain - Math.pow(600 / 4800, 0.75)) < 1e-9, `gain ${big.v.lastDraw.gain}`);
+  // 600 bright points are shown at full brightness; beyond that 600 / n.
+  assert.ok(Math.abs(big.v.lastDraw.gain - 600 / 4800) < 1e-9, `gain ${big.v.lastDraw.gain}`);
   big.h.destroy();
 
   // No labelled point at all (labels are the ids): every point has weight 0.7.
   const plain = setup();
   plain.h.update(makeSet({ n: 4800, d: 8, labelFor: (i, id) => id }));
   plain.dom.frames(3);
-  assert.ok(Math.abs(plain.v.lastDraw.gain - Math.pow(600 / (0.7 * 4800), 0.75)) < 1e-9, `gain ${plain.v.lastDraw.gain}`);
+  assert.ok(Math.abs(plain.v.lastDraw.gain - 600 / (0.7 * 4800)) < 1e-9, `gain ${plain.v.lastDraw.gain}`);
   plain.h.destroy();
 });

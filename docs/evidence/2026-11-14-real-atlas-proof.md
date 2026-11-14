@@ -21,8 +21,8 @@ Three things were found that the sample set had hidden:
 1. **Lattice shows no grouping on real vectors** (1.126, the same as a random
    frame). Not changed. A decision for the owner; see "Findings".
 2. **A large real set burned out to a white ball.** Fixed in this task.
-3. **The first producer writes no groups**, so a real view is one colour and
-   carries no group names. Not changed; a follow-up for `embeddings-cli`.
+3. **The first producer wrote no groups**, so a real view was one colour and
+   carried no group names. Fixed in `embeddings-cli` (`--group-by`).
 
 ## What was run
 
@@ -164,8 +164,8 @@ another origin. The same result under SwiftShader.
   it, and wrote `provenance.endpoint: "lobes gateway"`.
 - One thing the export does carry: `provenance.params.corpus` is the absolute
   local path of the corpus file. It is not a secret here, but a path from the
-  producer's machine reaches every page that loads the file. Noted for
-  `embeddings-cli`.
+  producer's machine reached every page that loaded the file. Fixed in
+  `embeddings-cli` after this run: only the file's name is written.
 
 ## Against the 2-D map
 
@@ -232,19 +232,25 @@ point, so 10,000 full-weight points piled into a featureless white ball in
 Tumble and Lattice.
 
 Changed in `js/src/50-viewer.js`: the overall brightness now falls as the
-number of bright points rises above 600, by `(600 / n) ^ 0.75`. Sets with up
+number of bright points rises above 600, by `600 / n`, so the total light
+stays about constant. Sets with up
 to 600 bright points, the sample set among them, are drawn exactly as before.
 With the change the 10,000-point Tumble view shows density and texture. Lattice
 on the large set is still too bright in the middle while an axis is mid-swap
 (finding 1 makes the cloud flat and dense there). The constants were chosen by
 eye on one set; they are a first setting, not a tuned one.
 
-### 3. The first producer writes no groups (open, in `embeddings-cli`)
+### 3. The first producer wrote no groups (fixed in `embeddings-cli`)
 
-`embeddings export` writes no `group`. The viewer colours and names by group,
-so a real Atlas is drawn in one colour with no group names, in every mode. An
-option that names a metadata key to use as the group would fix this at the
-producer; the contract and the viewer need no change.
+`embeddings export` wrote no `group`. The viewer colours and names by group,
+so a real Atlas was drawn in one colour with no group names, in every mode.
+Fixed at the producer after this run, with the owner's approval (deviation
+`d4`): `embeddings export --group-by <key>` writes each point's group from a
+metadata key. The contract and the viewer needed no change. With groups the
+small set shows its 15 groups in colour with their names; on the large set
+191 groups are too many hues to tell apart, and the group names drawn crowd
+the centre. The measurements above were taken on the files without groups;
+groups do not change a frame or a vector.
 
 ### 4. Smaller notes
 

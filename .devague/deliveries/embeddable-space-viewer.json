@@ -2,7 +2,7 @@
   "plan_slug": "embeddable-space-viewer",
   "schema_version": 2,
   "created": "2026-11-13T19:07:38Z",
-  "updated": "2026-11-14T01:37:50Z",
+  "updated": "2026-11-14T05:50:10Z",
   "deviations": [
     {
       "id": "d1",
@@ -45,6 +45,19 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "embeddings export gains --group-by <key> (writes each point's group from a metadata key) and writes only the corpus file's name in provenance.params",
+      "task_ref": "t15",
+      "reason": "t16 found a real export is one colour with no group names, and carried a local absolute path; user approved the group option on 2026-11-14",
+      "affects": [
+        "t16"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 4
     }
   ],
   "evidence": [],

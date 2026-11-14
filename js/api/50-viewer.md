@@ -519,7 +519,7 @@ name and its ring use the stop's colour.
 A point with a label is drawn at full weight; a set with no labelled point at
 all draws every point at weight 0.7. Many such bright points pile up into a
 featureless ball, so the overall brightness (`gain` in the renderer's draw
-state) is multiplied by `(600 / n) ^ 0.75` when the number of bright points `n`
+state) is multiplied by `600 / n` when the number of bright points `n`
 is above 600 (`n` is the labelled count, or 0.7 times the point count when
 nothing is labelled). At 600 or fewer nothing changes; the built-in sample set
 has 290. Found on a real 10,000-point Atlas, where every point carries text:

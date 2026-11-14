@@ -4890,7 +4890,7 @@ ET.viewer = (function () {
   };
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
-  var CROWD_POWER = 0.75;
+  var CROWD_POWER = 1;
   var LABEL_SAMPLE = 300; // labelled points projected on the CPU per frame for labels
   var LABEL_POOL = 64; // label elements at most
   var STATUS_EVERY = 0.12; // seconds between status-line updates (the reference's)
