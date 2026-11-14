@@ -81,7 +81,7 @@ ET.viewer = (function () {
     spinWhilePreparing: true,
     // Lower the drawing-buffer ratio in steps (never below 1) when the frame rate stays
     // under ADAPT_FPS while nothing prepares. false: always draw at the capped device ratio.
-    adaptivePixelRatio: true,
+    adaptivePixelRatio: false, // off until the owner decides: it trades sharpness for frame rate
     refitQuietSeconds: 2,
     refitShare: 0.01,
     onError: null,

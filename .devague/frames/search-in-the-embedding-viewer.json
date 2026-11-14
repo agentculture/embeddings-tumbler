@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T18:46:37Z",
+  "updated": "2026-11-14T18:58:04Z",
   "claims": [
     {
       "id": "c1",
@@ -1093,6 +1093,28 @@
       "skipped_check": "",
       "refs": [
         "tests/browser/test_search_candidates.py"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l16",
+      "code": "assumption-for-measurement",
+      "what": "The phone fix was measured only in Chromium standing in for a phone (frame gate, CPU throttle, busy-wait in draw) on a loaded machine; ranges come from 2 to 4 runs, some of an earlier rule; no WebKit and no real phone. The Lattice target of about 5 s was met only in the best runs (5.9 to 20 s).",
+      "skipped_check": "a reading on the owner's phone",
+      "refs": [
+        "js/api/50-viewer.md, Slow devices"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l17",
+      "code": "grader-unverified",
+      "what": "tests/browser/test_search_look.py::test_lattice_wires_follow_the_search failed once on the unmodified base branch under heavy machine load (the wiki agent's control run); it passes in my full runs. A timing-sensitive test is in the suite and its threshold was not re-examined.",
+      "skipped_check": "",
+      "refs": [
+        "tests/browser/test_search_look.py"
       ],
       "origin": "llm",
       "status": "proposed"

@@ -20,7 +20,7 @@ import pytest
 
 from tests.browser import harness
 
-PAGE = "/embeddings_tumbler/static/index.html"
+PAGE = "/embeddings_tumbler/static/index.html?sample=synthetic"
 H = "EmbeddingsTumbler.get(document.getElementById('space'))"
 GATE = """(() => { const raf = requestAnimationFrame.bind(window);
   const caf = cancelAnimationFrame.bind(window);

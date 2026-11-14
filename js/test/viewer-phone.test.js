@@ -236,7 +236,7 @@ function slowFrames(dom, seconds, ms) {
 }
 
 test("a frame rate under 25 for two seconds lowers the ratio in steps, never below 1", () => {
-  const { dom, h, v } = setup({ devicePixelRatio: 3 });
+  const { dom, h, v } = setup({ devicePixelRatio: 3 }, { adaptivePixelRatio: true });
   assert.strictEqual(h.info().pixelRatio, 2, "capped by maxPixelRatio");
   assert.strictEqual(h.info().pixelRatioLowered, false);
   const w2 = v.W;
@@ -254,16 +254,20 @@ test("the ratio stays when the option is off, at 60 fps, while paused and while 
   slowFrames(off.dom, 5, 100);
   assert.strictEqual(off.h.info().pixelRatio, 2, "option off");
   off.h.destroy();
-  const fast = setup({ devicePixelRatio: 2 });
+  const unset = setup({ devicePixelRatio: 2 }, {});
+  slowFrames(unset.dom, 5, 100);
+  assert.strictEqual(unset.h.info().pixelRatio, 2, "off unless the host asks for it");
+  unset.h.destroy();
+  const fast = setup({ devicePixelRatio: 2 }, { adaptivePixelRatio: true });
   fast.dom.frames(400);
   assert.strictEqual(fast.h.info().pixelRatio, 2, "60 fps");
   fast.h.destroy();
-  const paused = setup({ devicePixelRatio: 2 });
+  const paused = setup({ devicePixelRatio: 2 }, { adaptivePixelRatio: true });
   paused.h.pause();
   slowFrames(paused.dom, 5, 100);
   assert.strictEqual(paused.h.info().pixelRatio, 2, "paused");
   paused.h.destroy();
-  const prep = setup({ devicePixelRatio: 2 });
+  const prep = setup({ devicePixelRatio: 2 }, { adaptivePixelRatio: true });
   prep.v.mode.jobs.push(fakeJob(prep.dom));
   slowFrames(prep.dom, 5, 100);
   assert.strictEqual(prep.h.info().pixelRatio, 2, "preparing");
@@ -271,7 +275,7 @@ test("the ratio stays when the option is off, at 60 fps, while paused and while 
 });
 
 test("a 30 fps cap (iOS Low Power Mode) does not lower the ratio", () => {
-  const { dom, h } = setup({ devicePixelRatio: 2 });
+  const { dom, h } = setup({ devicePixelRatio: 2 }, { adaptivePixelRatio: true });
   slowFrames(dom, 6, 1000 / 30);
   assert.strictEqual(h.info().pixelRatio, 2);
   h.destroy();
