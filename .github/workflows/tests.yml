@@ -50,10 +50,17 @@ jobs:
           python3 scripts/sync_static.py --check
           python3 scripts/sync_version.py --check
 
+      # The unit tests, with line coverage for SonarCloud. node reports coverage against
+      # the assembled core file; scripts/js_coverage.py attributes it to the js/src modules.
       - name: node --test
-        run: node --test
+        run: |
+          set -euo pipefail
+          node --test --experimental-test-coverage \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=lcov --test-reporter-destination=js-coverage.raw.lcov
+          python3 scripts/js_coverage.py js-coverage.raw.lcov js-coverage.lcov
 
-      - run: uv run --locked --no-build pytest -n auto --cov=embeddings_tumbler --cov-report=xml:coverage.xml --cov-report=term -v
+      - run: uv run --locked --no-build pytest -n auto --cov=embeddings_tumbler --cov=scripts --cov=tests --cov-report=xml:coverage.xml --cov-report=term -v
 
       - name: SonarCloud Scan
         if: env.SONAR_TOKEN != ''

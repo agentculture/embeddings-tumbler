@@ -93,17 +93,35 @@ def plan(target: Path, source_root: Traversable | None = None) -> list[PlannedFi
     return planned
 
 
+#: The most a written file is ever given: owner read/write, group and other read. Never
+#: group or other write: a served asset has no reason to be writable by anyone else.
+SERVED_FILE_MODE = 0o644
+
+
+def _new_file_mode() -> int:
+    """:data:`SERVED_FILE_MODE` reduced by this process's umask (0644 under 022 or 002)."""
+    # Reading the umask means setting one for an instant. Set the strictest value while
+    # we look (never 0), so a file created in that instant by anything else is private.
+    umask = os.umask(0o077)
+    os.umask(umask)
+    return SERVED_FILE_MODE & ~umask
+
+
 def _write_atomic(dest: Path, data: bytes) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     # A fresh, unpredictable name created exclusively ("x" refuses an existing file or
-    # symlink), then renamed over the destination. The file gets the ordinary permissions
-    # of any file the user creates (their umask decides; 0644 under the usual 022), so a
-    # web server can read the published assets wherever the user's own files are readable.
+    # symlink), then renamed over the destination. The mode is set on the temporary
+    # file, before it takes its name: at most 0644, reduced by the user's umask, so a
+    # web server running as another user can read the assets and nobody else can write
+    # them. The same rule as `embeddings export` in embeddings-cli.
+    mode = _new_file_mode()
     tmp = dest.parent / f".et-tmp-{secrets.token_hex(16)}"
     # Opened before the try: if the name was taken, the file is not ours to remove.
     with open(tmp, "xb") as handle:
         try:
             handle.write(data)
+            handle.flush()
+            os.fchmod(handle.fileno(), mode)
             handle.close()
             os.replace(tmp, dest)
         except BaseException:

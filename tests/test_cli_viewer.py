@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import stat
 import threading
 import urllib.error
@@ -54,17 +55,24 @@ def test_write_apply_is_byte_identical(tmp_path, capsys):
     assert not list(target.glob(".et-tmp-*"))
 
 
-def test_written_files_get_the_permissions_of_any_new_file(tmp_path, capsys):
-    # Not the owner-only mode of a private temporary file: the user's umask decides, as
-    # for any file they create, so a web server can read the published assets.
+@pytest.mark.parametrize(
+    "umask,mode", [(0o022, 0o644), (0o027, 0o640), (0o077, 0o600), (0o002, 0o644)]
+)
+def test_written_files_are_readable_but_never_group_or_other_writable(
+    tmp_path, capsys, umask, mode
+):
+    # At most 0644, reduced by the umask: a web server running as another user can read
+    # the published assets, and group or other write is never granted (even under 002).
     target = tmp_path / "out"
-    assert main(["viewer", "write", str(target), "--apply"]) == 0
-    plain = tmp_path / "plain.txt"
-    plain.write_text("x", encoding="utf-8")
-    expected = stat.S_IMODE(plain.stat().st_mode)
-    for written in target.rglob("*"):
-        if written.is_file():
-            assert stat.S_IMODE(written.stat().st_mode) == expected, written
+    old = os.umask(umask)
+    try:
+        assert main(["viewer", "write", str(target), "--apply"]) == 0
+    finally:
+        os.umask(old)
+    written = [p for p in target.rglob("*") if p.is_file()]
+    assert written
+    for path in written:
+        assert stat.S_IMODE(path.stat().st_mode) == mode, path
 
 
 def test_write_refuses_existing_without_force(tmp_path, capsys):
