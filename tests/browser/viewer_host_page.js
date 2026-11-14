@@ -104,7 +104,11 @@
     return;
   }
 
-  // 1. mount and show the sample set; resolves when the viewer is ready (or after 20 s).
+  // How long a mode may take to become ready. Fitting is quick on an idle machine and
+  // slow when the whole test suite shares the CPU with software rendering.
+  const READY_MS = 60000;
+
+  // 1. mount and show the sample set; resolves when the viewer is ready (or after READY_MS).
   function mountAndUpdate() {
     let t0 = performance.now();
     h = T.mount(el, { seed: 3, preserveDrawingBuffer: true, title: "Viewer host check" });
@@ -117,7 +121,7 @@
     out.steps.updateMs = performance.now() - t0;
     return until(function () {
       return h.info().ready;
-    }, 20000);
+    }, READY_MS);
   }
 
   function layout() {
@@ -141,9 +145,13 @@
     };
   }
 
-  // 2. one mode: press its button, hold, count frames and lit pixels.
+  // 2. one mode: press its button, wait until it is ready, hold, count frames and lit pixels.
   async function measureMode(id) {
     el.querySelector('[data-mode="' + id + '"]').click();
+    await until(function () {
+      const i = h.info();
+      return i.mode === id && i.ready;
+    }, READY_MS);
     const f0 = h.info().frames;
     const t0 = performance.now();
     await wait(HOLD);

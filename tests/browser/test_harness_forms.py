@@ -66,7 +66,9 @@ def form_run(request, browser, webgl, site):
             INFO,
             lambda i: bool(i and i["ready"] and i["count"] and i["frames"] > 3),
             arg=el_id,
-            timeout=90,  # the 12,288-point sample on a loaded CPU (SwiftShader) is slow to fit
+            # The 12,288-point sample is slow to fit on SwiftShader, and slower still when
+            # the whole suite shares the CPU with it (the coverage run in CI).
+            timeout=300,
         )
         modes = {}
         # The 12,288-point sample is slow to prepare Lattice and Wander on SwiftShader; its run
@@ -79,7 +81,7 @@ def form_run(request, browser, webgl, site):
                 INFO,
                 lambda i, m=mode, s=start: i["mode"] == m and i["frames"] > s + 10,
                 arg=el_id,
-                timeout=90,
+                timeout=300,
                 what=f"{mode} to draw frames",
             )
         lit = harness.lit_pixels(tab.png(f"#{el_id} canvas.tumbler-canvas"))

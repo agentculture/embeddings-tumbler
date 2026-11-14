@@ -44,7 +44,7 @@ def _run(browser, base_url: str, viewport: tuple[int, int], query: str) -> dict:
         result = tab.wait_for(
             "() => window.__viewerResult",
             lambda r: bool(r and r.get("done")),
-            timeout=90,
+            timeout=300,  # each mode is waited for until ready; slow on a shared CPU
             what="the page to finish",
         )
     finally:
