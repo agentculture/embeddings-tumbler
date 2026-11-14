@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T02:58:30Z",
+  "updated": "2026-11-14T03:26:23Z",
   "claims": [
     {
       "id": "c1",
@@ -1133,6 +1133,18 @@
       "skipped_check": "same-frame pixel comparison; causes confirmed by a code change",
       "refs": [
         "t17"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l21",
+      "code": "assumption-for-measurement",
+      "what": "fidelity pass: the framing cap (AUTO_FIT 0.88) was tuned on the sample set alone and its label-room estimate assumes a character width; the 'before' and extent numbers come from an emulation of the viewer's yaw, not read back from a running browser; light-stage outline, stop and ring colours are covered by unit tests only, with no screenshot; the text-shadow outline was not checked in Firefox or Safari; one test (light-stage outline) passed before the change. Main agent looked at the label crop (reference, before, after): the outline now matches the reference in Lattice.",
+      "skipped_check": "framing cap on other data; light-theme screenshots; Firefox and Safari",
+      "refs": [
+        "t17",
+        "t11"
       ],
       "origin": "llm",
       "status": "proposed"
