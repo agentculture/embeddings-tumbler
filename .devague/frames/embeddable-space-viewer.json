@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-14T09:25:01Z",
+  "updated": "2026-11-14T10:06:16Z",
   "claims": [
     {
       "id": "c1",
@@ -1240,6 +1240,15 @@
       ],
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "l30",
+      "code": "assumption-for-measurement",
+      "what": "Reported 'no open SonarCloud issues' for the build from the pull-request analysis only, which covers changed files. After the merge the analysis of main showed 13 open issues in files older than the build (a probe script, a workforce example, two scaffold scripts), and the Tests workflow on main failed on them.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
     }
   ],
   "obligations": [
