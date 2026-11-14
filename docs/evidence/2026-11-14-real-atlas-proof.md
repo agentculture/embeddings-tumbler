@@ -206,6 +206,40 @@ visible in motion inside the mixed corpus. No structure was identified by eye
 that the numbers above do not already describe, and with no groups in the file
 the picture is a single colour, which makes identifying one by eye unlikely.
 
+## A second model: EmbeddingGemma 2
+
+At the owner's request the same two corpora were embedded again with
+`google/embeddinggemma-2` (gateway lane `gemma2-embed`, 768-d, served by another
+machine on the mesh and reached through the same gateway and key), exported
+with `--group-by group`, and measured the same way. 311 texts took 5 s and
+10,000 took 103 s.
+
+| Measure | Qwen3-Embedding-0.6B (1024-d) | EmbeddingGemma 2 (768-d) |
+|---------|-------------------------------|--------------------------|
+| Small set, full space | 1.117 | 1.130 |
+| Small set, random 3-D frames | 1.114 | 1.127 |
+| **Small set, Tumble** | **1.519** | **1.634** |
+| Small set, Tumble frames at or above 1.3 | 91% | 96% |
+| Small set, Lattice | 1.126 | 1.135 |
+| Small set, 2-D map | 1.948 | 2.393 |
+| Pairs clearly apart: map / some Tumble frame (of 105) | 64 / 81 | 77 / 89 |
+| Pairs overlapping in the map; of those clearly apart in some frame | 18; 2 | 13; 2 |
+| Large set, random 3-D frames | 1.089 | 1.080 |
+| **Large set, Tumble** | **1.286** | **1.265** |
+| Variance in the tour's 8 directions, large set | 18.9% | 17.6% |
+| Frames per second at 10,000 points (Tumble / Lattice / Wander, GPU) | 60.0 / 60.0 / 60.1 | 58.9 / 59.6 / 60.0 |
+| Requests to another origin, three forms | 0 | 0 |
+
+The pattern is the same on both models: Tumble meets 1.3 on the small set and
+falls just short on the large one, Lattice equals a random frame, and the 2-D
+map is the stronger single picture. EmbeddingGemma 2 separates these 15 groups
+somewhat better in every view. The dimension came from the data (768 here,
+1024 before) with no change to the viewer. The key scan and the address check
+were repeated on these files with the same result; the file records the model
+as `gemma2-embed`, the name the survey was given. The EmbeddingGemma frame-rate
+run shared the machine with another job, so its small shortfall from 60 and its
+longer load (13.7 s to ready) are not a finding about the model.
+
 ## Findings
 
 ### 1. Lattice shows no grouping on real vectors (open)
