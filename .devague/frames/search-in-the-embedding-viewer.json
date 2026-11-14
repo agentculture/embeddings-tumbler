@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T15:22:24Z",
+  "updated": "2026-11-14T15:40:04Z",
   "claims": [
     {
       "id": "c1",
@@ -976,6 +976,24 @@
       "id": "l7",
       "code": "control-absent",
       "what": "t7: the module was written before its tests; the stepper returned by searchChanged is the agent's own decision and the viewer task had not been checked against it; the view was not looked at in a browser; the cost of re-fitting on every append was not measured; the full suite was not re-run by the agent after its last fix (main agent ran it after merge: all pass).",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l8",
+      "code": "n-below-claim",
+      "what": "t6: implementation before tests; coverage not re-measured after the last test; the swing's speed and jump figures come from one 48-d sample set and one seed, and the test bounds were chosen from those same measurements; lazily cached values after a swing could depend on query order in an untested edge case; nothing was run in a browser. Criterion 1 does not hold literally for Wander, which already holds its frame for 2 s at each stop with or without a search.",
+      "skipped_check": "",
+      "refs": [],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l9",
+      "code": "assumption-for-measurement",
+      "what": "t8: nothing in a browser exercised search; the cost of the pair reports inside the viewer was not measured; complexity under 15 is the agent's estimate; 24 added lines (defensive branches) are uncovered. Main agent then drove search through the handle in Chromium: it works in all four modes with no errors, but found that results on the sample set are unnamed points (the build ranks every point, where the spec and the reference rank named points and light everything as near), that Wander with a search is almost dark (2 lit pixels of 57,600), and that Focus changes only 12 to 15 percent of its lit pixels per second.",
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
