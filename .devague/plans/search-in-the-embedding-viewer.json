@@ -3,9 +3,9 @@
   "title": "Search in the embedding viewer",
   "frame_slug": "search-in-the-embedding-viewer",
   "schema_version": 5,
-  "status": "drafting",
+  "status": "exported",
   "created": "2026-11-14T13:25:21Z",
-  "updated": "2026-11-14T13:40:12Z",
+  "updated": "2026-11-14T13:58:04Z",
   "targets": [
     {
       "id": "c1",
@@ -475,7 +475,7 @@
       "id": "t1",
       "summary": "Search interfaces, written down before any code: the search core's functions, the per-point lit value the renderer takes, the facing-view hook the modes take, the handle and info() additions, the embed and rerank callback contracts, and the helper route's request and response.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "js/api/24-search.md, js/api/26-search-sets.md and docs/search-interface.md exist and name every function, argument, return shape and refusal code the later tasks implement",
         "The document states that the shipped viewer today has no way to select, highlight or dim points, citing js/api/50-viewer.md",
@@ -493,7 +493,7 @@
       "id": "t2",
       "summary": "Search core, ranking (js/src/24-search.js, pure, no DOM): exact nearest points by cosine distance in the full space, run in slices; word search among loaded points; checks on a query vector; the same-space rule for reduced files.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "For random data at 768 and 1,024 dimensions the ranking equals an independent brute-force cosine ranking, and on-screen position is not an input to any function",
         "The scan is a stepper whose units each stay under 4 ms on 10,000 points of 1,024 dimensions, and a result is identical whether stepped or run in one go",
@@ -522,7 +522,7 @@
       "id": "t3",
       "summary": "Search core, several searches (js/src/26-search-sets.js, pure): up to four searches, what is lit and how strongly, points shared between searches, the report for each pair, the point-of-view scaling, and the seeded view that faces the searches.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "Lit values per point for the three settings: evenly (every point as near as the last named result), by closeness (a nearer point is never dimmer than a farther one for the same search, fading out beyond the last result), named results only",
         "A point is marked shared only when it lies inside the result radius of two or more searches; each pair's report gives the shared count, the named results in common and the closest pair of different results with its full-space distance",
@@ -550,7 +550,7 @@
       "id": "t4",
       "summary": "Renderer: a per-point lit value and a shared mark (js/src/30-renderer.js), so results swell and brighten, the rest dim, and a point found by several searches is marked.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "A new per-point buffer is uploaded and updated without re-uploading vectors; with no search the frame is byte-identical to today's (the existing frame hash test still passes unchanged)",
         "In a browser test, lit pixels of a dimmed set are fewer than of the same set with no filter, and a point given a higher lit value is brighter than one given a lower value",
@@ -570,7 +570,7 @@
       "id": "t5",
       "summary": "Local embed route for viewer serve (new module embeddings_tumbler/_embed_route.py and a flag on the serve verb): embeds a query, and optionally reranks, with the gateway key held only in the server process.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "Without the flag, viewer serve behaves exactly as today and reads no environment variable (the existing test for that still passes unchanged)",
         "With the flag: only POST with a JSON content type is answered; a request with a foreign Origin, a wrong Host, a GET, an over-long text, or more than the stated rate is refused, each shown by its own test; a non-loopback bind is refused unless a second flag is given",
@@ -593,7 +593,7 @@
       "id": "t6",
       "summary": "Modes: the swing to face the searches (js/src/39-modes.js and the three mode files). A new search, or the Face the searches control, draws the view toward the facing frame for about six seconds while it keeps drifting; then the mode's own motion carries on.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "In each of Tumble, Lattice and Wander, the frame differs between every pair of consecutive seconds during and after a swing (never held), and the swing ends by itself",
         "After the swing Lattice resumes swapping axes and Wander resumes flying between points, starting from the frame at that moment with no jump",
@@ -615,7 +615,7 @@
       "id": "t7",
       "summary": "Focus, a fourth mode (new file js/src/43-mode-focus.js): the view is fitted to the results of the search and re-fitted when the search changes; with no search it shows the whole set.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "Focus registers through the existing mode interface without editing any existing mode file or the data contract (the existing fourth-mode test pattern, applied to the real file)",
         "With a search active the frame is the fit of the results and the query; with none it is the fit of the whole set; changing the search turns smoothly to the new fit",
@@ -635,7 +635,7 @@
       "id": "t8",
       "summary": "Viewer API for search (js/src/50-viewer.js): the handle sets and clears searches by text, vector or point id; the host's embed and rerank callbacks; latest search wins; searches re-run after an append; info() reports search state.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "Everything the panel can do can be done through the handle, and info() gives each search's result ids, distances, lit setting and whether it is waiting or stale, enough for a test to assert results without reading pixels",
         "Callback answers delivered out of order, late, failing, with a wrong length or a non-finite value: in each case the lit set is the latest valid search's or unchanged, a plain message is available, and nothing runs after destroy",
@@ -664,7 +664,7 @@
       "id": "t9",
       "summary": "Search panel (new file js/src/45-search-panel.js): the collapsed one-line bar, the text box (one search per line, up to four), result lists, the lit menu, the Distance difference, Reranker and point-of-view controls, the Face the searches control, and the query markers and links drawn over the stage.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "Collapsed by default to one line naming the searches and how many points are lit; closing never clears or pauses a search; the expanded state is exposed to assistive technology and the panel works by keyboard",
         "Measured in a browser at desktop and phone width with searches active and the panel closed: it adds at most one line of 48 px or less under the stage",
@@ -700,7 +700,7 @@
       "id": "t10",
       "summary": "Web component: the embed and rerank callbacks as properties (js/shells/web-component.js).",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "Setting the two properties on the element reaches the viewer; they are not attributes and nothing is read from markup",
         "The shell still calls only the public API (the existing static scan passes, extended to the new handle methods it may use)",
@@ -721,7 +721,7 @@
       "id": "t11",
       "summary": "Standalone page: search without writing code (js/page/). The page uses the local embed route when viewer serve offers it, and search among loaded points otherwise.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "Served by viewer serve with the embed flag, typing free text searches by embedding; served as plain files, the page says it is matching loaded points and still works",
         "The page makes requests only to its own origin (network log), and still has no inline script or style",
@@ -741,7 +741,7 @@
       "id": "t12",
       "summary": "Browser tests for search (tests/browser/test_search_*.py) on the three delivery forms.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "With a search active, lit pixels keep changing every second in Tumble, Lattice and Wander, during and after the swing; a negative control with the view paused shows the check can fail",
         "The lit point ids reported by info() equal an independent exact ranking computed in the test from the same file",
@@ -771,7 +771,7 @@
       "id": "t13",
       "summary": "Guides: search for hosts and for people (docs/guides/host.md and a new docs/guides/search.md), with the API pages kept in step.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "The host guide shows adding search by script and by web component, the callback contracts, the handle methods and what info() reports, each with a tested example",
         "The search guide says what each control does, that distances are full-space distances and a picture is a shadow, and where typed text goes in each kind of search",
@@ -792,7 +792,7 @@
       "id": "t14",
       "summary": "Real-data proof for search: on the 10,000-point real file and through the real gateway, measure and record what search does.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "A written record under docs/evidence/ gives: time from the query vector arriving to the first frame with the lit set, and the frame rate over at least 10 seconds with four searches active, with machine and renderer stated; the targets are 1 second and 30 frames per second, and a miss is recorded as a miss",
         "Typed texts embedded by the file's own model through the helper light their true nearest neighbours, checked against an independent ranking, for both models used in the earlier proof",
@@ -817,7 +817,7 @@
       "id": "t15",
       "summary": "Reference comparison for search: the written list of every intended difference from the two reference pages, a side-by-side page, and the owner's sign-off.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "docs/reference-differences.md gains a search section listing each intended difference (query placement from named words, toy rerankers, the Focus reference's plain canvas and single search, and any found while building), each marked visible or not on comparable data",
         "A side-by-side page shows each reference next to the built view on comparable data",
