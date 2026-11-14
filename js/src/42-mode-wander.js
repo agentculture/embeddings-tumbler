@@ -44,6 +44,7 @@
       describe: describe,
       route: route,
       neighboursOf: neighboursOf,
+      mark: function () {}, // Wander has no events to fix
       leave: leave,
     };
 
@@ -56,6 +57,7 @@
     var startCentre = null;
     var scale = 1;
     var ready = false;
+    var empty = false;
     var visit = null; // Int32Array: points the route may stop at
     var labelledCount = 0;
     var inVisit = null; // Uint8Array(N): 1 when the point is a visit candidate
@@ -67,6 +69,7 @@
     var tmpC = null;
 
     function enter(s, opts) {
+      M.requireDimension(s, 3, "Wander");
       var o = opts || {};
       set = s;
       D = s.dimension;
@@ -76,6 +79,7 @@
       startFrame = entry ? entry.frame : M.startFrame(D, seed);
       startCentre = null;
       ready = false;
+      empty = s.count === 0;
       nbrCache = {};
       targets = [];
       toFrames = [];
@@ -116,6 +120,10 @@
           required: true,
           weight: 1,
           run: function () {
+            if (empty) {
+              ready = true;
+              return true;
+            }
             var st = M.stats(set);
             scale = st.radius / M.REFERENCE_RADIUS;
             startCentre = entry && entry.centre ? new Float32Array(entry.centre) : new Float32Array(st.mean);
@@ -136,7 +144,7 @@
     function nearest(j) {
       if (nbrCache[j]) return nbrCache[j];
       var X = set.vectors;
-      var K = Math.min(opt.neighbours, pool.length - 1);
+      var K = Math.max(0, Math.min(opt.neighbours, pool.length - 1));
       var bestD = new Float64Array(K);
       var bestI = new Int32Array(K);
       var filled = 0;
@@ -217,14 +225,7 @@
     function stateAt(time) {
       var t = M.checkTime(time);
       out.t = t;
-      if (!ready) {
-        out.frame.set(startFrame);
-        if (entry && entry.centre) out.centre.set(entry.centre);
-        out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0 };
-        out.focus = null;
-        out.status = status(t);
-        return out;
-      }
+      if (!ready || empty) return M.holdState(out, startFrame, entry, t, status(t));
       var hp = hopAt(t);
       var h = hp.h;
       ensure(h);
@@ -273,9 +274,12 @@
       return out;
     }
 
+    // A point's name for the status line, cut to 24 characters so the line
+    // stays short (the full label is the viewer's to show).
     function nameOf(i) {
       var p = set.points[i];
-      return M.isLabelled(p) ? p.label : p.id;
+      var n = M.isLabelled(p) ? p.label : p.id;
+      return n.length > 24 ? n.slice(0, 23) + "…" : n;
     }
 
     function describeStop(h, phase) {
@@ -291,12 +295,13 @@
     }
 
     function step(dt) {
-      self.time += dt;
+      self.time = Math.max(0, self.time + dt);
       return stateAt(self.time);
     }
 
     function status(time) {
       var t = M.checkTime(time === undefined ? self.time : time);
+      if (empty) return M.EMPTY_STATUS;
       if (!ready) return "getting ready to wander …";
       var hp = hopAt(t);
       ensure(hp.h);
@@ -309,16 +314,15 @@
     function dataChanged(newSet, info) {
       var i = info || {};
       var t = i.t === undefined ? self.time : M.checkTime(i.t);
-      if (i.op !== "append" || newSet.dimension !== D || !ready) {
-        var from = null;
+      if (i.op !== "append" || newSet.dimension !== D || !ready || empty) {
+        var from = entry;
         if (ready) {
           var s = stateAt(t);
-          from = { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) };
-        } else {
-          from = entry;
+          from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
+          if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
         }
         enter(newSet, { seed: seed, from: from });
-        return prepare();
+        return M.changed(prepare(), true);
       }
       var h = hopAt(t).h;
       ensure(h);
@@ -327,17 +331,17 @@
       set = newSet;
       nbrCache = {};
       buildPool();
-      return null;
+      return M.changed(null, false);
     }
 
     function route(n) {
-      if (!ready) return new Int32Array(0);
+      if (!ready || empty) return new Int32Array(0);
       if (n > 0) ensure(n - 1);
       return Int32Array.from(targets.slice(0, n));
     }
 
     function neighboursOf(j) {
-      return ready ? Int32Array.from(nearest(j)) : new Int32Array(0);
+      return ready && !empty ? Int32Array.from(nearest(j)) : new Int32Array(0);
     }
 
     function describe() {
@@ -351,6 +355,7 @@
         dwell: opt.dwell,
         labelled: labelledCount,
         visiting: labelledCount >= 2 ? "labelled points" : "any point",
+        empty: empty,
         varianceShare: null,
       };
     }

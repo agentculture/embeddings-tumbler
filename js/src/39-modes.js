@@ -16,6 +16,8 @@
 // ---------------------------------------------------------------------------
 ET.modes = (function () {
   // Members every mode instance must have (see js/api/40-modes.md).
+  // Optional members: mark(t) (fix the time of a finished event) and, for
+  // Tumble, refit(t).
   var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
   var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
   var registry = [];
@@ -175,15 +177,34 @@ ET.modes = (function () {
     st.radius = Math.sqrt(st.totalVariance) || 1;
   }
 
+  // Cheap check that `set` starts with `previous` (an append of it): same
+  // dimension, no fewer points, and the first and last rows of `previous` are
+  // equal in both. Not a proof; it catches a wrong `previous` in O(D).
+  function isPrefix(previous, set) {
+    var D = set.dimension;
+    if (!previous || previous.dimension !== D || !(previous.count <= set.count)) return false;
+    var n = previous.count;
+    if (n === 0) return true;
+    var a = previous.vectors;
+    var b = set.vectors;
+    var last = (n - 1) * D;
+    for (var d = 0; d < D; d++) {
+      if (a[d] !== b[d] || a[last + d] !== b[last + d]) return false;
+    }
+    return true;
+  }
+
   // stats(set) -> { count, dimension, mean: Float32Array(D), radius, totalVariance }.
   // O(N * D) the first time for a set; an appended set built from a set seen
   // before (pass it as `previous`) costs O(k * D) for the k new rows.
+  // Precondition: `set` is `previous` with points appended. A `previous` that
+  // fails the cheap check (isPrefix) is ignored and the stats are recomputed.
   function stats(set, previous) {
     if (statsCache && statsCache.has(set)) return statsCache.get(set);
     var D = set.dimension;
     var st;
     var prev = previous && statsCache ? statsCache.get(previous) : null;
-    if (prev && prev.dimension === D && prev.count <= set.count) {
+    if (prev && isPrefix(previous, set) && prev.count === previous.count) {
       st = { count: prev.count, dimension: D, sum: Float64Array.from(prev.sum), sumSq: prev.sumSq, mean: new Float32Array(D) };
       addRows(st, set.vectors, prev.count, set.count, D);
     } else {
@@ -343,6 +364,40 @@ ET.modes = (function () {
     return !!p && typeof p.label === "string" && p.label.trim() !== "" && p.label !== p.id;
   }
 
+  // Throws a RangeError naming the data when a set has too few dimensions.
+  function requireDimension(set, min, title) {
+    var D = set && set.dimension;
+    if (!(D >= min)) {
+      throw new RangeError(
+        "the set has dimension " + D + "; " + title + " needs at least " + min + " dimensions",
+      );
+    }
+  }
+
+  // The state a mode shows while it has nothing to move through (no points
+  // yet, or still preparing): the hold frame, the entry centre (or zeros) and
+  // the entry's draw parameters, no wires.
+  function holdState(out, frame, entry, t, status) {
+    out.t = t;
+    out.frame.set(frame);
+    if (entry && entry.centre) out.centre.set(entry.centre);
+    else out.centre.fill(0);
+    out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0, fog: 0 };
+    out.wires = null;
+    out.focus = null;
+    out.status = status;
+    return out;
+  }
+
+  // What dataChanged returns: more work to pump (or null), and whether mode
+  // time restarted at 0 (the mode re-entered; the viewer resets its clock and
+  // waits for isReady()).
+  function changed(work, restart) {
+    return { work: work || null, restart: !!restart };
+  }
+
+  var EMPTY_STATUS = "no points yet";
+
   function checkTime(t) {
     if (typeof t !== "number" || !isFinite(t)) throw new RangeError("time must be a finite number");
     return t < 0 ? 0 : t;
@@ -369,5 +424,10 @@ ET.modes = (function () {
     thousands: thousands,
     isLabelled: isLabelled,
     checkTime: checkTime,
+    requireDimension: requireDimension,
+    holdState: holdState,
+    changed: changed,
+    isPrefix: isPrefix,
+    EMPTY_STATUS: EMPTY_STATUS,
   };
 })();

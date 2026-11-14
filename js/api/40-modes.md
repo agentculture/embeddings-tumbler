@@ -51,13 +51,14 @@ registers one from a test). The public API (`ET.api`) is t8's; it may expose
 
 | Member | What it does |
 |--------|--------------|
-| `enter(set, { seed, from })` | Start the mode on `set`. Cheap: no heavy work. Mode time restarts at 0. `from` is optional: `{ frame, centre, draw }`, the last state the viewer drew (any mode's). With it the mode starts exactly there and blends into its own motion; without it, it starts from its own deterministic start. |
+| `enter(set, { seed, from })` | Start the mode on `set`. Throws a `RangeError` naming the set's dimension when it is below the mode's minimum (see "Limits"). Cheap: no heavy work. Mode time restarts at 0. `from` is optional: `{ frame, centre, draw }`, the last state the viewer drew (any mode's). With it the mode starts exactly there and blends into its own motion; without it, it starts from its own deterministic start. |
 | `prepare() -> stepper` | The mode's preparation, in bounded units. See below. |
 | `isReady() -> boolean` | Whether frames are defined (the required part of the preparation is done). |
 | `stateAt(t) -> state` | **The source of truth.** The state at mode time `t`. |
-| `step(dt) -> state` | A thin wrapper: `time += dt`, then `stateAt(time)`. Keeps `inst.time`. |
-| `status(t?) -> string` | The status line at `t` (default `inst.time`); the same text as `stateAt(t).status`. |
-| `dataChanged(newSet, { op, added, t }) -> stepper \| null` | The set changed at mode time `t` (see "Data changes"). Returns more work to pump, or `null`. |
+| `step(dt) -> state` | A thin wrapper: `time = max(0, time + dt)`, then `stateAt(time)`. Keeps `inst.time`; a negative `dt` never takes it below 0. |
+| `status(t?) -> string` | The status line at `t` (default `inst.time`); the same text as `stateAt(t).status`. A pure query: calling it at any times changes no later answer (tested). Kept short (about 70 characters at most); detail is in `describe()`. |
+| `dataChanged(newSet, { op, added, t }) -> { work, restart }` | The set changed at mode time `t` (see "Data changes"). `work` is a stepper to pump, or `null`. `restart: true` means the mode re-entered and its time restarted at 0: the viewer resets its mode clock to 0 and waits for `isReady()`. |
+| `mark(t)` (optional) | Fix the time of a finished event at mode time `t` (see "Events"). All three shipped modes have it; it does nothing when no event is waiting. |
 | `describe() -> object` | What the provenance block needs: `{ id, projection, seed, varianceShare, ... }` (per mode below). `projection` always says it is linear. |
 | `leave()` | Drop the instance's references; it is not used again. |
 
@@ -129,8 +130,34 @@ got (tested). As in `ET.math`, `Math.sin`/`Math.cos` may differ in the last bit
 between JavaScript engines.
 
 What may depend on progress or on events: the wires and their fade-in
-(Lattice), a refit (Tumble, when the viewer asks), and anything after an
-append.
+(Lattice), a refit (Tumble, when the viewer asks), anything after an append,
+and the progress figure in a "measuring" or "finding" status.
+
+### Events
+
+Two things happen at a time the work's progress decides: a Tumble refit
+switching in, and a Lattice wire list being shown (the first list fades in; a
+re-measured list replaces it). Each is an **event at a fixed time T**:
+
+- T is fixed by the caller: `refit(t)` (Tumble) gives it up front; `mark(t)`
+  fixes it for an event whose work has finished. Only when the caller gave no
+  time does the first `stateAt` after the work finished fix T at the time it
+  asks for. T is never earlier than the previous event of the same kind, so a
+  fixed past is never rewritten.
+- Once T is fixed, `stateAt(t)` is a pure function of (data, seed, entry view,
+  t, T): the same `t` gives the identical state however often and in whatever
+  order it is asked, and `t < T` gives the state from before the event (the old
+  tour and its share; no wires, or the previous wire list).
+- T is reported: Tumble `describe().refitAt` (and `refitPending` while a refit
+  runs or waits), Lattice `describe().wiresShownAt` (first list),
+  `wiresReplacedAt` (latest re-measured list) and `wiresPending`.
+- Recommended for the viewer: after pumping a stepper in a frame, call
+  `inst.mark(clock)` before `stateAt(clock)`; that makes T the frame's time
+  explicitly. Work finished before the clock started is then shown from 0.
+
+Tested: repeated and backwards queries across a refit and across the wire
+fade-in are bit-identical, and two instances given the same T agree whatever
+order they are queried in (`js/test/modes-review.test.js`).
 
 ### Data changes (`dataChanged`)
 
@@ -142,11 +169,10 @@ append (tested for all three: frame bit-identical, centre within 1e-7).
   (time constant 0.7 s) from where it is to the new mean. The reported
   `varianceShare` is **stale**: `describe().varianceShareStale` is true,
   `pointsSinceFit` counts the appended points, and the status line says
-  "(measured before N appended points)". `refit()` returns a stepper that fits
-  the directions again on the current set; the first `stateAt(t)` after it is
-  done switches to the new tour, aligned to the current axes (order and sign)
-  and blended in over `transition` (1.5 s), and from then on the share is
-  fresh. The viewer decides when to refit (for example after a quiet period or
+  "before N new points". `refit(t?)` returns a stepper that fits the directions
+  again on the current set; at the switch time T (see "Events") it switches to
+  the new tour, aligned to the current axes (order and sign) and blended in over
+  `transition` (1.5 s), and from then on the share is fresh. The viewer decides when to refit (for example after a quiet period or
   when `pointsSinceFit` passes a share of the set). This is the cheapest honest
   behaviour: an append costs `O(k * D)` here, a refit costs a full fit.
 - **Lattice** keeps its swap schedule: no jump; the centre glides to the new
@@ -157,12 +183,30 @@ append (tested for all three: frame bit-identical, centre within 1e-7).
 - **Wander** keeps every hop up to the one in progress at `t` (the stop and its
   frame), so the flight in progress is unchanged; later stops are chosen again
   with the new points, which may become stops (when labelled) and neighbours.
+  The next hop starts from the frame and point actually shown at the end of
+  the kept hop. Tested: sampled every 1/60 s from before an append to the end
+  of the second hop after it, the largest frame change per step stays within
+  1.5 times the largest seen in 60 s without an append (measured: 0.0022 to
+  0.0061 against 0.0077), and the change at the next hop's start is 0 to five
+  decimals. The route is fixed by the data history (the same sets appended at
+  the same times) and the seed, not by how the instance was queried (tested).
 
-Any other change (`op: "replace"`, another dimension) re-enters the mode on the
-new set, from the current view, and returns the new `prepare()` stepper.
+These return `{ work, restart: false }`. Any other change re-enters the mode
+from the current view and returns `{ work: prepare(), restart: true }`: the
+first points arriving on an **empty** set, `op: "replace"`, or another
+dimension.
 
 The mean and spread are kept as running sums (`ET.modes.stats(set, previous)`),
 so an append updates them in `O(k * D)`.
+
+### Empty sets
+
+A set with `count` 0 is valid (the data contract allows a replace with no
+points). Every mode accepts it: `prepare()` finishes at once, `isReady()` is
+true, and `stateAt` returns a hold state that does not move: the entry frame
+(or the mode's start frame), the entry centre (or zeros), the entry's draw
+parameters, no wires, status `no points yet`. The first append with points
+re-enters the mode from that view (`restart: true`).
 
 ## Tumble (`"tumble"`)
 
@@ -187,13 +231,14 @@ over `transition` seconds.
   variance held by the directions the tour moves through (`tour.varianceShare`).
   It is **not** the share of the three directions on screen at one instant (that
   is never more than this; `ET.math.varianceShare(Y, N, D, frame, 3)`).
-- Status: `tour through the 8 strongest directions, which hold 64.6% of the
-  variance`, plus `(measured before N appended points)` when stale and
-  `· refitting …` while a refit runs. Before it is ready: `finding the strongest
-  directions in 384-d … 33%`.
+- Status: `tour of 8 strongest directions · 64.6% of variance`, plus
+  `· before 40 new points` while the share is stale (at times before a refit's
+  switch, the share of the tour then shown). Before it is ready: `finding the
+  strongest directions in 384-d … 33%`.
 - `describe()`: `{ id, projection, seed, subspace, speed, varianceShare,
-  varianceShareStale, pointsSinceFit, fittedRows, method }`.
-- `refit() -> stepper` (Tumble only).
+  varianceShareStale, pointsSinceFit, fittedRows, method, refitAt,
+  refitPending, empty }`.
+- `refit(t?) -> stepper` (Tumble only); `mark(t)`.
 - Draw: `zoom` auto (below), `wires 0`, `dim 1`, `trails 0.17`, `fog 0`,
   `twinkle 0.18`, `depthOfField 1.1` (the reference's defaults).
 
@@ -226,10 +271,13 @@ no groups at all, every point gets wires.
 
 - Status: `swap 2 · axis Y trading for a hidden direction ·  47% · 1,870 wires`
   (swap number from 1, the axis, the swap's progress padded to three
-  characters, the wire count). While measuring: `… · measuring true neighbours
-  in 384-d … 37%`.
+  characters, the wire count of the list shown at that time). Before a list
+  is shown: `… · measuring 37%`.
 - `describe()`: `{ id, projection, seed, period, neighbourLimit,
-  wireNeighbours, wires, neighboursMeasured, varianceShare: null }`.
+  wireNeighbours, wires, neighboursMeasured, wiresShownAt, wiresReplacedAt,
+  wiresPending, empty, varianceShare: null }`.
+- Wires are an event (see "Events"): `state.wires` is `null` before the first
+  list's time, and `draw.wires` fades from 0 to 1 over `wireFade` from it.
 - Draw: `wires` 0..1 (the fade-in), `dim 0.55`, `trails 0.10` (the reference's
   `0.17 - 0.07`), `fog 0`, `zoom` auto.
 - The viewer calls `renderer.setWires(state.wires.pairs, state.wires.lengths)`
@@ -279,28 +327,46 @@ at the stop for `dwell` seconds with the centre exactly on the point.
   stop's in as `e^2`).
 - Status: dwelling `at "estuary" · ocean · stop 7`; travelling `"whale" →
   "estuary"`, or `heading to "estuary"` on the first hop, plus `· long leap to
-  ocean` when the hop changes group. Labels are untrusted text: the viewer must
-  insert the status with `textContent`.
+  ocean` when the hop changes group. Names longer than 24 characters are cut
+  to 23 and `…`. Labels are untrusted text: the viewer must insert the status
+  with `textContent`.
 - `inst.route(n) -> Int32Array`: the first `n` stops. `inst.neighboursOf(j) ->
   Int32Array`: the neighbours a stop's frame is fitted to.
 - `describe()`: `{ id, projection, seed, neighbours, neighbourLimit, travel,
-  dwell, labelled, visiting, varianceShare: null }`.
+  dwell, labelled, visiting, empty, varianceShare: null }`.
+- `mark(t)` does nothing: Wander has no events.
 - Draw: `fog 1`, `fogNear 1.2 * s`, `fogWidth 0.8 * s`, `zoom 2.7 / s`,
   `trails 0.17`, `wires 0`, where `s` is the set's radius over the sample's
   (below).
 
 ## Limits
 
-Lattice needs `D >= 4` (a hidden direction must exist) and Tumble `D >= 3`;
-`enter` (Lattice) or the preparation (Tumble) throws `RangeError` below that.
-Real sets are hundreds of dimensions; the viewer should refuse a mode rather
-than call it on a set that small.
+**Dimension.** Tumble and Wander need `D >= 3` (three orthonormal axes);
+Lattice needs `D >= 4` (a hidden direction must exist). Below that, `enter`
+throws a `RangeError` that names the data, for example `the set has dimension
+2; Lattice needs at least 4 dimensions`. The viewer turns it into a plain
+message for the host. Real sets are hundreds of dimensions.
+
+**Tiny sets.** Sets of 1, 2 or a few points work in every mode. With a single
+point, or a Wander neighbour pool of one, a stop has no neighbours: its local
+frame comes from `ET.math.localFrame` of that one point, which has no spread,
+so it falls back to standard basis directions (deterministic, orthonormal, but
+not fitted to anything). With fewer than four points a neighbourhood has rank
+below three and the missing axes are filled the same way. Tumble's tour on a
+set with one point (no variance) reports a share of 0.
+
+**Empty sets.** See "Empty sets" above.
 
 ## Shared helpers on `ET.modes`
 
 - `stats(set, previous?) -> { count, dimension, mean: Float32Array(D),
   totalVariance, radius }`, cached per set; `radius` is the root mean squared
-  distance from the mean.
+  distance from the mean. Precondition for `previous`: `set` is `previous` with
+  points appended. A cheap guard (`isPrefix`: same dimension, no fewer points,
+  the first and last rows of `previous` equal in both) is checked; when it
+  fails, `previous` is ignored and the stats are recomputed in full (tested).
+- `requireDimension(set, min, title)`, `holdState(...)`, `changed(work,
+  restart)`, `EMPTY_STATUS`: shared by the three modes for the rules above.
 - `REFERENCE_RADIUS = 0.963`: the sample set's radius (measured: 0.963 at
   384-d, 0.968 at 1024-d). Distances the reference tuned by eye (fog, Wander's
   zoom) are scaled by `radius / REFERENCE_RADIUS` measured when the mode is
@@ -322,6 +388,7 @@ var clock = 0;
 function frame(dt) {                       // once per animation frame
   if (!prep.done) prep.step(8);            // about 8 ms of preparation per frame
   if (inst.isReady() && running) clock += dt * speed;
+  inst.mark(clock);                        // finished events happen at this frame's time
   var s = inst.stateAt(inst.isReady() ? clock : 0);
   if (s.wires && s.wires.version !== lastWires) {
     renderer.setWires(s.wires.pairs, s.wires.lengths);
@@ -344,8 +411,14 @@ function frame(dt) {                       // once per animation frame
   reference spins the cloud at 0.06 rad/s of yaw while running.
 - **Mode switch:** create the new instance with `from` = a copy of the last
   state drawn; the new mode begins exactly there.
-- **Appends:** call `dataChanged(newSet, { op: "append", added: k, t: clock })`
-  on the active instance and pump the stepper it returns, if any.
+- **Appends:** call `r = dataChanged(newSet, { op: "append", added: k, t: clock })`
+  on the active instance; pump `r.work` if it is not `null` (as `prep`), and
+  when `r.restart` is true set the mode clock to 0 and wait for `isReady()`.
+- **Refit (Tumble):** `inst.refit()` (or `refit(clock)`) and pump the stepper;
+  with `mark(clock)` each frame the switch happens at the frame the fit
+  finished.
+- **Wires:** `renderer.setWires` returns a result; a caller that cares checks
+  `ok` (see `js/api/30-renderer.md`).
 
 ## Measured
 

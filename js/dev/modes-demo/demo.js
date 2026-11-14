@@ -173,9 +173,11 @@
       if (c.prep.done && stats.prepMs[c.id] === undefined) stats.prepMs[c.id] = Math.round(performance.now() - c.started);
     }
     if (c.inst.isReady() && running) c.clock += dt;
+    if (c.inst.isReady() && c.inst.mark) c.inst.mark(c.clock); // finished events happen now
     var s = c.inst.stateAt(c.inst.isReady() ? c.clock : 0);
     if (s.wires && s.wires.version !== c.wiresVersion) {
-      renderer.setWires(s.wires.pairs, s.wires.lengths);
+      var w = renderer.setWires(s.wires.pairs, s.wires.lengths);
+      if (w && w.ok === false) stats.error = "setWires: " + w.message;
       c.wiresVersion = s.wires.version;
     }
     if (running && !drag) yaw += dt * 0.06;

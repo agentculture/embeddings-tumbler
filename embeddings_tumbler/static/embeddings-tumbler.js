@@ -2628,6 +2628,8 @@ ET.renderer = (function () {
 // ---------------------------------------------------------------------------
 ET.modes = (function () {
   // Members every mode instance must have (see js/api/40-modes.md).
+  // Optional members: mark(t) (fix the time of a finished event) and, for
+  // Tumble, refit(t).
   var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
   var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
   var registry = [];
@@ -2787,15 +2789,34 @@ ET.modes = (function () {
     st.radius = Math.sqrt(st.totalVariance) || 1;
   }
 
+  // Cheap check that `set` starts with `previous` (an append of it): same
+  // dimension, no fewer points, and the first and last rows of `previous` are
+  // equal in both. Not a proof; it catches a wrong `previous` in O(D).
+  function isPrefix(previous, set) {
+    var D = set.dimension;
+    if (!previous || previous.dimension !== D || !(previous.count <= set.count)) return false;
+    var n = previous.count;
+    if (n === 0) return true;
+    var a = previous.vectors;
+    var b = set.vectors;
+    var last = (n - 1) * D;
+    for (var d = 0; d < D; d++) {
+      if (a[d] !== b[d] || a[last + d] !== b[last + d]) return false;
+    }
+    return true;
+  }
+
   // stats(set) -> { count, dimension, mean: Float32Array(D), radius, totalVariance }.
   // O(N * D) the first time for a set; an appended set built from a set seen
   // before (pass it as `previous`) costs O(k * D) for the k new rows.
+  // Precondition: `set` is `previous` with points appended. A `previous` that
+  // fails the cheap check (isPrefix) is ignored and the stats are recomputed.
   function stats(set, previous) {
     if (statsCache && statsCache.has(set)) return statsCache.get(set);
     var D = set.dimension;
     var st;
     var prev = previous && statsCache ? statsCache.get(previous) : null;
-    if (prev && prev.dimension === D && prev.count <= set.count) {
+    if (prev && isPrefix(previous, set) && prev.count === previous.count) {
       st = { count: prev.count, dimension: D, sum: Float64Array.from(prev.sum), sumSq: prev.sumSq, mean: new Float32Array(D) };
       addRows(st, set.vectors, prev.count, set.count, D);
     } else {
@@ -2955,6 +2976,40 @@ ET.modes = (function () {
     return !!p && typeof p.label === "string" && p.label.trim() !== "" && p.label !== p.id;
   }
 
+  // Throws a RangeError naming the data when a set has too few dimensions.
+  function requireDimension(set, min, title) {
+    var D = set && set.dimension;
+    if (!(D >= min)) {
+      throw new RangeError(
+        "the set has dimension " + D + "; " + title + " needs at least " + min + " dimensions",
+      );
+    }
+  }
+
+  // The state a mode shows while it has nothing to move through (no points
+  // yet, or still preparing): the hold frame, the entry centre (or zeros) and
+  // the entry's draw parameters, no wires.
+  function holdState(out, frame, entry, t, status) {
+    out.t = t;
+    out.frame.set(frame);
+    if (entry && entry.centre) out.centre.set(entry.centre);
+    else out.centre.fill(0);
+    out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0, fog: 0 };
+    out.wires = null;
+    out.focus = null;
+    out.status = status;
+    return out;
+  }
+
+  // What dataChanged returns: more work to pump (or null), and whether mode
+  // time restarted at 0 (the mode re-entered; the viewer resets its clock and
+  // waits for isReady()).
+  function changed(work, restart) {
+    return { work: work || null, restart: !!restart };
+  }
+
+  var EMPTY_STATUS = "no points yet";
+
   function checkTime(t) {
     if (typeof t !== "number" || !isFinite(t)) throw new RangeError("time must be a finite number");
     return t < 0 ? 0 : t;
@@ -2981,6 +3036,11 @@ ET.modes = (function () {
     thousands: thousands,
     isLabelled: isLabelled,
     checkTime: checkTime,
+    requireDimension: requireDimension,
+    holdState: holdState,
+    changed: changed,
+    isPrefix: isPrefix,
+    EMPTY_STATUS: EMPTY_STATUS,
   };
 })();
 // ---------------------------------------------------------------------------
@@ -2990,7 +3050,8 @@ ET.modes = (function () {
 // (ET.math.guidedTour). The frame at time t is the tour's closed-form
 // frameAt(t): it depends only on the data, the seed and t. The share of total
 // variance those directions hold is reported as a number and in the status
-// line. See js/api/40-modes.md.
+// line. A refit is an event at a fixed time T: before T the old tour, from T
+// on the new one, blended in. See js/api/40-modes.md.
 // ---------------------------------------------------------------------------
 (function () {
   var M = ET.modes;
@@ -3020,6 +3081,7 @@ ET.modes = (function () {
       dataChanged: dataChanged,
       describe: describe,
       refit: refit,
+      mark: mark,
       leave: leave,
     };
 
@@ -3027,29 +3089,36 @@ ET.modes = (function () {
     var D = 0;
     var seed = 0;
     var entry = null;
+    var empty = false;
+    var emptyReady = false;
     var st = null; // set statistics (mean, radius)
     var glide = null;
-    var tours = []; // [{ tour, al (alignment or null), t0 }]
-    var fittedCount = 0;
-    var pending = null; // a refit waiting for its switch time
-    var refitting = false;
+    // Fitted tours in switch-time order: { tour, al (alignment or null), t0, share, count }.
+    // The first has t0 = -Infinity; a refit adds one at its switch time T.
+    var tours = [];
+    var pending = null; // a finished refit whose switch time is not fixed yet
+    var refitRunning = false;
+    var requestedAt = null; // the switch time given to refit(t)
     var progress = 0;
     var hold = null;
     var out = null;
 
     function enter(s, opts) {
+      M.requireDimension(s, 3, "Tumble");
       var o = opts || {};
       set = s;
       D = s.dimension;
       seed = o.seed === undefined ? 0 : o.seed;
       entry = M.entryFrom(o.from, D);
+      empty = s.count === 0;
+      emptyReady = false;
       st = null;
       glide = null;
       tours = [];
       pending = null;
-      refitting = false;
+      refitRunning = false;
+      requestedAt = null;
       progress = 0;
-      fittedCount = 0;
       self.time = 0;
       self.varianceShare = null;
       hold = entry ? entry.frame : M.startFrame(D, seed);
@@ -3087,7 +3156,28 @@ ET.modes = (function () {
       ];
     }
 
+    function tracked(stp) {
+      var inner = stp.step;
+      stp.step = function (budget) {
+        var r = inner(budget);
+        progress = stp.progress;
+        return r;
+      };
+      return stp;
+    }
+
     function prepare() {
+      if (empty) {
+        return M.stepper([
+          {
+            required: true,
+            run: function () {
+              emptyReady = true;
+              return true;
+            },
+          },
+        ]);
+      }
       var tasks = [
         {
           required: true,
@@ -3102,23 +3192,15 @@ ET.modes = (function () {
       ].concat(
         fit(function (tour, count) {
           var al = entry ? M.alignment(tour.frameAt(0), entry.frame, D) : null;
-          tours = [{ tour: tour, al: al, t0: -Infinity }];
-          fittedCount = count;
+          tours = [{ tour: tour, al: al, t0: -Infinity, share: tour.varianceShare, count: count }];
           self.varianceShare = tour.varianceShare;
         }),
       );
-      var stp = M.stepper(tasks);
-      var inner = stp.step;
-      stp.step = function (budget) {
-        var r = inner(budget);
-        progress = stp.progress;
-        return r;
-      };
-      return stp;
+      return tracked(M.stepper(tasks));
     }
 
     function isReady() {
-      return tours.length > 0 && glide !== null;
+      return empty ? emptyReady : tours.length > 0 && glide !== null;
     }
 
     function tourFrame(entryT, t, res) {
@@ -3127,16 +3209,40 @@ ET.modes = (function () {
       return f;
     }
 
-    function frameAt(t, res) {
+    function activeIndex(t) {
       var i = tours.length - 1;
       while (i > 0 && tours[i].t0 > t) i--;
+      return i;
+    }
+
+    function frameAt(t, res) {
+      var i = activeIndex(t);
       var cur = tours[i];
       tourFrame(cur, t, res);
       if (i > 0 && t - cur.t0 < opt.transition) {
         var prev = tourFrame(tours[i - 1], t, new Float32Array(3 * D));
         ET.math.blendFrames(prev, res, ET.math.smoothstep((t - cur.t0) / opt.transition), D, res);
       }
+      if (entry && t < opt.transition) {
+        ET.math.blendFrames(entry.frame, res, ET.math.smoothstep(t / opt.transition), D, res);
+      }
       return res;
+    }
+
+    function lastSwitch() {
+      return tours.length ? tours[tours.length - 1].t0 : -Infinity;
+    }
+
+    // Fix a finished refit's switch time. Never earlier than the last switch,
+    // so the past already fixed is never rewritten.
+    function fixSwitch(T) {
+      var t0 = Math.max(T, lastSwitch());
+      var al = M.alignment(pending.tour.frameAt(t0), frameAt(t0, new Float32Array(3 * D)), D);
+      tours.push({ tour: pending.tour, al: al, t0: t0, share: pending.tour.varianceShare, count: pending.count });
+      self.varianceShare = pending.tour.varianceShare;
+      pending = null;
+      refitRunning = false;
+      requestedAt = null;
     }
 
     function drawFor(frame, centre, t) {
@@ -3157,105 +3263,97 @@ ET.modes = (function () {
 
     function stateAt(time) {
       var t = M.checkTime(time);
+      if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
+      if (pending) fixSwitch(t); // no time was given: the first query fixes it
       out.t = t;
-      if (!isReady()) {
-        out.frame.set(hold);
-        if (entry && entry.centre) out.centre.set(entry.centre);
-        out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0, fog: 0 };
-        out.status = status(t);
-        return out;
-      }
-      if (pending) {
-        var curNow = frameAt(t, new Float32Array(3 * D));
-        var al = M.alignment(pending.tour.frameAt(t), curNow, D);
-        tours = tours.filter(function (x) {
-          return x.t0 <= t;
-        });
-        tours.push({ tour: pending.tour, al: al, t0: t });
-        fittedCount = pending.count;
-        self.varianceShare = pending.tour.varianceShare;
-        pending = null;
-        refitting = false;
-      }
       frameAt(t, out.frame);
-      if (entry && t < opt.transition) {
-        ET.math.blendFrames(entry.frame, out.frame, ET.math.smoothstep(t / opt.transition), D, out.frame);
-      }
       glide.at(t, out.centre);
       out.draw = drawFor(out.frame, out.centre, t);
+      out.wires = null;
+      out.focus = null;
       out.status = status(t);
       return out;
     }
 
     function step(dt) {
-      self.time += dt;
+      self.time = Math.max(0, self.time + dt);
       return stateAt(self.time);
     }
 
-    function pct(x) {
-      return (x * 100).toFixed(1) + "%";
-    }
-
-    function status() {
-      if (!isReady()) {
-        return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
-      }
-      var m = tours[tours.length - 1].tour.subspace;
-      var s = "tour through the " + m + " strongest directions, which hold " + pct(self.varianceShare) + " of the variance";
-      var since = set.count - fittedCount;
-      if (since > 0) s += " (measured before " + M.thousands(since) + " appended points)";
-      if (refitting) s += " · refitting …";
+    function status(time) {
+      var t = M.checkTime(time === undefined ? self.time : time);
+      if (empty) return M.EMPTY_STATUS;
+      if (!isReady()) return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
+      var cur = tours[activeIndex(t)];
+      var s = "tour of " + cur.tour.subspace + " strongest directions · " + (cur.share * 100).toFixed(1) + "% of variance";
+      var since = set.count - cur.count;
+      if (since > 0) s += " · before " + M.thousands(since) + " new points";
       return s;
     }
 
+    function snapshot(t) {
+      var s = stateAt(t);
+      var from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
+      if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
+      return from;
+    }
+
     // Append: keep the tour (no jump); the camera glides to the new mean; the
-    // reported share is marked stale until refit(). Replace: start over.
+    // reported share is marked stale until refit(). The first points onto an
+    // empty set, a replace, or another dimension: start over from the view.
     function dataChanged(newSet, info) {
       var i = info || {};
       var t = i.t === undefined ? self.time : M.checkTime(i.t);
-      if (i.op !== "append" || newSet.dimension !== D || !isReady()) {
+      if (i.op !== "append" || newSet.dimension !== D || empty || !isReady()) {
         var from = isReady() ? snapshot(t) : entry;
         enter(newSet, { seed: seed, from: from });
-        return prepare();
+        return M.changed(prepare(), true);
       }
       var old = set;
       set = newSet;
       st = M.stats(newSet, old);
       glide.retarget(t, st.mean);
-      return null;
+      return M.changed(null, false);
     }
 
-    function snapshot(t) {
-      var s = stateAt(t);
-      return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) };
-    }
-
-    // Fit the directions again on the current data. Returns a stepper; when it
-    // is done, the next stateAt(t) switches to the new tour, blending over
-    // `transition` seconds from the old one.
-    function refit() {
-      if (!isReady()) return prepare();
-      refitting = true;
+    // Fit the directions again on the current data. Returns a stepper. The
+    // switch to the new tour happens at time `t` when given (never earlier than
+    // a previous switch); otherwise at mark(t) or the first stateAt after the
+    // stepper is done. From the switch the new tour blends in over `transition`.
+    function refit(t) {
+      if (empty || !isReady()) return prepare();
+      refitRunning = true;
+      requestedAt = t === undefined ? null : M.checkTime(t);
       return M.stepper(
         fit(function (tour, count) {
           pending = { tour: tour, count: count };
+          if (requestedAt !== null) fixSwitch(requestedAt);
         }),
       );
     }
 
+    // Fix the time of a finished event (a refit waiting for its switch).
+    function mark(time) {
+      if (pending) fixSwitch(M.checkTime(time));
+    }
+
     function describe() {
-      var tour = tours.length ? tours[tours.length - 1].tour : null;
+      var last = tours.length ? tours[tours.length - 1] : null;
+      var fittedCount = last ? last.count : 0;
       return {
         id: "tumble",
         projection: "linear: a guided tour, a turning orthonormal 3-frame inside the span of the strongest principal directions",
         seed: seed,
-        subspace: tour ? tour.subspace : opt.subspace,
+        subspace: last ? last.tour.subspace : opt.subspace,
         speed: opt.speed,
         varianceShare: self.varianceShare,
-        varianceShareStale: isReady() ? set.count !== fittedCount : false,
-        pointsSinceFit: isReady() ? set.count - fittedCount : 0,
-        fittedRows: tour && tour.pca ? tour.pca.sampledRows : 0,
-        method: tour && tour.pca ? tour.pca.method : null,
+        varianceShareStale: isReady() && !empty ? set.count !== fittedCount : false,
+        pointsSinceFit: isReady() && !empty ? set.count - fittedCount : 0,
+        fittedRows: last && last.tour.pca ? last.tour.pca.sampledRows : 0,
+        method: last && last.tour.pca ? last.tour.pca.method : null,
+        refitAt: last && last.t0 > -Infinity ? last.t0 : null,
+        refitPending: refitRunning,
+        empty: empty,
       };
     }
 
@@ -3315,6 +3413,7 @@ ET.modes = (function () {
       status: status,
       dataChanged: dataChanged,
       describe: describe,
+      mark: mark,
       leave: leave,
     };
 
@@ -3322,31 +3421,38 @@ ET.modes = (function () {
     var D = 0;
     var seed = 0;
     var entry = null;
+    var empty = false;
+    var emptyReady = false;
     var st = null;
     var glide = null;
     var swap = null;
+    var hold = null;
     var knn = null; // the stepper in progress (or finished)
-    var wires = null; // { pairs, lengths, version }
     var version = 0;
-    var wiresSeenAt = null; // mode time when the wires were first drawn
-    var queried = false; // has stateAt been called since enter?
+    // Wire lists in the order they were shown: { wires: {pairs, lengths, version}, T }.
+    // A list is drawn from its time T on; T is fixed by mark(t), or by the first
+    // stateAt after the list was measured, and never earlier than the last T.
+    var lists = [];
+    var pendingWires = null; // a measured list whose time is not fixed yet
     var out = null;
 
     function enter(s, opts) {
+      M.requireDimension(s, 4, "Lattice");
       var o = opts || {};
       set = s;
       D = s.dimension;
       seed = o.seed === undefined ? 0 : o.seed;
       entry = M.entryFrom(o.from, D);
+      empty = s.count === 0;
+      emptyReady = false;
       st = null;
       glide = null;
       knn = null;
-      wires = null;
-      wiresSeenAt = null;
-      queried = false;
+      lists = [];
+      pendingWires = null;
       self.time = 0;
-      var frame0 = entry ? entry.frame : M.startFrame(D, seed);
-      swap = ET.math.makeSwapTour(frame0, D, { seed: seed, period: opt.period });
+      hold = entry ? entry.frame : M.startFrame(D, seed);
+      swap = ET.math.makeSwapTour(hold, D, { seed: seed, period: opt.period });
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
     }
 
@@ -3407,37 +3513,65 @@ ET.modes = (function () {
         }
       }
       version++;
-      var first = wires === null;
-      wires = { pairs: new Uint32Array(pairs), lengths: new Float32Array(lengths), version: version };
-      // Measured before the clock started: fade in with the mode from t = 0. A
-      // replacement list (after an append) is shown at full strength at once.
-      if (first) wiresSeenAt = queried ? null : 0;
+      pendingWires = { pairs: new Uint32Array(pairs), lengths: new Float32Array(lengths), version: version };
     }
 
     function prepare() {
+      if (empty) {
+        return M.stepper([
+          {
+            required: true,
+            run: function () {
+              emptyReady = true;
+              return true;
+            },
+          },
+        ]);
+      }
       return M.stepper([statsTask(), knnTask()]);
     }
 
     function isReady() {
-      return glide !== null;
+      return empty ? emptyReady : glide !== null;
     }
 
+    function lastT() {
+      return lists.length ? lists[lists.length - 1].T : -Infinity;
+    }
+
+    function fixWires(T) {
+      lists.push({ wires: pendingWires, T: Math.max(T, lastT()) });
+      pendingWires = null;
+    }
+
+    // Fix the time of a finished event (a measured wire list waiting to be shown).
+    function mark(time) {
+      if (pendingWires) fixWires(M.checkTime(time));
+    }
+
+    function activeList(t) {
+      for (var i = lists.length - 1; i >= 0; i--) if (lists[i].T <= t) return lists[i];
+      return null;
+    }
+
+    // The first list fades in over wireFade from its time; later lists replace
+    // it at full strength.
     function wireOpacity(t) {
-      if (!wires) return 0;
-      if (wiresSeenAt === null) wiresSeenAt = t;
-      return ET.math.smoothstep((t - wiresSeenAt) / opt.wireFade);
+      if (!lists.length || t < lists[0].T) return 0;
+      return ET.math.smoothstep((t - lists[0].T) / opt.wireFade);
     }
 
     function stateAt(time) {
       var t = M.checkTime(time);
+      if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
+      if (pendingWires) fixWires(t); // no time was given: the first query fixes it
       out.t = t;
       swap.frameAt(t, out.frame);
-      if (glide) glide.at(t, out.centre);
-      else if (entry && entry.centre) out.centre.set(entry.centre);
-      var sc = st ? st.radius / M.REFERENCE_RADIUS : 1;
+      glide.at(t, out.centre);
+      var sc = st.radius / M.REFERENCE_RADIUS;
       var draw = {
         zoom: M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample),
-        wires: wireOpacity(t),
+        wires: 0,
         dim: 0.55,
         trails: 0.1,
         fog: 0,
@@ -3446,63 +3580,67 @@ ET.modes = (function () {
         twinkle: 0.18,
         depthOfField: 1.1,
       };
-      // the wire fade-in is its own ramp, not part of the entry blend
-      var w = draw.wires;
       out.draw = M.blendDraw(draw, entry, t, opt.transition);
-      out.draw.wires = w;
-      queried = true;
-      out.wires = wires;
+      // the wire fade-in is its own ramp, not part of the entry blend
+      out.draw.wires = wireOpacity(t);
+      var list = activeList(t);
+      out.wires = list ? list.wires : null;
+      out.focus = null;
       out.status = status(t);
       return out;
     }
 
     function step(dt) {
-      self.time += dt;
+      self.time = Math.max(0, self.time + dt);
       return stateAt(self.time);
     }
 
+    // Short on purpose (about 70 characters at most); detail is in describe().
     function status(time) {
       var t = M.checkTime(time === undefined ? self.time : time);
+      if (empty) return M.EMPTY_STATUS;
       var s = swap.stateAt(t);
       var pctSwap = String(Math.round(Math.min(1, s.u) * 100));
       while (pctSwap.length < 3) pctSwap = " " + pctSwap;
       var line = "swap " + (s.cycle + 1) + " · axis " + "XYZ".charAt(s.axis) + " trading for a hidden direction · " + pctSwap + "%";
-      var measuring = knn && !knn.done;
-      if (wires && !measuring) {
-        line += " · " + M.thousands(wires.pairs.length / 2) + " wires";
-      } else if (knn) {
-        line += " · measuring true neighbours in " + D + "-d … " + Math.round((knn.next / Math.max(1, knn.count)) * 100) + "%";
-        if (wires) line += " (" + M.thousands(wires.pairs.length / 2) + " wires shown)";
-      } else {
-        line += " · no wires yet";
+      var list = isReady() ? activeList(t) : null;
+      if (list) {
+        var nw = list.wires.pairs.length / 2;
+        line += " · " + M.thousands(nw) + (nw === 1 ? " wire" : " wires");
       }
+      else if (knn) line += " · measuring " + Math.round((knn.next / Math.max(1, knn.count)) * 100) + "%";
+      else line += " · no wires yet";
       return line;
     }
 
     // Append: the swap tour goes on unchanged and the camera glides to the new
     // mean. If new points fall inside the neighbour limit, neighbours are
-    // measured again (the old wires stay until the new ones are ready).
+    // measured again (the old wires stay until the new ones are shown). The
+    // first points onto an empty set, a replace, or another dimension: start
+    // over from the current view.
     function dataChanged(newSet, info) {
       var i = info || {};
       var t = i.t === undefined ? self.time : M.checkTime(i.t);
-      if (i.op !== "append" || newSet.dimension !== D) {
-        var s = stateAt(t);
-        enter(newSet, {
-          seed: seed,
-          from: { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) },
-        });
-        return prepare();
+      if (i.op !== "append" || newSet.dimension !== D || empty || !isReady()) {
+        var from = entry;
+        if (isReady()) {
+          var s = stateAt(t);
+          from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
+          if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
+        }
+        enter(newSet, { seed: seed, from: from });
+        return M.changed(prepare(), true);
       }
       var old = set;
       set = newSet;
-      if (!glide) return null; // preparation not started: it will read the new set
       st = M.stats(newSet, old);
       glide.retarget(t, st.mean);
-      if (old.count < opt.neighbourLimit) return M.stepper([knnTask()]);
-      return null;
+      if (old.count < opt.neighbourLimit) return M.changed(M.stepper([knnTask()]), false);
+      return M.changed(null, false);
     }
 
     function describe() {
+      var last = lists.length ? lists[lists.length - 1] : null;
       return {
         id: "lattice",
         projection: "linear: an orthonormal 3-frame; one axis at a time turns a quarter turn into a hidden direction",
@@ -3510,15 +3648,20 @@ ET.modes = (function () {
         period: opt.period,
         neighbourLimit: opt.neighbourLimit,
         wireNeighbours: opt.wireNeighbours,
-        wires: wires ? wires.pairs.length / 2 : 0,
+        wires: last ? last.wires.pairs.length / 2 : 0,
         neighboursMeasured: !!(knn && knn.done),
+        wiresShownAt: lists.length ? lists[0].T : null,
+        wiresReplacedAt: lists.length > 1 ? last.T : null,
+        wiresPending: pendingWires !== null,
+        empty: empty,
         varianceShare: null,
       };
     }
 
     function leave() {
       knn = null;
-      wires = null;
+      lists = [];
+      pendingWires = null;
       set = null;
     }
 
@@ -3578,6 +3721,7 @@ ET.modes = (function () {
       describe: describe,
       route: route,
       neighboursOf: neighboursOf,
+      mark: function () {}, // Wander has no events to fix
       leave: leave,
     };
 
@@ -3590,6 +3734,7 @@ ET.modes = (function () {
     var startCentre = null;
     var scale = 1;
     var ready = false;
+    var empty = false;
     var visit = null; // Int32Array: points the route may stop at
     var labelledCount = 0;
     var inVisit = null; // Uint8Array(N): 1 when the point is a visit candidate
@@ -3601,6 +3746,7 @@ ET.modes = (function () {
     var tmpC = null;
 
     function enter(s, opts) {
+      M.requireDimension(s, 3, "Wander");
       var o = opts || {};
       set = s;
       D = s.dimension;
@@ -3610,6 +3756,7 @@ ET.modes = (function () {
       startFrame = entry ? entry.frame : M.startFrame(D, seed);
       startCentre = null;
       ready = false;
+      empty = s.count === 0;
       nbrCache = {};
       targets = [];
       toFrames = [];
@@ -3650,6 +3797,10 @@ ET.modes = (function () {
           required: true,
           weight: 1,
           run: function () {
+            if (empty) {
+              ready = true;
+              return true;
+            }
             var st = M.stats(set);
             scale = st.radius / M.REFERENCE_RADIUS;
             startCentre = entry && entry.centre ? new Float32Array(entry.centre) : new Float32Array(st.mean);
@@ -3670,7 +3821,7 @@ ET.modes = (function () {
     function nearest(j) {
       if (nbrCache[j]) return nbrCache[j];
       var X = set.vectors;
-      var K = Math.min(opt.neighbours, pool.length - 1);
+      var K = Math.max(0, Math.min(opt.neighbours, pool.length - 1));
       var bestD = new Float64Array(K);
       var bestI = new Int32Array(K);
       var filled = 0;
@@ -3751,14 +3902,7 @@ ET.modes = (function () {
     function stateAt(time) {
       var t = M.checkTime(time);
       out.t = t;
-      if (!ready) {
-        out.frame.set(startFrame);
-        if (entry && entry.centre) out.centre.set(entry.centre);
-        out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0 };
-        out.focus = null;
-        out.status = status(t);
-        return out;
-      }
+      if (!ready || empty) return M.holdState(out, startFrame, entry, t, status(t));
       var hp = hopAt(t);
       var h = hp.h;
       ensure(h);
@@ -3807,9 +3951,12 @@ ET.modes = (function () {
       return out;
     }
 
+    // A point's name for the status line, cut to 24 characters so the line
+    // stays short (the full label is the viewer's to show).
     function nameOf(i) {
       var p = set.points[i];
-      return M.isLabelled(p) ? p.label : p.id;
+      var n = M.isLabelled(p) ? p.label : p.id;
+      return n.length > 24 ? n.slice(0, 23) + "…" : n;
     }
 
     function describeStop(h, phase) {
@@ -3825,12 +3972,13 @@ ET.modes = (function () {
     }
 
     function step(dt) {
-      self.time += dt;
+      self.time = Math.max(0, self.time + dt);
       return stateAt(self.time);
     }
 
     function status(time) {
       var t = M.checkTime(time === undefined ? self.time : time);
+      if (empty) return M.EMPTY_STATUS;
       if (!ready) return "getting ready to wander …";
       var hp = hopAt(t);
       ensure(hp.h);
@@ -3843,16 +3991,15 @@ ET.modes = (function () {
     function dataChanged(newSet, info) {
       var i = info || {};
       var t = i.t === undefined ? self.time : M.checkTime(i.t);
-      if (i.op !== "append" || newSet.dimension !== D || !ready) {
-        var from = null;
+      if (i.op !== "append" || newSet.dimension !== D || !ready || empty) {
+        var from = entry;
         if (ready) {
           var s = stateAt(t);
-          from = { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) };
-        } else {
-          from = entry;
+          from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
+          if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
         }
         enter(newSet, { seed: seed, from: from });
-        return prepare();
+        return M.changed(prepare(), true);
       }
       var h = hopAt(t).h;
       ensure(h);
@@ -3861,17 +4008,17 @@ ET.modes = (function () {
       set = newSet;
       nbrCache = {};
       buildPool();
-      return null;
+      return M.changed(null, false);
     }
 
     function route(n) {
-      if (!ready) return new Int32Array(0);
+      if (!ready || empty) return new Int32Array(0);
       if (n > 0) ensure(n - 1);
       return Int32Array.from(targets.slice(0, n));
     }
 
     function neighboursOf(j) {
-      return ready ? Int32Array.from(nearest(j)) : new Int32Array(0);
+      return ready && !empty ? Int32Array.from(nearest(j)) : new Int32Array(0);
     }
 
     function describe() {
@@ -3885,6 +4032,7 @@ ET.modes = (function () {
         dwell: opt.dwell,
         labelled: labelledCount,
         visiting: labelledCount >= 2 ? "labelled points" : "any point",
+        empty: empty,
         varianceShare: null,
       };
     }

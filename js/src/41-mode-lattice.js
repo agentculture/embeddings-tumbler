@@ -36,6 +36,7 @@
       status: status,
       dataChanged: dataChanged,
       describe: describe,
+      mark: mark,
       leave: leave,
     };
 
@@ -43,31 +44,38 @@
     var D = 0;
     var seed = 0;
     var entry = null;
+    var empty = false;
+    var emptyReady = false;
     var st = null;
     var glide = null;
     var swap = null;
+    var hold = null;
     var knn = null; // the stepper in progress (or finished)
-    var wires = null; // { pairs, lengths, version }
     var version = 0;
-    var wiresSeenAt = null; // mode time when the wires were first drawn
-    var queried = false; // has stateAt been called since enter?
+    // Wire lists in the order they were shown: { wires: {pairs, lengths, version}, T }.
+    // A list is drawn from its time T on; T is fixed by mark(t), or by the first
+    // stateAt after the list was measured, and never earlier than the last T.
+    var lists = [];
+    var pendingWires = null; // a measured list whose time is not fixed yet
     var out = null;
 
     function enter(s, opts) {
+      M.requireDimension(s, 4, "Lattice");
       var o = opts || {};
       set = s;
       D = s.dimension;
       seed = o.seed === undefined ? 0 : o.seed;
       entry = M.entryFrom(o.from, D);
+      empty = s.count === 0;
+      emptyReady = false;
       st = null;
       glide = null;
       knn = null;
-      wires = null;
-      wiresSeenAt = null;
-      queried = false;
+      lists = [];
+      pendingWires = null;
       self.time = 0;
-      var frame0 = entry ? entry.frame : M.startFrame(D, seed);
-      swap = ET.math.makeSwapTour(frame0, D, { seed: seed, period: opt.period });
+      hold = entry ? entry.frame : M.startFrame(D, seed);
+      swap = ET.math.makeSwapTour(hold, D, { seed: seed, period: opt.period });
       out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
     }
 
@@ -128,37 +136,65 @@
         }
       }
       version++;
-      var first = wires === null;
-      wires = { pairs: new Uint32Array(pairs), lengths: new Float32Array(lengths), version: version };
-      // Measured before the clock started: fade in with the mode from t = 0. A
-      // replacement list (after an append) is shown at full strength at once.
-      if (first) wiresSeenAt = queried ? null : 0;
+      pendingWires = { pairs: new Uint32Array(pairs), lengths: new Float32Array(lengths), version: version };
     }
 
     function prepare() {
+      if (empty) {
+        return M.stepper([
+          {
+            required: true,
+            run: function () {
+              emptyReady = true;
+              return true;
+            },
+          },
+        ]);
+      }
       return M.stepper([statsTask(), knnTask()]);
     }
 
     function isReady() {
-      return glide !== null;
+      return empty ? emptyReady : glide !== null;
     }
 
+    function lastT() {
+      return lists.length ? lists[lists.length - 1].T : -Infinity;
+    }
+
+    function fixWires(T) {
+      lists.push({ wires: pendingWires, T: Math.max(T, lastT()) });
+      pendingWires = null;
+    }
+
+    // Fix the time of a finished event (a measured wire list waiting to be shown).
+    function mark(time) {
+      if (pendingWires) fixWires(M.checkTime(time));
+    }
+
+    function activeList(t) {
+      for (var i = lists.length - 1; i >= 0; i--) if (lists[i].T <= t) return lists[i];
+      return null;
+    }
+
+    // The first list fades in over wireFade from its time; later lists replace
+    // it at full strength.
     function wireOpacity(t) {
-      if (!wires) return 0;
-      if (wiresSeenAt === null) wiresSeenAt = t;
-      return ET.math.smoothstep((t - wiresSeenAt) / opt.wireFade);
+      if (!lists.length || t < lists[0].T) return 0;
+      return ET.math.smoothstep((t - lists[0].T) / opt.wireFade);
     }
 
     function stateAt(time) {
       var t = M.checkTime(time);
+      if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
+      if (pendingWires) fixWires(t); // no time was given: the first query fixes it
       out.t = t;
       swap.frameAt(t, out.frame);
-      if (glide) glide.at(t, out.centre);
-      else if (entry && entry.centre) out.centre.set(entry.centre);
-      var sc = st ? st.radius / M.REFERENCE_RADIUS : 1;
+      glide.at(t, out.centre);
+      var sc = st.radius / M.REFERENCE_RADIUS;
       var draw = {
         zoom: M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample),
-        wires: wireOpacity(t),
+        wires: 0,
         dim: 0.55,
         trails: 0.1,
         fog: 0,
@@ -167,63 +203,67 @@
         twinkle: 0.18,
         depthOfField: 1.1,
       };
-      // the wire fade-in is its own ramp, not part of the entry blend
-      var w = draw.wires;
       out.draw = M.blendDraw(draw, entry, t, opt.transition);
-      out.draw.wires = w;
-      queried = true;
-      out.wires = wires;
+      // the wire fade-in is its own ramp, not part of the entry blend
+      out.draw.wires = wireOpacity(t);
+      var list = activeList(t);
+      out.wires = list ? list.wires : null;
+      out.focus = null;
       out.status = status(t);
       return out;
     }
 
     function step(dt) {
-      self.time += dt;
+      self.time = Math.max(0, self.time + dt);
       return stateAt(self.time);
     }
 
+    // Short on purpose (about 70 characters at most); detail is in describe().
     function status(time) {
       var t = M.checkTime(time === undefined ? self.time : time);
+      if (empty) return M.EMPTY_STATUS;
       var s = swap.stateAt(t);
       var pctSwap = String(Math.round(Math.min(1, s.u) * 100));
       while (pctSwap.length < 3) pctSwap = " " + pctSwap;
       var line = "swap " + (s.cycle + 1) + " · axis " + "XYZ".charAt(s.axis) + " trading for a hidden direction · " + pctSwap + "%";
-      var measuring = knn && !knn.done;
-      if (wires && !measuring) {
-        line += " · " + M.thousands(wires.pairs.length / 2) + " wires";
-      } else if (knn) {
-        line += " · measuring true neighbours in " + D + "-d … " + Math.round((knn.next / Math.max(1, knn.count)) * 100) + "%";
-        if (wires) line += " (" + M.thousands(wires.pairs.length / 2) + " wires shown)";
-      } else {
-        line += " · no wires yet";
+      var list = isReady() ? activeList(t) : null;
+      if (list) {
+        var nw = list.wires.pairs.length / 2;
+        line += " · " + M.thousands(nw) + (nw === 1 ? " wire" : " wires");
       }
+      else if (knn) line += " · measuring " + Math.round((knn.next / Math.max(1, knn.count)) * 100) + "%";
+      else line += " · no wires yet";
       return line;
     }
 
     // Append: the swap tour goes on unchanged and the camera glides to the new
     // mean. If new points fall inside the neighbour limit, neighbours are
-    // measured again (the old wires stay until the new ones are ready).
+    // measured again (the old wires stay until the new ones are shown). The
+    // first points onto an empty set, a replace, or another dimension: start
+    // over from the current view.
     function dataChanged(newSet, info) {
       var i = info || {};
       var t = i.t === undefined ? self.time : M.checkTime(i.t);
-      if (i.op !== "append" || newSet.dimension !== D) {
-        var s = stateAt(t);
-        enter(newSet, {
-          seed: seed,
-          from: { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) },
-        });
-        return prepare();
+      if (i.op !== "append" || newSet.dimension !== D || empty || !isReady()) {
+        var from = entry;
+        if (isReady()) {
+          var s = stateAt(t);
+          from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
+          if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
+        }
+        enter(newSet, { seed: seed, from: from });
+        return M.changed(prepare(), true);
       }
       var old = set;
       set = newSet;
-      if (!glide) return null; // preparation not started: it will read the new set
       st = M.stats(newSet, old);
       glide.retarget(t, st.mean);
-      if (old.count < opt.neighbourLimit) return M.stepper([knnTask()]);
-      return null;
+      if (old.count < opt.neighbourLimit) return M.changed(M.stepper([knnTask()]), false);
+      return M.changed(null, false);
     }
 
     function describe() {
+      var last = lists.length ? lists[lists.length - 1] : null;
       return {
         id: "lattice",
         projection: "linear: an orthonormal 3-frame; one axis at a time turns a quarter turn into a hidden direction",
@@ -231,15 +271,20 @@
         period: opt.period,
         neighbourLimit: opt.neighbourLimit,
         wireNeighbours: opt.wireNeighbours,
-        wires: wires ? wires.pairs.length / 2 : 0,
+        wires: last ? last.wires.pairs.length / 2 : 0,
         neighboursMeasured: !!(knn && knn.done),
+        wiresShownAt: lists.length ? lists[0].T : null,
+        wiresReplacedAt: lists.length > 1 ? last.T : null,
+        wiresPending: pendingWires !== null,
+        empty: empty,
         varianceShare: null,
       };
     }
 
     function leave() {
       knn = null;
-      wires = null;
+      lists = [];
+      pendingWires = null;
       set = null;
     }
 

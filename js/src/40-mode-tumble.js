@@ -5,7 +5,8 @@
 // (ET.math.guidedTour). The frame at time t is the tour's closed-form
 // frameAt(t): it depends only on the data, the seed and t. The share of total
 // variance those directions hold is reported as a number and in the status
-// line. See js/api/40-modes.md.
+// line. A refit is an event at a fixed time T: before T the old tour, from T
+// on the new one, blended in. See js/api/40-modes.md.
 // ---------------------------------------------------------------------------
 (function () {
   var M = ET.modes;
@@ -35,6 +36,7 @@
       dataChanged: dataChanged,
       describe: describe,
       refit: refit,
+      mark: mark,
       leave: leave,
     };
 
@@ -42,29 +44,36 @@
     var D = 0;
     var seed = 0;
     var entry = null;
+    var empty = false;
+    var emptyReady = false;
     var st = null; // set statistics (mean, radius)
     var glide = null;
-    var tours = []; // [{ tour, al (alignment or null), t0 }]
-    var fittedCount = 0;
-    var pending = null; // a refit waiting for its switch time
-    var refitting = false;
+    // Fitted tours in switch-time order: { tour, al (alignment or null), t0, share, count }.
+    // The first has t0 = -Infinity; a refit adds one at its switch time T.
+    var tours = [];
+    var pending = null; // a finished refit whose switch time is not fixed yet
+    var refitRunning = false;
+    var requestedAt = null; // the switch time given to refit(t)
     var progress = 0;
     var hold = null;
     var out = null;
 
     function enter(s, opts) {
+      M.requireDimension(s, 3, "Tumble");
       var o = opts || {};
       set = s;
       D = s.dimension;
       seed = o.seed === undefined ? 0 : o.seed;
       entry = M.entryFrom(o.from, D);
+      empty = s.count === 0;
+      emptyReady = false;
       st = null;
       glide = null;
       tours = [];
       pending = null;
-      refitting = false;
+      refitRunning = false;
+      requestedAt = null;
       progress = 0;
-      fittedCount = 0;
       self.time = 0;
       self.varianceShare = null;
       hold = entry ? entry.frame : M.startFrame(D, seed);
@@ -102,7 +111,28 @@
       ];
     }
 
+    function tracked(stp) {
+      var inner = stp.step;
+      stp.step = function (budget) {
+        var r = inner(budget);
+        progress = stp.progress;
+        return r;
+      };
+      return stp;
+    }
+
     function prepare() {
+      if (empty) {
+        return M.stepper([
+          {
+            required: true,
+            run: function () {
+              emptyReady = true;
+              return true;
+            },
+          },
+        ]);
+      }
       var tasks = [
         {
           required: true,
@@ -117,23 +147,15 @@
       ].concat(
         fit(function (tour, count) {
           var al = entry ? M.alignment(tour.frameAt(0), entry.frame, D) : null;
-          tours = [{ tour: tour, al: al, t0: -Infinity }];
-          fittedCount = count;
+          tours = [{ tour: tour, al: al, t0: -Infinity, share: tour.varianceShare, count: count }];
           self.varianceShare = tour.varianceShare;
         }),
       );
-      var stp = M.stepper(tasks);
-      var inner = stp.step;
-      stp.step = function (budget) {
-        var r = inner(budget);
-        progress = stp.progress;
-        return r;
-      };
-      return stp;
+      return tracked(M.stepper(tasks));
     }
 
     function isReady() {
-      return tours.length > 0 && glide !== null;
+      return empty ? emptyReady : tours.length > 0 && glide !== null;
     }
 
     function tourFrame(entryT, t, res) {
@@ -142,16 +164,40 @@
       return f;
     }
 
-    function frameAt(t, res) {
+    function activeIndex(t) {
       var i = tours.length - 1;
       while (i > 0 && tours[i].t0 > t) i--;
+      return i;
+    }
+
+    function frameAt(t, res) {
+      var i = activeIndex(t);
       var cur = tours[i];
       tourFrame(cur, t, res);
       if (i > 0 && t - cur.t0 < opt.transition) {
         var prev = tourFrame(tours[i - 1], t, new Float32Array(3 * D));
         ET.math.blendFrames(prev, res, ET.math.smoothstep((t - cur.t0) / opt.transition), D, res);
       }
+      if (entry && t < opt.transition) {
+        ET.math.blendFrames(entry.frame, res, ET.math.smoothstep(t / opt.transition), D, res);
+      }
       return res;
+    }
+
+    function lastSwitch() {
+      return tours.length ? tours[tours.length - 1].t0 : -Infinity;
+    }
+
+    // Fix a finished refit's switch time. Never earlier than the last switch,
+    // so the past already fixed is never rewritten.
+    function fixSwitch(T) {
+      var t0 = Math.max(T, lastSwitch());
+      var al = M.alignment(pending.tour.frameAt(t0), frameAt(t0, new Float32Array(3 * D)), D);
+      tours.push({ tour: pending.tour, al: al, t0: t0, share: pending.tour.varianceShare, count: pending.count });
+      self.varianceShare = pending.tour.varianceShare;
+      pending = null;
+      refitRunning = false;
+      requestedAt = null;
     }
 
     function drawFor(frame, centre, t) {
@@ -172,105 +218,97 @@
 
     function stateAt(time) {
       var t = M.checkTime(time);
+      if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
+      if (pending) fixSwitch(t); // no time was given: the first query fixes it
       out.t = t;
-      if (!isReady()) {
-        out.frame.set(hold);
-        if (entry && entry.centre) out.centre.set(entry.centre);
-        out.draw = entry ? Object.assign({}, entry.draw) : { wires: 0, fog: 0 };
-        out.status = status(t);
-        return out;
-      }
-      if (pending) {
-        var curNow = frameAt(t, new Float32Array(3 * D));
-        var al = M.alignment(pending.tour.frameAt(t), curNow, D);
-        tours = tours.filter(function (x) {
-          return x.t0 <= t;
-        });
-        tours.push({ tour: pending.tour, al: al, t0: t });
-        fittedCount = pending.count;
-        self.varianceShare = pending.tour.varianceShare;
-        pending = null;
-        refitting = false;
-      }
       frameAt(t, out.frame);
-      if (entry && t < opt.transition) {
-        ET.math.blendFrames(entry.frame, out.frame, ET.math.smoothstep(t / opt.transition), D, out.frame);
-      }
       glide.at(t, out.centre);
       out.draw = drawFor(out.frame, out.centre, t);
+      out.wires = null;
+      out.focus = null;
       out.status = status(t);
       return out;
     }
 
     function step(dt) {
-      self.time += dt;
+      self.time = Math.max(0, self.time + dt);
       return stateAt(self.time);
     }
 
-    function pct(x) {
-      return (x * 100).toFixed(1) + "%";
-    }
-
-    function status() {
-      if (!isReady()) {
-        return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
-      }
-      var m = tours[tours.length - 1].tour.subspace;
-      var s = "tour through the " + m + " strongest directions, which hold " + pct(self.varianceShare) + " of the variance";
-      var since = set.count - fittedCount;
-      if (since > 0) s += " (measured before " + M.thousands(since) + " appended points)";
-      if (refitting) s += " · refitting …";
+    function status(time) {
+      var t = M.checkTime(time === undefined ? self.time : time);
+      if (empty) return M.EMPTY_STATUS;
+      if (!isReady()) return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
+      var cur = tours[activeIndex(t)];
+      var s = "tour of " + cur.tour.subspace + " strongest directions · " + (cur.share * 100).toFixed(1) + "% of variance";
+      var since = set.count - cur.count;
+      if (since > 0) s += " · before " + M.thousands(since) + " new points";
       return s;
     }
 
+    function snapshot(t) {
+      var s = stateAt(t);
+      var from = { frame: new Float32Array(s.frame), centre: null, draw: Object.assign({}, s.draw) };
+      if (!empty || (entry && entry.centre)) from.centre = new Float32Array(s.centre);
+      return from;
+    }
+
     // Append: keep the tour (no jump); the camera glides to the new mean; the
-    // reported share is marked stale until refit(). Replace: start over.
+    // reported share is marked stale until refit(). The first points onto an
+    // empty set, a replace, or another dimension: start over from the view.
     function dataChanged(newSet, info) {
       var i = info || {};
       var t = i.t === undefined ? self.time : M.checkTime(i.t);
-      if (i.op !== "append" || newSet.dimension !== D || !isReady()) {
+      if (i.op !== "append" || newSet.dimension !== D || empty || !isReady()) {
         var from = isReady() ? snapshot(t) : entry;
         enter(newSet, { seed: seed, from: from });
-        return prepare();
+        return M.changed(prepare(), true);
       }
       var old = set;
       set = newSet;
       st = M.stats(newSet, old);
       glide.retarget(t, st.mean);
-      return null;
+      return M.changed(null, false);
     }
 
-    function snapshot(t) {
-      var s = stateAt(t);
-      return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), draw: Object.assign({}, s.draw) };
-    }
-
-    // Fit the directions again on the current data. Returns a stepper; when it
-    // is done, the next stateAt(t) switches to the new tour, blending over
-    // `transition` seconds from the old one.
-    function refit() {
-      if (!isReady()) return prepare();
-      refitting = true;
+    // Fit the directions again on the current data. Returns a stepper. The
+    // switch to the new tour happens at time `t` when given (never earlier than
+    // a previous switch); otherwise at mark(t) or the first stateAt after the
+    // stepper is done. From the switch the new tour blends in over `transition`.
+    function refit(t) {
+      if (empty || !isReady()) return prepare();
+      refitRunning = true;
+      requestedAt = t === undefined ? null : M.checkTime(t);
       return M.stepper(
         fit(function (tour, count) {
           pending = { tour: tour, count: count };
+          if (requestedAt !== null) fixSwitch(requestedAt);
         }),
       );
     }
 
+    // Fix the time of a finished event (a refit waiting for its switch).
+    function mark(time) {
+      if (pending) fixSwitch(M.checkTime(time));
+    }
+
     function describe() {
-      var tour = tours.length ? tours[tours.length - 1].tour : null;
+      var last = tours.length ? tours[tours.length - 1] : null;
+      var fittedCount = last ? last.count : 0;
       return {
         id: "tumble",
         projection: "linear: a guided tour, a turning orthonormal 3-frame inside the span of the strongest principal directions",
         seed: seed,
-        subspace: tour ? tour.subspace : opt.subspace,
+        subspace: last ? last.tour.subspace : opt.subspace,
         speed: opt.speed,
         varianceShare: self.varianceShare,
-        varianceShareStale: isReady() ? set.count !== fittedCount : false,
-        pointsSinceFit: isReady() ? set.count - fittedCount : 0,
-        fittedRows: tour && tour.pca ? tour.pca.sampledRows : 0,
-        method: tour && tour.pca ? tour.pca.method : null,
+        varianceShareStale: isReady() && !empty ? set.count !== fittedCount : false,
+        pointsSinceFit: isReady() && !empty ? set.count - fittedCount : 0,
+        fittedRows: last && last.tour.pca ? last.tour.pca.sampledRows : 0,
+        method: last && last.tour.pca ? last.tour.pca.method : null,
+        refitAt: last && last.t0 > -Infinity ? last.t0 : null,
+        refitPending: refitRunning,
+        empty: empty,
       };
     }
 

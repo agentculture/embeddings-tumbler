@@ -109,7 +109,7 @@ test("criterion 2: a fourth dummy mode registers without editing any existing fi
           return this.stateAt(t).status;
         },
         dataChanged() {
-          return null;
+          return { work: null, restart: false };
         },
         describe() {
           return { id: "still", projection: "a fixed linear projection onto three axes", varianceShare: null };

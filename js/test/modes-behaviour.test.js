@@ -89,7 +89,7 @@ test("Tumble on append: no jump, the share is marked stale, refit crossfades to 
   const c5 = new Float32Array(before.centre);
   const z5 = before.draw.zoom;
   const bigger = F.appendTo(ET, set, 40);
-  const work = inst.dataChanged(bigger, { op: "append", added: 40, t: 5 });
+  const work = inst.dataChanged(bigger, { op: "append", added: 40, t: 5 }).work;
   if (work) work.step();
   const after = inst.stateAt(5);
   assert.ok(F.bytesEqual(f5, after.frame), "frame unchanged at the moment of the append");
@@ -98,7 +98,7 @@ test("Tumble on append: no jump, the share is marked stale, refit crossfades to 
   const d = inst.describe();
   assert.strictEqual(d.varianceShareStale, true);
   assert.strictEqual(d.pointsSinceFit, 40);
-  assert.ok(/before 40 appended points/.test(inst.stateAt(6).status), inst.stateAt(6).status);
+  assert.ok(/before 40 new points/.test(inst.stateAt(6).status), inst.stateAt(6).status);
   // the centre glides to the new mean (it does not jump there)
   const mean = ET.math.meanOf(bigger.vectors, bigger.count, D);
   const far = inst.stateAt(30).centre;
@@ -200,7 +200,7 @@ test("Lattice: the neighbour limit is a parameter, and the work runs in bounded 
   prep.step(0);
   prep.step(0);
   assert.ok(prep.progress > 0 && prep.progress < 1);
-  assert.ok(/measuring true neighbours in 48-d … \d+%/.test(inst.stateAt(1).status), inst.stateAt(1).status);
+  assert.ok(/measuring \d+%/.test(inst.stateAt(1).status), inst.stateAt(1).status);
   prep.step();
   const w = inst.stateAt(2).wires;
   for (const i of w.pairs) assert.ok(i < 300);
@@ -215,7 +215,7 @@ test("Lattice on append: frame and wires unchanged at once; new wires come from 
   const c = new Float32Array(s.centre);
   const v0 = s.wires.version;
   const bigger = F.appendTo(ET, set, 30, { group: "law" });
-  const work = inst.dataChanged(bigger, { op: "append", added: 30, t: 4 });
+  const work = inst.dataChanged(bigger, { op: "append", added: 30, t: 4 }).work;
   const s2 = inst.stateAt(4);
   assert.ok(F.bytesEqual(f, s2.frame));
   assert.ok(F.maxAbsDiff(c, s2.centre) < 1e-7);
@@ -293,7 +293,7 @@ test("Wander on append: the stop in progress is kept, future stops may use new p
   const c = new Float32Array(s.centre);
   const first = inst.route(2);
   const bigger = F.appendTo(ET, set, 20, { labelled: true, group: "music" });
-  const work = inst.dataChanged(bigger, { op: "append", added: 20, t });
+  const work = inst.dataChanged(bigger, { op: "append", added: 20, t }).work;
   if (work) work.step();
   const s2 = inst.stateAt(t);
   assert.ok(F.bytesEqual(f, s2.frame));
@@ -332,7 +332,9 @@ test("draw parameters port the reference's feel", () => {
   const ET = F.freshET();
   const set = F.sampleSet(ET);
   const t = F.ready(ET, "tumble", set).stateAt(5).draw;
-  const l = F.ready(ET, "lattice", set).stateAt(5).draw;
+  const lat = F.ready(ET, "lattice", set);
+  lat.mark(0); // wires measured before the clock started: shown from t = 0
+  const l = lat.stateAt(5).draw;
   const w = F.ready(ET, "wander", set).stateAt(5).draw;
   assert.strictEqual(t.wires, 0);
   assert.strictEqual(t.fog, 0);
