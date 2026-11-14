@@ -1,0 +1,80 @@
+{
+  "plan_slug": "embeddable-space-viewer",
+  "schema_version": 2,
+  "created": "2026-11-13T19:07:38Z",
+  "updated": "2026-11-14T06:11:24Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t15 writes a route name (e.g. 'lobes gateway') into provenance.endpoint instead of copying the Atlas's endpoint URL; the data contract refuses any endpoint that looks like a network address (endpoint-is-address)",
+      "task_ref": "t15",
+      "reason": "An Atlas records its endpoint as a URL, and the spec rule is that the embedding gateway address never reaches a page; copying it as t15's criterion words it would break that rule. User chose 'Name only' on 2026-11-13.",
+      "affects": [
+        "t2",
+        "t5",
+        "t16"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "t15 adds two registration lines (the import and _export_cmd.register(sub)) to embeddings/cli/__init__.py in embeddings-cli, a stable-contract module; no parser behaviour, dispatch, _errors.py or _output.py changes",
+      "task_ref": "t15",
+      "reason": "A new verb can only be registered in _build_parser() in that module, at the spot embeddings-cli's CLAUDE.md marks for it; criterion 5's 'no stable-contract module changes' cannot be met literally without hiding the registration inside another verb. User chose 'Accept the 2 lines' on 2026-11-13.",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "An extra performance pass, not a task in the plan, reworks three merged modules: the principal-direction fit becomes a sliced stepper (t4), the modes prepare in units under about 4 ms (t7), and an append no longer copies all base vectors (t5). Results must stay bit-identical and the frozen data contract is unchanged.",
+      "task_ref": "t8",
+      "reason": "The user's live test showed a visible jump after appending points (measured: one frame of about 200 ms at 384-d when Tumble refits, 888 ms at 10,500 x 1024) and a heavier initial load on phone Safari; t8's criterion says an append must not reset the camera, and the spec says no visible jump where avoidable. The plan's tasks t4, t5 and t7 did not bound these costs.",
+      "affects": [
+        "t4",
+        "t5",
+        "t7",
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "embeddings export gains --group-by <key> (writes each point's group from a metadata key) and writes only the corpus file's name in provenance.params",
+      "task_ref": "t15",
+      "reason": "t16 found a real export is one colour with no group names, and carried a local absolute path; user approved the group option on 2026-11-14",
+      "affects": [
+        "t16"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "Lattice draws hidden directions from the data's 8 strongest principal directions instead of the full space (mode option hidden: 'full' keeps the reference's rule); the light-background default becomes 'soft'",
+      "task_ref": "t7",
+      "reason": "t16 measured Lattice at 1.126 group separation on real vectors, equal to a random frame; user said 'build' on 2026-11-14, and at sign-off accepted only the soft light style",
+      "affects": [
+        "t8",
+        "t17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 5
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

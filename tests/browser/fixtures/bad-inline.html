@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>harness negative control: an inline script</title>
+</head>
+<body>
+<p>Negative control (deliberately bad). Served with script-src 'self', so its inline script is a policy violation the harness must report.</p>
+<script>window.__inlineRan = true;</script>
+</body>
+</html>

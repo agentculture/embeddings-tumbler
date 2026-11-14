@@ -14,7 +14,8 @@ Three modes ship first, and a mode is a separable unit so more can be added:
 
 - **Tumble** — the frame drifts through the space on a guided tour.
 - **Lattice** — points are wired to their true nearest neighbours (measured in
-  the full space) and one visible axis at a time is swapped for a hidden one.
+  the full space) and one visible axis at a time is swapped for a hidden one,
+  drawn from the data's strongest directions.
 - **Wander** — the camera flies from point to neighbouring point and re-fits
   its axes to each neighbourhood.
 
@@ -22,12 +23,36 @@ It is a sibling of [`embeddings-cli`](https://github.com/agentculture/embeddings
 which measures embedding spaces and is the first producer of data for this
 viewer.
 
-## Current state: planned, not built
+As of 2026-11-13 no repository surveyed for this work (`embeddings-lens`,
+`irc-lens`, `webglass-cli`, `embodiment`, `eidetic-cli`) contained an embedding
+viewer; the only one was a demo page whose data is generated in the page. That
+page is the reference: `docs/specs/reference/embedding-tumbler-demo.html`.
 
-**Nothing of the viewer exists in this repo yet.** The package is still the
-agent-first CLI scaffold from `culture-agent-template` (`whoami`, `learn`,
-`explain`, `overview`, `doctor`, `cli overview`). What exists is the converged
-spec, the converged plan, and a working reference demo:
+## Current state: built, first release pending
+
+The viewer is built from the converged spec and plan (18 tasks, by a workforce
+run that ended 2026-11-14). In the repository: the data contract and its
+fixtures (`docs/data-contract.md`, `tests/fixtures/contract/`); the core file,
+assembled from `js/src/` by `scripts/assemble.py` (mathematics, contract
+loader, WebGL 2 renderer, the three modes, the viewer API `mount` / `update` /
+`destroy`); the built-in sample set; the two shells (`js/shells/`,
+`js/page/`); the shipped copies under `embeddings_tumbler/static/`; the
+`viewer overview | write | serve` CLI verbs; packaging for the wheel and for
+npm with a byte-identity check (`scripts/check_packages.py`); the browser
+harness (`tests/browser/`); the host and producer guides (`docs/guides/`).
+`js/README.md` is the module convention and `js/api/` documents each module's
+interface.
+
+Not done yet: no release has been published. The first npm release needs a
+one-time manual publish before CI's trusted publishing can take over
+(`docs/release.md`). Only Chromium has been tested automatically. A search
+view (type a query, see what it links to) is asked for and waits for its own
+spec.
+
+What real vectors showed, and what was changed because of it (Lattice's hidden
+directions, brightness of crowded sets), is in
+`docs/evidence/2026-11-14-real-atlas-proof.md`. Intended differences from the
+reference, and the owner's sign-off, are in `docs/reference-differences.md`.
 
 | What | Where |
 |------|-------|
@@ -37,6 +62,9 @@ spec, the converged plan, and a working reference demo:
 | How to run the build with a workforce, plus per-task guidance | `docs/workforce/README.md` |
 | Illustrative code sketches (API, data file, mode interface) | `docs/workforce/examples/` |
 | What real vectors look like, measured | `docs/evidence/2026-11-13-real-vector-probe.md` |
+| The viewer on a real Atlas, two models, measured | `docs/evidence/2026-11-14-real-atlas-proof.md` |
+| Host and producer guides, with working example pages | `docs/guides/` |
+| How a release is made | `docs/release.md` |
 | devague frame and plan state (source of the two exports) | `.devague/` |
 
 Mark anything you describe that is ahead of the code as `(planned)`. Update
@@ -97,8 +125,8 @@ markdownlint-cli2 "**/*.md"
 python3 scripts/scan-secrets.py          # committed secrets + non-localhost endpoints
 uv run teken cli doctor . --strict       # the agent-first rubric gate CI runs
 
-node --test                              # (planned) JavaScript unit tests, no dependencies
-python3 scripts/assemble.py              # (planned) rebuild the single core file
+node --test                              # JavaScript unit tests, no dependencies
+python3 scripts/assemble.py              # rebuild the single core file (--check fails when stale)
 ```
 
 ## The CLI contract

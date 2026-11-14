@@ -1,0 +1,60 @@
+name: Packages
+
+# Dry-run build of BOTH packages on every pull request (and on main): the
+# Python wheel and sdist with `uv build` and the npm tarball with `npm pack`.
+# Nothing here publishes, logs in, or asks for an OIDC token. The job then
+# proves the two packages carry the same core file bytes, the same static
+# files and the same version (scripts/check_packages.py). See docs/release.md.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  dry-run:
+    name: dry-run build of the wheel and the npm tarball
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      # The same npm the publish job uses, so the dry-run packs what a
+      # release would pack.
+      - name: install npm 11.21.1
+        run: |
+          set -euo pipefail
+          npm install -g npm@11.21.1 --ignore-scripts
+          npm --version
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - name: build the wheel, the sdist and the npm tarball and check they agree
+        id: build
+        run: python3 scripts/check_packages.py --out-dir dist-packages --github-output "$GITHUB_OUTPUT"
+
+      - name: list what each package carries
+        env:
+          WHEEL: ${{ steps.build.outputs.wheel }}
+          SDIST: ${{ steps.build.outputs.sdist }}
+          TARBALL: ${{ steps.build.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          tar -tzvf "$TARBALL"
+          python3 -m zipfile -l "$WHEEL"
+          tar -tzf "$SDIST" | wc -l

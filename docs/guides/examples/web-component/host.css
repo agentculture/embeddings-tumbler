@@ -1,0 +1,23 @@
+body {
+  margin: 0;
+  padding: 16px;
+  background: #f6f3ec;
+  color: #1b2130;
+  font: 16px/1.5 system-ui, sans-serif;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+button {
+  font: inherit;
+  padding: 6px 12px;
+}
+
+/* A light page: tell the viewer so, and it draws the points as soft coloured ink. */
+embeddings-tumbler {
+  --tumbler-background: #f6f3ec;
+  --tumbler-stage-height: 420px;
+}

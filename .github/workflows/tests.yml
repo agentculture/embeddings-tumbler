@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
 
+# Every `run:` step uses bash with -e and -o pipefail (GitHub's explicit-bash
+# invocation); multi-line steps add `set -euo pipefail` themselves.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -27,15 +33,63 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
-      - run: uv run pytest -n auto --cov=embeddings_tumbler --cov-report=xml:coverage.xml --cov-report=term -v
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      # The committed generated files (the assembled core file, the shipped
+      # sample, shell and page copies, package.json's version) must match
+      # their sources; each script exits 1 and names the fix when stale.
+      - name: generated files are current
+        run: |
+          set -euo pipefail
+          python3 scripts/assemble.py --check
+          python3 scripts/sync_sample.py --check
+          python3 scripts/sync_static.py --check
+          python3 scripts/sync_version.py --check
+
+      # The unit tests, with line coverage for SonarCloud. node reports coverage against
+      # the assembled core file; scripts/js_coverage.py attributes it to the js/src modules.
+      - name: node --test
+        run: |
+          set -euo pipefail
+          # node leaves test files out of coverage by default; everything here counts
+          # (sonar-project.properties), so that default is replaced.
+          node --test --experimental-test-coverage --test-coverage-exclude='node_modules/**' \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=lcov --test-reporter-destination=js-coverage.raw.lcov
+          python3 scripts/js_coverage.py js-coverage.raw.lcov js-coverage.lcov
+
+      # The browser tests run here too (as well as in browser.yml, which makes a skip a
+      # failure), so the coverage report includes the harness and the browser test files.
+      - name: install Chromium for Playwright
+        run: uv run --locked --no-build playwright install --with-deps chromium
+
+      - run: uv run --locked --no-build pytest -n auto --cov=. --cov-report=xml:coverage.xml --cov-report=term -v
 
       - name: SonarCloud Scan
         if: env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6
         env:
           SONAR_HOST_URL: https://sonarcloud.io
+
+      # Stricter than the quality gate: any issue left Open or Confirmed fails the run.
+      # An issue marked Accepted on SonarCloud does not. The scan step above waits for
+      # the analysis (sonar.qualitygate.wait), so the issue list is complete here.
+      - name: No open SonarCloud issues
+        if: env.SONAR_TOKEN != ''
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PR_NUMBER" ]; then
+            python3 scripts/sonar_open_issues.py --pull-request "$PR_NUMBER"
+          else
+            python3 scripts/sonar_open_issues.py --branch "$BRANCH_NAME"
+          fi
 
   lint:
     runs-on: ubuntu-latest
@@ -55,27 +109,28 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
       - name: black --check
-        run: uv run black --check embeddings_tumbler tests
+        run: uv run --locked --no-build black --check embeddings_tumbler tests
 
       - name: isort --check
-        run: uv run isort --check-only embeddings_tumbler tests
+        run: uv run --locked --no-build isort --check-only embeddings_tumbler tests
 
       - name: flake8
-        run: uv run flake8 embeddings_tumbler tests
+        run: uv run --locked --no-build flake8 embeddings_tumbler tests
 
       - name: bandit
-        run: uv run bandit -c pyproject.toml -r embeddings_tumbler
+        run: uv run --locked --no-build bandit -c pyproject.toml -r embeddings_tumbler
 
       - name: markdownlint-cli2
         run: |
-          npm install -g markdownlint-cli2@0.21.0
+          set -euo pipefail
+          npm install -g markdownlint-cli2@0.21.0 --ignore-scripts
           markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
 
       - name: afi rubric gate
-        run: uv run teken cli doctor . --strict
+        run: uv run --locked --no-build teken cli doctor . --strict
 
   harness-smoke:
     # All four harnesses (Claude Code, Pi/associate, colleague, Qwen Code) are
@@ -92,7 +147,7 @@ jobs:
 
       - run: uv python install 3.12
 
-      - run: uv sync
+      - run: uv sync --locked --no-build
 
       # `--stage all` runs three stages and prints exactly which of them really
       # ran here:
@@ -111,8 +166,8 @@ jobs:
       - name: per-harness smoke check
         shell: bash
         run: |
-          set -o pipefail
-          uv run python scripts/harness-smoke.py --stage all --require config 2>&1 \
+          set -euo pipefail
+          uv run --locked --no-build python scripts/harness-smoke.py --stage all --require config 2>&1 \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
   version-check:
@@ -139,10 +194,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           # AgentCulture rule: every PR bumps the version — even docs/config/CI.
           # See CLAUDE.md and the version-bump skill for rationale.
-          PR_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          MAIN_VERSION=$(git show origin/main:pyproject.toml 2>/dev/null | python3 -c "import sys,tomllib; print(tomllib.loads(sys.stdin.read())['project']['version'])" 2>/dev/null || echo "")
+          PR_VERSION="$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          MAIN_VERSION="$(git show origin/main:pyproject.toml 2>/dev/null | python3 -c "import sys,tomllib; print(tomllib.loads(sys.stdin.read())['project']['version'])" 2>/dev/null || echo "")"
 
           if [ -z "$MAIN_VERSION" ]; then
             echo "No pyproject.toml on main yet — skipping version check (initial scaffold)."
@@ -155,14 +211,16 @@ jobs:
 
           $MARKER"
 
-            EXISTING=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
-              --jq '.[] | select(.body | contains("<!-- version-check -->")) | .id' | head -1)
+            # `first // empty` instead of `| head -1`: under pipefail, head
+            # closing the pipe early could fail the step before it comments.
+            EXISTING="$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+              --jq '[.[] | select(.body | contains("<!-- version-check -->")) | .id] | first // empty')"
 
             if [ -n "$EXISTING" ]; then
-              gh api repos/${{ github.repository }}/issues/comments/$EXISTING \
+              gh api "repos/${{ github.repository }}/issues/comments/${EXISTING}" \
                 -X PATCH -f body="$BODY" > /dev/null
             else
-              gh pr comment ${{ github.event.pull_request.number }} --body "$BODY" || true
+              gh pr comment "${{ github.event.pull_request.number }}" --body "$BODY" || true
             fi
 
             echo "::error::Version $PR_VERSION matches main. Bump before merging."

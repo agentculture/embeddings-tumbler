@@ -1,0 +1,285 @@
+/* The standalone page of embeddings-tumbler.
+ *
+ * The page is the document around ONE viewer: a full-bleed night sky with the
+ * instrument panel beneath it, after the reference demo. The viewer draws the
+ * stage, masthead, status line, mode switch, readout strip, controls and the
+ * provenance block itself; this file gives it the host colours, fonts and stage
+ * height through its --tumbler-* custom properties, lays the page out, and
+ * adds the per-mode notes below the viewer.
+ *
+ * Nothing here is loaded from another origin. The reference's faces
+ * (Instrument Serif, IBM Plex Sans, IBM Plex Mono) are named first in each
+ * stack so a machine that has them installed uses them; otherwise the stack
+ * falls back to local faces. See "Fonts" in docs/reference-differences.md.
+ *
+ * Single dark look by choice, as in the reference: the subject is light on
+ * darkness.
+ */
+
+:root {
+  --page-bg: #04060b;
+  --page-sky: #0b1430;
+  --page-fg: #e9eef6;
+  --page-muted: #8a96ab;
+  --page-line: #1b2436;
+  --page-accent: #ffc56b;
+  --page-font-display: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Palatino,
+    "URW Palladio L", P052, "Book Antiqua", Georgia, serif;
+  --page-font-body: "IBM Plex Sans", "Segoe UI", Seravek, "Gill Sans Nova", Ubuntu, Calibri,
+    "Source Sans 3", "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+  --page-font-data: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas,
+    "Ubuntu Mono", "DejaVu Sans Mono", "Liberation Mono", monospace;
+  --page-gutter-left: max(20px, env(safe-area-inset-left, 0px));
+  --page-gutter-right: max(20px, env(safe-area-inset-right, 0px));
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--page-bg);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 0;
+  background: var(--page-bg);
+  color: var(--page-fg);
+  font-family: var(--page-font-body);
+  font-size: 15px;
+  line-height: 1.55;
+  overflow-x: hidden;
+}
+
+main {
+  display: block;
+  padding-bottom: 56px;
+  /* A long file name or address in the page's own text must not push the page
+   * wider than a phone (the viewer sets its own wrapping inside #space). */
+  overflow-wrap: anywhere;
+}
+
+/* ---------- the viewer's host element: theme and size ---------- */
+
+.space {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  --tumbler-background: var(--page-bg);
+  --tumbler-sky: var(--page-sky);
+  --tumbler-foreground: var(--page-fg);
+  --tumbler-muted: var(--page-muted);
+  --tumbler-line: var(--page-line);
+  --tumbler-accent: var(--page-accent);
+  --tumbler-font: var(--page-font-body);
+  --tumbler-font-data: var(--page-font-data);
+  --tumbler-font-display: var(--page-font-display);
+  /* The reference's stage height. */
+  --tumbler-stage-height: clamp(420px, 72vh, 900px);
+  /* Spacing and sizes of the viewer's own elements, the reference's values. */
+  --tumbler-masthead-top: 22px;
+  --tumbler-masthead-left: var(--page-gutter-left);
+  --tumbler-masthead-right: var(--page-gutter-right);
+  --tumbler-title-size: clamp(34px, 6vw, 64px);
+  --tumbler-title-margin: 0 0 8px;
+  --tumbler-status-left: var(--page-gutter-left);
+  --tumbler-status-right: var(--page-gutter-right);
+  --tumbler-status-bottom: 16px;
+  --tumbler-panel-padding: 8px var(--page-gutter-right) 0 var(--page-gutter-left);
+  --tumbler-panel-gap: 20px;
+  --tumbler-mode-padding: 12px 16px 10px 0;
+  --tumbler-mode-title-size: 28px;
+  --tumbler-mode-summary-size: 13px;
+  /* The readout strip's size (22 px of cells between two 1 px lines) and the
+   * 6 px gap before its caption are the viewer's own defaults, the reference's. */
+  --tumbler-readout-caption-size: 12px;
+  --tumbler-controls-gap: 10px 22px;
+}
+
+/* A short screen (a phone held sideways, a small board's display): keep the
+ * panel in reach below the sky. */
+@media (max-height: 560px) {
+  .space {
+    --tumbler-stage-height: clamp(260px, 70vh, 420px);
+  }
+}
+
+/* ---------- reference spacing for the viewer's parts ----------
+ *
+ * The viewer sets its spacing inline as var(--tumbler-<name>, <its default>), so
+ * the page sets those custom properties on its host element and the browser uses
+ * them (js/api/50-viewer.md lists them). They change spacing and sizes only,
+ * never colours, behaviour or content. The class names below are stable for the
+ * few things the viewer does not set inline.
+ */
+
+@media (max-width: 600px) {
+  .space {
+    --tumbler-mode-title-size: 24px;
+  }
+}
+
+/* The sky blends into the panel below, as in the reference. */
+.space .tumbler-stage::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 90px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--page-bg));
+}
+
+.space .tumbler-title {
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+/* The instrument panel: centred under the full-bleed sky, the reference's width.
+ * The viewer sets neither the panel's width nor its margin. */
+.space .tumbler-panel {
+  max-width: calc(1120px + var(--page-gutter-left) + var(--page-gutter-right));
+  margin: 0 auto;
+}
+
+/* ---------- while the data loads, or when it cannot be shown ---------- */
+
+.wait {
+  position: relative;
+  height: clamp(420px, 72vh, 900px);
+  background: radial-gradient(
+    ellipse 75% 70% at 50% 46%,
+    var(--page-sky) 0%,
+    #070b18 48%,
+    var(--page-bg) 82%
+  );
+  overflow: hidden;
+  padding: 22px var(--page-gutter-right) 22px var(--page-gutter-left);
+}
+
+@media (max-height: 560px) {
+  .wait {
+    height: clamp(260px, 70vh, 420px);
+  }
+}
+
+.wait-title {
+  margin: 0 0 8px;
+  font-family: var(--page-font-display);
+  font-weight: 400;
+  font-style: italic;
+  font-size: clamp(34px, 6vw, 64px);
+  line-height: 0.95;
+  letter-spacing: -0.01em;
+  text-shadow: 0 0 28px rgba(4, 6, 11, 0.9);
+}
+
+/* The loading line is an <output> (a polite status); it lays out as the paragraph it was. */
+.wait-text {
+  display: block;
+  margin: 0;
+  max-width: 62ch;
+  font-family: var(--page-font-data);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--page-muted);
+  overflow-wrap: anywhere;
+}
+
+body[data-page-state="error"] .wait-text {
+  color: var(--page-fg);
+}
+
+body[data-page-state="error"] .wait-text::before {
+  content: "";
+  display: block;
+  width: 36px;
+  height: 2px;
+  margin: 0 0 10px;
+  background: var(--page-accent);
+}
+
+/* ---------- the per-mode notes ---------- */
+
+.notes {
+  /* The reference's 1,120 px content width, plus the gutters (border-box here). */
+  max-width: calc(1120px + var(--page-gutter-left) + var(--page-gutter-right));
+  margin: 0 auto;
+  padding: 20px var(--page-gutter-right) 0 var(--page-gutter-left);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+body[data-page-state="loading"] .notes,
+body[data-page-state="refused"] .notes,
+body[data-page-state="error"] .notes {
+  display: none;
+}
+
+.explain {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 40px;
+  max-width: 980px;
+}
+
+.explain h2 {
+  grid-column: 1 / -1;
+  font-family: var(--page-font-display);
+  font-weight: 400;
+  font-style: italic;
+  font-size: 30px;
+  line-height: 1.1;
+  margin: 4px 0 0;
+}
+
+.explain h3 {
+  font-family: var(--page-font-data);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--page-accent);
+  margin: 0 0 4px;
+}
+
+.explain p {
+  margin: 0;
+  max-width: 62ch;
+  color: #c5cddb;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .explain {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.note {
+  margin: 0;
+  border-top: 1px solid var(--page-line);
+  padding-top: 14px;
+  max-width: 92ch;
+  font-family: var(--page-font-data);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--page-muted);
+  overflow-wrap: anywhere;
+}
+
+/* The page hides a mode's notes with the hidden attribute. The class rules above
+ * set display on those elements, so this rule wins by specificity (two classes'
+ * worth), not by importance; it sits last so a rule of equal weight cannot undo it. */
+.notes [hidden],
+[hidden] {
+  display: none;
+}

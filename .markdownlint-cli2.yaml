@@ -16,6 +16,8 @@ config:
 
 ignores:
   - "node_modules/**"
+  # The virtual environment (dev dependencies ship Markdown of their own).
+  - ".venv/**"
   - ".local/**"
   - ".afi/**"
   - ".teken/**"

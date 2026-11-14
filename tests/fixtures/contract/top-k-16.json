@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "kind": "embeddings-tumbler/data",
+  "model": "fixture/model-1024",
+  "dimension": 16,
+  "count": 5,
+  "text_included": true,
+  "provenance": {
+    "source": "fixture: top-k-16",
+    "producer": "scripts/gen_contract_fixtures.py",
+    "created": "2026-11-13T00:00:00Z",
+    "synthetic": true,
+    "seed": 16,
+    "limitations": [],
+    "uncertain": []
+  },
+  "reduction": {
+    "kind": "top-k",
+    "source_dimension": 1024,
+    "directions_kept": 16,
+    "variance_dropped": 0.42
+  },
+  "vectors": {
+    "file": "top-k-16.f32",
+    "dtype": "float32",
+    "byte_order": "little",
+    "byte_length": 320
+  },
+  "points": [
+    {
+      "id": "k-0",
+      "label": "top-k point 0"
+    },
+    {
+      "id": "k-1",
+      "label": "top-k point 1"
+    },
+    {
+      "id": "k-2",
+      "label": "top-k point 2"
+    },
+    {
+      "id": "k-3",
+      "label": "top-k point 3"
+    },
+    {
+      "id": "k-4",
+      "label": "top-k point 4"
+    }
+  ]
+}

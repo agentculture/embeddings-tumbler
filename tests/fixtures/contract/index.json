@@ -1,0 +1,353 @@
+{
+  "contract": "docs/data-contract.md",
+  "generator": "scripts/gen_contract_fixtures.py",
+  "schema_versions_supported": [
+    1
+  ],
+  "about": "One entry per case. Load 'base' first as a full set (null: start empty), then apply 'file'. A valid case lists what the view holds afterwards; a refused case gives the first refusal's code and exact message, and the view is unchanged.",
+  "messages": {
+    "wrong-kind": "Not an embeddings-tumbler data set: \"kind\" must be \"embeddings-tumbler/data\".",
+    "schema-version": "Data schema version {found} is not supported; this viewer reads schema version {supported}.",
+    "invalid-field": "Field \"{field}\" is missing or not valid.",
+    "vector-file-path": "Vector file \"{file}\" must be a plain file name in the same folder as the data file.",
+    "endpoint-is-address": "\"provenance.endpoint\" must name the embedding route, not give a network address.",
+    "block-unreadable": "Vector file \"{file}\" could not be read.",
+    "count-mismatch": "\"count\" is {count} but the data has {found} point records.",
+    "duplicate-id": "Point id \"{id}\" appears more than once.",
+    "block-length": "Vector block is {found} bytes; expected {count} points x {dimension} dimensions x 4 bytes = {expected} bytes.",
+    "non-finite": "Vector of point \"{id}\" contains a value that is not a finite number.",
+    "append-without-base": "Cannot append: the view holds no data set yet. Send a full set first.",
+    "model-mismatch": "Cannot append: model \"{found}\" differs from the view's model \"{expected}\". One view shows one model.",
+    "dimension-mismatch": "Cannot append: dimension {found} differs from the view's dimension {expected}.",
+    "reduction-mismatch": "Cannot append: reduction \"{found}\" differs from the view's reduction \"{expected}\".",
+    "id-exists": "Cannot append: point id \"{id}\" is already in the view."
+  },
+  "cases": [
+    {
+      "name": "valid-384",
+      "file": "valid-384.json",
+      "base": null,
+      "valid": true,
+      "expect": {
+        "count": 6,
+        "ids": [
+          "a-01",
+          "a-02",
+          "a-03",
+          "b-01",
+          "b-02",
+          "c-01"
+        ],
+        "model": "fixture/model-a",
+        "dimension": 384,
+        "reduction": "none",
+        "text_included": true
+      },
+      "refusal": null
+    },
+    {
+      "name": "valid-1024",
+      "file": "valid-1024.json",
+      "base": null,
+      "valid": true,
+      "expect": {
+        "count": 4,
+        "ids": [
+          "q-01",
+          "q-02",
+          "q-03",
+          "q-04"
+        ],
+        "model": "fixture/model-1024",
+        "dimension": 1024,
+        "reduction": "rotation",
+        "text_included": true
+      },
+      "refusal": null
+    },
+    {
+      "name": "labels-only",
+      "file": "labels-only.json",
+      "base": null,
+      "valid": true,
+      "expect": {
+        "count": 4,
+        "ids": [
+          "item-0",
+          "item-1",
+          "item-2",
+          "item-3"
+        ],
+        "model": "fixture/model-a",
+        "dimension": 384,
+        "reduction": "none",
+        "text_included": false
+      },
+      "refusal": null
+    },
+    {
+      "name": "top-k-16",
+      "file": "top-k-16.json",
+      "base": null,
+      "valid": true,
+      "expect": {
+        "count": 5,
+        "ids": [
+          "k-0",
+          "k-1",
+          "k-2",
+          "k-3",
+          "k-4"
+        ],
+        "model": "fixture/model-1024",
+        "dimension": 16,
+        "reduction": "top-k",
+        "text_included": true
+      },
+      "refusal": null
+    },
+    {
+      "name": "empty-set",
+      "file": "empty-384.json",
+      "base": null,
+      "valid": true,
+      "expect": {
+        "count": 0,
+        "ids": [],
+        "model": "fixture/model-a",
+        "dimension": 384,
+        "reduction": "none",
+        "text_included": true
+      },
+      "refusal": null
+    },
+    {
+      "name": "append-onto-384",
+      "file": "append-384.json",
+      "base": "valid-384.json",
+      "valid": true,
+      "expect": {
+        "count": 8,
+        "ids": [
+          "a-01",
+          "a-02",
+          "a-03",
+          "b-01",
+          "b-02",
+          "c-01",
+          "d-01",
+          "d-02"
+        ],
+        "model": "fixture/model-a",
+        "dimension": 384,
+        "reduction": "none",
+        "text_included": true
+      },
+      "refusal": null
+    },
+    {
+      "name": "labels-only-append-onto-text",
+      "file": "append-labels-only.json",
+      "base": "valid-384.json",
+      "valid": true,
+      "expect": {
+        "count": 8,
+        "ids": [
+          "a-01",
+          "a-02",
+          "a-03",
+          "b-01",
+          "b-02",
+          "c-01",
+          "item-8",
+          "item-9"
+        ],
+        "model": "fixture/model-a",
+        "dimension": 384,
+        "reduction": "none",
+        "text_included": true
+      },
+      "refusal": null
+    },
+    {
+      "name": "append-without-base",
+      "file": "append-384.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "append-without-base",
+        "message": "Cannot append: the view holds no data set yet. Send a full set first."
+      }
+    },
+    {
+      "name": "bumped-version",
+      "file": "bumped-version.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "schema-version",
+        "message": "Data schema version 2 is not supported; this viewer reads schema version 1."
+      }
+    },
+    {
+      "name": "wrong-block-length",
+      "file": "wrong-block-length.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "block-length",
+        "message": "Vector block is 9212 bytes; expected 6 points x 384 dimensions x 4 bytes = 9216 bytes."
+      }
+    },
+    {
+      "name": "mixed-dimension",
+      "file": "append-768.json",
+      "base": "valid-384.json",
+      "valid": false,
+      "refusal": {
+        "code": "dimension-mismatch",
+        "message": "Cannot append: dimension 768 differs from the view's dimension 384."
+      }
+    },
+    {
+      "name": "second-model",
+      "file": "append-other-model.json",
+      "base": "valid-384.json",
+      "valid": false,
+      "refusal": {
+        "code": "model-mismatch",
+        "message": "Cannot append: model \"fixture/model-b\" differs from the view's model \"fixture/model-a\". One view shows one model."
+      }
+    },
+    {
+      "name": "reduction-mismatch",
+      "file": "append-rotated.json",
+      "base": "valid-384.json",
+      "valid": false,
+      "refusal": {
+        "code": "reduction-mismatch",
+        "message": "Cannot append: reduction \"rotation\" differs from the view's reduction \"none\"."
+      }
+    },
+    {
+      "name": "id-exists",
+      "file": "append-existing-id.json",
+      "base": "valid-384.json",
+      "valid": false,
+      "refusal": {
+        "code": "id-exists",
+        "message": "Cannot append: point id \"a-02\" is already in the view."
+      }
+    },
+    {
+      "name": "duplicate-id",
+      "file": "duplicate-id.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "duplicate-id",
+        "message": "Point id \"a-02\" appears more than once."
+      }
+    },
+    {
+      "name": "count-mismatch",
+      "file": "count-mismatch.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "count-mismatch",
+        "message": "\"count\" is 6 but the data has 5 point records."
+      }
+    },
+    {
+      "name": "block-unreadable",
+      "file": "block-unreadable.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "block-unreadable",
+        "message": "Vector file \"no-such-block.f32\" could not be read."
+      }
+    },
+    {
+      "name": "non-finite",
+      "file": "non-finite.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "non-finite",
+        "message": "Vector of point \"a-03\" contains a value that is not a finite number."
+      }
+    },
+    {
+      "name": "endpoint-address",
+      "file": "endpoint-address.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "endpoint-is-address",
+        "message": "\"provenance.endpoint\" must name the embedding route, not give a network address."
+      }
+    },
+    {
+      "name": "endpoint-hostname",
+      "file": "endpoint-hostname.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "endpoint-is-address",
+        "message": "\"provenance.endpoint\" must name the embedding route, not give a network address."
+      }
+    },
+    {
+      "name": "endpoint-port",
+      "file": "endpoint-port.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "endpoint-is-address",
+        "message": "\"provenance.endpoint\" must name the embedding route, not give a network address."
+      }
+    },
+    {
+      "name": "wrong-kind",
+      "file": "wrong-kind.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "wrong-kind",
+        "message": "Not an embeddings-tumbler data set: \"kind\" must be \"embeddings-tumbler/data\"."
+      }
+    },
+    {
+      "name": "vector-file-path",
+      "file": "vector-file-path.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "vector-file-path",
+        "message": "Vector file \"../valid-384.f32\" must be a plain file name in the same folder as the data file."
+      }
+    },
+    {
+      "name": "missing-limitations",
+      "file": "missing-limitations.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "invalid-field",
+        "message": "Field \"provenance.limitations\" is missing or not valid."
+      }
+    },
+    {
+      "name": "byte-length-declared",
+      "file": "byte-length-declared.json",
+      "base": null,
+      "valid": false,
+      "refusal": {
+        "code": "invalid-field",
+        "message": "Field \"vectors.byte_length\" is missing or not valid."
+      }
+    }
+  ]
+}

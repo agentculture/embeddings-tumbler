@@ -1,6 +1,6 @@
 [project]
 name = "embeddings-tumbler"
-version = "0.10.1"
+version = "0.11.0"
 description = "Visualize embedding space: tumble, lattice and wander through high-dimensional embeddings in a 3-D window."
 readme = "README.md"
 license = "Apache-2.0"
@@ -40,13 +40,16 @@ dev = [
     "black>=23.7.0",
     "teken>=0.8",
     "pyyaml>=6.0",
+    "playwright>=1.65,<1.66",
 ]
 
 [tool.coverage.run]
-source = ["embeddings_tumbler"]
-omit = ["embeddings_tumbler/__pycache__/*"]
-# Emit repo-relative paths in coverage.xml so SonarCloud maps them to
-# sonar.sources=embeddings_tumbler (absolute/.venv paths fail to map → empty coverage).
+# One source root, the repository: every Python file counts (the package, the scripts,
+# the tests, the documentation's examples), and coverage.xml names each file by its
+# repo-relative path. Several roots would make names such as `__init__.py` ambiguous
+# and SonarCloud would drop them.
+source = ["."]
+omit = [".venv/*", "**/__pycache__/*", ".claude/*", "node_modules/*"]
 relative_files = true
 
 [tool.coverage.report]
@@ -73,4 +76,4 @@ skips = ["B101", "B404", "B603"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra --dist loadgroup"

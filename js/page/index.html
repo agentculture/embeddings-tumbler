@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark">
+<title>Embedding Tumbler</title>
+<link rel="stylesheet" href="page.css">
+</head>
+<body data-page-state="loading">
+<main>
+  <div class="space" id="space">
+    <div class="wait" id="wait">
+      <p class="wait-title">Embedding Tumbler</p>
+      <output class="wait-text" id="wait-text">Loading the viewer…</output>
+      <noscript><p class="wait-text">This page draws the view with JavaScript, which is turned off in this browser.</p></noscript>
+    </div>
+  </div>
+
+  <div class="notes" id="notes">
+    <section class="explain" data-for="tumble">
+      <h2>Tumble</h2>
+      <div><h3>What is happening</h3>
+        <p>A rotating tesseract is a 4-D shape seen through a 3-D window that keeps turning. This is the same trick with <span data-fill="dimension">hundreds of</span> dimensions. The three axes you see are a small frame that drifts smoothly through the whole space and never returns to the same view.</p></div>
+      <div><h3>What to watch for</h3>
+        <p>Regions slide through each other and separate again. <span data-fill="ring">A ring</span> opens into a circle, then flattens to a line. Filaments between regions swing like bridges. None of the points move. Only the viewpoint does.</p></div>
+    </section>
+
+    <section class="explain" data-for="lattice" hidden>
+      <h2>Lattice</h2>
+      <div><h3>What is happening</h3>
+        <p><span data-fill="lattice-count">Up to a thousand</span> of the points are wired to their three nearest neighbours, measured in all <span data-fill="dimension">the</span> dimensions, so the wires stay true even when the picture misleads. The view changes one axis at a time: a visible axis is traded for a hidden direction, the way a tesseract turns inside out.</p></div>
+      <div><h3>What to watch for</h3>
+        <p>A wire flares when the view shows it close to its true length and fades when it points off into dimensions you cannot see. A long wire joins two real neighbours that this view happens to pull apart. Two clumps that overlap with no wires between them are not actually close.</p></div>
+    </section>
+
+    <section class="explain" data-for="wander" hidden>
+      <h2>Wander</h2>
+      <div><h3>What is happening</h3>
+        <p>Instead of watching from outside, the camera travels. It hops from one named star to a near neighbour, and at every stop the three axes are fitted again to that neighbourhood, so each region unfolds along its own strongest directions. Every few hops it leaps somewhere far away.</p></div>
+      <div><h3>What to watch for</h3>
+        <p>Brightness is true distance. Bright points are close in all <span data-fill="dimension">the</span> dimensions. The dim dust is far away, however near it looks on screen. Spokes mark the nearest named neighbours of the current stop, and <span data-fill="ring-lower">a ring</span> turns face-on when the camera arrives there.</p></div>
+    </section>
+
+    <p class="note" id="note-sample" hidden>The data is synthetic: nine topic regions, the filaments and bridges between them, a ring of months and an arc of temperature words, generated to behave like the output of a small sentence-embedding model and normalised to unit length. 290 points carry words; the rest stand in for unnamed passages. Real model output is noisier and less tidy.</p>
+    <p class="note" id="note-file" hidden></p>
+  </div>
+</main>
+<script src="embeddings-tumbler.js"></script>
+<script src="sample-data.js"></script>
+<script src="page.js"></script>
+</body>
+</html>

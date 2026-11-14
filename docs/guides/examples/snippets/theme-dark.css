@@ -1,0 +1,14 @@
+/* Set the properties on the element the viewer is mounted in, or on any ancestor. */
+.space {
+  --tumbler-background: #101418;
+  --tumbler-sky: #16202c;
+  --tumbler-foreground: #e6edf3;
+  --tumbler-muted: #8b98a5;
+  --tumbler-line: #26313d;
+  --tumbler-accent: #7fd1b9;
+  --tumbler-ungrouped: #8cadff;
+  --tumbler-group-1: #ffb86b;
+  --tumbler-group-2: #7fd1b9;
+  --tumbler-font: "Helvetica Neue", Arial, sans-serif;
+  --tumbler-stage-height: clamp(320px, 55vh, 640px);
+}

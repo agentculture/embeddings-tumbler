@@ -1,0 +1,356 @@
+// The standalone page of embeddings-tumbler: a shell around ONE viewer.
+//
+//   index.html                      the built-in sample set
+//   index.html?data=sets/a.json     a data file from this page's own origin
+//   ...&mode=lattice&seed=7         optional starting mode and view seed
+//
+// This script holds no rendering or projection logic. It calls only
+// EmbeddingsTumbler.mount and the handle's update (and sample.generate for the
+// sample set). It fetches a data file and its sibling .f32 block itself, same
+// origin only, and hands the in-memory form to update, which validates it and
+// shows any refusal inside the viewer. The page's own messages use textContent.
+(function () {
+  "use strict";
+
+  const KIND = "embeddings-tumbler/data";
+  const SCHEMA_VERSION = 1; // the version this page's copy of the core reads
+  const PLAIN_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+  const TITLE = "Embedding Tumbler";
+  // The largest records file (the .json) the page reads, judged by its
+  // Content-Length before the body is read, and by its length after reading
+  // when the server sends none. The binary .f32 block is not limited here.
+  const MAX_RECORDS_BYTES = 64 * 1024 * 1024;
+  const MAX_RECORDS_TEXT = "64 MB";
+
+  const doc = document;
+  const body = doc.body;
+  const space = doc.getElementById("space");
+  const wait = doc.getElementById("wait");
+  const waitText = doc.getElementById("wait-text");
+
+  function setState(state) {
+    body.dataset.pageState = state;
+  }
+
+  function mark(name) {
+    try {
+      performance.mark(name);
+    } catch (err) {
+      // marks are a convenience for measuring; their absence changes nothing
+    }
+  }
+
+  function say(message) {
+    waitText.textContent = message;
+  }
+
+  // The loading line (an <output>, a polite status) becomes an alert for a failure.
+  function fail(message) {
+    if (wait.parentNode !== space) space.appendChild(wait);
+    waitText.setAttribute("role", "alert");
+    say(message);
+    setState("error");
+  }
+
+  function PageError(message) {
+    this.pageMessage = message;
+  }
+
+  function tooLarge(name) {
+    return new PageError(
+      'The data file "' + name + '" is too large: this page reads records files of up to ' + MAX_RECORDS_TEXT + "."
+    );
+  }
+
+  function blockFailed(file) {
+    return new PageError('Vector file "' + file + '" could not be read.');
+  }
+
+  function thousands(n) {
+    return Number(n).toLocaleString("en-US");
+  }
+
+  function readQuery() {
+    let params = null;
+    try {
+      params = new URLSearchParams(window.location.search);
+    } catch (err) {
+      params = null;
+    }
+    function get(key) {
+      return params ? params.get(key) : null;
+    }
+    const options = {};
+    const mode = get("mode");
+    if (mode) options.mode = mode;
+    const seed = get("seed");
+    if (seed !== null && seed.trim() !== "") {
+      const trimmed = seed.trim();
+      options.seed = /^-?\d+(\.\d+)?$/.test(trimmed) && Number.isFinite(Number(trimmed)) ? Number(trimmed) : seed;
+    }
+    // A data address of only spaces is no address: the sample set, as for data=.
+    let data = get("data");
+    if (data !== null && data.trim() === "") data = null;
+    return { data: data, options: options };
+  }
+
+  // ---------- the per-mode notes below the viewer ----------
+
+  function showNotes(modeId) {
+    const sections = Array.from(doc.querySelectorAll(".explain[data-for]"));
+    const any = sections.some((s) => s.dataset.for === modeId);
+    for (const s of sections) {
+      // A mode the page has no note for (one a host registered) hides them all.
+      s.hidden = any ? s.dataset.for !== modeId : true;
+    }
+  }
+
+  function fill(name, text) {
+    for (const el of doc.querySelectorAll('[data-fill="' + name + '"]')) el.textContent = text;
+  }
+
+  function fillNotes(info, source) {
+    const dimension = Number(info?.dimension);
+    const count = Number(info?.count);
+    if (dimension > 0) fill("dimension", thousands(dimension));
+    if (count >= 1000) fill("lattice-count", "A thousand");
+    else if (count > 1) fill("lattice-count", "All " + thousands(count));
+    else fill("lattice-count", "In a larger set, a thousand");
+    if (source.sample) {
+      fill("ring", "The ring of months");
+      fill("ring-lower", "the ring of months");
+      doc.getElementById("note-sample").hidden = false;
+    } else {
+      const note = doc.getElementById("note-file");
+      note.textContent =
+        "The vectors in this view were loaded from " +
+        source.name +
+        ". The provenance block above says where they came from, which model made them, and what their producer states about them.";
+      note.hidden = false;
+    }
+  }
+
+  // ---------- mounting ----------
+
+  function show(data, options, source) {
+    const api = window.EmbeddingsTumbler;
+    mark("tumbler-page-data-ready");
+    wait.remove();
+    const opts = {
+      title: TITLE,
+      provenanceOpen: false,
+      onModeChange: showNotes,
+    };
+    if (options.mode) opts.mode = options.mode;
+    if (options.seed !== undefined) opts.seed = options.seed;
+    const handle = api.mount(space, opts);
+    mark("tumbler-page-mount");
+    const result = handle.update(data);
+    showNotes(handle.mode());
+    if (result?.ok) {
+      fillNotes(handle.info(), source);
+      setState("ready");
+    } else {
+      // The viewer shows its own plain refusal over the stage.
+      setState("refused");
+    }
+  }
+
+  function showSample(options) {
+    const api = window.EmbeddingsTumbler;
+    if (typeof api.sample?.generate !== "function") {
+      fail(
+        "The sample set is not available: sample-data.js is missing from this folder. " +
+          "Copy it next to this page, or open the page with ?data= and the address of a data file."
+      );
+      return;
+    }
+    say("Generating the sample set…");
+    // Let the loading line paint before the generator takes the main thread.
+    window.requestAnimationFrame(function () {
+      window.setTimeout(function () {
+        let data;
+        try {
+          data = api.sample.generate();
+        } catch (err) {
+          fail("The sample set could not be generated.");
+          return;
+        }
+        try {
+          show(data, options, { sample: true, name: "the built-in sample set" });
+        } catch (err) {
+          fail("The page could not start the viewer.");
+        }
+      }, 0);
+    });
+  }
+
+  function sameOrigin(url) {
+    return (url.protocol === "http:" || url.protocol === "https:") && url.origin === window.location.origin;
+  }
+
+  function fileName(url) {
+    const parts = url.pathname.split("/");
+    const last = parts.at(-1) || url.pathname;
+    try {
+      return decodeURIComponent(last);
+    } catch (err) {
+      return last;
+    }
+  }
+
+  // A readable file-form set: the records name their vectors file, which the page fetches.
+  function isFileForm(records, v) {
+    return (
+      !!records &&
+      typeof records === "object" &&
+      !Array.isArray(records) &&
+      records.kind === KIND &&
+      records.schema_version === SCHEMA_VERSION &&
+      !!v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof v.file === "string"
+    );
+  }
+
+  // The records file's text, or null when the load was abandoned meanwhile.
+  async function fetchRecords(url, name, init, live) {
+    let res;
+    try {
+      res = await window.fetch(url.href, init);
+    } catch (err) {
+      throw new PageError('The data file "' + name + '" could not be loaded.');
+    }
+    if (!live()) return null;
+    if (res.url && !sameOrigin(new URL(res.url))) {
+      throw new PageError('Refused: "' + name + '" was redirected to another origin.');
+    }
+    if (!res.ok) {
+      throw new PageError('The data file "' + name + '" could not be loaded: the server answered ' + res.status + ".");
+    }
+    const size = typeof res.headers?.get === "function" ? res.headers.get("content-length") : null;
+    if (size !== null && Number(size) > MAX_RECORDS_BYTES) throw tooLarge(name);
+    return res.text();
+  }
+
+  // The vectors block, or null when the load was abandoned meanwhile.
+  async function fetchBlock(blockUrl, file, init, live) {
+    let res;
+    try {
+      res = await window.fetch(blockUrl.href, init);
+    } catch (err) {
+      throw blockFailed(file);
+    }
+    if (!live()) return null;
+    if (!res.ok || (res.url && !sameOrigin(new URL(res.url)))) throw blockFailed(file);
+    return res.arrayBuffer();
+  }
+
+  // Fetch the records file and, for the file form, its sibling block, then show them.
+  async function loadFile(url, name, init, load, options) {
+    const live = () => !load.abandoned;
+    const text = await fetchRecords(url, name, init, live);
+    if (!live() || text === null) return;
+    if (text.length > MAX_RECORDS_BYTES) throw tooLarge(name);
+    let records;
+    try {
+      records = JSON.parse(text);
+    } catch (err) {
+      throw new PageError('The data file "' + name + '" is not valid JSON.');
+    }
+    const v = records && typeof records === "object" ? records.vectors : null;
+    if (!isFileForm(records, v)) {
+      // Not a readable file-form set: the viewer refuses it with its own message.
+      load.done = true;
+      show(records, options, { sample: false, name: name });
+      return;
+    }
+    if (!PLAIN_FILE.test(v.file)) {
+      throw new PageError('Vector file "' + v.file + '" must be a plain file name in the same folder as the data file.');
+    }
+    const block = await fetchBlock(new URL(v.file, url.href), v.file, init, live);
+    if (!live() || block === null) return;
+    load.done = true;
+    // The descriptor stays, with the block beside it: the viewer checks the
+    // file form's own fields (dtype, byte order, declared length) against it.
+    show({ ...records, vectors: { ...v, data: block } }, options, { sample: false, name: name });
+  }
+
+  function showFile(address, options) {
+    const page = window.location;
+    if (page.protocol !== "http:" && page.protocol !== "https:") {
+      fail(
+        "This page reads data files over HTTP from its own folder. Serve the folder " +
+          "(for example: embeddings-tumbler viewer serve <folder>) and open the page from there."
+      );
+      return;
+    }
+    let url;
+    try {
+      url = new URL(address, page.href);
+    } catch (err) {
+      fail('The data address "' + address + '" is not a valid address.');
+      return;
+    }
+    if (!sameOrigin(url)) {
+      fail(
+        'Refused: the data address "' +
+          address +
+          '" points at another origin. This page loads data only from its own origin (' +
+          page.origin +
+          ")."
+      );
+      return;
+    }
+    const name = fileName(url);
+    say("Loading " + name + "…");
+
+    // Leaving the page (pagehide) abandons the load: the requests are aborted and
+    // nothing that arrives later touches a page that has moved on. If the browser
+    // brings the page back from its back-forward cache, the load starts again.
+    const load = { abandoned: false, controller: null };
+    try {
+      load.controller = typeof AbortController === "function" ? new AbortController() : null;
+    } catch (err) {
+      load.controller = null;
+    }
+    const init = { credentials: "same-origin" };
+    if (load.controller) init.signal = load.controller.signal;
+    window.addEventListener("pagehide", function () {
+      if (load.abandoned || load.done) return;
+      load.abandoned = true;
+      load.controller?.abort();
+      window.addEventListener("pageshow", function again(ev) {
+        if (!ev?.persisted) return;
+        if (typeof window.removeEventListener === "function") window.removeEventListener("pageshow", again);
+        showFile(address, options);
+      });
+    });
+
+    // Every failure ends here and is shown as a plain message (unless the page has moved on).
+    loadFile(url, name, init, load, options).catch(function (err) {
+      if (load.abandoned) return; // abandoned: the page has moved on
+      load.done = true;
+      fail(err?.pageMessage || 'The data file "' + name + '" could not be shown.');
+    });
+  }
+
+  function start() {
+    if (!space || !wait || !waitText) return;
+    const api = window.EmbeddingsTumbler;
+    if (typeof api?.mount !== "function") {
+      fail("The viewer is not available: embeddings-tumbler.js is missing from this folder.");
+      return;
+    }
+    const query = readQuery();
+    try {
+      if (query.data) showFile(query.data, query.options);
+      else showSample(query.options);
+    } catch (err) {
+      fail("The page could not start the viewer.");
+    }
+  }
+
+  start();
+})();

@@ -26,6 +26,7 @@ buildable/deployable package baseline. Clone it, rename the package, edit
 - `embeddings-tumbler overview` — descriptive snapshot of the agent.
 - `embeddings-tumbler doctor` — check the agent-identity invariants.
 - `embeddings-tumbler cli overview` — describe the CLI surface.
+- `embeddings-tumbler viewer write|serve|overview` — ship and try the viewer files.
 
 ## Exit-code policy
 
@@ -120,6 +121,67 @@ itself (distinct from the global `overview`, which describes the agent).
     embeddings-tumbler cli overview
     embeddings-tumbler cli overview --json
 """
+_VIEWER = """\
+# embeddings-tumbler viewer
+
+Noun group for the embedding-space viewer files packaged with this tool.
+
+- `viewer write <folder>` copies them into a host folder.
+- `viewer serve <folder>` serves a folder as static files for local testing.
+- `viewer overview` describes the verbs.
+
+## Usage
+
+    embeddings-tumbler viewer overview
+    embeddings-tumbler viewer overview --json
+"""
+
+_VIEWER_WRITE = """\
+# embeddings-tumbler viewer write
+
+Writes everything shipped under the package's `static/` folder (the core
+script, and the web component and standalone page as they ship) into a host
+folder, keeping relative paths. The copies are byte-identical to the packaged
+files.
+
+It previews by default: each file is listed with its size and whether it
+already exists. Nothing is written without `--apply`. Existing files are never
+overwritten without `--force`; the refusal happens before any file is written.
+Files are written atomically. A destination that is, or passes through, a
+symlink is refused.
+
+## Usage
+
+    embeddings-tumbler viewer write ./public/tumbler            # preview
+    embeddings-tumbler viewer write ./public/tumbler --apply
+    embeddings-tumbler viewer write ./public/tumbler --apply --force
+    embeddings-tumbler viewer write ./public/tumbler --json
+
+Exit codes: 0 success or preview, 1 refused (existing files, unsafe path),
+2 the folder could not be written.
+"""
+
+_VIEWER_SERVE = """\
+# embeddings-tumbler viewer serve
+
+Serves a folder as static files so the viewer can be tried locally. GET and
+HEAD only (anything else is 405); only regular files under the folder are
+served, with no directory traversal and no symlink escape. Responses carry the
+right content types (`.js`, `.html`, `.css`, `.json`, `.f32`, fonts) and
+`Cache-Control: no-store`.
+
+It binds to `127.0.0.1` by default. A non-loopback `--host` must be given
+explicitly and is noted on stderr. `--port 0` picks a free port. The server
+reads no gateway address or key from anywhere.
+
+## Usage
+
+    embeddings-tumbler viewer serve ./public/tumbler
+    embeddings-tumbler viewer serve ./public/tumbler --port 0 --json
+
+`--json` prints `{"host", "port", "url", "root"}` once, then serves until
+interrupted. Exit codes: 0 stopped, 1 bad folder or port, 2 could not bind.
+"""
 
 
 ENTRIES: dict[tuple[str, ...], str] = {
@@ -132,4 +194,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("doctor",): _DOCTOR,
     ("cli",): _CLI,
     ("cli", "overview"): _CLI,
+    ("viewer",): _VIEWER,
+    ("viewer", "overview"): _VIEWER,
+    ("viewer", "write"): _VIEWER_WRITE,
+    ("viewer", "serve"): _VIEWER_SERVE,
 }

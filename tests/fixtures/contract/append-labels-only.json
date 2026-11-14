@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "embeddings-tumbler/data",
+  "op": "append",
+  "model": "fixture/model-a",
+  "dimension": 384,
+  "count": 2,
+  "text_included": false,
+  "vectors": {
+    "file": "append-labels-only.f32",
+    "dtype": "float32",
+    "byte_order": "little",
+    "byte_length": 3072
+  },
+  "points": [
+    {
+      "id": "item-8",
+      "label": "item-8",
+      "group": "g"
+    },
+    {
+      "id": "item-9",
+      "label": "item-9",
+      "group": "g"
+    }
+  ]
+}

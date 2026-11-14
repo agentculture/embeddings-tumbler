@@ -1,0 +1,5 @@
+/* A light page. The viewer notices the light background, switches to its light defaults
+   and draws the points as soft coloured ink. */
+.space {
+  --tumbler-background: #fbfaf6;
+}

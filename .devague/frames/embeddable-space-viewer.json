@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-13T18:13:06Z",
-  "updated": "2026-11-13T18:39:08Z",
+  "updated": "2026-11-14T09:25:01Z",
   "claims": [
     {
       "id": "c1",
@@ -912,7 +912,336 @@
       "seeds": []
     }
   ],
-  "lapses": [],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "assumption-for-measurement",
+      "what": "t3 agent did not check that bare 'node --test' stays clean when .venv exists in the checkout, and did not load the assembled file in a real browser (only node's module.exports branch ran). Main agent then ran 'node --test' in the main checkout with .venv present: 3 pass, 0 fail. The browser global-export branch stays unexercised until t10/t11/t14.",
+      "skipped_check": "node --test in a checkout with .venv; classic script load in a browser",
+      "refs": [
+        "t3"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l2",
+      "code": "grader-unverified",
+      "what": "t2's reference validator lives in the pytest file and was written by the same agent from its own contract document, so the tests show the fixtures and the document agree with each other, not that the contract is right; nothing in JavaScript has read the fixtures yet (t5). Fixture byte-identity was checked on CPython 3.13 on one machine only.",
+      "skipped_check": "an independent implementation reading the fixtures; regeneration on a second Python version",
+      "refs": [
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l3",
+      "code": "assumption-for-measurement",
+      "what": "t12: the stderr warning for a non-loopback --host is not exercised end to end (only the is_loopback helper is unit-tested), and the agent assumed the wheel ships static/ without building it. Main agent built the wheel: embeddings_tumbler/static/embeddings-tumbler.js is present. The warning branch stays untested.",
+      "skipped_check": "CLI test binding a non-loopback host; uv build --wheel",
+      "refs": [
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l4",
+      "code": "assumption-for-measurement",
+      "what": "t5: the little-endian DataView path was never run on a big-endian host; no performance measurement on large sets (append copies all vectors each time); the in-memory test for the three file-form-only fixtures asserts refusal and unchanged base but not the exact code. Separately, t5 is the first independent implementation to read t2's fixtures and found no contradiction between document, index.json and fixtures (bears on l2).",
+      "skipped_check": "big-endian run; timing at 10,000 x 1024; exact-code assertion for file-form-only cases in memory form",
+      "refs": [
+        "t5",
+        "l2"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l5",
+      "code": "control-absent",
+      "what": "t2b: code and tests written in one pass, tests never seen failing first; the endpoint pattern accepts a trailing space, which the document does not mention.",
+      "skipped_check": "running the new tests red before the implementation change",
+      "refs": [
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l6",
+      "code": "assumption-for-measurement",
+      "what": "t15: the before/after 'map --html' byte comparison across code versions was done by hand only (no committed cross-version test); rotation and top-k were never run on real model vectors or at 2560-d; the agent's cross-check against the viewer's validator used the old endpoint rule and its allowlist checker was written from a message, not the document. Main agent then exported a synthetic 300 x 1024 Atlas four ways (plain, labels-only, rotate, top-k 16, endpoint name 'lobes gateway') and both the merged Python reference validator and the merged JS loader accepted all four.",
+      "skipped_check": "committed cross-version map test; real-vector run (t16)",
+      "refs": [
+        "t15"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l7",
+      "code": "n-below-claim",
+      "what": "t4: module written before its tests (test-first not followed; a mutation check covers criteria 3 and 4 only); the guided-versus-random margin (asserted 0.25, observed about 0.44) is measured on one synthetic fixture with one tour seed and one random seed, no seed sweep; a test's noise level was lowered on reasoning about the noise spectrum, not a measurement; cross-browser bit-identity of the tour is unverified (Math.sin/cos); principal-direction convergence is unverified on real vectors.",
+      "skipped_check": "seed sweep for the separation margin; browser run of the determinism test; real-vector run (t16)",
+      "refs": [
+        "t4"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l8",
+      "code": "assumption-for-measurement",
+      "what": "t6: no side-by-side comparison with the reference page (one screenshot looked at); twinkle has no assertion and was not checked by eye; wires are drawn in the browser test but not asserted separately; the no-HDR fallback was exercised only through the hdr:false option, never on a GPU without float render targets; SwiftShader timings are noisy (first page about 4x slower, attributed to warm-up without measurement); whether the browser test skips cleanly on CI is unconfirmed. Main agent loaded the demo in headless Chromium on the Radeon 760M: 60.0 fps at 5,000 x 1024-d, zero console errors; trails look streaky.",
+      "skipped_check": "side-by-side with the reference; twinkle and wire assertions; CI run of the browser test",
+      "refs": [
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l9",
+      "code": "assumption-for-measurement",
+      "what": "t9: the browser attach path (window.EmbeddingsTumbler.sample, loaded after the core) was never run in a browser; the fidelity test against the reference generator was not mutation-tested; generate() timings are single runs.",
+      "skipped_check": "browser load of sample-data.js after the core; a deliberately wrong port to show the fidelity test fails",
+      "refs": [
+        "t9"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l10",
+      "code": "n-below-claim",
+      "what": "t7: Tumble's principal-direction fit is one indivisible unit (up to about 525 ms at 1024-d on 12,288 points), not bounded slices; the visual check against the reference was screenshots at different moments and window sizes, not a side-by-side; browser fps is one 6-second sample per mode at the 60 fps display cap, so headroom is unmeasured; REFERENCE_RADIUS is a constant measured on the sample set and hard-coded; no real (non-synthetic) vectors were exercised; Wander's near/leap rules are tested by one assertion on one seed. Main agent loaded the modes demo on the Radeon 760M: 60.0 fps in each mode, zero console errors; Lattice shows very bright dense wire bands.",
+      "skipped_check": "side-by-side with the reference; fps headroom uncapped; real vectors (t16); seed sweep for Wander's route rules",
+      "refs": [
+        "t7"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l11",
+      "code": "control-absent",
+      "what": "t6 was merged before its two colleague reviews returned (main agent's choice, to unblock t7). The reviews then found a real fault: a failed upload in setData can leave a half-built GPU state that makes draw() throw, and the node tests' fake GL accepts any call, so the append row arithmetic was untested outside the browser test. Follow-up fixes are in progress on agent/t6b.",
+      "skipped_check": "independent review before merge",
+      "refs": [
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l12",
+      "code": "n-below-claim",
+      "what": "t7 fixes: Wander's no-jump bound across an append comes from one set and three seeds; preparation times were not re-measured in node after the fixes; Tumble's variance share printed 1.0000000342 for a 2-to-5 point set (floating-point overshoot shown as 100.0%).",
+      "skipped_check": "more sets and seeds for the append continuity bound; clamp of the share to 1",
+      "refs": [
+        "t7"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l13",
+      "code": "assumption-for-measurement",
+      "what": "t8: the viewer module was written before its tests; touch input (pinch, double-tap, pan-y scrolling) is tested only with synthetic events in a fake DOM, never on a real phone; context loss and restore, hidden-tab and off-screen pausing and the twenty-cycle mount/destroy leak check run only in the fake DOM, not in the browser test; the light theme was judged from one software-rendered screenshot; GPU frame rates hit the 60 fps display cap so headroom is unmeasured; heap figures include the dev page's sample pool; Firefox, Safari and a screen reader were not checked; the static no-network checks are regex heuristics.",
+      "skipped_check": "real touch device; browser-level pause, context-loss and leak tests; uncapped frame rate; Firefox and Safari",
+      "refs": [
+        "t8"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l14",
+      "code": "control-absent",
+      "what": "perf pass: merged before its two colleague reviews returned (main agent's choice; evidence at merge was the agent's 56/56 bit-identical math checks and 20,277 identical mode states against the previous code, plus all existing determinism tests passing unchanged). The refit-turn constant (0.5) was tuned on the same scenarios it is tested on; there is no guarantee for the largest-single-entry measure (worst seen 1.48 against a 1.5 bound). Browser figures are script time per frame including the 8 ms budget, not the largest single unit. A few units still reach 4-6 ms on a fresh load.",
+      "skipped_check": "independent review before merge; refit-turn bound on scenarios not used for tuning",
+      "refs": [
+        "d3",
+        "t4",
+        "t5",
+        "t7"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l15",
+      "code": "control-absent",
+      "what": "t8 fixes: the two lost-time unit tests were written with the fix and never seen failing; the refit-turn ratios in the browser come from one run per case; the robustness paths (throwing modes, broken-viewer recovery, failed GPU append) and the three light styles are covered in the fake DOM only, with no browser test; the light styles were chosen by eye from one GPU screenshot each and the user has not seen them. Main agent re-ran its own reproductions after merge: no frame gap above 34 ms across three appends and the refit (was one 200 ms gap), and a real mouse click dismisses the notice.",
+      "skipped_check": "red run of the lost-time tests; browser tests of robustness paths and light styles",
+      "refs": [
+        "t8"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l16",
+      "code": "assumption-for-measurement",
+      "what": "t10: the dev demo page was never opened in a browser; mode and seed attribute changes are tested on the fake DOM only; redirect handling is covered only by a node test with a fake response URL; the browser test's lit-pixel check depends on frame ordering (stable in 4 runs); the wheel was not rebuilt by the agent after the last commit. Main agent rebuilt the wheel after merge and it carries web-component.js.",
+      "skipped_check": "browser run of the dev demo; browser test of mode and seed changes and of a real redirect",
+      "refs": [
+        "t10"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l17",
+      "code": "grader-unverified",
+      "what": "t18: the guide fixes made after the cold reader's feedback (count-0 dimension, what counts as corpus text, float32 overflow, dimensions 1 and 2) were not re-read by a second cold reader; the text given to the cold reader omitted some non-format paragraphs so it was not byte-identical to producer.md; the standalone-page example test has never run (shipped files absent until t11 merges); host-guide performance numbers are copied from API documents, not measured. The agent reported an intermittent remount failure in its script-example browser test without finding the cause: main agent traced it to the test's wait helper returning the first non-empty note text (failed 4 of 6 runs), fixed the helper, and the test then passed 8 of 8. The web-component example now passes against the real component.",
+      "skipped_check": "second cold read after guide fixes; standalone example run",
+      "refs": [
+        "t18"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l18",
+      "code": "control-absent",
+      "what": "t11: merged before its colleague reviews returned (main agent's choice, to complete wave 5 for the user's hand-off); no measurement on a real phone or board (emulated viewports only); the Wander note and overflow at 390 px were checked for the sample set and one Lattice data run only; fallback fonts on Windows and macOS are inferred from the stack order, not checked; the reference and the page were not compared at the same seed and time; reduced motion was not tested on the page; page.css overrides documented viewer class names with !important for spacing. Main agent loaded the page through the tailnet address on the GPU at 1280 and 390 px, with a data file, and the three guide examples: state ready, no console errors.",
+      "skipped_check": "independent review before merge; real-device layout check; same-seed side-by-side (t17)",
+      "refs": [
+        "t11"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l19",
+      "code": "assumption-for-measurement",
+      "what": "t13: no workflow has run and actionlint is not installed, so the CI and publish workflows are validated only by static tests and by running their shell steps locally; the npm trusted-publishing path (OIDC exchange, provenance, repository-field check) is untried end to end; every local pack used npm 9.2.0 while CI will use npm 11; the release runbook's npmjs.com form field names come from memory; some packaging tests were not seen failing before their scripts existed.",
+      "skipped_check": "a real CI run; npm 11 pack; a trial trusted publish",
+      "refs": [
+        "t13"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l20",
+      "code": "assumption-for-measurement",
+      "what": "t17: several causes of the unintended differences were read from code, not confirmed by changing it (Wander label sizes and colours, Tumble framing, control sizes); point size, glow, bloom, depth of field and trail length were judged by eye on different frames because the reference's Tumble is unseeded; Firefox, Safari desktop and SwiftShader were not compared; the fonts table reuses earlier width measurements. The user's sign-off is open.",
+      "skipped_check": "same-frame pixel comparison; causes confirmed by a code change",
+      "refs": [
+        "t17"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l21",
+      "code": "assumption-for-measurement",
+      "what": "fidelity pass: the framing cap (AUTO_FIT 0.88) was tuned on the sample set alone and its label-room estimate assumes a character width; the 'before' and extent numbers come from an emulation of the viewer's yaw, not read back from a running browser; light-stage outline, stop and ring colours are covered by unit tests only, with no screenshot; the text-shadow outline was not checked in Firefox or Safari; one test (light-stage outline) passed before the change. Main agent looked at the label crop (reference, before, after): the outline now matches the reference in Lattice.",
+      "skipped_check": "framing cap on other data; light-theme screenshots; Firefox and Safari",
+      "refs": [
+        "t17",
+        "t11"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l22",
+      "code": "assumption-for-measurement",
+      "what": "t14: no workflow has run on a GitHub runner and the Chromium install step was never executed; wall times were measured on a heavily loaded machine; the older seven browser test files were not run in GPU mode; the cause of a slight brightness shift of the existing cloud after an append was not investigated; no negative control provokes a favicon or service-worker request. The harness found a real defect: under prefers-reduced-motion the viewer stopped taking frames before Tumble finished preparing. Main agent fixed it (frames continue until the mode is ready; status refreshed on the ready frame; a paused view gets a 40 ms preparation budget) and removed the expected-failure marker: the test passed 6 of 6 alone and the full parallel suite passes (550 passed).",
+      "skipped_check": "a real CI run of browser.yml; GPU-mode run of the older browser tests",
+      "refs": [
+        "t14",
+        "t8"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l23",
+      "code": "assumption-for-measurement",
+      "what": "t13 fixes: some new workflow and release-state tests were made to pass without a recorded failing run (mutation-tested afterwards); the release-state script assumes npm 11 keeps npm 9's JSON error format (it fails closed if not); passing built file paths between workflow steps was simulated locally only. After merging t13 and t14 together one workflow test failed because the browser workflow lacked the shell default the packaging tests require; main agent added it.",
+      "skipped_check": "a real CI run; npm 11 output format",
+      "refs": [
+        "t13"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l24",
+      "code": "assumption-for-measurement",
+      "what": "The viewer's brightness was tuned only on the synthetic sample set (290 labelled points of 12,288); a real 10,000-point file, where every point carries text, burned out to a white ball. Found and fixed in t16.",
+      "skipped_check": "a draw check on a set where every point is labelled",
+      "refs": [
+        "t8",
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l25",
+      "code": "assumption-for-measurement",
+      "what": "Lattice was accepted on the sample set only; on real vectors its group separation equals a random frame (1.126 vs 1.114). Measured in t16, left open for the owner.",
+      "skipped_check": "a group-separation measurement of Lattice on real vectors, as was done for Tumble",
+      "refs": [
+        "t7",
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l26",
+      "code": "assumption-for-measurement",
+      "what": "t16's 30 fps criterion says 'on the user's desktop'; it was measured in headless Chromium on the development machine (Radeon 760M), not on screen by the user with the real file.",
+      "skipped_check": "the user's own on-screen reading of the 10,000-point real file",
+      "refs": [
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l27",
+      "code": "assumption-for-measurement",
+      "what": "Refit hardening: the stale-stepper guard was added to Tumble only; Lattice and Wander rely on the viewer dropping queued work on restart, and a caller driving them directly was not measured.",
+      "skipped_check": "the abandoned-preparation test run against Lattice and Wander at mode level",
+      "refs": [
+        "t7"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l28",
+      "code": "n-below-claim",
+      "what": "Refit hardening: the tightened 1.4 peak bound is asserted at seed 3 only; seeds 1-8 (max 1.31) were measured with an uncommitted scratch script.",
+      "skipped_check": "the bound asserted over several seeds in the committed test",
+      "refs": [
+        "t7"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l29",
+      "code": "control-absent",
+      "what": "embeddings-tumbler's SonarCloud scan had never run (the token secret was empty), so no task in this run was checked by it; the first scan on PR 3 found 572 open issues and a failing quality gate.",
+      "skipped_check": "a SonarCloud analysis of each merged task",
+      "refs": [
+        "t13",
+        "t14"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    }
+  ],
   "obligations": [
     {
       "id": "o1",
