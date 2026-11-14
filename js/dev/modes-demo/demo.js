@@ -101,6 +101,20 @@
   var pitch = 0.16;
   var running = true;
   var drag = null;
+  // User zoom (dev demo only; the viewer task owns the real control): wheel on a
+  // desktop, multiplied on top of the mode's own zoom. Double-click resets it.
+  var userZoom = 1;
+  canvas.addEventListener(
+    "wheel",
+    function (e) {
+      e.preventDefault();
+      userZoom = Math.max(0.2, Math.min(8, userZoom * Math.exp(-e.deltaY * 0.0015)));
+    },
+    { passive: false }
+  );
+  canvas.addEventListener("dblclick", function () {
+    userZoom = 1;
+  });
   canvas.addEventListener("pointerdown", function (e) {
     drag = [e.clientX, e.clientY];
   });
@@ -186,6 +200,7 @@
       centre: s.centre,
       yaw: yaw,
       pitch: pitch,
+      zoom: (s.draw.zoom === undefined ? 1 : s.draw.zoom) * userZoom,
       pointSize: 6.5 * dpr,
       time: now / 1000,
       dt: dt,
