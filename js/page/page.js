@@ -31,7 +31,8 @@
   // The helper route: a fixed path on the page's own origin, never configurable.
   const ROUTE = "/_tumbler/search";
   const PROBE_MS = 2500; // how long the describe request may take
-  const DEFAULT_CANDIDATE_CHARS = 4000;
+  const DEFAULT_CANDIDATE_CHARS = 2000;
+  const DEFAULT_CANDIDATES = 100;
   // What the page says for each refusal code of the route. The server's own text is
   // never shown: these are the page's words.
   const ROUTE_MESSAGES = {
@@ -202,6 +203,7 @@
 
   function helperCallbacks(address, described) {
     const maxChars = limitOf(described, "maxCandidateChars", DEFAULT_CANDIDATE_CHARS);
+    const maxCount = limitOf(described, "maxCandidates", DEFAULT_CANDIDATES);
     const callbacks = {
       embed: async function (text) {
         const answer = await callRoute(address, { op: "embed", text: text });
@@ -210,6 +212,8 @@
     };
     if (described.rerank && typeof described.rerank === "object") {
       callbacks.rerank = async function (query, candidates) {
+        // Never fewer than the viewer stated: more than the route admits is refused here.
+        if (candidates.length > maxCount) throw new Error(ROUTE_MESSAGES["too-many-candidates"]);
         const cut = candidates.map((c) => String(c).slice(0, maxChars));
         const answer = await callRoute(address, { op: "rerank", query: query, candidates: cut });
         return { scores: answer.scores, model: answer.model };

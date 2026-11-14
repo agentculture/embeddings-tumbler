@@ -87,6 +87,8 @@ ET.viewer = (function () {
     searchTimeoutMs: 15000,
     searchPanel: true,
     searchK: 8,
+    searchCandidates: 50, // candidates handed to the reranker (3 to 100)
+    searchTop: 20, // reranked candidates kept (3 to searchCandidates)
     searchLit: "even",
     onSearchChange: null,
   };
@@ -2717,6 +2719,8 @@ ET.viewer = (function () {
       timeoutMs: ms > 0 ? ms : 15000,
       settings: {
         k: ET.search.clampK(opts.searchK),
+        candidates: ET.search.clampCandidates(opts.searchCandidates),
+        top: ET.search.clampTop(opts.searchTop, opts.searchCandidates),
         lit: ET.searchSets.litSetting(opts.searchLit),
         distances: false,
         rerank: false,
@@ -2727,7 +2731,7 @@ ET.viewer = (function () {
       work: [], // steppers of the run in progress: { run, job, then }
       shown: [], // the searches shown, in letter order
       shownSet: null, // the set they were worked out on
-      shownUsed: null, // the settings they were worked out with: { k, pointOfView, rerank }
+      shownUsed: null, // the settings they were worked out with: { k, candidates, top, pointOfView, rerank }
       lit: null, // ET.searchSets.litValues of the searches shown
       pairs: [],
       unmatched: [],
@@ -2888,6 +2892,7 @@ ET.viewer = (function () {
       used: null,
       pendingEmbed: 0,
       pendingRerank: 0,
+      pairs: null,
     };
   }
 
@@ -3053,14 +3058,22 @@ ET.viewer = (function () {
     var pov = ET.searchSets.LETTERS.indexOf(st.pointOfView);
     run.searches = kept;
     run.set = v.set;
-    run.used = { k: st.k, pointOfView: pov >= 0 && pov < kept.length ? st.pointOfView : null, rerank: st.rerank };
+    run.used = {
+      k: st.k,
+      candidates: st.candidates,
+      top: st.top,
+      pointOfView: pov >= 0 && pov < kept.length ? st.pointOfView : null,
+      rerank: st.rerank,
+    };
+    var counts = { k: st.k, candidates: st.candidates, top: st.top };
     run.left = kept.length;
     kept.forEach(function (q, j) {
       q.letter = ET.searchSets.letter(j);
       q.scale = run.used.pointOfView === q.letter ? ET.searchSets.scaleFor(q.query) : null;
       q.reranker = null;
+      q.sent = 0;
       q.note = q.baseNote;
-      queueWork(v, run, ET.search.makeRank(run.set, q.query, { k: st.k, scale: q.scale }), function (ranking) {
+      queueWork(v, run, ET.search.makeRank(run.set, q.query, { ...counts, scale: q.scale }), function (ranking) {
         q.ranking = ranking;
         q.view = ranking;
         run.left--;
@@ -3075,7 +3088,7 @@ ET.viewer = (function () {
 
   function startRerank(v, run) {
     if (!rerankOn(v, run)) {
-      commitRun(v, run);
+      startPairs(v, run);
       return;
     }
     run.left = run.searches.length;
@@ -3088,6 +3101,7 @@ ET.viewer = (function () {
       var candidates = q.ranking.pool.map(function (hit) {
         return ET.search.pointText(run.set, hit.index);
       });
+      q.sent = candidates.length; // never more than the candidates stated
       run.pendingRerank++;
       callHost(v, run, v.search.rerank, [q.rerankText, candidates], "rerank", function (outcome) {
         run.pendingRerank--;
@@ -3099,7 +3113,34 @@ ET.viewer = (function () {
 
   function rerankDone(v, run) {
     run.left--;
-    if (run.left === 0) commitRun(v, run);
+    if (run.left === 0) startPairs(v, run);
+  }
+
+  // The pair reports, in the frame budget (with 100 results a search they cost far more than a
+  // frame), then the run is shown.
+  function startPairs(v, run) {
+    if (!isCurrent(v, run)) return;
+    var job;
+    try {
+      job = ET.searchSets.makePairReports(
+        run.set,
+        run.searches.map(function (q) {
+          return q.view;
+        })
+      );
+    } catch (err) {
+      // Rankings always index the set they were made on; nothing to pair otherwise.
+      job = null;
+    }
+    if (!job) {
+      run.pairs = [];
+      commitRun(v, run);
+      return;
+    }
+    queueWork(v, run, job, function (pairs) {
+      run.pairs = pairs;
+      commitRun(v, run);
+    });
   }
 
   // A reranker's answer: the new order, or a note and the embedding order kept.
@@ -3148,12 +3189,7 @@ ET.viewer = (function () {
     s.message = null;
     if (run.kind === "set" && run.used.pointOfView === null) s.settings.pointOfView = null;
     relight(v);
-    try {
-      s.pairs = ET.searchSets.pairReports(run.set, views(s));
-    } catch (err) {
-      // Rankings always index the set they were made on; nothing to pair otherwise.
-      s.pairs = [];
-    }
+    s.pairs = run.pairs || [];
     startFacing(v, run.swing);
     notifyModeSearch(v);
     if (run.resolve) run.resolve({ ok: true, search: searchInfo(v) });
@@ -3169,7 +3205,11 @@ ET.viewer = (function () {
     if (!s.shown.length || !v.set) return false;
     var u = s.shownUsed;
     var st = s.settings;
-    return s.shownSet !== v.set || u.k !== st.k || u.pointOfView !== st.pointOfView || u.rerank !== st.rerank;
+    return s.shownSet !== v.set || countsChanged(u, st) || u.pointOfView !== st.pointOfView || u.rerank !== st.rerank;
+  }
+
+  function countsChanged(a, b) {
+    return a.k !== b.k || a.candidates !== b.candidates || a.top !== b.top;
   }
 
   // Work the searches shown out again from the query vectors held (word searches match
@@ -3454,17 +3494,37 @@ ET.viewer = (function () {
     var s = v.search;
     var st = s.settings;
     var before = { ...st };
-    if (Object.hasOwn(patch, "k") && Number.isFinite(Number(patch.k))) st.k = ET.search.clampK(Number(patch.k));
+    applyCounts(st, patch);
     if (ET.searchSets.LIT_SETTINGS.includes(patch.lit)) st.lit = patch.lit;
     if (typeof patch.distances === "boolean") st.distances = patch.distances;
     if (typeof patch.onlyResults === "boolean") st.onlyResults = patch.onlyResults;
     if (typeof patch.rerank === "boolean") st.rerank = patch.rerank && rerankOffered(v);
     if (Object.hasOwn(patch, "pointOfView") && validPointOfView(v, patch.pointOfView)) st.pointOfView = patch.pointOfView;
     return {
-      rank: st.k !== before.k || st.pointOfView !== before.pointOfView || st.rerank !== before.rerank,
+      rank: countsChanged(st, before) || st.pointOfView !== before.pointOfView || st.rerank !== before.rerank,
       lit: st.lit !== before.lit,
       only: st.onlyResults !== before.onlyResults,
     };
+  }
+
+  // A count in a patch (a number, or a string holding one, as a range input gives), or null
+  // when absent or not a number: null, booleans and empty strings are ignored, not read as 0.
+  function patchCount(patch, key) {
+    var raw = Object.hasOwn(patch, key) ? patch[key] : null;
+    var text = typeof raw === "string" && raw.trim() !== "";
+    if (typeof raw !== "number" && !text) return null;
+    var n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // k, candidates and top from a patch; candidates first, so top is cut to the new candidates.
+  function applyCounts(st, patch) {
+    var k = patchCount(patch, "k");
+    var candidates = patchCount(patch, "candidates");
+    var top = patchCount(patch, "top");
+    if (k !== null) st.k = ET.search.clampK(k);
+    if (candidates !== null) st.candidates = ET.search.clampCandidates(candidates);
+    st.top = ET.search.clampTop(top === null ? st.top : top, st.candidates);
   }
 
   function validPointOfView(v, value) {
@@ -3579,6 +3639,11 @@ ET.viewer = (function () {
       point: q.kind === "point" ? q.point : null,
       pointOfView: !!q.scale,
       k: view.k,
+      candidates: view.candidates,
+      top: view.top,
+      available: availableOf(view),
+      sent: q.sent || 0,
+      counts: countsNote(q, view),
       note: q.note,
       radius: view.radius,
       insideCount: s.lit ? s.lit.insideCounts[j] : 0,
@@ -3586,6 +3651,23 @@ ET.viewer = (function () {
         return resultInfo(v, hit);
       }),
     };
+  }
+
+  // How many points could be results of a ranking: the named ones, or all when none is named.
+  function availableOf(ranking) {
+    return ranking.named > 0 ? ranking.named : ranking.count;
+  }
+
+  // Says so when a number asked for is more than there is to give, or null.
+  function countsNote(q, view) {
+    var available = availableOf(view);
+    var what = available + (view.named > 0 ? " named points" : " points");
+    if (q.reranker) {
+      if (view.candidates <= available) return null;
+      return "Only " + what + " can be results, so the reranker was given " + available + " candidates, not " + view.candidates + ".";
+    }
+    if (view.k <= available) return null;
+    return "Only " + what + " can be results, so " + available + " are shown, not " + view.k + ".";
   }
 
   function resultInfo(v, hit) {

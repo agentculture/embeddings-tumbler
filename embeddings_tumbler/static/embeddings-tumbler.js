@@ -2151,8 +2151,10 @@
 (function () {
   var DEFAULT_K = 8;
   var MIN_K = 3;
-  var MAX_K = 20;
-  var POOL_FACTOR = 3;
+  var MAX_K = 100;
+  var DEFAULT_CANDIDATES = 50;
+  var MAX_CANDIDATES = 100;
+  var DEFAULT_TOP = 20;
   var PREFIX_MIN = 3;
   var MEASURE = "cosine";
   var MEASURE_TEXT = "cosine distance (1 minus cosine similarity)";
@@ -2193,9 +2195,24 @@
     return { ok: false, code: code, message: format(code, values) };
   }
 
+  // A count rounded and clamped into MIN_K .. most; not a finite number gives `fallback`.
+  function clampCount(n, most, fallback) {
+    if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
+    return Math.min(most, Math.max(MIN_K, Math.round(n)));
+  }
+
   function clampK(k) {
-    if (typeof k !== "number" || !Number.isFinite(k)) return DEFAULT_K;
-    return Math.min(MAX_K, Math.max(MIN_K, Math.round(k)));
+    return clampCount(k, MAX_K, DEFAULT_K);
+  }
+
+  function clampCandidates(n) {
+    return clampCount(n, MAX_CANDIDATES, DEFAULT_CANDIDATES);
+  }
+
+  // How many reranked candidates are kept: MIN_K .. the clamped number of candidates.
+  function clampTop(top, candidates) {
+    var most = clampCandidates(candidates);
+    return clampCount(top, most, Math.min(DEFAULT_TOP, most));
   }
 
   function hasPoints(set) {
@@ -2434,27 +2451,29 @@
     };
   }
 
-  function buildRanking(set, k, scaled, pool, scan, plainRanks) {
+  function buildRanking(set, counts, scaled, pool, scan, plainRanks) {
     var distances = scan.distances;
     var plainDistances = scan.plainDistances;
-    var pooled = [];
+    var nearest = [];
     for (var r = 0; r < pool.n; r++) {
       var i = pool.idx[r];
       var plainD = scaled ? plainDistances[i] : pool.dist[r];
-      pooled.push(makeHit(set, i, pool.dist[r], r + 1, plainD, scaled ? plainRanks[r] : r + 1));
+      nearest.push(makeHit(set, i, pool.dist[r], r + 1, plainD, scaled ? plainRanks[r] : r + 1));
     }
-    var hits = pooled.slice(0, k);
+    var hits = nearest.slice(0, counts.k);
     var near = hits.length ? hits[0].distance : null;
     var radius = hits.length ? hits.at(-1).distance : null;
     for (const hit of hits) hit.gap = hit.distance - near;
     return {
       measure: MEASURE,
-      k: k,
+      k: counts.k,
+      candidates: counts.candidates,
+      top: counts.top,
       count: set.count,
       named: scan.named,
       scaled: scaled,
       hits: hits,
-      pool: pooled,
+      pool: nearest.slice(0, counts.candidates),
       near: near,
       radius: radius,
       distances: distances,
@@ -2544,7 +2563,7 @@
     return built;
   }
 
-  function* scanGen(set, q32, scale, k, wk) {
+  function* scanGen(set, q32, scale, counts, wk) {
     var N = set.count;
     var D = set.dimension;
     var V = set.vectors;
@@ -2553,7 +2572,8 @@
     var named = yield* namedGen(set, wk);
     // Results come from named points; with none named, every point is a candidate.
     var mask = named.count > 0 ? named.mask : null;
-    var pool = new Pool(Math.min(POOL_FACTOR * k, mask ? named.count : N));
+    // The nearest max(k, candidates): the results come from its start, the reranker's pool too.
+    var pool = new Pool(Math.min(Math.max(counts.k, counts.candidates), mask ? named.count : N));
     var distances = new Float64Array(N);
     var plainDistances = scaled ? new Float64Array(N) : null;
     var acc = { dot: 0, nn: 0, dotS: 0, nnS: 0 };
@@ -2564,7 +2584,7 @@
     }
     var plainRanks = scaled ? yield* pooledPlainRanks(pool, plainDistances, mask, N, wk) : null;
     var scan = { distances: distances, plainDistances: plainDistances, named: named.count };
-    return buildRanking(set, k, scaled, pool, scan, plainRanks);
+    return buildRanking(set, counts, scaled, pool, scan, plainRanks);
   }
 
   function makeRank(set, vector, options) {
@@ -2574,9 +2594,10 @@
     if (scale !== null && !isF32(scale, D)) {
       throw new TypeError("scale must be a Float32Array of length " + D);
     }
-    var k = clampK(options?.k);
+    var candidates = clampCandidates(options?.candidates);
+    var counts = { k: clampK(options?.k), candidates: candidates, top: clampTop(options?.top, candidates) };
     var wk = new Tracker(set.count * (NAME_COST + (scale ? 4 * D : 2 * D)));
-    return genStepper(scanGen(set, vector, scale, k, wk), wk);
+    return genStepper(scanGen(set, vector, scale, counts, wk), wk);
   }
 
   function rank(set, vector, options) {
@@ -2601,7 +2622,8 @@
     order.sort(function (a, b) {
       return scores[b] - scores[a] || a - b;
     });
-    var take = Math.min(ranking.k, order.length);
+    // The best `top` of the candidates by the reranker's scores (k for a ranking without one).
+    var take = Math.min(ranking.top ?? ranking.k, order.length);
     var hits = [];
     for (var r = 0; r < take; r++) {
       var hit = { ...ranking.pool[order[r]] };
@@ -2777,12 +2799,16 @@
     DEFAULT_K: DEFAULT_K,
     MIN_K: MIN_K,
     MAX_K: MAX_K,
-    POOL_FACTOR: POOL_FACTOR,
+    DEFAULT_CANDIDATES: DEFAULT_CANDIDATES,
+    MAX_CANDIDATES: MAX_CANDIDATES,
+    DEFAULT_TOP: DEFAULT_TOP,
     PREFIX_MIN: PREFIX_MIN,
     MEASURE: MEASURE,
     MEASURE_TEXT: MEASURE_TEXT,
     MESSAGES: MESSAGES,
     clampK: clampK,
+    clampCandidates: clampCandidates,
+    clampTop: clampTop,
     format: format,
     checkSameSpace: checkSameSpace,
     checkQuery: checkQuery,
@@ -2974,7 +3000,9 @@ ET.searchSets = (function () {
     return shared;
   }
 
-  function closestPair(X, D, ra, rb, la, lb) {
+  // The closest pair of different named results, one from each search; pauses when a unit
+  // of work ends (counted, so the pauses fall at the same places on every run).
+  function* closestPairGen(X, D, ra, rb, la, lb, wk) {
     var best = null;
     for (var x = 0; x < ra.hits.length; x++) {
       var ia = ra.hits[x].index;
@@ -2983,39 +3011,64 @@ ET.searchSets = (function () {
         if (ia === ib) continue;
         var dist = rowDistance(X, D, ia, ib, la[x], lb[y]);
         if (best === null || dist < best.distance) best = { a: ia, b: ib, distance: dist };
+        if (wk.add(D)) yield;
       }
     }
     return best;
   }
 
-  function pairReports(set, searches) {
-    checkSearches(searches);
-    var X = set.vectors;
-    var D = set.dimension;
-    var lengths = [];
-    for (const search of searches) lengths.push(hitLengths(X, D, set.count, search.hits));
+  // One pair's report.
+  function* pairGen(X, D, a, b, ra, rb, lengths, wk) {
+    var inB = new Set();
+    for (const hit of rb.hits) inB.add(hit.index);
+    var commonIndices = [];
+    for (const hit of ra.hits) {
+      if (inB.has(hit.index)) commonIndices.push(hit.index);
+    }
+    var shared = sharedBetween(ra, rb);
+    if (wk.add(Math.min(ra.distances.length, rb.distances.length))) yield;
+    var closest = yield* closestPairGen(X, D, ra, rb, lengths[a], lengths[b], wk);
+    return {
+      a: a,
+      b: b,
+      shared: shared,
+      common: commonIndices.length,
+      commonIndices: commonIndices,
+      closest: closest,
+    };
+  }
+
+  function* pairsGen(set, searches, lengths, wk) {
     var pairs = [];
     for (var a = 0; a < searches.length; a++) {
       for (var b = a + 1; b < searches.length; b++) {
-        var ra = searches[a];
-        var rb = searches[b];
-        var inB = new Set();
-        for (const hit of rb.hits) inB.add(hit.index);
-        var commonIndices = [];
-        for (const hit of ra.hits) {
-          if (inB.has(hit.index)) commonIndices.push(hit.index);
-        }
-        pairs.push({
-          a: a,
-          b: b,
-          shared: sharedBetween(ra, rb),
-          common: commonIndices.length,
-          commonIndices: commonIndices,
-          closest: closestPair(X, D, ra, rb, lengths[a], lengths[b]),
-        });
+        pairs.push(yield* pairGen(set.vectors, set.dimension, a, b, searches[a], searches[b], lengths, wk));
       }
     }
     return pairs;
+  }
+
+  // The pair reports as a stepper (the facing frame's convention). The rows' lengths and the
+  // checks of every index are worked out here, so a bad index throws at once.
+  function makePairReports(set, searches) {
+    checkSearches(searches);
+    var D = set.dimension;
+    var lengths = [];
+    for (const search of searches) lengths.push(hitLengths(set.vectors, D, set.count, search.hits));
+    var total = 1;
+    for (var a = 0; a < searches.length; a++) {
+      for (var b = a + 1; b < searches.length; b++) {
+        total += searches[a].hits.length * searches[b].hits.length * D + set.count;
+      }
+    }
+    var wk = new FaceWork(total);
+    return faceStepper(pairsGen(set, searches, lengths, wk), wk);
+  }
+
+  function pairReports(set, searches) {
+    var st = makePairReports(set, searches);
+    st.step();
+    return st.result;
   }
 
   // ----- the facing frame: vector helpers (double precision) -----------------
@@ -3132,16 +3185,21 @@ ET.searchSets = (function () {
   // The rows of every search (its query and its named results), unscaled, each
   // search's centre scaled and unscaled, and each scaled row's offset from its
   // search's scaled centre.
-  function gatherRows(fit) {
+  // Pauses after each search's centres and whenever a unit of work ends among its offsets, so
+  // searches of 100 results keep units short.
+  function* gatherRows(fit, wk) {
     var out = { scaledCentres: [], plainCentres: [], offsets: [], plainRows: [] };
     for (const search of fit.searches) {
       var mine = searchRows(fit.X, fit.D, search);
       var c = meanOfRows(mine, fit.D, fit.scale);
       out.scaledCentres.push(c);
       out.plainCentres.push(meanOfRows(mine, fit.D, null));
+      wk.add(2 * mine.length * fit.D);
+      yield;
       for (const row of mine) {
         out.plainRows.push(row);
         out.offsets.push(offsetOf(row, fit.D, fit.scale, c));
+        if (wk.add(fit.D)) yield;
       }
     }
     return out;
@@ -3228,13 +3286,14 @@ ET.searchSets = (function () {
   }
 
   // Steps 8 and 9: signs against the current frame, then centre and zoom.
-  function finish(fit, rows, axes, origins) {
+  function* finish(fit, rows, axes, origins, wk) {
     var D = fit.D;
     var frame = signedFrame(axes, fit.current, D);
     var centre = Float32Array.from(meanOfRows(rows.plainCentres, D, null));
     var reach = FACE_MIN_REACH;
     for (const row of rows.plainRows) {
       reach = Math.max(reach, shownLength(frame, row, centre, D));
+      if (wk.add(3 * D)) yield;
     }
     return {
       frame: frame,
@@ -3248,9 +3307,7 @@ ET.searchSets = (function () {
 
   function* facingGen(fit, wk) {
     var D = fit.D;
-    var rows = gatherRows(fit);
-    wk.add(rows.offsets.length * D);
-    yield;
+    var rows = yield* gatherRows(fit, wk);
     var axes = [];
     var origins = [];
     var cs = rows.scaledCentres;
@@ -3269,7 +3326,7 @@ ET.searchSets = (function () {
       }
     }
     if (fit.scale) axes = mapBack(axes, origins, fit.scale, D);
-    return finish(fit, rows, axes, origins);
+    return yield* finish(fit, rows, axes, origins, wk);
   }
 
   function now() {
@@ -3331,7 +3388,7 @@ ET.searchSets = (function () {
     }
     var rowCount = 0;
     for (const search of searches) rowCount += 1 + search.hits.length;
-    var wk = new FaceWork(rowCount * D * (1 + 2 * FACE_ITERATIONS * 3));
+    var wk = new FaceWork(rowCount * D * (6 + 2 * FACE_ITERATIONS * 3));
     return faceStepper(facingGen(fit, wk), wk);
   }
 
@@ -3357,6 +3414,7 @@ ET.searchSets = (function () {
     scaleFor: scaleFor,
     litValues: litValues,
     pairReports: pairReports,
+    makePairReports: makePairReports,
     makeFacingFrame: makeFacingFrame,
     facingFrame: facingFrame,
   };
@@ -7981,7 +8039,11 @@ ET.modes = (function () {
   var SP_SUGGEST_MAX = 8; // the Focus reference lists up to eight suggestions
   var SP_SUGGEST_CHARS = 60; // a suggestion's button text is cut here; the click uses all of it
   var SP_STAGE_TEXT = 28; // a result's text on the stage is cut here; the list carries all of it
-  var SP_LABEL_POOL = 96; // 4 searches x 20 results, plus the four letters and some distances
+  // Labels on the stage at most. With 4 searches of up to 100 results the overlap rule leaves
+  // most out long before this; the lists carry every result.
+  var SP_LABEL_POOL = 160;
+  var SP_MAX_COUNT = 100; // the most results, candidates or kept a search can ask for
+  var SP_K_RERANKED = "With the reranker on, Keep top sets how many results are kept.";
   var SP_CHAR_W = 6.7; // estimated width of one 11 px monospace character, CSS px
   var SP_LABEL_H = 12; // height of one stage label box, CSS px
   var SP_LIT_TEXT = {
@@ -8043,23 +8105,42 @@ ET.modes = (function () {
     return "a vector from the host (" + q.model + "); nothing sent by the viewer";
   }
 
-  function spRerankedBy(q) {
-    return q.reranker ? "; reranked by " + q.reranker + ": query and candidate texts sent to the reranker" : "";
+  // `others`: some other search was reranked, so a search that was not says what it kept.
+  function spRerankedBy(q, others) {
+    if (!q.reranker) return others ? "; not reranked: the " + spThousands(q.results.length) + " nearest kept" : "";
+    return (
+      "; reranked by " +
+      q.reranker +
+      " (" +
+      spKeptOf(q) +
+      "): query and candidate texts sent to the reranker"
+    );
+  }
+
+  // "top 20 of 50 candidates": what one reranked search kept, as it happened.
+  function spKeptOf(q) {
+    return "top " + spThousands(q.results.length) + " of " + spPlural(q.sent, "candidate", "candidates");
+  }
+
+  // The counts the searches used: candidates and kept when a search was reranked, k otherwise
+  // (a search the reranker failed on keeps the k nearest, and says so in its note).
+  function spCountsUsed(search, reranked) {
+    var st = search.settings || {};
+    var plain = "the " + spThousands(st.k) + " nearest kept (" + spPlural(st.k, "result", "results") + " per search)";
+    if (!reranked) return plain;
+    return "the " + spThousands(st.candidates) + " nearest as candidates, the reranker's top " + spThousands(st.top) + " kept";
   }
 
   // What the searches used, for the provenance row.
   function usedText(search) {
     if (!spActive(search)) return "no search";
     var st = search.settings || {};
-    var parts = [
-      search.measure,
-      spPlural(st.k, "result per search", "results per search"),
-      "lit: " + (SP_LIT_TEXT[st.lit] || SP_LIT_TEXT.even),
-    ];
-    var reranked = false;
+    var reranked = search.searches.some(function (q) {
+      return !!q.reranker;
+    });
+    var parts = [search.measure, spCountsUsed(search, reranked), "lit: " + (SP_LIT_TEXT[st.lit] || SP_LIT_TEXT.even)];
     search.searches.forEach(function (q) {
-      if (q.reranker) reranked = true;
-      parts.push(q.letter + ' "' + q.text + '": ' + spMadeBy(q) + spRerankedBy(q));
+      parts.push(q.letter + ' "' + q.text + '": ' + spMadeBy(q) + spRerankedBy(q, reranked));
     });
     if (!reranked) parts.push("no reranker");
     if (st.pointOfView) parts.push("point of view: " + st.pointOfView + " (each dimension scaled by its query)");
@@ -8193,6 +8274,7 @@ ET.modes = (function () {
             " is measured from its own point of view: every dimension is scaled by the size of its query's value there (a linear change); the other searches keep plain distance."
         );
       }
+      if (q.counts) parts.push(q.letter + ": " + q.counts);
       if (q.note) parts.push(q.letter + ": " + q.note);
     });
   }
@@ -8255,7 +8337,7 @@ ET.modes = (function () {
       spCountsText(q) +
       " · " +
       spKindText(q) +
-      (q.reranker ? " · embedding order, then the reranker " + q.reranker : "") +
+      (q.reranker ? " · embedding order, then the reranker " + q.reranker + " (" + spKeptOf(q) + ")" : "") +
       (q.pointOfView ? " · from its point of view" : "")
     );
   }
@@ -8594,6 +8676,34 @@ ET.modes = (function () {
     return o;
   }
 
+  // A labelled range from 3 to 100 with its value beside it; moving it sets `key`.
+  function spRange(p, cls, words, key, value) {
+    var label = spLabelled(p, cls, words);
+    var input = spEl(p, "input", "", { width: "110px" });
+    input.type = "range";
+    input.min = "3";
+    input.max = String(SP_MAX_COUNT);
+    input.step = "1";
+    input.value = String(value);
+    var out = spText(p, "output", "", String(value), { minWidth: "3ch" });
+    label.appendChild(input);
+    label.appendChild(out);
+    spListen(p, input, "input", function () {
+      out.textContent = String(input.value);
+      spSetting(p, key, Number(input.value));
+    });
+    return { label: label, input: input, out: out };
+  }
+
+  // Show a range's value from the settings (never while it is the same, so a drag is not reset).
+  function spRangeValue(r, value, max) {
+    if (max && r.input.max !== String(max)) r.input.max = String(max);
+    if (value && String(r.input.value) !== String(value)) {
+      r.input.value = String(value);
+      r.out.textContent = String(value);
+    }
+  }
+
   function spBuildControls(p) {
     var row = spEl(p, "div", "tumbler-search-controls", { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 22px",
       fontSize: "12px" });
@@ -8613,20 +8723,13 @@ ET.modes = (function () {
     });
     p.rerank = spCheckbox(p, "tumbler-search-rerank", "Reranker", "rerank");
     p.distances = spCheckbox(p, "tumbler-search-distances", "Distance difference", "distances");
-    p.kLabel = spLabelled(p, "tumbler-search-k", "Results");
-    p.k = spEl(p, "input", "", { width: "110px" });
-    p.k.type = "range";
-    p.k.min = "3";
-    p.k.max = "20";
-    p.k.step = "1";
-    p.k.value = "8";
-    p.kOut = spText(p, "output", "", "8", { minWidth: "2ch" });
-    p.kLabel.appendChild(p.k);
-    p.kLabel.appendChild(p.kOut);
-    spListen(p, p.k, "input", function () {
-      p.kOut.textContent = String(p.k.value);
-      spSetting(p, "k", Number(p.k.value));
-    });
+    var k = spRange(p, "tumbler-search-k", "Results", "k", 8);
+    p.kLabel = k.label;
+    p.k = k.input;
+    p.kOut = k.out;
+    // Beside the Reranker, and like it in the row only while a reranker is offered.
+    p.cand = spRange(p, "tumbler-search-candidates", "Candidates", "candidates", 50);
+    p.top = spRange(p, "tumbler-search-top", "Keep top", "top", 20);
     var pov = spSelect(p, "tumbler-search-pov", "From this search's point of view", [["", "off"]]);
     p.pov = pov.input;
     p.povLabel = pov.label;
@@ -8640,7 +8743,7 @@ ET.modes = (function () {
       spClear(p);
     });
     p.litLabel = lit.label;
-    [p.face, lit.label, p.rerank.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
+    [p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
       row.appendChild(c);
     });
     return row;
@@ -8692,7 +8795,7 @@ ET.modes = (function () {
     [p.face, p.clear].forEach(function (b) {
       spStyle(b, spButtonStyle(pal));
     });
-    [p.rerank.input, p.distances.input, p.only.input, p.k].forEach(function (c) {
+    [p.rerank.input, p.distances.input, p.only.input, p.k, p.cand.input, p.top.input].forEach(function (c) {
       c.style.accentColor = pal.accent;
     });
     p.note.style.color = pal.muted;
@@ -8890,20 +8993,26 @@ ET.modes = (function () {
     var active = spActive(search);
     p.face.disabled = !active || !search.faceable;
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
-    if (st.k && String(p.k.value) !== String(st.k)) {
-      p.k.value = String(st.k);
-      p.kOut.textContent = String(st.k);
-    }
+    spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
     p.distances.input.checked = !!st.distances;
     var offered = !!search?.reranker?.offered;
     spPlace(p.rerank.label, offered, p.distances.label);
+    spPlace(p.cand.label, offered, p.distances.label);
+    spPlace(p.top.label, offered, p.distances.label);
     p.rerank.input.checked = offered && !!st.rerank;
+    spRangeValue(p.cand, st.candidates, 0);
+    spRangeValue(p.top, st.top, st.candidates);
+    // With the reranker on, Keep top decides how many results there are, not Results.
+    var reranking = offered && !!st.rerank;
+    p.k.disabled = reranking;
+    p.k.title = reranking ? SP_K_RERANKED : "";
     p.only.input.checked = !!st.onlyResults;
     spShow(p.only.label, p.focus, "inline-flex");
     spRenderPov(p, search);
   }
 
-  // The Reranker control is in the row only when a reranker is offered (absent, not hidden).
+  // The Reranker, Candidates and Keep top controls are in the row only when a reranker is
+  // offered (absent, not hidden).
   function spPlace(label, present, before) {
     if (present && !label.parentNode && before.parentNode) before.parentNode.insertBefore(label, before);
     if (!present && label.parentNode) label.remove();
@@ -9013,7 +9122,15 @@ ET.modes = (function () {
   function spListStyle(layout) {
     var base = { listStyle: "none", margin: "0", padding: "0" };
     if (layout === "grid") {
-      return { ...base, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: "6px 22px" };
+      // Up to 100 results: the list scrolls inside its own box, so the panel stays usable.
+      return {
+        ...base,
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+        gap: "6px 22px",
+        maxHeight: "var(--tumbler-search-list-height, 320px)",
+        overflowY: "auto",
+      };
     }
     return { ...base, display: "flex", flexDirection: "column" };
   }
@@ -9209,7 +9326,7 @@ ET.modes = (function () {
     var q = search.searches[0];
     var parts = search.searches.map(function (s) {
       var how = s.pointOfView ? "from its point of view" : "plain distance";
-      return s.letter + ": " + s.results.length + " named results, " + how + (s.reranker ? ", then the reranker" : "");
+      return s.letter + ": " + s.results.length + " named results, " + how + (s.reranker ? ", then the reranker (" + spKeptOf(s) + ")" : "");
     });
     return (search.searches.length === 1 ? parts[0].slice(q.letter.length + 2) : parts.join("; ")) + " · " + search.measure;
   }
@@ -9353,13 +9470,16 @@ ET.modes = (function () {
     var order = view.queue.slice().sort(function (a, b) {
       return a.r.rank - b.r.rank || a.j - b.j;
     });
-    order.forEach(function (it) {
+    // Stop once every label element is used: with 400 results the rest would only be tested.
+    for (var it of order) {
+      if (used >= SP_LABEL_POOL) break;
       used = spPlaceResult(p, view, boxes, used, it, many);
-    });
+    }
     if (view.distances) {
-      order.forEach(function (it) {
-        used = spPlaceDistance(p, view, boxes, used, it);
-      });
+      for (var link of order) {
+        if (used >= SP_LABEL_POOL) break;
+        used = spPlaceDistance(p, view, boxes, used, link);
+      }
     }
     spHideLabels(p, used);
   }
@@ -9672,6 +9792,8 @@ ET.viewer = (function () {
     searchTimeoutMs: 15000,
     searchPanel: true,
     searchK: 8,
+    searchCandidates: 50, // candidates handed to the reranker (3 to 100)
+    searchTop: 20, // reranked candidates kept (3 to searchCandidates)
     searchLit: "even",
     onSearchChange: null,
   };
@@ -12302,6 +12424,8 @@ ET.viewer = (function () {
       timeoutMs: ms > 0 ? ms : 15000,
       settings: {
         k: ET.search.clampK(opts.searchK),
+        candidates: ET.search.clampCandidates(opts.searchCandidates),
+        top: ET.search.clampTop(opts.searchTop, opts.searchCandidates),
         lit: ET.searchSets.litSetting(opts.searchLit),
         distances: false,
         rerank: false,
@@ -12312,7 +12436,7 @@ ET.viewer = (function () {
       work: [], // steppers of the run in progress: { run, job, then }
       shown: [], // the searches shown, in letter order
       shownSet: null, // the set they were worked out on
-      shownUsed: null, // the settings they were worked out with: { k, pointOfView, rerank }
+      shownUsed: null, // the settings they were worked out with: { k, candidates, top, pointOfView, rerank }
       lit: null, // ET.searchSets.litValues of the searches shown
       pairs: [],
       unmatched: [],
@@ -12473,6 +12597,7 @@ ET.viewer = (function () {
       used: null,
       pendingEmbed: 0,
       pendingRerank: 0,
+      pairs: null,
     };
   }
 
@@ -12638,14 +12763,22 @@ ET.viewer = (function () {
     var pov = ET.searchSets.LETTERS.indexOf(st.pointOfView);
     run.searches = kept;
     run.set = v.set;
-    run.used = { k: st.k, pointOfView: pov >= 0 && pov < kept.length ? st.pointOfView : null, rerank: st.rerank };
+    run.used = {
+      k: st.k,
+      candidates: st.candidates,
+      top: st.top,
+      pointOfView: pov >= 0 && pov < kept.length ? st.pointOfView : null,
+      rerank: st.rerank,
+    };
+    var counts = { k: st.k, candidates: st.candidates, top: st.top };
     run.left = kept.length;
     kept.forEach(function (q, j) {
       q.letter = ET.searchSets.letter(j);
       q.scale = run.used.pointOfView === q.letter ? ET.searchSets.scaleFor(q.query) : null;
       q.reranker = null;
+      q.sent = 0;
       q.note = q.baseNote;
-      queueWork(v, run, ET.search.makeRank(run.set, q.query, { k: st.k, scale: q.scale }), function (ranking) {
+      queueWork(v, run, ET.search.makeRank(run.set, q.query, { ...counts, scale: q.scale }), function (ranking) {
         q.ranking = ranking;
         q.view = ranking;
         run.left--;
@@ -12660,7 +12793,7 @@ ET.viewer = (function () {
 
   function startRerank(v, run) {
     if (!rerankOn(v, run)) {
-      commitRun(v, run);
+      startPairs(v, run);
       return;
     }
     run.left = run.searches.length;
@@ -12673,6 +12806,7 @@ ET.viewer = (function () {
       var candidates = q.ranking.pool.map(function (hit) {
         return ET.search.pointText(run.set, hit.index);
       });
+      q.sent = candidates.length; // never more than the candidates stated
       run.pendingRerank++;
       callHost(v, run, v.search.rerank, [q.rerankText, candidates], "rerank", function (outcome) {
         run.pendingRerank--;
@@ -12684,7 +12818,34 @@ ET.viewer = (function () {
 
   function rerankDone(v, run) {
     run.left--;
-    if (run.left === 0) commitRun(v, run);
+    if (run.left === 0) startPairs(v, run);
+  }
+
+  // The pair reports, in the frame budget (with 100 results a search they cost far more than a
+  // frame), then the run is shown.
+  function startPairs(v, run) {
+    if (!isCurrent(v, run)) return;
+    var job;
+    try {
+      job = ET.searchSets.makePairReports(
+        run.set,
+        run.searches.map(function (q) {
+          return q.view;
+        })
+      );
+    } catch (err) {
+      // Rankings always index the set they were made on; nothing to pair otherwise.
+      job = null;
+    }
+    if (!job) {
+      run.pairs = [];
+      commitRun(v, run);
+      return;
+    }
+    queueWork(v, run, job, function (pairs) {
+      run.pairs = pairs;
+      commitRun(v, run);
+    });
   }
 
   // A reranker's answer: the new order, or a note and the embedding order kept.
@@ -12733,12 +12894,7 @@ ET.viewer = (function () {
     s.message = null;
     if (run.kind === "set" && run.used.pointOfView === null) s.settings.pointOfView = null;
     relight(v);
-    try {
-      s.pairs = ET.searchSets.pairReports(run.set, views(s));
-    } catch (err) {
-      // Rankings always index the set they were made on; nothing to pair otherwise.
-      s.pairs = [];
-    }
+    s.pairs = run.pairs || [];
     startFacing(v, run.swing);
     notifyModeSearch(v);
     if (run.resolve) run.resolve({ ok: true, search: searchInfo(v) });
@@ -12754,7 +12910,11 @@ ET.viewer = (function () {
     if (!s.shown.length || !v.set) return false;
     var u = s.shownUsed;
     var st = s.settings;
-    return s.shownSet !== v.set || u.k !== st.k || u.pointOfView !== st.pointOfView || u.rerank !== st.rerank;
+    return s.shownSet !== v.set || countsChanged(u, st) || u.pointOfView !== st.pointOfView || u.rerank !== st.rerank;
+  }
+
+  function countsChanged(a, b) {
+    return a.k !== b.k || a.candidates !== b.candidates || a.top !== b.top;
   }
 
   // Work the searches shown out again from the query vectors held (word searches match
@@ -13039,17 +13199,37 @@ ET.viewer = (function () {
     var s = v.search;
     var st = s.settings;
     var before = { ...st };
-    if (Object.hasOwn(patch, "k") && Number.isFinite(Number(patch.k))) st.k = ET.search.clampK(Number(patch.k));
+    applyCounts(st, patch);
     if (ET.searchSets.LIT_SETTINGS.includes(patch.lit)) st.lit = patch.lit;
     if (typeof patch.distances === "boolean") st.distances = patch.distances;
     if (typeof patch.onlyResults === "boolean") st.onlyResults = patch.onlyResults;
     if (typeof patch.rerank === "boolean") st.rerank = patch.rerank && rerankOffered(v);
     if (Object.hasOwn(patch, "pointOfView") && validPointOfView(v, patch.pointOfView)) st.pointOfView = patch.pointOfView;
     return {
-      rank: st.k !== before.k || st.pointOfView !== before.pointOfView || st.rerank !== before.rerank,
+      rank: countsChanged(st, before) || st.pointOfView !== before.pointOfView || st.rerank !== before.rerank,
       lit: st.lit !== before.lit,
       only: st.onlyResults !== before.onlyResults,
     };
+  }
+
+  // A count in a patch (a number, or a string holding one, as a range input gives), or null
+  // when absent or not a number: null, booleans and empty strings are ignored, not read as 0.
+  function patchCount(patch, key) {
+    var raw = Object.hasOwn(patch, key) ? patch[key] : null;
+    var text = typeof raw === "string" && raw.trim() !== "";
+    if (typeof raw !== "number" && !text) return null;
+    var n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // k, candidates and top from a patch; candidates first, so top is cut to the new candidates.
+  function applyCounts(st, patch) {
+    var k = patchCount(patch, "k");
+    var candidates = patchCount(patch, "candidates");
+    var top = patchCount(patch, "top");
+    if (k !== null) st.k = ET.search.clampK(k);
+    if (candidates !== null) st.candidates = ET.search.clampCandidates(candidates);
+    st.top = ET.search.clampTop(top === null ? st.top : top, st.candidates);
   }
 
   function validPointOfView(v, value) {
@@ -13164,6 +13344,11 @@ ET.viewer = (function () {
       point: q.kind === "point" ? q.point : null,
       pointOfView: !!q.scale,
       k: view.k,
+      candidates: view.candidates,
+      top: view.top,
+      available: availableOf(view),
+      sent: q.sent || 0,
+      counts: countsNote(q, view),
       note: q.note,
       radius: view.radius,
       insideCount: s.lit ? s.lit.insideCounts[j] : 0,
@@ -13171,6 +13356,23 @@ ET.viewer = (function () {
         return resultInfo(v, hit);
       }),
     };
+  }
+
+  // How many points could be results of a ranking: the named ones, or all when none is named.
+  function availableOf(ranking) {
+    return ranking.named > 0 ? ranking.named : ranking.count;
+  }
+
+  // Says so when a number asked for is more than there is to give, or null.
+  function countsNote(q, view) {
+    var available = availableOf(view);
+    var what = available + (view.named > 0 ? " named points" : " points");
+    if (q.reranker) {
+      if (view.candidates <= available) return null;
+      return "Only " + what + " can be results, so the reranker was given " + available + " candidates, not " + view.candidates + ".";
+    }
+    if (view.k <= available) return null;
+    return "Only " + what + " can be results, so " + available + " are shown, not " + view.k + ".";
   }
 
   function resultInfo(v, hit) {

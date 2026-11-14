@@ -77,6 +77,7 @@ litSetting
 scaleFor
 litValues
 pairReports
+makePairReports
 makeFacingFrame
 facingFrame
 ```
@@ -196,6 +197,30 @@ searches, not every frame, so it stays a single call, not a stepper. If the
 viewer finds the cold first call costs a long frame in practice, slicing it
 the way the facing frame is sliced is the remedy.
 
+**With 100 results per search** (the owner's request for more candidates,
+`js/api/24-search.md`, "Candidates and top") the cost grows with the square of
+the result count: four searches of 100 results at 10,000 x 1,024 took a median
+of 51.2 ms in one call (20 runs; 2.1 ms with 20 results on the same run), far
+over the 8 ms frame budget. So the viewer now uses `makePairReports` (below),
+pumped in the frame budget; `pairReports` is that stepper run to the end, for
+tests and small sets, and its result is unchanged.
+
+### `ET.searchSets.makePairReports(set, searches) -> stepper`
+
+The pair reports as a stepper in the facing frame's convention (`step(budgetMs?)
+-> done`, `done`, `progress`, `result`): a unit ends after 2^17 multiply-adds,
+counted, not timed (one dot product of the closest-pair scan counts `D`, the
+shared count one per point), so the pauses fall at the same places on every
+run, and the result is identical, bit for bit, to `pairReports` whatever the
+budgets. The checks (`TypeError` for a `searches` that is not an array,
+`RangeError` for more than four or a hit whose `index` is not a row) and the
+rows' lengths are done when it is made, so a bad index throws at once. With
+fewer than two searches it is done after one step with `[]`. Measured (node
+24, 10,000 x 1,024, four searches of 100 results, `step(0)` until done, 10
+runs, load average about 1.5 on 12 cores): total median 51.8 ms, the longest
+unit median 1.0 ms, at most 1.4 ms; with four searches of 20 results the total
+is 2.0 ms and the longest unit 0.1 ms.
+
 ### `ET.searchSets.makeFacingFrame(set, searches, options?) -> stepper`
 
 The linear view that faces the searches: three orthonormal directions whose
@@ -237,6 +262,16 @@ searches of 20 results, `step(0)` until done, 5 runs each):
 Measured again under a load average of about 32 (after a refactor that changes
 no result): blocking medians 5.0 to 6.8 ms with spread axes and 1.4 to 1.9 ms
 without, the largest unit 2.8 ms over every case.
+
+With 100 results per search the first unit (every search's centres and its
+rows' offsets) and the last (the reach of every row through the frame) were
+not sliced and reached 4.0 ms median, 5.1 ms at most, for four searches of 100
+results (10,000 x 1,024, 10 runs). They now pause after each search's centres
+and whenever a unit of work ends among the offsets and the reach (counted as
+for the other units; the result is unchanged bit for bit). Measured after:
+four searches of 100, total median 5.2 ms, longest unit median 1.0 ms, at most
+2.6 ms; one search of 100, total 12.3 ms, longest unit 0.6 ms, at most 1.4 ms;
+four searches of 20, total 1.3 ms, longest unit 0.3 ms.
 
 The result:
 

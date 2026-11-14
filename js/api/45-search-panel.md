@@ -101,8 +101,12 @@ section.tumbler-search                  first child of div.tumbler-panel; aria-l
     div.tumbler-search-suggest          role=group; span + button.tumbler-search-suggestion (data-index)
     div.tumbler-search-controls         button.tumbler-search-face, label.tumbler-search-lit (select),
                                         label.tumbler-search-rerank (only while offered),
+                                        label.tumbler-search-candidates and
+                                        label.tumbler-search-top (range + output, 3..100 and
+                                        3..candidates; only while a reranker is offered),
                                         label.tumbler-search-distances, label.tumbler-search-k
-                                        (range + output), label.tumbler-search-pov (select),
+                                        (range 3..100 + output; disabled with its reason as
+                                        the title while reranking), label.tumbler-search-pov (select),
                                         label.tumbler-search-only (shown in Focus only),
                                         button.tumbler-search-clear
     p.tumbler-search-note
@@ -142,3 +146,28 @@ px and 390 px wide, two searches active).
 
 `js/test/search-panel.test.js` (node, the assembled file on the fake DOM) and
 `tests/browser/test_search_panel.py` (Chromium).
+
+## Candidates and top (the owner's request, 2026-11-14)
+
+See `docs/search-interface.md`, "Candidates and top". In the panel:
+
+- **Controls.** Results is a range from 3 to 100. Candidates (3 to 100) and
+  Keep top (3 to the current candidates; its maximum follows) are ranges with
+  their value beside them, placed right after the Reranker checkbox and, like
+  it, absent from the row while no reranker is offered. Each drives
+  `handle.setSearchSettings({ candidates })` / `({ top })`. While the reranker
+  is on, Results is disabled and its title says "With the reranker on, Keep top
+  sets how many results are kept."
+- **What was used.** `usedText` states the counts the searches used: "the 50
+  nearest as candidates, the reranker's top 20 kept" when a search was
+  reranked, "the 8 nearest kept (8 results per search)" otherwise; a reranked
+  search adds "(top 20 of 50 candidates)" from its own `results` and `sent`,
+  and, when another search was reranked, a search that was not says "not
+  reranked: the 8 nearest kept". The list heading and the Focus sub line say
+  "then the reranker X (top 20 of 50 candidates)". A count cut to what there
+  is (`counts` in `info().search`) is a sentence of the note, after the letter.
+- **Long lists.** Each result list under the stage scrolls inside its own box:
+  `max-height: var(--tumbler-search-list-height, 320px)` and `overflow-y:
+  auto` (the Focus list beside the stage already scrolled). Stage labels keep
+  the overlap rule; at most 160 label elements (`SP_LABEL_POOL`, was 96), and
+  placing stops once they are used.

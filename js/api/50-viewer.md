@@ -84,7 +84,9 @@ All optional.
 | `rerank` | none | Search: the host's `rerank(query, candidates)` callback. |
 | `searchTimeoutMs` | `15000` | Search: how long a callback may take before its answer is dropped. |
 | `searchPanel` | `true` | Search: `false` mounts no search panel (the handle still does everything). |
-| `searchK` | `8` | Search: results per search (3 to 20). |
+| `searchK` | `8` | Search: results per search with no reranker (3 to 100). |
+| `searchCandidates` | `50` | Search: candidates handed to the reranker (3 to 100). |
+| `searchTop` | `20` | Search: reranked candidates kept (3 to `searchCandidates`). |
 | `searchLit` | `"even"` | Search: the starting lit setting (`"even"`, `"close"`, `"named"`). |
 | `onSearchChange(search)` | none | Search: called with `info().search` whenever it changes. |
 
@@ -115,7 +117,7 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 | `info()` | object | A snapshot for hosts and tests (below). |
 | `setSearches(list)` | Promise | Search: replace the searches (text, vector or point id); see "Search". |
 | `clearSearches()` | boolean | Search: remove every search. |
-| `setSearchSettings(patch)` | Promise | Search: `k`, `lit`, `distances`, `rerank`, `pointOfView`, `onlyResults`. |
+| `setSearchSettings(patch)` | Promise | Search: `k`, `candidates`, `top`, `lit`, `distances`, `rerank`, `pointOfView`, `onlyResults`. |
 | `searchSettings()` | object | Search: a copy of the settings. |
 | `faceSearches()` | boolean | Search: swing toward the searches again (false in a mode with no `face`, Focus). |
 | `setSearchCallbacks({ embed?, rerank? })` | object | Search: set or remove the callbacks after mount. |

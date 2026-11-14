@@ -11,8 +11,10 @@
 (function () {
   var DEFAULT_K = 8;
   var MIN_K = 3;
-  var MAX_K = 20;
-  var POOL_FACTOR = 3;
+  var MAX_K = 100;
+  var DEFAULT_CANDIDATES = 50;
+  var MAX_CANDIDATES = 100;
+  var DEFAULT_TOP = 20;
   var PREFIX_MIN = 3;
   var MEASURE = "cosine";
   var MEASURE_TEXT = "cosine distance (1 minus cosine similarity)";
@@ -53,9 +55,24 @@
     return { ok: false, code: code, message: format(code, values) };
   }
 
+  // A count rounded and clamped into MIN_K .. most; not a finite number gives `fallback`.
+  function clampCount(n, most, fallback) {
+    if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
+    return Math.min(most, Math.max(MIN_K, Math.round(n)));
+  }
+
   function clampK(k) {
-    if (typeof k !== "number" || !Number.isFinite(k)) return DEFAULT_K;
-    return Math.min(MAX_K, Math.max(MIN_K, Math.round(k)));
+    return clampCount(k, MAX_K, DEFAULT_K);
+  }
+
+  function clampCandidates(n) {
+    return clampCount(n, MAX_CANDIDATES, DEFAULT_CANDIDATES);
+  }
+
+  // How many reranked candidates are kept: MIN_K .. the clamped number of candidates.
+  function clampTop(top, candidates) {
+    var most = clampCandidates(candidates);
+    return clampCount(top, most, Math.min(DEFAULT_TOP, most));
   }
 
   function hasPoints(set) {
@@ -294,27 +311,29 @@
     };
   }
 
-  function buildRanking(set, k, scaled, pool, scan, plainRanks) {
+  function buildRanking(set, counts, scaled, pool, scan, plainRanks) {
     var distances = scan.distances;
     var plainDistances = scan.plainDistances;
-    var pooled = [];
+    var nearest = [];
     for (var r = 0; r < pool.n; r++) {
       var i = pool.idx[r];
       var plainD = scaled ? plainDistances[i] : pool.dist[r];
-      pooled.push(makeHit(set, i, pool.dist[r], r + 1, plainD, scaled ? plainRanks[r] : r + 1));
+      nearest.push(makeHit(set, i, pool.dist[r], r + 1, plainD, scaled ? plainRanks[r] : r + 1));
     }
-    var hits = pooled.slice(0, k);
+    var hits = nearest.slice(0, counts.k);
     var near = hits.length ? hits[0].distance : null;
     var radius = hits.length ? hits.at(-1).distance : null;
     for (const hit of hits) hit.gap = hit.distance - near;
     return {
       measure: MEASURE,
-      k: k,
+      k: counts.k,
+      candidates: counts.candidates,
+      top: counts.top,
       count: set.count,
       named: scan.named,
       scaled: scaled,
       hits: hits,
-      pool: pooled,
+      pool: nearest.slice(0, counts.candidates),
       near: near,
       radius: radius,
       distances: distances,
@@ -404,7 +423,7 @@
     return built;
   }
 
-  function* scanGen(set, q32, scale, k, wk) {
+  function* scanGen(set, q32, scale, counts, wk) {
     var N = set.count;
     var D = set.dimension;
     var V = set.vectors;
@@ -413,7 +432,8 @@
     var named = yield* namedGen(set, wk);
     // Results come from named points; with none named, every point is a candidate.
     var mask = named.count > 0 ? named.mask : null;
-    var pool = new Pool(Math.min(POOL_FACTOR * k, mask ? named.count : N));
+    // The nearest max(k, candidates): the results come from its start, the reranker's pool too.
+    var pool = new Pool(Math.min(Math.max(counts.k, counts.candidates), mask ? named.count : N));
     var distances = new Float64Array(N);
     var plainDistances = scaled ? new Float64Array(N) : null;
     var acc = { dot: 0, nn: 0, dotS: 0, nnS: 0 };
@@ -424,7 +444,7 @@
     }
     var plainRanks = scaled ? yield* pooledPlainRanks(pool, plainDistances, mask, N, wk) : null;
     var scan = { distances: distances, plainDistances: plainDistances, named: named.count };
-    return buildRanking(set, k, scaled, pool, scan, plainRanks);
+    return buildRanking(set, counts, scaled, pool, scan, plainRanks);
   }
 
   function makeRank(set, vector, options) {
@@ -434,9 +454,10 @@
     if (scale !== null && !isF32(scale, D)) {
       throw new TypeError("scale must be a Float32Array of length " + D);
     }
-    var k = clampK(options?.k);
+    var candidates = clampCandidates(options?.candidates);
+    var counts = { k: clampK(options?.k), candidates: candidates, top: clampTop(options?.top, candidates) };
     var wk = new Tracker(set.count * (NAME_COST + (scale ? 4 * D : 2 * D)));
-    return genStepper(scanGen(set, vector, scale, k, wk), wk);
+    return genStepper(scanGen(set, vector, scale, counts, wk), wk);
   }
 
   function rank(set, vector, options) {
@@ -461,7 +482,8 @@
     order.sort(function (a, b) {
       return scores[b] - scores[a] || a - b;
     });
-    var take = Math.min(ranking.k, order.length);
+    // The best `top` of the candidates by the reranker's scores (k for a ranking without one).
+    var take = Math.min(ranking.top ?? ranking.k, order.length);
     var hits = [];
     for (var r = 0; r < take; r++) {
       var hit = { ...ranking.pool[order[r]] };
@@ -637,12 +659,16 @@
     DEFAULT_K: DEFAULT_K,
     MIN_K: MIN_K,
     MAX_K: MAX_K,
-    POOL_FACTOR: POOL_FACTOR,
+    DEFAULT_CANDIDATES: DEFAULT_CANDIDATES,
+    MAX_CANDIDATES: MAX_CANDIDATES,
+    DEFAULT_TOP: DEFAULT_TOP,
     PREFIX_MIN: PREFIX_MIN,
     MEASURE: MEASURE,
     MEASURE_TEXT: MEASURE_TEXT,
     MESSAGES: MESSAGES,
     clampK: clampK,
+    clampCandidates: clampCandidates,
+    clampTop: clampTop,
     format: format,
     checkSameSpace: checkSameSpace,
     checkQuery: checkQuery,
