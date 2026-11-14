@@ -2,7 +2,7 @@
   "plan_slug": "search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-14T16:05:41Z",
-  "updated": "2026-11-14T16:05:41Z",
+  "updated": "2026-11-14T17:23:30Z",
   "deviations": [
     {
       "id": "d1",
@@ -17,6 +17,22 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Two pieces of work are added to the search build at the owner's instruction, ahead of their plan tasks: a real-vector demo set from Wikipedia as the standalone page's default, and candidates (3 to 100, default 50) with the reranker keeping the top X (default 20).",
+      "task_ref": "t9",
+      "reason": "Owner on 2026-11-14: 'Yes, replace the demo default with real vectors. Plus, we need more results, 50 or 100, and add reranker and top x out of that (top 20?)'. The plan cannot take new tasks until the new requirements' honesty conditions are confirmed, and the owner asked for the work now.",
+      "affects": [
+        "t2",
+        "t5",
+        "t8",
+        "t11"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
     }
   ],
   "evidence": [],

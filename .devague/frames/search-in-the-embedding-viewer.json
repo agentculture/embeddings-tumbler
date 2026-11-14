@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T16:32:13Z",
+  "updated": "2026-11-14T17:23:30Z",
   "claims": [
     {
       "id": "c1",
@@ -807,6 +807,44 @@
       "links": [],
       "instruction": "docs/specs/reference/tumbler-sky-search.html shows it: the share of each axis in the cell's contribution weights three fixed colours, and a legend names them.",
       "revisions": []
+    },
+    {
+      "id": "c48",
+      "kind": "requirement",
+      "text": "The demo's default data is real: about 1,000 items taken from Wikipedia and embedded by a real model, small enough to ship (about 4 MB). The synthetic set from the reference stays available.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h35",
+          "text": "The provenance on the page names the source (Wikipedia, with the list and the retrieval date), the model and the licence of the text; the set is produced by a committed script from a committed list so it can be rebuilt; the package stays under 5 MB; and the synthetic set still loads when asked for.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Owner's words on 2026-11-14: 'keep existing fake or use wikipedia real data, but keep the size small (4m, 1000 items is fine)'. Asked for after seeing that 'sear' and 'searing' are unrelated in the synthetic set, where a real model puts them at 0.212.",
+      "revisions": []
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "A search takes more candidates and can keep the best of them: the nearest N by embedding are the candidates (3 to 100, 50 by default), and with the reranker on the top X of them are kept (20 by default). With no reranker the results stay at 8 by default and can be raised to 100.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h36",
+          "text": "The number of candidates and the number kept are both shown wherever a search states what it used; the lit radius follows the results actually kept; the reranker never sees more than the stated number of candidates; and the embed route's own limit admits 100 candidates.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Owner's words on 2026-11-14: 'we need more results, 50 or 100, and add reranker and top x out of that (top 20?)', then chose '50 candidates, top 20'. This replaces the earlier range of 3 to 20 results.",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -1171,6 +1209,24 @@
       "source_text": "Each cell of the readout strip is coloured by which screen axis its dimension feeds: it mixes three colours according to how much that dimension contributes to the picture's horizontal, vertical and depth axes. Opacity keeps meaning what it means now, the size of the contribution.",
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "o17",
+      "claim_id": "c48",
+      "seam": "demo data -> person trying the viewer",
+      "behavior": "The standalone page opens on real vectors by default and says where they came from, by which model and under which licence; neighbours in it reflect meaning (a real model's distances), and the synthetic set is one explicit choice away.",
+      "source_text": "The demo's default data is real: about 1,000 items taken from Wikipedia and embedded by a real model, small enough to ship (about 4 MB). The synthetic set from the reference stays available.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o18",
+      "claim_id": "c49",
+      "seam": "candidates -> reranker -> results",
+      "behavior": "N candidates are taken by full-space distance among named points; with a reranker the top X by its scores are the results; without one the first K by distance are; every count is stated.",
+      "source_text": "A search takes more candidates and can keep the best of them: the nearest N by embedding are the candidates (3 to 100, 50 by default), and with the reranker on the top X of them are kept (20 by default). With no reranker the results stay at 8 by default and can be raised to 100.",
+      "origin": "llm",
+      "status": "proposed"
     }
   ]
 }
