@@ -227,12 +227,16 @@
     if (c.inst.isReady() && running) c.clock += dt;
     if (c.inst.isReady() && c.inst.mark) c.inst.mark(c.clock); // finished events happen now
     const s = c.inst.stateAt(c.inst.isReady() ? c.clock : 0);
-    if (s.wires && s.wires.version !== c.wiresVersion) {
-      const w = renderer.setWires(s.wires.pairs, s.wires.lengths);
-      if (w?.ok === false) stats.error = "setWires: " + w.message;
-      c.wiresVersion = s.wires.version;
-    }
+    if (s.wires) syncWires(c, s.wires);
     return s;
+  }
+
+  // Hand the renderer a mode's wires when they are a version it has not seen yet.
+  function syncWires(c, wires) {
+    if (wires.version === c.wiresVersion) return;
+    const w = renderer.setWires(wires.pairs, wires.lengths);
+    if (w?.ok === false) stats.error = "setWires: " + w.message;
+    c.wiresVersion = wires.version;
   }
 
   // Once a second: frames per second, the gap and script diagnostics, and lit pixels.

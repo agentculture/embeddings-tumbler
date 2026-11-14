@@ -28,7 +28,7 @@ too, `--port 0` picks a free one and prints the address; use it in place of
 | `d` | dimension of the synthetic set | `1024` |
 | `n` | number of synthetic points | `5000` |
 | `seed` | seed of the synthetic set | `20261113` |
-| `fixture` | load a contract fixture instead, e.g. `valid-384` or `valid-1024`; must be a plain name matching `^[A-Za-z0-9][A-Za-z0-9._-]*$` | none |
+| `fixture` | load a contract fixture instead: one of `valid-384`, `valid-1024`, `top-k-16`, `labels-only`, `append-384` (a fixed list in `demo.js`; any other value is refused) | none |
 | `wires` | `1` starts with wires shown | off |
 | `hdr` | `0` forces the no-HDR fallback | on |
 | `bench` | `1` also times each draw with a GPU sync, shown as ms/frame | off |

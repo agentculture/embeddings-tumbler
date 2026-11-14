@@ -74,10 +74,10 @@ test("insertBefore() and replaceChild() check the reference node", () => {
   const { doc, parent, a, c } = tree();
   const x = doc.createElement("i");
   x.id = "x";
-  parent.insertBefore(x, c);
+  assert.equal(parent.insertBefore(x, c), x); // returns the inserted node
   assert.deepEqual(ids(parent), ["a", "b", "x", "c"]);
   assert.throws(() => parent.insertBefore(doc.createElement("i"), doc.body), /not a child/);
-  parent.replaceChild(c, a);
+  assert.equal(parent.replaceChild(c, a), a); // returns the replaced node
   assert.deepEqual(ids(parent), ["c", "b", "x"]);
   assert.throws(() => a.appendChild(a), /hierarchy/);
 });

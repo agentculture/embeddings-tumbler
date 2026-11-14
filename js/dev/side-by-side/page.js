@@ -9,25 +9,25 @@
 (function () {
   "use strict";
 
-  var REF = "/docs/specs/reference/embedding-tumbler-demo.html";
-  var BUILD = "/embeddings_tumbler/static/index.html";
-  var STORE = "et-side-by-side-checked";
-  var MODES = ["tumble", "lattice", "wander"];
+  const REF = "/docs/specs/reference/embedding-tumbler-demo.html";
+  const BUILD = "/embeddings_tumbler/static/index.html";
+  const STORE = "et-side-by-side-checked";
+  const MODES = ["tumble", "lattice", "wander"];
 
-  var refFrame = document.getElementById("frame-ref");
-  var buildFrame = document.getElementById("frame-build");
-  var statusEl = document.getElementById("status");
-  var buttons = Array.prototype.slice.call(document.querySelectorAll(".bar button[data-mode]"));
-  var current = "tumble";
+  const refFrame = document.getElementById("frame-ref");
+  const buildFrame = document.getElementById("frame-build");
+  const statusEl = document.getElementById("status");
+  const buttons = Array.from(document.querySelectorAll(".bar button[data-mode]"));
+  let current = "tumble";
 
   function say(text) {
     statusEl.textContent = text;
   }
 
   function markButtons() {
-    buttons.forEach(function (b) {
+    for (const b of buttons) {
       b.setAttribute("aria-pressed", String(b.getAttribute("data-mode") === current));
-    });
+    }
   }
 
   function loadBuild(mode) {
@@ -43,13 +43,13 @@
     try {
       refFrame.contentWindow.location.hash = "#" + mode;
       return true;
-    } catch (err) {
+    } catch {
       return false;
     }
   }
 
   function setMode(mode) {
-    if (MODES.indexOf(mode) < 0) return;
+    if (!MODES.includes(mode)) return;
     current = mode;
     markButtons();
     loadBuild(mode);
@@ -66,14 +66,14 @@
     say("Both reloaded in " + current + ".");
   }
 
-  buttons.forEach(function (b) {
+  for (const b of buttons) {
     b.addEventListener("click", function () {
       setMode(b.getAttribute("data-mode"));
     });
-  });
+  }
   document.getElementById("restart").addEventListener("click", restart);
 
-  var loaded = 0;
+  let loaded = 0;
   function onLoad() {
     loaded++;
     if (loaded === 2) say("Both pages loaded. The reference asks for Google Fonts from another origin; if you are offline it falls back to other fonts.");
@@ -83,70 +83,73 @@
 
   // ---------- the checklist ----------
 
-  var checked = {};
+  let checked = {};
   try {
     checked = JSON.parse(window.localStorage.getItem(STORE) || "{}") || {};
-  } catch (err) {
+  } catch {
     checked = {};
   }
 
   function save() {
     try {
       window.localStorage.setItem(STORE, JSON.stringify(checked));
-    } catch (err) {
+    } catch {
       /* a remembered tick is a convenience */
     }
   }
 
   function element(tag, className, text) {
-    var el = document.createElement(tag);
+    const el = document.createElement(tag);
     if (className) el.className = className;
     if (text !== undefined) el.textContent = text;
     return el;
   }
 
   function render(data) {
-    var root = document.getElementById("groups");
-    var total = 0;
-    var countEl = document.getElementById("count");
+    const root = document.getElementById("groups");
+    let total = 0;
+    const countEl = document.getElementById("count");
     function updateCount() {
-      var n = 0;
-      Object.keys(checked).forEach(function (k) {
+      let n = 0;
+      for (const k of Object.keys(checked)) {
         if (checked[k]) n++;
-      });
+      }
       countEl.textContent = n + " of " + total + " checked";
     }
-    data.groups.forEach(function (g) {
-      var details = element("details");
+    // One checklist line: a box remembered under key, the title and what the sample set shows.
+    function itemRow(key, item) {
+      const li = element("li");
+      const label = element("label");
+      const box = element("input");
+      box.type = "checkbox";
+      box.checked = !!checked[key];
+      box.addEventListener("change", function () {
+        checked[key] = box.checked;
+        save();
+        updateCount();
+      });
+      label.appendChild(box);
+      label.appendChild(element("span", "", item.title));
+      const vis = element("span", "vis", "on the sample set: " + item.visible);
+      vis.setAttribute("data-vis", item.visible);
+      label.appendChild(vis);
+      li.appendChild(label);
+      return li;
+    }
+    for (const g of data.groups) {
+      const details = element("details");
       details.open = true;
-      var summary = element("summary", "", g.group + " ");
+      const summary = element("summary", "", g.group + " ");
       summary.appendChild(element("small", "", "(" + g.items.length + ")"));
       details.appendChild(summary);
-      var list = element("ul");
-      g.items.forEach(function (item) {
+      const list = element("ul");
+      for (const item of g.items) {
         total++;
-        var key = g.group + " / " + item.title;
-        var li = element("li");
-        var label = element("label");
-        var box = element("input");
-        box.type = "checkbox";
-        box.checked = !!checked[key];
-        box.addEventListener("change", function () {
-          checked[key] = box.checked;
-          save();
-          updateCount();
-        });
-        label.appendChild(box);
-        label.appendChild(element("span", "", item.title));
-        var vis = element("span", "vis", "on the sample set: " + item.visible);
-        vis.setAttribute("data-vis", item.visible);
-        label.appendChild(vis);
-        li.appendChild(label);
-        list.appendChild(li);
-      });
+        list.appendChild(itemRow(g.group + " / " + item.title, item));
+      }
       details.appendChild(list);
       root.appendChild(details);
-    });
+    }
     document.getElementById("check-note").textContent =
       "Each line is a heading in docs/reference-differences.md, where the reference, the build, the reason and the evidence are written out. The last group is what the side-by-side found that nobody had written down.";
     updateCount();

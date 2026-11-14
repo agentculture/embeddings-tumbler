@@ -102,6 +102,14 @@ ET.modes = (function () {
     });
     var api = { done: false, ready: false, progress: 0, step: step };
 
+    // Share of task i done so far: 1 when finished, else its own estimate
+    // (kept below 1), else a guess from the units it has run.
+    function taskProgress(i) {
+      if (finished[i]) return 1;
+      if (typeof list[i].progress === "function") return Math.max(0, Math.min(0.999, list[i].progress()));
+      return 1 - 1 / (1 + units[i]);
+    }
+
     function refresh() {
       var total = 0;
       var got = 0;
@@ -110,10 +118,7 @@ ET.modes = (function () {
       for (var i = 0; i < list.length; i++) {
         var w = list[i].weight === undefined ? 1 : list[i].weight;
         total += w;
-        var p;
-        if (finished[i]) p = 1;
-        else if (typeof list[i].progress === "function") p = Math.max(0, Math.min(0.999, list[i].progress()));
-        else p = 1 - 1 / (1 + units[i]);
+        var p = taskProgress(i);
         got += w * p;
         if (!finished[i]) {
           done = false;
@@ -184,7 +189,8 @@ ET.modes = (function () {
   function isPrefix(previous, set) {
     var D = set.dimension;
     var grows = previous?.count <= set.count; // false for a missing or NaN count too
-    if (!previous || previous.dimension !== D || !grows) return false;
+    if (!previous) return false;
+    if (previous.dimension !== D || !grows) return false;
     var n = previous.count;
     if (n === 0) return true;
     var a = previous.vectors;
@@ -319,7 +325,8 @@ ET.modes = (function () {
 
   // Copy of an entry state handed to enter({ from }), or null.
   function entryFrom(from, D) {
-    if (!from?.frame || from.frame.length !== 3 * D) return null;
+    if (!from?.frame) return null;
+    if (from.frame.length !== 3 * D) return null;
     var e = { frame: new Float32Array(from.frame), centre: null, draw: {} };
     ET.math.orthonormalize(e.frame, 3, D);
     if (from.centre?.length === D) e.centre = new Float32Array(from.centre);

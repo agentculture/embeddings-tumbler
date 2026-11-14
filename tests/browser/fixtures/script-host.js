@@ -1,11 +1,14 @@
 // Canonical host fixture 1: the script form. A plain host script that does what
 // js/api/50-viewer.md tells a host to do: mount, fetch its own data file and its vector block,
-// update. The data file is twin-blobs.json, which the harness writes beside the page. Query:
-// ?seed=<n> (default 5), ?manual=1 (load the page but mount nothing, for the mount/destroy
-// cycles). State on window.__host.
+// update. The data file is twin-blobs.json and its block twin-blobs.f32, which the harness
+// writes beside the page; both addresses are fixed here, and a data file naming any other
+// block is refused rather than followed, so nothing read from the query string or from a
+// fetched file is put in a request. Query: ?seed=<n> (default 5), ?manual=1 (load the page
+// but mount nothing, for the mount/destroy cycles). State on window.__host.
 (function () {
   "use strict";
   const DATA_FILE = "twin-blobs.json";
+  const BLOCK_FILE = "twin-blobs.f32";
   const q = new URLSearchParams(location.search);
   const T = window.EmbeddingsTumbler;
   const H = window.__harness;
@@ -19,8 +22,9 @@
     const r = await fetch(DATA_FILE);
     if (!r.ok) throw new Error(DATA_FILE + ": " + r.status);
     const meta = await r.json();
-    const rb = await fetch(meta.vectors.file);
-    if (!rb.ok) throw new Error(meta.vectors.file + ": " + rb.status);
+    if (meta.vectors.file !== BLOCK_FILE) throw new Error(DATA_FILE + " names a block other than " + BLOCK_FILE);
+    const rb = await fetch(BLOCK_FILE);
+    if (!rb.ok) throw new Error(BLOCK_FILE + ": " + rb.status);
     const block = await rb.arrayBuffer();
     cached = { ...meta, vectors: block };
     return cached;

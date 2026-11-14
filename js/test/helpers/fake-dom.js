@@ -75,7 +75,7 @@ class FakeNode {
     while (prev && nodes.includes(prev)) prev = prev.previousSibling;
     detachAll(nodes);
     const ref = prev ? prev.nextSibling : parent.firstChild;
-    for (const n of nodes) parent.insertBefore(n, ref);
+    for (const n of nodes) placeBefore(parent, n, ref);
   }
   after(...items) {
     const parent = this.parentNode;
@@ -84,7 +84,7 @@ class FakeNode {
     let next = this.nextSibling;
     while (next && nodes.includes(next)) next = next.nextSibling;
     detachAll(nodes);
-    for (const n of nodes) parent.insertBefore(n, next);
+    for (const n of nodes) placeBefore(parent, n, next);
   }
   replaceWith(...items) {
     const parent = this.parentNode;
@@ -94,10 +94,10 @@ class FakeNode {
     while (next && nodes.includes(next)) next = next.nextSibling;
     detachAll(nodes.filter((n) => n !== this));
     if (this.parentNode === parent) {
-      for (const n of nodes) if (n !== this) parent.insertBefore(n, this);
+      for (const n of nodes) if (n !== this) placeBefore(parent, n, this);
       if (!nodes.includes(this)) this.remove();
     } else {
-      for (const n of nodes) parent.insertBefore(n, next);
+      for (const n of nodes) placeBefore(parent, n, next);
     }
   }
 }
@@ -119,6 +119,37 @@ function toNodes(owner, items) {
 
 function detachAll(nodes) {
   for (const n of nodes) n.remove();
+}
+
+// The one insertion routine behind insertBefore, appendChild, replaceChild, append,
+// prepend, replaceChildren, before, after and replaceWith: put child into parent's
+// children before ref (null or undefined = at the end) and return child. A fragment
+// inserts its children. The public tree methods all call this, never each other, so
+// none of them is defined in terms of another (no before() <-> insertBefore() loop).
+function placeBefore(parent, child, ref) {
+  if (ref !== null && ref !== undefined && ref.parentNode !== parent) {
+    throw new Error("fake DOM: reference node is not a child");
+  }
+  if (child === ref) return child;
+  if (child.nodeType === 11) {
+    for (const c of child.childNodes.slice()) placeBefore(parent, c, ref);
+    return child;
+  }
+  if (child.contains?.(parent)) throw new Error("fake DOM: hierarchy error");
+  child.remove();
+  const i = ref === null || ref === undefined ? -1 : parent.childNodes.indexOf(ref);
+  if (i < 0) parent.childNodes.push(child);
+  else parent.childNodes.splice(i, 0, child);
+  child.parentNode = parent;
+  return child;
+}
+
+// HTML's "reflect a boolean content attribute", writing the attribute map directly
+// (no setAttribute, so attribute observers do not see it): present as "" when on,
+// absent when off. The hidden setter, whose signature the DOM fixes, calls it.
+function reflectBooleanAttribute(el, name, on) {
+  if (on) el.attributes.set(name, "");
+  else el.attributes.delete(name);
 }
 
 class FakeText extends FakeNode {
@@ -226,24 +257,10 @@ class FakeParent extends FakeNode {
   }
   // Insert child before ref (null = at the end). A fragment inserts its children.
   insertBefore(child, ref) {
-    if (ref !== null && ref !== undefined && ref.parentNode !== this) {
-      throw new Error("fake DOM: reference node is not a child");
-    }
-    if (child === ref) return child;
-    if (child.nodeType === 11) {
-      for (const c of child.childNodes.slice()) this.insertBefore(c, ref);
-      return child;
-    }
-    if (child.contains?.(this)) throw new Error("fake DOM: hierarchy error");
-    child.remove();
-    const i = ref === null || ref === undefined ? -1 : this.childNodes.indexOf(ref);
-    if (i < 0) this.childNodes.push(child);
-    else this.childNodes.splice(i, 0, child);
-    child.parentNode = this;
-    return child;
+    return placeBefore(this, child, ref);
   }
   appendChild(child) {
-    return this.insertBefore(child, null);
+    return placeBefore(this, child, null);
   }
   removeChild(child) {
     const i = this.childNodes.indexOf(child);
@@ -254,26 +271,26 @@ class FakeParent extends FakeNode {
   replaceChild(child, old) {
     if (old.parentNode !== this) throw new Error("fake DOM: not a child");
     if (child !== old) {
-      this.insertBefore(child, old);
+      placeBefore(this, child, old);
       old.remove();
     }
     return old;
   }
   append(...items) {
-    for (const n of toNodes(this, items)) this.insertBefore(n, null);
+    for (const n of toNodes(this, items)) placeBefore(this, n, null);
   }
   prepend(...items) {
     const nodes = toNodes(this, items);
     detachAll(nodes);
     const ref = this.firstChild;
-    for (const n of nodes) this.insertBefore(n, ref);
+    for (const n of nodes) placeBefore(this, n, ref);
   }
   replaceChildren(...items) {
     const nodes = toNodes(this, items);
     detachAll(nodes);
     for (const c of this.childNodes) c.parentNode = null;
     this.childNodes = [];
-    for (const n of nodes) this.insertBefore(n, null);
+    for (const n of nodes) placeBefore(this, n, null);
   }
   contains(node) {
     return lineage(node).includes(this);
@@ -403,8 +420,7 @@ class FakeElement extends FakeParent {
     return this.attributes.has("hidden");
   }
   set hidden(value) {
-    if (value) this.attributes.set("hidden", "");
-    else this.attributes.delete("hidden");
+    reflectBooleanAttribute(this, "hidden", value);
   }
   get dataset() {
     if (!this._dataset) this._dataset = makeDataset(this);

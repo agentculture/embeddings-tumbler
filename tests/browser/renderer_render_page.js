@@ -7,10 +7,25 @@
   const SIZE = 256;
   const out = { cases: {}, fatal: null, unavailable: null };
 
-  async function fetchFixture(name) {
-    const base = "/tests/fixtures/contract/";
-    const meta = await (await fetch(base + name + ".json")).json();
-    const buf = await (await fetch(base + meta.vectors.file)).arrayBuffer();
+  // The two fixtures this page draws, at fixed addresses. A data file naming any other block
+  // is refused rather than followed, so nothing read from a fetched file is put in a request.
+  const FIXTURES = {
+    "valid-384": {
+      data: "/tests/fixtures/contract/valid-384.json",
+      file: "valid-384.f32",
+      block: "/tests/fixtures/contract/valid-384.f32",
+    },
+    "valid-1024": {
+      data: "/tests/fixtures/contract/valid-1024.json",
+      file: "valid-1024.f32",
+      block: "/tests/fixtures/contract/valid-1024.f32",
+    },
+  };
+
+  async function fetchFixture(fixture) {
+    const meta = await (await fetch(fixture.data)).json();
+    if (meta.vectors.file !== fixture.file) throw new Error(fixture.data + " names an unexpected block");
+    const buf = await (await fetch(fixture.block)).arrayBuffer();
     return { meta: meta, vectors: new Float32Array(buf) };
   }
 
@@ -154,7 +169,7 @@
       return;
     }
     probe.renderer.dispose();
-    const fx = await Promise.all([fetchFixture("valid-384"), fetchFixture("valid-1024")]);
+    const fx = await Promise.all([fetchFixture(FIXTURES["valid-384"]), fetchFixture(FIXTURES["valid-1024"])]);
     const a = drawFixture("d384", fx[0]);
     out.cases.d384 = a.result || { made: a.made };
     const b = drawFixture("d1024", fx[1]);
