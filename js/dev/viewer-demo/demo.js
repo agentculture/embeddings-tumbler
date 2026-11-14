@@ -3,29 +3,29 @@
 // refreshTheme(), and the optional sample file. See README.md for the query string.
 (function () {
   "use strict";
-  var T = window.EmbeddingsTumbler;
-  var q = new URLSearchParams(location.search);
-  var D = parseInt(q.get("d") || "384", 10);
-  var N = parseInt(q.get("n") || "12288", 10);
-  var SEED = q.get("seed") || "1";
-  var MODE = q.get("mode") || "tumble";
-  var ONE = q.get("one") === "1"; // mount only the left viewer (for measuring)
+  const T = window.EmbeddingsTumbler;
+  const q = new URLSearchParams(location.search);
+  const D = Number.parseInt(q.get("d") || "384", 10);
+  const N = Number.parseInt(q.get("n") || "12288", 10);
+  const SEED = q.get("seed") || "1";
+  const MODE = q.get("mode") || "tumble";
+  const ONE = q.get("one") === "1"; // mount only the left viewer (for measuring)
 
-  var cspCount = 0;
-  var cspEl = document.getElementById("csp");
+  let cspCount = 0;
+  const cspEl = document.getElementById("csp");
   document.addEventListener("securitypolicyviolation", function () {
     cspCount++;
     cspEl.textContent = String(cspCount);
   });
 
   // One pool of sample points per page: the first N are the set, the rest feed appends.
-  var POOL_EXTRA = 2000;
-  var t0 = performance.now();
-  var pool = T.sample.generate({ dimension: D, count: N + POOL_EXTRA });
-  var generateMs = performance.now() - t0;
+  const POOL_EXTRA = 2000;
+  const t0 = performance.now();
+  const pool = T.sample.generate({ dimension: D, count: N + POOL_EXTRA });
+  const generateMs = performance.now() - t0;
 
   function slice(from, to, op) {
-    var o = {
+    const o = {
       schema_version: 1,
       kind: "embeddings-tumbler/data",
       model: pool.model,
@@ -42,12 +42,12 @@
 
   // Points past the pool: copies of random pool points, nudged, with new ids.
   function extra(side, k) {
-    var vectors = new Float32Array(k * D);
-    var points = [];
-    for (var i = 0; i < k; i++) {
-      var src = Math.floor(Math.random() * N);
-      for (var d = 0; d < D; d++) vectors[i * D + d] = pool.vectors[src * D + d] + (Math.random() - 0.5) * 0.02;
-      var p = pool.points[src];
+    const vectors = new Float32Array(k * D);
+    const points = [];
+    for (let i = 0; i < k; i++) {
+      const src = Math.floor(Math.random() * N);
+      for (let d = 0; d < D; d++) vectors[i * D + d] = pool.vectors[src * D + d] + (Math.random() - 0.5) * 0.02;
+      const p = pool.points[src];
       side.extraId++;
       points.push({ id: "extra-" + side.extraId, label: "", group: p.group });
     }
@@ -64,7 +64,7 @@
     };
   }
 
-  var THEMES = [
+  const THEMES = [
     { name: "dark", props: {} },
     {
       name: "teal",
@@ -96,17 +96,17 @@
       },
     });
   });
-  var START_THEME = q.get("theme") || "";
-  var ALL_PROPS = [];
+  const START_THEME = q.get("theme") || "";
+  const ALL_PROPS = [];
   THEMES.forEach(function (t) {
     Object.keys(t.props).forEach(function (k) {
-      if (ALL_PROPS.indexOf(k) < 0) ALL_PROPS.push(k);
+      if (!ALL_PROPS.includes(k)) ALL_PROPS.push(k);
     });
   });
 
   // Longest gap between animation frames in the last 5 s, seen by the page itself.
-  var gaps = [];
-  var lastFrameAt = null;
+  const gaps = [];
+  let lastFrameAt = null;
   function watchFrames(t) {
     if (lastFrameAt !== null) gaps.push([t, t - lastFrameAt]);
     lastFrameAt = t;
@@ -115,17 +115,17 @@
   }
   requestAnimationFrame(watchFrames);
   function longestGap() {
-    var m = 0;
+    let m = 0;
     gaps.forEach(function (g) {
       if (g[1] > m) m = g[1];
     });
     return m;
   }
 
-  var sides = {};
+  const sides = {};
   ["a", "b"].forEach(function (name) {
-    var section = document.querySelector('[data-side="' + name + '"]');
-    var side = {
+    const section = document.querySelector('[data-side="' + name + '"]');
+    const side = {
       name: name,
       el: document.getElementById("space-" + name),
       info: document.getElementById("info-" + name),
@@ -137,36 +137,35 @@
       appendMs: [],
     };
     sides[name] = side;
-    var buttons = section.querySelectorAll("button[data-act]");
-    for (var i = 0; i < buttons.length; i++) {
-      buttons[i].addEventListener("click", act.bind(null, side));
+    for (const button of section.querySelectorAll("button[data-act]")) {
+      button.addEventListener("click", act.bind(null, side));
     }
   });
 
   function act(side, e) {
-    var what = e.currentTarget.dataset.act;
-    var r = null;
+    const what = e.currentTarget.dataset.act;
+    let r = null;
     if (what === "mount") {
       side.handle = T.mount(side.el, { seed: SEED, mode: MODE, title: side.name === "a" ? "Embedding Tumbler" : "" });
     } else if (what === "update") {
       side.next = N;
       side.extraId = 0;
-      var u0 = performance.now();
+      const u0 = performance.now();
       r = T.update(side.el, slice(0, N, "replace"));
       side.updateMs = performance.now() - u0;
     } else if (what === "append") {
-      var data;
+      let data;
       if (side.next + 200 <= N + POOL_EXTRA) {
         data = slice(side.next, side.next + 200, "append");
         side.next += 200;
       } else data = extra(side, 200);
-      var a0 = performance.now();
+      const a0 = performance.now();
       r = T.update(side.el, data);
       side.appendMs.push(performance.now() - a0);
     } else if (what === "invalid") {
       r = T.update(side.el, { schema_version: 2, kind: "embeddings-tumbler/data" });
     } else if (what === "markup") {
-      var m = slice(0, 400, "replace");
+      const m = slice(0, 400, "replace");
       m.points = m.points.map(function (p, i) {
         return {
           id: p.id,
@@ -187,7 +186,7 @@
 
   function setTheme(side, index, button) {
     side.theme = index;
-    var th = THEMES[side.theme];
+    const th = THEMES[side.theme];
     ALL_PROPS.forEach(function (k) {
       side.el.style.removeProperty(k);
     });
@@ -199,22 +198,18 @@
   }
 
   function show(side) {
-    var h = T.get(side.el);
-    var lines = [];
+    const h = T.get(side.el);
+    const lines = [];
     if (!h) lines.push("not mounted. Press mount, then update: mount carries no data.");
     else {
-      var i = h.info();
+      const i = h.info();
+      const lr = i.timing.lastRefit;
       lines.push(
         "mode " + i.mode + (i.paused ? " (paused)" : "") + (i.suspended ? " (suspended)" : "") +
-          " | t " + i.time.toFixed(2) + " s | seed " + i.seed + " | zoom " + i.zoom.toFixed(2)
-      );
-      lines.push(i.count + " points x " + i.dimension + "-d | " + (i.fps ? i.fps.toFixed(1) : "-") + " fps | frames " + i.frames);
-      lines.push(
+          " | t " + i.time.toFixed(2) + " s | seed " + i.seed + " | zoom " + i.zoom.toFixed(2),
+        i.count + " points x " + i.dimension + "-d | " + (i.fps ? i.fps.toFixed(1) : "-") + " fps | frames " + i.frames,
         "first frame " + fmt(i.timing.firstFrameMs) + " ms | ready " + fmt(i.timing.firstReadyMs) +
-          " ms | longest frame " + fmt(i.timing.longestFrameMs) + " ms | refits " + i.timing.refits
-      );
-      var lr = i.timing.lastRefit;
-      lines.push(
+          " ms | longest frame " + fmt(i.timing.longestFrameMs) + " ms | refits " + i.timing.refits,
         "longest frame gap, last 5 s: " + fmt(longestGap()) + " ms | last refit: " +
           (lr ? "at " + fmt(lr.atMs / 1000) + " s, " + fmt(lr.durationMs) + " ms of work, longest step " + fmt(lr.longestStepMs) + " ms" : "none")
       );
@@ -239,15 +234,15 @@
   window.__viewerDemo = { sides: sides, D: D, N: N };
   ["a", "b"].forEach(function (name) {
     if (ONE && name === "b") return;
-    var s = sides[name];
+    const s = sides[name];
     s.handle = T.mount(s.el, { seed: SEED, mode: MODE, title: name === "a" ? "Embedding Tumbler" : "" });
     if (START_THEME) {
-      var idx = THEMES.findIndex(function (t) {
+      const idx = THEMES.findIndex(function (t) {
         return t.name === START_THEME || (t.props["--tumbler-light-style"] || t.name) === START_THEME;
       });
       if (idx >= 0) setTheme(s, idx, document.querySelector('[data-side="' + name + '"] button[data-act="theme"]'));
     }
-    var u0 = performance.now();
+    const u0 = performance.now();
     s.lastResult = T.update(s.el, slice(0, N, "replace"));
     s.updateMs = performance.now() - u0;
     show(s);

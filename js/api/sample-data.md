@@ -47,8 +47,8 @@ Also exported: `referenceSeed`, `referenceDimension`, `referenceCount`.
 The generator uses the reference's random source (mulberry32 plus a Gaussian
 draw) and its draw order, so at the reference seed and 384 dimensions the
 vectors are **bit-identical** to the reference's (`js/test/sample.test.js` cuts
-the reference's generator out of the demo page, runs it in `node:vm` and
-compares bytes). The reference's per-point colour weights are not part of the
+the reference's generator out of the demo page, runs it on its own with no
+page globals and compares bytes). The reference's per-point colour weights are not part of the
 contract and are not output, but their random draws are still made so the
 stream stays aligned.
 

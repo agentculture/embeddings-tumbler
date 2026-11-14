@@ -13,14 +13,14 @@
   <p>Left: the reference demo. Right: the built standalone page. The list below is
     <code>docs/reference-differences.md</code>, to check off as you compare. Ticking a box here
     is not the sign-off; that is recorded in the document's last section.</p>
-  <div class="bar" role="group" aria-label="Switch both pages">
+  <fieldset class="bar" aria-label="Switch both pages">
     <span class="bar-label">Show both in</span>
     <button type="button" data-mode="tumble" aria-pressed="true">Tumble</button>
     <button type="button" data-mode="lattice" aria-pressed="false">Lattice</button>
     <button type="button" data-mode="wander" aria-pressed="false">Wander</button>
     <button type="button" id="restart">Restart both</button>
-  </div>
-  <p class="status" id="status" role="status">Loading both pages.</p>
+  </fieldset>
+  <output class="status" id="status">Loading both pages.</output>
 </header>
 
 <main>
