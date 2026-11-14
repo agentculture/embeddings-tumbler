@@ -804,8 +804,8 @@ What follows are measurements, not promises.
 - **Loading.** On that desktop the sample set of 12,288 points took about 150
   ms to the first frame and about 1.3 seconds until Tumble was moving at 1024
   dimensions (about 0.55 seconds at 384). The viewer prepares in slices of a few
-  milliseconds per frame, so the page does not freeze; the picture holds still
-  and a progress line shows meanwhile.
+  milliseconds per frame, so the page does not freeze; the cloud keeps its slow
+  spin and a progress line shows meanwhile.
 - **Appends.** One append of 100 points onto 10,000 points of 1024 dimensions
   took 2 to 6 ms, apart from the first, which takes about 100 ms because the
   graphics buffers double in size.

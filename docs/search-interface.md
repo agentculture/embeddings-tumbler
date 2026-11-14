@@ -660,8 +660,8 @@ component and the standalone page build on them.
 ### Lifecycle
 
 - **Budget.** Ranking, word matching and the facing frame are steppers pumped
-  inside the existing per-frame budget (`prepareBudgetMs`, 8 ms, halved after a
-  long frame; `js/api/50-viewer.md`, "Heavy work"), after the mode's own
+  inside the existing per-frame budget (at least `prepareBudgetMs`, 8 ms, following
+  the frame interval; `js/api/50-viewer.md`, "Heavy work"), after the mode's own
   preparation. A search never causes a long frame. The view keeps moving while
   a search is worked out.
 - **Appends.** After an append the results are stale (`stale: true`,

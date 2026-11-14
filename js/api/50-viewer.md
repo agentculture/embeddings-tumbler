@@ -73,8 +73,10 @@ All optional.
 | `provenanceOpen` | `true` | The provenance block is a `<details>`; `false` starts it collapsed (its summary line still names source, model, dimension, items, seed, synthetic and the shadow sentence). The block cannot be removed. |
 | `modeOptions` | `null` | Per-mode options passed to `ET.modes.create`, for example `{ tumble: { refitTransition: 6 } }` (see `js/api/40-modes.md`). The viewer adds none of its own. |
 | `maxPixelRatio` | `2` | Cap on `devicePixelRatio` for the drawing buffer (the reference's). |
+| `adaptivePixelRatio` | `true` | Lower the drawing-buffer ratio in steps of 0.5 (never below 1, never raised again in this mount) after two measured seconds in a row under 25 frames per second while the view runs, draws and prepares nothing. Trades sharpness for smoothness on a slow GPU (see "Slow devices"). `false`: always the capped device ratio, as in 0.11.6. |
 | `preserveDrawingBuffer` | `false` | Keep the WebGL drawing buffer so the host (or a test) can read pixels or take a screenshot. Costs some speed. |
-| `prepareBudgetMs` | `8` | Milliseconds of mode preparation per animation frame, halved after a frame that ran over 16 ms (see "Heavy work"). While the view is paused the budget is at least 40 ms, and frames keep running until the mode is ready even when paused or under reduced motion. |
+| `prepareBudgetMs` | `8` | The least milliseconds of mode preparation per animation frame. The budget is a third of the measured frame interval, between this and three times this (24 ms by default), and half of this for one frame after the work itself overran (see "Heavy work"). While the view is paused the budget is at least 40 ms, and frames keep running until the mode is ready even when paused or under reduced motion. |
+| `spinWhilePreparing` | `true` | Keep the slow spin turning while a mode prepares, so the view never stands still (the mode clock still waits for ready; see "Time"). `false`: the picture holds still until ready, as in 0.11.6. |
 | `refitQuietSeconds` | `2` | Tumble refit policy after appends (see "Appends"). `Infinity` never refits. |
 | `refitShare` | `0.01` | Tumble refits only when the points appended since the last fit are at least this share of the set (and at least one). |
 | `onError(result)` | none | Called with every refusal `{ ok: false, code, message }` (the same object `update` returns). |
@@ -124,13 +126,21 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 
 `info()` returns `{ mode, paused, broken, suspended, hidden, onScreen, destroyed,
 reducedMotion, time, seed, speed, zoom, ready, preparing, count, dimension,
-model, rendering, animating, frames, fps, status, message, timing, search }`.
+model, rendering, animating, frames, fps, pixelRatio, pixelRatioLowered, status,
+message, timing, search }`.
 `suspended` is true while the document is hidden or the element is off screen;
 `animating` is true while an animation frame is requested; `frames` counts
-frames that did work; `fps` is measured once a second; `status` is the status
+frames that did work; `fps` is measured once a second (a window restarts after a pause, a resume or a
+gap of more than 250 ms between frames); `pixelRatio` is the drawing-buffer ratio
+in use and `pixelRatioLowered` is true once `adaptivePixelRatio` has lowered it;
+`status` is the status
 line; `message` is the message shown, if any; `timing` is `{ firstFrameMs,
-firstReadyMs, longestFrameMs, lastAppendMs, refits, lastRefit }` in milliseconds since
-`mount`; `lastRefit` is `null` or `{ atMs, durationMs, longestStepMs }`: when the
+firstReadyMs, longestFrameMs, lastAppendMs, refits, lastRefit, budgetMs, workMs,
+scriptMs, drawMs, intervalMs }`, the first three in milliseconds since
+`mount`; `budgetMs` is the heavy-work budget of the last frame (`null` before the first
+frame with a view), `workMs` that frame's time in the work itself, `scriptMs` its whole
+callback less the renderer's draw call, `drawMs` the draw call, and `intervalMs` the
+smoothed time between animation frames (all in milliseconds); `lastRefit` is `null` or `{ atMs, durationMs, longestStepMs }`: when the
 last Tumble refit finished (milliseconds since `mount`), the main-thread time its
 work took in all, and its longest single step (`longestFrameMs` is the longest single animation-frame callback of
 this viewer, which is where mode preparation runs).
@@ -310,7 +320,15 @@ texture. On "append 200 points" onto 12,288 points: 44 to 46 ms for the first
   and not suspended. After the tab or the element comes back, motion continues
   from where it stopped; there is no jump.
 - The slow spin of the cloud (0.06 rad/s of yaw, the reference's) runs on the
-  same clock and stops while dragging.
+  same clock and stops while dragging. With `spinWhilePreparing` (default on) it
+  also turns while a mode prepares, through the frame the mode holds, so the view
+  never stands still; the **mode** clock still starts at 0 when the mode is ready,
+  so the frames a ready mode draws for a mode time do not depend on how fast the
+  preparation ran. When the mode becomes ready its motion starts from the spin
+  reached, with no jump. `time()` is the mode time: 0 while preparing.
+- `seek(t)` sets the mode time and the spin. A seek during preparation also holds
+  the spin until the mode is ready, so the frame shown then is the frame at `t`
+  (the reproduction rule below holds whether the seek came before or after ready).
 - A frame is a function of: the data, the seed, the mode, its time, and the view
   it entered from. **A fresh `mount` with the same data, seed and mode, followed
   by `seek(t)`, shows the same frame** (with no drag and the same zoom and
@@ -335,11 +353,32 @@ texture. On "append 200 points" onto 12,288 points: 44 to 46 ms for the first
 
 Mode preparation (`prepare()` steppers, Lattice's neighbour search, Tumble's fit
 and refit, Wander's first stop) runs in units of a few milliseconds. The viewer
-pumps it every frame within a budget of `prepareBudgetMs` (8 ms), halved after a
-frame that ran over 16 ms. Until the mode is ready the picture holds still and
-the status shows the mode's preparing line (for Tumble, `finding the strongest
-directions in 1,024-d … 40%`). `aria-busy` is set on the root while preparing.
-The clock starts when the mode reports ready.
+pumps it every frame within a budget that follows where the time went:
+
+- **A share of the frame interval.** The budget is a third of the measured
+  (smoothed) time between animation frames, never below `prepareBudgetMs` (8 ms)
+  and never above three times it (24 ms). On a 60 Hz screen that is 8 ms, as
+  before. On a device whose frames are long because drawing is slow (the GPU or
+  the compositor), the work still gets a third of the wall time, so preparation
+  makes steady progress at any frame rate.
+- **Cut only when the work overran.** When the work itself took more than 16 ms
+  and more than 8 ms past its budget (a unit far longer than asked: cold code, a
+  garbage collection), the next frame gets half of `prepareBudgetMs`. The rest of
+  the frame's script and the draw call do not count: a smaller budget would not
+  make them shorter, and cutting it for them only starved the work. In 0.11.6
+  the budget was halved after any frame callback over 16 ms;
+  on the owner's phone, where every frame took about 59 ms, that left about
+  4 ms of work per frame, and Lattice's neighbours were at 22 percent after
+  30 seconds.
+- Paused: at least 40 ms. Hidden or off screen: no frames, so no work; a gap of
+  more than 250 ms between frames is not taken as a frame interval.
+- No unit is longer than the steppers already promise (a few milliseconds), and
+  the results are bit-identical however the work is sliced.
+
+Until the mode is ready the mode clock waits and the status shows the mode's
+preparing line (for Tumble, `finding the strongest directions in 1,024-d … 40%`);
+the slow spin keeps turning (`spinWhilePreparing`). `aria-busy` is set on the
+root while preparing.
 
 Measured on Chromium with the AMD Radeon 760M GPU, the demo page with one
 viewer, the built-in sample set of 12,288 points, two runs each:
@@ -714,3 +753,47 @@ sample set of 12,288 points, 5 s per mode after 1.5 s to settle:
 | SwiftShader (software) | 1024 | 26.2 | 21.8 | 23.8 |
 
 On the GPU the display's 60 fps cap is reached, so the headroom is not measured. This table was measured before the performance pass and has not been re-measured since; the GPU still held 60 fps in every run of the measurements above.
+
+## Slow devices
+
+Found on the owner's iPhone (Chrome on iOS, so WebKit), 2026-11-14: the standalone
+page with the built-in sample set drew at 17 frames per second, stood still for
+seconds at start, and Lattice's neighbours were at 22 percent after 30 seconds.
+Three changes answer it: the heavy-work budget above, `spinWhilePreparing`, and
+`adaptivePixelRatio`. Nothing here was run on WebKit or on a phone.
+
+Measured in Chromium (Playwright, headless, ANGLE on the AMD Radeon 760M), 390 x 844
+window at device scale 3 (so a drawing-buffer ratio of 2), the shipped standalone
+page, CPU throttled 6x (`Emulation.setCPUThrottlingRate`), a page-level
+`requestAnimationFrame` wrapper that passes every fourth callback (15 frames per
+second at most), milliseconds from opening the page or from the switch. The
+machine was shared with other jobs (load average 1 to 7), so runs vary widely:
+
+| Setup | Build | First motion | Tumble ready | Lattice done | Wander done |
+|-------|-------|--------------|--------------|--------------|-------------|
+| 6x, 1 in 4 frames | 0.11.6 | 11,046 to 21,579 | 10,378 to 20,785 | 14,946 to 60,348 | 182 to 642 |
+| 6x, 1 in 4 frames | this | 1,206 to 2,612 | 4,202 to 15,136 | 5,908 to 20,038 | 79 to 143 |
+| 6x, 1 in 4, 30 ms in draw | 0.11.6 | 23,383 | 22,683 | 48,587 | 464 |
+| 6x, 1 in 4, 30 ms in draw | this | 1,261 to 1,906 | 5,569 to 11,586 | 7,432 to 13,867 | 108 to 503 |
+
+"30 ms in draw" busy-waits inside the renderer's draw call, standing in for WebGL
+calls that block on a GPU-bound device. Lattice's preparation includes its own fit
+of the strongest directions (588 of its 834 ms on the development machine without
+throttling), the same fit Tumble has just made.
+
+Drawing cost, SwiftShader (software rendering, the slow-GPU stand-in), same window,
+`adaptivePixelRatio` off, frames per second over 4 s:
+
+| Mode | Ratio 2 | Ratio 1.5 | Ratio 1 |
+|------|---------|-----------|---------|
+| Tumble | 10.7 | 16.7 | 29.1 |
+| Lattice | 10.0 | 15.5 | 24.0 |
+| Wander | 10.7 | 17.5 | (not measured cleanly) |
+
+What ratio 1 costs: half the drawing-buffer pixels in each direction against
+ratio 2. Points keep their CSS size, but their edges, the wires (one-pixel lines)
+and the glow are coarser, and the bloom, which samples fixed mip levels of the
+drawing buffer, spreads twice as far in CSS pixels and shows its coarse levels as
+soft blocks. The ratio is lowered only after two seconds under 25 frames per
+second (a 30 fps cap such as iOS Low Power Mode does not trigger it) and is never
+raised again in that mount, so it cannot flicker.
