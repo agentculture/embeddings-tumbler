@@ -107,3 +107,32 @@ def test_an_embed_attribute_is_not_read(site, browser):
         assert result == {"property": None, "ran": True}
     finally:
         tab.close()
+
+
+def test_the_mode_attribute_accepts_focus_and_null_removes_the_callback(site, browser):
+    """Two things the host guide says about the element beside this example."""
+    tab = _open(browser, site)
+    try:
+        page = tab.page
+        page.evaluate("() => document.getElementById('space').setAttribute('mode', 'focus')")
+        mode = harness.wait_for(
+            page,
+            "() => document.getElementById('space').handle.mode()",
+            lambda m: m == "focus",
+            timeout=120,
+            what="the Focus view",
+        )
+        assert mode == "focus"
+        page.evaluate("() => { document.getElementById('space').embed = null; }")
+        assert page.evaluate(INFO)["embedder"]["available"] is False
+        # With no callback the same typed text is matched among the loaded points.
+        page.fill("#query", "alpha")
+        page.click("button[type=submit]")
+        search = harness.wait_for(
+            page, INFO, lambda s: s["active"] and not s["waiting"], timeout=120, what="a search"
+        )
+        assert search["searches"][0]["kind"] == "words"
+        assert search["searches"][0]["sentTo"] == "nowhere"
+        assert tab.console_errors() == []
+    finally:
+        tab.close()

@@ -1,0 +1,39 @@
+body {
+  margin: 0;
+  padding: 16px;
+  background: #0b0f1a;
+  color: #e9eef6;
+  font: 16px/1.5 system-ui, sans-serif;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+button,
+input {
+  font: inherit;
+  padding: 6px 12px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+pre {
+  min-height: 6em;
+  margin: 0 0 16px;
+  white-space: pre-wrap;
+  font: 13px/1.5 ui-monospace, monospace;
+}
+
+.space {
+  --tumbler-stage-height: 420px;
+  /* The colours of searches A and B: ring, links, letters and list numbers. */
+  --tumbler-search-1: #ffd27a;
+  --tumbler-search-2: #7ad7ff;
+}

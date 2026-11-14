@@ -34,6 +34,7 @@ POLICY = "default-src 'self'"
 
 NEEDS = {
     "script": ["embeddings-tumbler.js"],
+    "script-search": ["embeddings-tumbler.js"],
     "web-component": ["embeddings-tumbler.js", "web-component.js"],
     "standalone": ["embeddings-tumbler.js", "index.html", "page.css", "page.js"],
 }
@@ -119,6 +120,17 @@ def _clean(base, tab):
     assert tab.foreign_requests(base) == []
 
 
+SEARCH = "() => EmbeddingsTumbler.get(document.getElementById('space')).info().search"
+SLOW = 120  # seconds: CI runners are slow and render in software
+
+
+def _press(page, action, note, settled=lambda s: not s["waiting"]):
+    """Press one of the search example's buttons; wait for its note, then the search state."""
+    page.click(f"button[data-action={action}]")
+    harness.wait_for_text(page, "#note", note, timeout=SLOW)
+    return harness.wait_for(page, SEARCH, settled, timeout=SLOW, what=f"the search after {action}")
+
+
 def _open(page, base, path):
     page.goto(base + path)
     _skip_without_webgl(page)
@@ -182,3 +194,82 @@ def test_standalone_form_page_shows_the_named_file(opened):
     page.goto(base + "/index.html?data=" + other)
     page.wait_for_timeout(1500)
     assert not any(r["url"].startswith("http://127.0.0.1:9") for r in tab.requests)
+
+
+@pytest.mark.parametrize("example_site", ["script-search"], indirect=True)
+def test_script_form_search_page_searches_through_the_handle(opened):
+    """The host guide's search example: both callbacks, every handle method, info().search."""
+    form, base, page, tab = opened
+    _open(page, base, "/example.html")
+    harness.wait_for_text(page, "#note", "Showing 320 points.", timeout=SLOW)
+    before = page.evaluate(SEARCH)
+    assert before["active"] is False
+    assert before["embedder"] == {"available": True}
+    assert before["reranker"] == {"available": True, "offered": True}
+    assert before["settings"]["k"] == 8
+
+    # Words matched among the loaded points: nothing is sent, and no callback is needed.
+    words = _press(page, "words", "Done: Match words.", lambda s: s["active"] and not s["waiting"])
+    one = words["searches"][0]
+    assert [one["letter"], one["kind"], one["sentTo"]] == ["A", "words", "nowhere"]
+    assert len(one["results"]) == 8
+    assert all("<alpha>" in hit["text"] for hit in one["results"])
+    assert words["measure"] == "cosine distance (1 minus cosine similarity)"
+    assert _lit(page) > 50, "the picture is blank"
+
+    # Typed text through the embed callback.
+    page.fill("#query", "p0007")
+    embedded = _press(
+        page, "embed", "Done: Embed and search.", lambda s: s["searches"][0]["kind"] == "embedded"
+    )
+    one = embedded["searches"][0]
+    assert [one["sentTo"], one["queryForm"], one["model"]] == [
+        "embedder",
+        "plain",
+        "synthetic/cold-test",
+    ]
+    assert one["results"][0]["id"] == "p0007"
+    assert one["results"][0]["distance"] == pytest.approx(0, abs=1e-6)
+
+    # A text the stand-in embedder cannot answer is refused and the earlier search stays.
+    page.fill("#query", "no such point")
+    kept = _press(page, "embed", "Refused (embed-failed)")
+    assert kept["searches"][0]["text"] == "p0007"
+
+    # Two searches, lettered in order, with a pair report.
+    two = _press(page, "two", "Done: Two searches.", lambda s: len(s["searches"]) == 2)
+    assert [q["letter"] for q in two["searches"]] == ["A", "B"]
+    assert [[p["a"], p["b"]] for p in two["pairs"]] == [["A", "B"]]
+    assert two["litCount"] == sum(q["insideCount"] for q in two["searches"]) - two["sharedCount"]
+
+    # Settings re-run the searches held.
+    more = _press(
+        page, "settings", "Done: 12 results", lambda s: len(s["searches"][0]["results"]) == 12
+    )
+    assert [more["settings"][key] for key in ("k", "lit", "distances")] == [12, "close", True]
+
+    # The reranker: 50 candidates sent, the top 20 kept, and the reranker named.
+    ranked = _press(
+        page, "rerank", "Done: Reranker", lambda s: s["searches"][0]["reranker"] is not None
+    )
+    one = ranked["searches"][0]
+    assert [one["reranker"], one["sent"], len(one["results"])] == ["example/shared-words", 50, 20]
+
+    # From a loaded point, then from a vector the host has.
+    point = _press(page, "point", "Done: From point", lambda s: s["searches"][0]["kind"] == "point")
+    assert point["searches"][0]["results"][0]["id"] == "p0007"
+    vector = _press(
+        page, "vector", "Done: From a vector", lambda s: s["searches"][0]["kind"] == "vector"
+    )
+    assert vector["searches"][0]["text"] == "between p0000 and p0001"
+
+    # Face again, then clear; a second clear has nothing to clear.
+    _press(page, "face", "Done: Face the searches.")
+    cleared = _press(page, "clear", "Done: Clear.", lambda s: not s["active"])
+    assert cleared["searches"] == []
+    assert "No search" in page.evaluate(_text(page, "#report"))
+    _press(page, "clear", "Refused (nothing-to-clear)")
+
+    # Nothing left the page: the only requests are the page's own files.
+    assert [r for r in tab.requests if r["method"] != "GET"] == []
+    _clean(base, tab)
