@@ -45,6 +45,28 @@
 - Search among the loaded points is supported as well, with no embedding: by picking a point, or by words matched against the labels and texts already in the data file. It works when the host supplies no embed callback.
   - instruction: The sky reference does this: a query is placed from the named points its words match.
   - honesty: With no embed callback the panel still works and says plainly that it is matching loaded points, not embedding the text; words that match nothing are named, never silently dropped.
+- A query vector is only compared with data in the same space. A data file whose reduction is not 'none' (top-k or rotation), or whose producer shifted or scaled the vectors, is searched by embedding only if the file carries what is needed to apply the same change to the query; otherwise embedding search is refused with a plain message and search among loaded points still works. (challenge pass / adjacent systems: docs/data-contract.md reduction and the embeddings-cli export options --rotate and --top-k; a rotated file has the same dimension, so the dimension check alone would pass a wrong comparison.)
+  - honesty: A rotated or top-k file never yields embedding results unless the query went through the same change; the refusal names the reduction found.
+- The embed callback returns the vector together with the id of the model that made it, and the helper says which query form it used for models that embed queries and documents differently. (challenge pass / unstated assumptions: c18 refuses another model, but nothing said how the viewer learns the model.)
+  - honesty: The model id shown for a search is the one the callback reported, and a callback that reports none is refused rather than assumed to match.
+- Searches are worked out again after an append, and until then the panel says the results are from before the new points. (challenge pass / lifecycle: js/api/50-viewer.md Appends; Tumble already marks its variance share stale the same way.)
+  - honesty: After an append no stale result is presented as current, and the re-run needs no action from the person.
+- The scan for nearest points and the word matching run in slices inside the viewer's existing per-frame work budget, so a search never causes a long frame. (challenge pass / failure modes: js/api/50-viewer.md Heavy work, 8 ms budget; four searches over 10,000 points of 1,024 dimensions is about 40 million multiplications.)
+  - honesty: Measured on the 10,000-point real file with four searches: no viewer frame exceeds the budget the heavy-work section states because of search.
+- The latest search wins: an answer from the callback that arrives after a newer search was typed is dropped. A callback that fails, times out or returns a wrong-length or non-finite vector shows a plain message in the panel and leaves the view and the earlier results unchanged. Nothing runs after destroy. (challenge pass / failure modes and lifecycle.)
+  - honesty: Shown by tests that deliver callback answers out of order, late, failing and malformed; in each the lit set is the latest valid search's or unchanged.
+- The embed route of viewer serve is off unless asked for with a flag, is refused on a non-loopback bind unless a second flag says so, accepts only POST with a JSON content type from its own origin (Host and Origin checked, no cross-origin headers sent), limits text length and request rate, never logs query text, and never returns the gateway address or the gateway's own error text. With the flag off, viewer serve stays the static-only server it is today and still reads no environment variable. (challenge pass / security: `embeddings_tumbler`/`_static_server.py` and cli/`_commands`/viewer.py; serve can bind non-loopback with a warning, and any web page can send a request to a loopback port.)
+  - honesty: Each refusal is shown by a test that would pass if the check were removed only by failing: a cross-origin request, a wrong Host, a GET, an oversized text, a non-loopback bind without the second flag; and the response and log contain neither the key, the gateway address nor the query text.
+- When a search is embedded, the panel says the typed text is sent to the embedder the host configured; search among loaded points says it sends nothing. With a reranker, the panel says the query and the candidate texts are sent to it, and the Reranker toggle is absent for a labels-only set. (challenge pass / data flows: the project rule that the viewer sends text nowhere; docs/data-contract.md labels-only sets.)
+  - honesty: The sentence about where the text goes is on screen whenever that kind of search is active, and matches what actually happens (a network log shows no request from the viewer itself).
+- Search colours and the mark for a point found by several searches are defined for light backgrounds as well as dark, and no meaning rests on colour alone: each search has a letter, and the result lists and the pair reports carry everything the picture shows, as text. (challenge pass / overlooked actors: the soft-ink light treatment, where white would vanish; people who cannot use the canvas.)
+  - honesty: Checked on the light treatment in a browser, and every fact in the picture can be read from the text of the panel alone.
+- The view that faces the searches is the same for the same data, searches and seed: no unseeded randomness in its fit. (challenge pass / unstated assumptions: the project rule on reproducible views; the reference page's fit starts from unseeded random directions.)
+  - honesty: Two fresh runs with the same data, searches and seed give the same fitted frame, bit for bit.
+- Hosts and agents can drive search without the panel: the handle sets and clears searches (by text, by vector or by point id) and info() reports each search, its result ids and distances and whether it is waiting or stale. On the web component the callbacks are set as properties, not attributes. (challenge pass / overlooked actors and observability: js/api/50-viewer.md handle and info(); js/shells/web-component.js observes only src, mode and seed.)
+  - honesty: Everything the panel can do can be done through the handle, and info() is enough for a test to assert results without reading pixels.
+- Each intended difference between the built search and the two reference pages is listed in the repository, and the user signs off a side-by-side comparison before release. Known ones today: the references place a query from named words and use toy rerankers; the Focus reference draws on a plain canvas, has no multi-search and has an Only results toggle. (challenge pass / the artifact as part of the spec: docs/reference-differences.md is the precedent.)
+  - honesty: The list is complete enough that the user's side-by-side look finds no unlisted difference, and release waits for the sign-off.
 
 ## Honesty conditions
 
@@ -80,6 +102,9 @@
 - Every loaded point at least as near as the last named result is lit too, as the sky reference does; results can be asked for from 3 to 20, 8 by default.
 - Result text is shown when the data file includes text; otherwise the label is shown.
 - A word search among loaded points places the query at the mean of the matching points' vectors and then lights the nearest points, as the sky reference does; when both are available the panel says which of the two kinds of search ran.
+- Distance is cosine distance (1 minus cosine similarity), named as such in the view; the contract does not require unit-length vectors, so this differs from straight-line distance for some files. The sky reference measures straight-line distance on centred vectors. (challenge pass / unstated assumptions: docs/data-contract.md line 207.)
+- The helper reaches the gateway with the Python standard library only, so the package keeps zero runtime dependencies, and takes the gateway address and key only from its own environment. (challenge pass / hidden dependencies: pyproject.toml dependencies = \[\].)
+- Focus keeps the Only results toggle from its reference page; the other three views dim and never hide. (challenge pass / the artifact as part of the spec.)
 
 ## Scope exploration
 
@@ -88,9 +113,21 @@
 - `s3` — `js/api/50-viewer.md and js/src/50-viewer.js`: The public API has mount, update, destroy and a handle; nothing selects, highlights or dims points and nothing exposes projected positions. The core file makes no network request of any kind. Search needs new API surface.
 - `s4` — `embeddings_tumbler/_static_server.py`: viewer serve is static files only, GET and HEAD, and by design reads no environment variable. A local embed route changes that stated property.
 - `s5` — `docs/data-contract.md`: Schema v1 has `text_included`: a file may carry no texts, only labels. Results can show text only when the file has it.
+- `s6` — `challenge pass / depth`: Rigorous. Escalation signals present: security-sensitive work (a server route that holds the gateway key; query text leaving the page through a callback).
+- `s7` — `challenge pass / cheap probe: real gateway and the real 311-point file`: Embedded three queries through the gateway with the file's own model (Qwen3-Embedding-0.6B) and ranked by cosine in plain Python. 'March' returned March then the other months; 'a cold winter morning' returned frosty, cold, January; a sentence about embedding vectors returned the matching facts and documents. Query and data norms are 1.000. So the callback route works on real data with no extra prompt for this model. Not probed: EmbeddingGemma 2, the reranker, or any reduced file.
+- `s8` — `challenge pass / concurrency and reversibility lenses`: Single-threaded page code; the only races are callback answers arriving out of order and appends during a search, both routed to requirements. Nothing in the spec migrates or deletes data; the feature can be left unused by not opening the panel. Clean otherwise.
+- `s9` — `challenge pass / adjacent systems: Lattice and Wander limits`: Lattice wires only its first 1,000 points and Wander stops only at labelled points (js/api/50-viewer.md), so a result outside those sets is lit but has no wire or stop. Not examined: how that reads on a 10,000-point file.
+- `s10` — `challenge pass / not examined`: Non-Chromium browsers; touch use of the panel on a phone beyond one rendered width; a screen reader on the real panel; memory with four searches on the largest real file; embeddings-cli needs no change as far as read, but its export options were read only from this session's notes, not the code.
 
 ## Decisions
 
 - Query embedding is a host callback, embed(text) -> vector. The core file still makes no network request. For local use and the standalone page, embeddings-tumbler viewer serve gains an embed route on its own origin that holds the gateway key in the server process (started under grant run).
 - The reranker is an optional host callback, rerank(query, candidates) -> scores, offered by the same route as embedding.
 - The two reference pages are the visual and behavioural reference: docs/specs/reference/tumbler-sky-search.html for search in the three existing views, docs/specs/reference/tumbler-focus-view.html for Focus.
+
+## Open parks
+
+- [unknown_nonblocking] Whether Wander should visit the results of a search. The reference leaves Wander's route unchanged.
+- [unknown_nonblocking] Retrieval quality with EmbeddingGemma 2 queries, with any reranker, and on reduced files was not probed in this pass.
+- [follow_up] With three or four searches the facing view scales to fit all of them, so two that touch can end up small beside a far one (seen in the sky reference). A way to face a chosen pair is not specified.
+- [follow_up] Labels and distance numbers overlap inside a tight cluster of results (seen in the sky reference). No decluttering rule is specified.
