@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "drafting",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T11:41:18Z",
+  "updated": "2026-11-14T11:41:41Z",
   "claims": [
     {
       "id": "c1",
@@ -455,6 +455,37 @@
       "id": "c27",
       "kind": "assumption",
       "text": "Result text is shown when the data file includes text; otherwise the label is shown.",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "Search among the loaded points is supported as well, with no embedding: by picking a point, or by words matched against the labels and texts already in the data file. It works when the host supplies no embed callback.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "With no embed callback the panel still works and says plainly that it is matching loaded points, not embedding the text; words that match nothing are named, never silently dropped.",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "The sky reference does this: a query is placed from the named points its words match.",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "assumption",
+      "text": "A word search among loaded points places the query at the mean of the matching points' vectors and then lights the nearest points, as the sky reference does; when both are available the panel says which of the two kinds of search ran.",
       "origin": "llm",
       "status": "proposed",
       "honesty_conditions": [],
