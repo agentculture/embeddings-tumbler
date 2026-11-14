@@ -2,7 +2,7 @@
   "plan_slug": "embeddable-space-viewer",
   "schema_version": 2,
   "created": "2026-11-13T19:07:38Z",
-  "updated": "2026-11-14T06:11:24Z",
+  "updated": "2026-11-14T10:22:49Z",
   "deviations": [
     {
       "id": "d1",
@@ -74,7 +74,443 @@
       "seq": 5
     }
   ],
-  "evidence": [],
-  "deltas": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "js/test/viewer.test.js::mount appends exactly one child to the element and touches nothing else",
+      "behavior_text": "One child is added; body, head, classes, styles and window keys are unchanged. Sibling tests assert replace, append keeping the camera, and a plain message on invalid data; tests/browser/test_viewer_render.py asserts the same in Chromium.",
+      "contract_text": "mount attaches a viewer to exactly the element given and touches nothing outside it; update with a full set replaces the view, update with an append adds points and keeps the camera and existing points; neither call throws on valid data, and invalid data yields a plain message in the element, not an exception in the host.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green. Partly covered: 'neither call throws on valid data' is implicit only (no test states it); no negative control for 'camera kept'.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "tests/browser/test_harness_forms.py::test_c1_network_log_holds_only_the_test_servers_origin",
+      "behavior_text": "Across three delivery forms every logged request is on the test server's origin; test_c2_no_csp_violation asserts zero violations under script-src 'self'; tests/test_standalone_page.py asserts every asset is a shipped same-folder name.",
+      "contract_text": "The file makes no request to any origin, contains no inline script requirement, and works under script-src 'self'; fonts and every other asset come from the host or from the file itself.",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "Ran green, and negative controls show each check fails when broken (test_harness_negative_controls.py, test_check_no_external_origin.py::test_negative_control_bites). The tests assert 'no other origin'; the shells do read the data file from their own origin.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "js/test/web-component-static.test.js::the web component calls only mount, update and destroy on the core",
+      "behavior_text": "Only T.mount, T.update and T.destroy are used on the core object, and the web component holds no graphics or projection code (16 mutations are caught).",
+      "contract_text": "Both shells call only the public mount/update/destroy API of the same unmodified core file; neither carries its own copy of rendering or projection logic.",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "Ran green with a negative control, for the web component only. Partly covered: the standalone page script also uses api.sample and handle methods (its test allows that), and no test scans page.js for rendering or projection code.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "tests/browser/test_harness_lifecycle.py::test_c4_twenty_mount_destroy_cycles_leave_nothing_script_form",
+      "behavior_text": "After 20 mount/destroy cycles in Chromium, canvases, live contexts, pending frames, timers, observers and listeners equal the baseline; unit tests assert no frame work while hidden or off screen and a message on context loss.",
+      "contract_text": "destroy(el) releases every GPU resource, observer and animation callback the viewer created; while the tab is hidden or the element is off screen the viewer does no per-frame work; a lost graphics context is restored or reported in the element.",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "Ran green; test_leak_counters_catch_one_of_everything is the negative control. The hidden-tab and off-screen clauses are asserted on a fake DOM only, not in a real browser; real context loss is tested on the renderer page, not the viewer's in-element message.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "js/test/sample.test.js::criterion 2: output passes the contract loader; provenance says synthetic",
+      "behavior_text": "The built-in producer's output is accepted by the contract loader; guide-producer and embeddings-cli export tests show the same for the two other producers; duplicate ids and a wrong block length are refused.",
+      "contract_text": "Every data file states its schema version, model id, dimension, item count and where the vectors came from; every point has a stable id; all vectors have the stated dimension. A producer never emits a file that omits these.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green. Partly covered: no viewer test refuses a file that omits model, dimension, count, provenance.source or a point id; 'a producer never emits' is shown for three known producers only.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "js/test/contract.test.js::file form: wrong-block-length",
+      "behavior_text": "A block of 9212 bytes is refused with the exact message naming the expected 6 x 384 x 4 = 9216 bytes; little-endian decoding, dtype, byte order and declared length are asserted by sibling tests.",
+      "contract_text": "Vectors arrive as one little-endian float32 block whose length is exactly points x dimension x 4 bytes; a block of any other length is refused with a plain message.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green; these are the refusal cases themselves. No real-browser test of the wrong-length case (a wrong dtype is tested in Chromium).",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "js/test/contract.test.js::criterion 1: bumped version names the version found and supported",
+      "behavior_text": "The message says schema version 2 is not supported and that the viewer reads schema version 1; shown in Chromium by tests/browser/test_standalone_page.py::test_a_refused_set_shows_the_viewers_message_and_no_points.",
+      "contract_text": "The viewer reads the schema version first and refuses an unknown or newer one, naming the version it found and the versions it supports.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green. Partly covered: the code checks 'kind' before the version, so 'reads the schema version first' holds only relative to every other field; no test asserts the order against 'kind'.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "js/test/viewer.test.js::a refused append leaves the running view unchanged and shows a notice",
+      "behavior_text": "An append with another dimension or model is refused (dimension-mismatch, model-mismatch); the set, the GPU count and the loop are unchanged.",
+      "contract_text": "Data whose points disagree in dimension, or an append whose model id or dimension differs from what is already shown, is refused and the current view is left unchanged.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green. Partly covered: 'points disagree in dimension' inside one set can only appear as a wrong block length (vectors are one flat block) and has no test of its own; no real-browser test of a refused append.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "tests/test_cli_viewer.py::test_serve_ignores_gateway_key_in_environment",
+      "behavior_text": "viewer serve with a sentinel key and address in its environment returns neither in any response; contract tests refuse a data file whose endpoint is an address; scan-secrets and the no-external-origin scan pass on shipped files.",
+      "contract_text": "No page, shell or data file ever contains the gateway address or key, and the browser never contacts the gateway; the key exists only in the environment of the server-side process that embeds, placed there by grant run.",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "Ran green with negative controls for the scans. Not covered by any test: 'the key exists only in the environment of the embedding process, placed there by grant run'. Its only support is the manual scan recorded in docs/evidence/2026-11-14-real-atlas-proof.md.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "tests/browser/test_web_component.py::test_another_origin_is_refused_and_never_requested",
+      "behavior_text": "Data on another origin is refused without a request; after load the only requests are the data file and its block; the core file contains no network call (static scan).",
+      "contract_text": "The viewer sends corpus text, labels, metadata and vectors nowhere; its only read is the data file or object its host handed it.",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "Ran green; test_network_log_catches_a_request_to_another_origin (10 request kinds) is the negative control. Same-origin sends are excluded by the static scan only; no test inspects same-origin request bodies.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "tests/browser/test_viewer_render.py::test_provenance_is_shown",
+      "behavior_text": "In Chromium at desktop and phone width the block shows model, dimension, count, 'Seed (view)' and the shadow sentence; test_markup_labels_are_literal_text asserts labels with markup create no element.",
+      "contract_text": "Every mounted view shows source, model, dimension, item count, the seed, how the view is produced, and that a projection is a shadow of the space; labels and metadata are inserted as text only.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green. Partly covered: the displayed value of the view seed is not firmly asserted (label only); a mounted viewer with no data shows no block by design; markup in metadata or provenance strings is untested; no negative control.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "js/test/math-tour.test.js::at 768-d the tour's reported variance share matches an independent recomputation",
+      "behavior_text": "The reported share equals an independent recomputation at 384, 768, 1024 and 2560 dimensions; the status states it; after an append it is marked stale until refitted.",
+      "contract_text": "The page states the share of total variance held by the directions the tour moves through, recomputed from the data shown, and never presents a guided view as the whole space.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green. 'Never presents a guided view as the whole space' rests on two text assertions (Tumble's summary and the shadow sentence), not on a general check.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o13",
+      "test_ref": "js/test/modes-determinism.test.js::criterion 4: tumble at 1024-d gives bit-identical frames over 10 s in two fresh runs",
+      "behavior_text": "601 frames are byte-identical across two fresh runs for each mode; a different seed gives a different sequence.",
+      "contract_text": "Given the same data, seed and elapsed time the frame is the same; the seed in use is always visible in the provenance block and can be set by the host.",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "Ran green, with the different-seed test as the control. Partly covered: the seed's displayed value is asserted as a label only; a host-set seed is not checked end to end; no real-browser comparison across two loads.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o14",
+      "test_ref": "js/test/modes.test.js::criterion 2: a fourth dummy mode registers without editing any existing file",
+      "behavior_text": "A fourth mode registers, the three shipped modes still give orthonormal frames, and every file under js/src (the contract included) is byte-identical afterwards.",
+      "contract_text": "A mode supplies only its own motion and drawing rules over the shared projection, data and provenance; adding a fourth mode changes no existing mode and no part of the data contract.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green. Partly covered: 'a mode supplies only its own motion and drawing rules' is not asserted (no scan of mode files).",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o15",
+      "test_ref": "embeddings-cli tests/test_export.py::test_preview_by_default_writes_nothing",
+      "behavior_text": "Preview writes nothing; an existing target is refused without --force; a missing vector file is refused with a hint naming 'embeddings survey'; both files are staged then renamed; model, seed, limitations and uncertain are copied.",
+      "contract_text": "It previews by default and writes nothing without --apply, refuses an existing target without --force, refuses an Atlas whose vector file is absent with a hint naming 'embeddings survey', writes atomically, and copies the Atlas's model, endpoint, seed, limitations and uncertain lists into the file's provenance.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "All 83 test_export.py cases ran green at embeddings-cli origin/main. The clause 'copies the Atlas's endpoint' is NOT met as written: by approved deviation d1 the endpoint URL is never copied and only a route name is written. One test shows a failure can leave a lone new block, so the pair is not atomic as a pair.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "3dfc708"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 20
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o16",
+      "test_ref": "embeddings-cli tests/test_export.py::test_export_leaves_the_atlas_and_map_output_unchanged",
+      "behavior_text": "Map HTML bytes and the Atlas folder are equal before and after four export runs; the roadmap lockstep tests derive the verb list from the real parser.",
+      "contract_text": "'embeddings map --html' output, Atlas schema v1 and the three stable-contract CLI modules are byte-for-byte unaffected by the producer step; its tests live beside it and the roadmap lockstep test still derives the verb list from the parser.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green at embeddings-cli origin/main. Partly covered: no test pins Atlas schema v1 or the three stable-contract modules; by git diff __init__.py gained two registration lines (approved deviation d2), so 'byte-for-byte unaffected' does not hold for it.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "3dfc708"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 21
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o17",
+      "test_ref": "tests/browser/test_standalone_page.py::test_sample_set_renders_with_modes_provenance_and_controls",
+      "behavior_text": "In Chromium the page shows the three modes, the four controls, one readout strip and the Tumble note; sample vectors are byte-identical to the reference generator; the differences checklist matches the document.",
+      "contract_text": "On the built-in sample set the page shows the same three views, rendering effects, masthead, readout strip, controls and per-view notes as docs/specs/reference/embedding-tumbler-demo.html; each intended difference is listed in the repo, and the user signs off the side-by-side comparison before release.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green. Partly covered: no automated comparison of the built page against the reference page; masthead content untested. The sign-off is a document line, not a test (docs/reference-differences.md: 'confirmed, light -> soft ink is ok, the two others not'), and line 8 of that document still says the sign-off has not happened.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 22
+    },
+    {
+      "id": "e18",
+      "obligation_ref": "o18",
+      "test_ref": "tests/test_packages.py::test_check_packages_passes_on_the_real_build",
+      "behavior_text": "The real wheel, sdist and npm tarball hold a byte-identical core file with the same version header; every publish job re-runs the check on the files it uploads.",
+      "contract_text": "Both packages of one release contain a byte-identical core file carrying the same version header; a release that would publish them out of step fails.",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "Ran green; a one-byte change in a real tarball fails the check (test_check_packages_fails_on_a_doctored_real_tarball). The release failure path is asserted by workflow structure; no real release has run through it.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 23
+    },
+    {
+      "id": "e19",
+      "obligation_ref": "o19",
+      "test_ref": "embeddings-cli tests/test_export.py::test_top_k_records_directions_kept_and_variance_dropped",
+      "behavior_text": "A top-k file records the kind, directions kept and variance dropped (equal to an independent computation); the default export applies no reduction; the viewer's provenance block shows the reduction line (unit test).",
+      "contract_text": "A reduced data file records which reduction was applied, the number of directions kept and the share of variance dropped; the page shows this beside the provenance, and top-k reduction never happens unless explicitly requested.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Ran green at embeddings-cli origin/main and in the tumbler unit tests. Partly covered: no real-browser test loads a reduced file and reads the page.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "3dfc708"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 24
+    },
+    {
+      "id": "e20",
+      "obligation_ref": "o21",
+      "test_ref": "tests/test_workflows.py::test_npm_job_uses_trusted_publishing_only",
+      "behavior_text": "The npm job publishes on push only, with id-token and provenance and no credential; PyPI uses trusted publishing; the only CI secret referenced is the Sonar token; no .npmrc or .pypirc is committed.",
+      "contract_text": "Releases to both registries are published only by the repository's CI workflow using trusted publishing; no registry token is stored as a repository secret or in any file, and a publish from a developer machine is not part of the release path.",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "Ran green with negative controls for token plumbing. These assert the workflow's shape; no trusted publish has happened yet. The clause 'a publish from a developer machine is not part of the release path' is NOT met for the first npm release: docs/release.md describes a one-time manual publish with a token.",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-14T09:48:38Z",
+        "commit": "cc34850"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 25
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "The data file's provenance.endpoint holds a route name, never the Atlas's endpoint address; the contract refuses an address there.",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [
+        "e15"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "embeddings-cli's stable-contract module embeddings/cli/__init__.py gained two lines that register the export command.",
+      "caused_by": [
+        "d2"
+      ],
+      "evidence_refs": [
+        "e16"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "added",
+      "behavior_text": "embeddings export takes --group-by <key> to write each point's group, and writes only the corpus file's name into provenance.",
+      "caused_by": [
+        "d4"
+      ],
+      "evidence_refs": [
+        "e15"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "amended",
+      "behavior_text": "Lattice swaps in hidden directions drawn from the data's 8 strongest directions, not from the full space; hidden: 'full' keeps the reference's rule. A light background is drawn as soft ink by default.",
+      "caused_by": [
+        "d5"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }

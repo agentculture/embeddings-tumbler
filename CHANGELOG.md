@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] - 2026-11-14
+
+### Added
+
+- The spec for search in the viewer (`docs/specs/2026-11-14-search-in-the-embedding-viewer.md`) and its two reference pages.
+
+### Changed
+
+- Delivery records for the viewer build: evidence for 20 obligations, four behaviour changes and one more lapse, all confirmed by the user.
+
 ## [0.11.2] - 2026-11-14
 
 ### Fixed
