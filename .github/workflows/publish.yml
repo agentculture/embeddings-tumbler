@@ -1,16 +1,39 @@
-name: Publish to PyPI
+name: Publish to PyPI and npm
+
+# Two registries, one core file, trusted publishing only (OIDC; no registry
+# token exists anywhere in this repository or its secrets). See docs/release.md.
+#
+# Pull request (same-repo only): test -> verify-packages -> test-publish (TestPyPI
+#   dev build). npm has no test registry and its versions can never be reused,
+#   so nothing goes to npm from a pull request; the dry-run build of both
+#   packages is in packages.yml and in verify-packages below.
+# Push to main: test -> verify-packages -> publish-npm -> publish (PyPI).
+#   Every job checks out the same commit (github.sha). The byte-identity check
+#   runs in verify-packages before either registry is touched, and again in
+#   each publish job on the exact file that job uploads.
+#   npm goes first: it is the newer channel and the likelier to fail, and a
+#   failure there leaves nothing published. Both publish jobs are safe to
+#   re-run: PyPI skips files already uploaded (--check-url) and the npm job
+#   skips a version already on npm after checking that it matches this commit.
 
 on:
   push:
     branches: [main]
     paths:
       - "pyproject.toml"
+      - "package.json"
       - "embeddings_tumbler/**"
   pull_request:
     branches: [main]
     paths:
       - "pyproject.toml"
+      - "package.json"
       - "embeddings_tumbler/**"
+
+# Never run two publishes of the same ref at once; never cancel one midway.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -28,11 +51,37 @@ jobs:
 
       - run: uv run pytest -n auto -v
 
+  verify-packages:
+    # Builds both packages from this commit and fails unless the wheel and the
+    # npm tarball carry byte-identical viewer files with one version.
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: install npm 11.21.1
+        run: |
+          npm install -g npm@11.21.1
+          npm --version
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - name: build both packages and check they agree
+        run: python3 scripts/check_packages.py --out-dir dist-packages
+
   test-publish:
     # Skip on fork PRs — no OIDC/environment context is available there, so the
     # publish step would fail and block external contributor CI.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    needs: test
+    needs: [test, verify-packages]
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -65,9 +114,62 @@ jobs:
         run: |
           echo "::notice::Test with: uv tool install --index-url https://test.pypi.org/simple/ --index-strategy unsafe-best-match embeddings-tumbler==${DEV_VERSION}"
 
+  publish-npm:
+    if: github.event_name == 'push'
+    needs: [test, verify-packages]
+    runs-on: ubuntu-latest
+    # The npm trusted publisher for @culture.dev/embeddings-tumbler names this
+    # workflow file (publish.yml) and this environment (npm).
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: install npm 11.21.1 (trusted publishing needs 11.5.1 or later)
+        run: |
+          npm install -g npm@11.21.1
+          node -e '
+            const v = process.argv[1].split(".").map(Number);
+            const ok = v[0] > 11 || (v[0] === 11 && (v[1] > 5 || (v[1] === 5 && v[2] >= 1)));
+            if (!ok) { console.error("npm " + process.argv[1] + " is older than 11.5.1"); process.exit(1); }
+            console.log("npm " + process.argv[1]);
+          ' "$(npm --version)"
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - name: build both packages from this commit and check they agree
+        run: python3 scripts/check_packages.py --out-dir dist-packages
+
+      - name: publish to npm by trusted publishing
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SPEC="@culture.dev/embeddings-tumbler@${VERSION}"
+          TARBALL=$(ls dist-packages/*.tgz)
+          PUBLISHED=$(npm view "$SPEC" version 2>/dev/null || true)
+          if [ "$PUBLISHED" = "$VERSION" ]; then
+            # A re-run, or the one-time bootstrap publish already made this
+            # version. Prove the registry copy matches this commit; never
+            # publish over it (npm refuses, and versions cannot be reused).
+            echo "::notice::$SPEC is already on npm; checking it matches this commit"
+            mkdir -p published
+            (cd published && npm pack "$SPEC" --ignore-scripts)
+            python3 scripts/check_packages.py --wheel dist-packages/*.whl --tarball published/*.tgz
+          else
+            npm publish "$TARBALL" --provenance --access public
+          fi
+
   publish:
     if: github.event_name == 'push'
-    needs: test
+    # PyPI waits for npm so that a failed npm publish leaves nothing published.
+    needs: [test, verify-packages, publish-npm]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -82,7 +184,16 @@ jobs:
 
       - run: uv sync
 
-      - name: Build and publish to PyPI
-        run: |
-          uv build
-          uv publish --trusted-publishing always --check-url https://pypi.org/simple/
+      # npm is needed only to pack a tarball to compare the wheel against.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Build
+        run: uv build
+
+      - name: Check the wheel about to be uploaded against the npm tarball
+        run: python3 scripts/check_packages.py --wheel dist/embeddings_tumbler-*-py3-none-any.whl
+
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/

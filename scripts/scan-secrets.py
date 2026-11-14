@@ -18,6 +18,15 @@ links don't trip it:
    ``http(s)://`` URL. ``localhost`` / ``127.0.0.1`` / ``::1`` / ``0.0.0.0``
    are allowed; anything else fails.
 
+3. Registry tokens and registry-token plumbing — both packages publish by
+   trusted publishing (OIDC), so no tracked file may name a variable or CI
+   secret that would carry a registry token (the setup-node auth variable,
+   ``NPM_TOKEN``, ``PYPI_TOKEN``, the twine password, uv's publish
+   token/password, ``secrets.NPM*`` / ``secrets.PYPI*`` / ``secrets.TWINE*``),
+   no ``_authToken=`` may carry a literal value, and a tracked ``.npmrc`` may
+   carry no auth line at all, not even a ``${VAR}`` reference. The npm and
+   PyPI token shapes themselves are part of check 1.
+
 Usage:
     scan-secrets.py                # scan all tracked files (git ls-files)
     scan-secrets.py path [path...] # scan specific files
@@ -54,6 +63,8 @@ _KNOWN_TOKEN_PATTERNS = [
     (r"xox[baprs]-[A-Za-z0-9-]{10,}", "Slack token"),
     (r"sk-[A-Za-z0-9]{20,}", "OpenAI-style secret key"),
     (r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----", "private key block"),
+    (r"\bnpm_[A-Za-z0-9]{36}\b", "npm access token"),
+    (r"pypi-AgE[A-Za-z0-9_-]{50,}", "PyPI API token"),
 ]
 
 # key = value / key: "value" assignments where the key name is secret-ish.
@@ -231,6 +242,36 @@ def _scan_endpoints(path: str, text: str) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Check 3: registry tokens and registry-token plumbing
+# ---------------------------------------------------------------------------
+
+_REGISTRY_PLUMBING = [
+    (r"\bNODE_AUTH_TOKEN\b", "setup-node registry auth variable"),
+    (r"\bNPM_TOKEN\b", "npm token variable"),
+    (r"\bPYPI_(?:API_)?TOKEN\b", "PyPI token variable"),
+    (r"\bTWINE_PASSWORD\b", "twine password variable"),
+    (r"\bUV_PUBLISH_(?:TOKEN|PASSWORD)\b", "uv publish credential variable"),
+    (r"(?i)\bsecrets\.(?:npm|pypi|twine)\w*", "registry credential in CI secrets"),
+    # A literal value after _authToken= (a ${VAR} reference is not a token).
+    (r"_authToken\s*=\s*(?!\$\{)\S", "literal npm auth token"),
+]
+
+_NPMRC_AUTH_RE = re.compile(r"(?i)(?:_authToken|_auth|_password)\s*=")
+
+
+def _scan_registry_tokens(path: str, text: str) -> list[Finding]:
+    findings: list[Finding] = []
+    is_npmrc = Path(path).name == ".npmrc"
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        for pattern, label in _REGISTRY_PLUMBING:
+            if re.search(pattern, line):
+                findings.append(Finding(path, lineno, "registry-token", label))
+        if is_npmrc and _NPMRC_AUTH_RE.search(line):
+            findings.append(Finding(path, lineno, "registry-token", "auth line in a .npmrc"))
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -260,6 +301,7 @@ def scan_paths(paths: list[str]) -> list[Finding]:
             continue
         findings.extend(_scan_credentials(rel_path, text))
         findings.extend(_scan_endpoints(rel_path, text))
+        findings.extend(_scan_registry_tokens(rel_path, text))
     return findings
 
 

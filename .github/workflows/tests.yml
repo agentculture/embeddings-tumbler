@@ -29,6 +29,23 @@ jobs:
 
       - run: uv sync
 
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      # The committed generated files (the assembled core file, the shipped
+      # sample, shell and page copies, package.json's version) must match
+      # their sources; each script exits 1 and names the fix when stale.
+      - name: generated files are current
+        run: |
+          python3 scripts/assemble.py --check
+          python3 scripts/sync_sample.py --check
+          python3 scripts/sync_static.py --check
+          python3 scripts/sync_version.py --check
+
+      - name: node --test
+        run: node --test
+
       - run: uv run pytest -n auto --cov=embeddings_tumbler --cov-report=xml:coverage.xml --cov-report=term -v
 
       - name: SonarCloud Scan

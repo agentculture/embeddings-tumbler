@@ -302,3 +302,104 @@ def test_a_non_http_scheme_is_not_treated_as_an_endpoint(tmp_path: Path) -> None
     """The endpoint check is scoped to http(s) URLs, as documented."""
     findings = _write_and_scan(tmp_path, '{"endpoint": "unix:///var/run/thing.sock"}\n')
     assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# Check 3 (t13): registry tokens and registry-token plumbing. Both packages are
+# published by trusted publishing (OIDC), so no committed file may carry a
+# registry token, a variable or secret that would hold one, or an .npmrc with
+# auth. A local ``${VAR}`` reference in prose (the one-time bootstrap runbook)
+# is not a token; a literal value after ``_authToken=`` is.
+# ---------------------------------------------------------------------------
+
+
+def _registry_findings(path: str, text: str) -> list:
+    return scan_secrets._scan_registry_tokens(path, text)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "          NODE_AUTH_TOKEN: ${{ secrets.WHATEVER }}",
+        "  env:\n    NPM_TOKEN: x",
+        "      PYPI_TOKEN: abc",
+        "      PYPI_API_TOKEN: abc",
+        "      TWINE_PASSWORD: abc",
+        "      UV_PUBLISH_TOKEN: abc",
+        "      UV_PUBLISH_PASSWORD: abc",
+        "      token: ${{ secrets.NPM_PUBLISH }}",
+        "      password: ${{ secrets.PYPI_PASSWORD }}",
+        "      password: ${{ secrets.pypi_api }}",
+        "      x: ${{ secrets.TWINE }}",
+        "//registry.npmjs.org/:_authToken=abcdef0123456789",
+    ],
+)
+def test_registry_token_plumbing_is_caught(line: str) -> None:
+    findings = _registry_findings("workflow.yml", line + "\n")
+    assert findings and all(f.kind == "registry-token" for f in findings), line
+
+
+def test_an_npmrc_with_any_auth_is_caught_even_as_a_reference() -> None:
+    text = "//registry.npmjs.org/:_authToken=${NPM_ACCESS_TOKEN}\n"
+    assert _registry_findings(".npmrc", text)
+    assert _registry_findings("sub/dir/.npmrc", "_auth=Zm9vOmJhcg==\n")
+
+
+def test_an_npmrc_without_auth_is_allowed() -> None:
+    assert _registry_findings(".npmrc", "fund=false\naudit=false\n") == []
+
+
+def test_a_local_env_reference_outside_an_npmrc_is_not_a_token() -> None:
+    # The bootstrap runbook writes a throwaway userconfig outside the repo
+    # that holds only a ${VAR} reference; documenting that line is allowed.
+    text = "printf '%s\\n' '//registry.npmjs.org/:_authToken=${NPM_ACCESS_TOKEN}'\n"
+    assert _registry_findings("docs/release.md", text) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "grant run --inject NPM_ACCESS_TOKEN=NPM_ACCESS_TOKEN -- npm publish",
+        "SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}",
+        "GH_TOKEN: ${{ github.token }}",
+        "uv publish --trusted-publishing always",
+        "npm publish --provenance --access public",
+    ],
+)
+def test_non_registry_lines_are_not_flagged(line: str) -> None:
+    assert _registry_findings("workflow.yml", line + "\n") == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "npm_" + "Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4zAb7c",
+        "pypi-AgEIcHlwaS5vcmc" + "A" * 60,
+    ],
+)
+def test_registry_token_shapes_are_credentials(value: str) -> None:
+    findings = scan_secrets._scan_credentials("x.txt", f"value {value}\n")
+    assert any(f.kind == "credential" for f in findings), value
+
+
+def test_registry_token_check_runs_in_the_cli(tmp_path: Path) -> None:
+    planted = tmp_path / "publish.yml"
+    planted.write_text("env:\n  NODE_AUTH_TOKEN: ${{ secrets.X }}\n", encoding="utf-8")
+    result = _run_cli(str(planted))
+    assert result.returncode == 1
+    assert "registry-token" in result.stderr
+
+
+def test_every_workflow_file_is_free_of_registry_tokens() -> None:
+    workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.y*ml"))
+    assert workflows, "no workflow files found"
+    for path in workflows:
+        text = path.read_text(encoding="utf-8")
+        rel = str(path.relative_to(REPO_ROOT))
+        found = _registry_findings(rel, text) + scan_secrets._scan_credentials(rel, text)
+        assert found == [], [str(f) for f in found]
+
+
+def test_no_npmrc_or_pypirc_is_committed() -> None:
+    tracked = scan_secrets._tracked_files()
+    assert [p for p in tracked if Path(p).name in {".npmrc", ".pypirc"}] == []
