@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-11-14
+
+### Fixed
+
+- Browser tests wait for each mode to be ready and allow more time on a loaded runner; the coverage run in CI timed out on the old 20 s and 90 s waits.
+
 ## [0.11.0] - 2026-11-14
 
 ### Added
