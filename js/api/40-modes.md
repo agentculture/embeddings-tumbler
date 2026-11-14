@@ -128,15 +128,25 @@ What is ready when (measured below):
 
 | Mode | Required before frames | Extra work (drawn when it arrives) |
 |------|------------------------|------------------------------------|
-| Tumble | mean and spread, centring (`ET.math.makeCentre`), principal directions and tour (`ET.math.makeGuidedTour`) | none |
-| Lattice | mean and spread | true neighbours, query rows one at a time until about 1 ms has passed (at most `sliceRows`, 16, per unit); then the wire list |
+| Tumble | mean and spread, centring (`ET.math.makeCentre`), principal directions and tour (`ET.math.makeGuidedTour`), the zoom basis over the tour's directions (`zoomBasisJob`) | none |
+| Lattice | mean and spread; with `hidden: "strongest"` also the fit and the zoom basis | true neighbours, a few candidates of one query row at a time (about 4,096 multiply-adds) until about 1 ms has passed (at most `sliceRows`, 16, rows per unit); then the wire list |
 | Wander | mean and spread, the visit list and the neighbour pool (one unit, `O(N)`), the first stop (its neighbour scan in pieces, then its local frame via `ET.math.makeLocalFrame`) | none at preparation; each later stop is computed ahead of need in the same small pieces, one piece per `stateAt`, during the hop before it |
 
-Every unit is small: the mean and spread are added about 2^19 values per unit
+Every unit is small: the mean and spread are added about 2^13 values per unit
 (`ET.modes.statsJob`), and Tumble's fit runs one `ET.math` stepper unit per
-unit (about 2^20 multiply-adds, or less once 1 ms has passed). No unit takes
+unit (about 2^20 multiply-adds, or less once 1 ms has passed, with a look at
+the clock every 4,096; see `js/api/10-math.md`). No unit takes
 more than a few milliseconds (measured below), so the viewer's per-frame
-budget holds. The fit still uses at most `fitRows` (4,096) rows taken at an
+budget holds, also on a device that runs JavaScript without a compiler
+(`js/api/50-viewer.md`, "Slow devices").
+
+Framing: Tumble and Lattice frame every frame with `autoZoom`'s rule. Done
+directly that is a pass over the 512-point sample in full dimension on every
+frame (1.5 million multiply-adds in 1,024-d). Their frames stay inside the
+span of a few fixed directions (Tumble: the tour's eight, and the entry frame
+during the entry blend; Lattice: the fitted eight and the frame its swap
+schedule started from), so each builds a zoom basis once, in small units while
+it prepares, and frames through `zoomWith` (below). The fit still uses at most `fitRows` (4,096) rows taken at an
 even stride when the set is larger (the variance shares are exact over all
 rows). The frames are bit-identical to a blocking preparation, whatever the
 budgets (tested: `js/test/modes-refit.test.js` pumps Tumble's preparation in
@@ -444,8 +454,8 @@ still shown); it is gone once those axes have been traded away.
 
 Wires: each of the first `neighbourLimit` points is wired to its
 `wireNeighbours` true nearest neighbours **in the full space** among those
-points (`ET.math.makeKnn`, exact, run one row at a time until about 1 ms has
-passed, at most `sliceRows` rows per unit), deduplicated,
+points (`ET.math.makeKnn`, exact, run a few candidates of one row at a time
+until about 1 ms has passed, at most `sliceRows` rows per unit), deduplicated,
 with their true lengths. As in the reference, points with no group get no wires
 of their own when any point in the limit has a group (the unstructured halo
 stays unwired); they can still be another point's neighbour. When the set has
@@ -456,7 +466,7 @@ no groups at all, every point gets wires.
 | `period` | 3.4 | seconds per swap (the reference's) |
 | `neighbourLimit` | 1000 | only the first this-many points get neighbours (the reference's) |
 | `wireNeighbours` | 3 | wires per point (the reference's) |
-| `sliceRows` | 16 | at most this many query rows per unit of neighbour work (the reference's); a unit also stops after its first row once 1 ms has passed |
+| `sliceRows` | 16 | at most this many query rows per unit of neighbour work (the reference's); a unit also stops after its first piece of a row (about 4,096 multiply-adds) once 1 ms has passed |
 | `transition` | 1.2 | seconds to blend draw parameters in |
 | `wireFade` | 1.2 | seconds for the wires to fade in once measured |
 | `centreTau` | 0.7 | seconds, the centre's glide to the mean |
@@ -576,8 +586,17 @@ set with one point (no variance) reports a share of 0.
   fails, `previous` is ignored and the stats are recomputed in full (tested).
 - `statsJob(set) -> { run() -> done, progress(), result }`: the same
   statistics as `stats(set)` (the same object, cached, bit-identical values),
-  added about 2^19 values per `run()`, for a stepper task. A set already cached
+  added about 2^13 values per `run()`, for a stepper task. A set already cached
   finishes in one call. `now()`: the clock the steppers use.
+- `fittedDirections(set, seed, subspace, sampleRows) -> pca | undefined` and
+  `keepDirections(set, seed, subspace, sampleRows, pca)`: a finished fit of the
+  strongest directions, kept with its set (a `WeakMap`). Tumble and Lattice
+  fit the same directions of the same set, and the fit is the longest
+  preparation there is, so the second to ask hands the kept result to
+  `ET.math.makeGuidedTour` as `pca` and is ready in a fraction of the work. It
+  is the result the fit would produce again (tested: a Lattice that took a
+  kept fit shows the same frames, bit for bit, as one that fitted for itself).
+  An appended set is another set and is fitted afresh.
 - `requireDimension(set, min, title)`, `holdState(...)`, `changed(work,
   restart)`, `EMPTY_STATUS`: shared by the three modes for the rules above.
 - `REFERENCE_RADIUS = 0.963`: the sample set's radius (measured: 0.963 at
@@ -595,6 +614,27 @@ set with one point (no variance) reports a share of 0.
   extent fell from up to 1.38 of the half-stage to at most 0.85). A fixed
   sample, so appends past it do not move the framing. Zoom is a draw
   parameter; frames are unchanged. Wander's flight uses its own fixed zoom.
+- `zoomBasisJob(X, N, D, rows, count, sample?) -> { run() -> done, progress(),
+  result }` builds a zoom basis from `count` directions (rows of `rows`) in
+  small pieces for a stepper task: the directions made orthonormal (`B`) and
+  the coordinates of the first `sample` (512) points along each (`Z`).
+  `zoomExtendJob(base, X, rows, count)` does the same for a copy of `base`
+  with more directions (the two share what they have in common), and
+  `extendZoomBasis(base, X, rows, count?)` runs that to the end in one call
+  (3 rows by default: a frame). `zoomWith(zb, X, N, D, frame, centre,
+  sample?)` is `autoZoom`'s rule from those coordinates when every row of the
+  frame lies inside the basis's span (less than 1e-5 of its length outside
+  it): `3 * k * D` multiply-adds for the frame's coefficients and `3 * k * n`
+  for the sample, about a thirtieth of the direct pass. It returns
+  `autoZoom(...)` itself when there is no basis, the sample size differs
+  (points appended to a set smaller than the sample) or the frame is outside
+  the span (a turn onto a refitted tour, a turn back after a swing). Which of
+  the two answers depends on the frame and the basis alone, and the basis on
+  the data, the seed and the entry, so the zoom is still a function of data,
+  seed and time (tested: two instances asked in different orders give
+  identical zooms). The two agree to rounding: measured over 300 s on the
+  sample set at 999 x 1,024, at most 1.5e-9 apart (relative) in Tumble and
+  3.9e-9 in Lattice. `zb.fast` and `zb.exact` count the answers of each kind.
 - `makeGlide`, `alignment`, `applyAlignment`, `entryFrom`, `blendDraw`,
   `startFrame`, `thousands`, `isLabelled`, `checkTime`, `stepper`: the pieces
   the three modes share, documented in the source.

@@ -139,7 +139,7 @@
   // ----- sliced work (the convention of 10-math.js) --------------------------
 
   var UNIT = 1 << 20; // multiply-adds per unit at most
-  var CHECK = UNIT >> 4;
+  var CHECK = 1 << 12; // multiply-adds between two looks at the clock (as in 10-math.js)
   var SLICE_MS = 1;
 
   function clockNow() {

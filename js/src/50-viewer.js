@@ -2131,6 +2131,177 @@ ET.viewer = (function () {
     return ET.renderer.place(out, ds, v.W, v.H);
   }
 
+  // ---------- the label sample along the frame, without a pass in full dimension ----------
+  //
+  // Names and hover need the screen position of every point of the label sample on every
+  // frame: 3 * n * D multiply-adds done directly (921,600 for 300 points in 1,024-d; on a
+  // device that runs JavaScript without a compiler that alone was about 50 ms a frame).
+  // But a frame moves inside the span of a few directions for seconds at a time (Tumble:
+  // the tour's eight; Lattice: one new direction per swap; a mode that prepares: the frame
+  // it holds). The projector keeps an orthonormal basis Q of the directions the frames
+  // shown lately lay in, with each sample point's coordinate along each (P). A frame row
+  // inside the span costs its coefficients in Q (k * D) and a k-term sum per point; a row
+  // with a part outside it adds that part to Q (one pass over the sample, n * D). When Q is
+  // full it starts again from the frame shown. A row counts as inside when less than
+  // PROJECT_TOL of its length is outside, so a position is off by at most PROJECT_TOL times
+  // the point's distance from the origin: under a hundredth of a pixel.
+
+  var PROJECT_TOL2 = 1e-12; // PROJECT_TOL squared
+  var PROJECT_CAP = 32; // directions kept at most
+
+  function makeProjector(D, ids, cap) {
+    var K = Math.max(4, cap || PROJECT_CAP);
+    var Q = []; // orthonormal directions, Float64Array(D) each
+    var P = []; // P[j][i] = (sample point i) . Q[j]
+    var coef = new Float64Array(3 * K);
+    var X = null;
+    var n = 0;
+    var self = { D: D, ids: ids, size: 0, added: 0, resets: 0, bind: bind, into: into };
+
+    function column(q, col, from, to) {
+      for (var i = from; i < to; i++) {
+        var o = ids[i] * D;
+        var s = 0;
+        for (var d = 0; d < D; d++) s += X[o + d] * q[d];
+        col[i] = s;
+      }
+    }
+
+    // The vector block and how many sample points to answer for. Points beyond the ones
+    // already bound (an append) get their coordinates; the earlier rows are unchanged.
+    function bind(vectors, count) {
+      var from = X === null ? 0 : n;
+      X = vectors;
+      if (count > from) {
+        for (var j = 0; j < Q.length; j++) {
+          if (P[j].length < count) {
+            var wider = new Float64Array(Math.max(count, ids.length));
+            wider.set(P[j].subarray(0, from));
+            P[j] = wider;
+          }
+          column(Q[j], P[j], from, count);
+        }
+      }
+      n = count;
+    }
+
+    // Row r's coefficients in Q into coef; true when the row is inside the span.
+    function coefficients(F, r) {
+      var o = r * D;
+      var nf = 0;
+      for (var d = 0; d < D; d++) nf += F[o + d] * F[o + d];
+      var got = 0;
+      for (var j = 0; j < Q.length; j++) {
+        var q = Q[j];
+        var c = 0;
+        for (var d2 = 0; d2 < D; d2++) c += F[o + d2] * q[d2];
+        coef[r * K + j] = c;
+        got += c * c;
+      }
+      return nf - got <= PROJECT_TOL2 * nf; // false for NaN too
+    }
+
+    // The part of row r outside the span, as a unit vector, or null when there is none
+    // to speak of (or the row is not finite).
+    function outside(F, r) {
+      var o = r * D;
+      var q = new Float64Array(D);
+      var nf = 0;
+      for (var d = 0; d < D; d++) {
+        q[d] = F[o + d];
+        nf += q[d] * q[d];
+      }
+      for (var pass = 0; pass < 2; pass++) {
+        for (var b of Q) {
+          var dp = 0;
+          for (var d2 = 0; d2 < D; d2++) dp += q[d2] * b[d2];
+          for (var d3 = 0; d3 < D; d3++) q[d3] -= dp * b[d3];
+        }
+      }
+      var nn = 0;
+      for (var d4 = 0; d4 < D; d4++) nn += q[d4] * q[d4];
+      var real = nn > (PROJECT_TOL2 / 4) * nf; // false for NaN too
+      if (!real) return null;
+      var inv = 1 / Math.sqrt(nn);
+      for (var d5 = 0; d5 < D; d5++) q[d5] *= inv;
+      return q;
+    }
+
+    // Make row r answerable: 0 when it is (after adding its outside part if it had
+    // one), 1 when the basis was full and has been emptied (every row starts again).
+    function cover(F, r) {
+      if (coefficients(F, r)) return 0;
+      var q = outside(F, r);
+      if (!q) return 0;
+      if (Q.length >= K) {
+        Q = [];
+        P = [];
+        self.resets++;
+        return 1;
+      }
+      var col = new Float64Array(Math.max(n, ids.length));
+      column(q, col, 0, n);
+      Q.push(q);
+      P.push(col);
+      self.added++;
+      coefficients(F, r);
+      return 0;
+    }
+
+    // out[3 * i + r] = (sample point i - centre) . (frame row r), for i < n.
+    function into(F, C, out) {
+      var r = 0;
+      var restarts = 0;
+      var before = self.added;
+      while (r < 3) {
+        if (cover(F, r) && restarts < 2) {
+          restarts++;
+          r = 0;
+        } else r++;
+      }
+      // A direction added for a later row is one the earlier rows have no coefficient
+      // for yet: work all three out again against the basis as it is now.
+      if (self.added !== before) for (var r2 = 0; r2 < 3; r2++) coefficients(F, r2);
+      self.size = Q.length;
+      var f0 = 0;
+      var f1 = 0;
+      var f2 = 0;
+      for (var d = 0; d < D; d++) {
+        f0 += C[d] * F[d];
+        f1 += C[d] * F[D + d];
+        f2 += C[d] * F[2 * D + d];
+      }
+      for (var i = 0; i < n; i++) {
+        out[3 * i] = -f0;
+        out[3 * i + 1] = -f1;
+        out[3 * i + 2] = -f2;
+      }
+      for (var j = 0; j < Q.length; j++) {
+        var col = P[j];
+        var c0 = coef[j];
+        var c1 = coef[K + j];
+        var c2 = coef[2 * K + j];
+        for (var i2 = 0; i2 < n; i2++) {
+          out[3 * i2] += c0 * col[i2];
+          out[3 * i2 + 1] += c1 * col[i2];
+          out[3 * i2 + 2] += c2 * col[i2];
+        }
+      }
+      return out;
+    }
+
+    return self;
+  }
+
+  // The projector for the label sample as it is now (a new one after a replace, a
+  // rebuilt sample or a rollback; an append only adds its points).
+  function sampleProjector(v, n) {
+    var D = v.set.dimension;
+    if (v.projector?.ids !== v.labelSample || v.projector.D !== D) v.projector = makeProjector(D, v.labelSample);
+    v.projector.bind(v.set.vectors, n);
+    return v.projector;
+  }
+
   // The overlay's 2-D context, looked up once (null when there is none).
   function overlayContext(v) {
     if (v.overlayCtx === undefined) v.overlayCtx = safeContext2d(v.overlay);
@@ -2263,12 +2434,17 @@ ET.viewer = (function () {
     clearLabels(v, used);
   }
 
-  // Screen positions of the first n points of the label sample, into v.sx and v.sy.
+  // Screen positions of the first n points of the label sample, into v.sx and v.sy:
+  // their coordinates along the frame from the projector, then the screen mapping with
+  // the draw state merged once.
   function projectSample(v, s, ds, n) {
-    var sample = v.labelSample;
-    var tmp = v.tmp3;
+    if (n === 0) return;
+    if (v.sampleCoords.length < 3 * n) v.sampleCoords = new Float64Array(3 * Math.max(n, LABEL_SAMPLE));
+    var co = sampleProjector(v, n).into(s.frame, s.centre, v.sampleCoords);
+    var put = ET.renderer.placer(ds, v.W, v.H);
+    var q = v.placed;
     for (var j = 0; j < n; j++) {
-      var q = project(v, sample[j], s, ds, tmp);
+      put(co[3 * j], co[3 * j + 1], co[3 * j + 2], q);
       v.sx[j] = q.x;
       v.sy[j] = q.y;
     }
@@ -4054,6 +4230,9 @@ ET.viewer = (function () {
       sx: new Float32Array(LABEL_SAMPLE),
       sy: new Float32Array(LABEL_SAMPLE),
       tmp3: [0, 0, 0],
+      projector: null, // the label sample's projector (makeProjector), made when first needed
+      sampleCoords: new Float64Array(3 * LABEL_SAMPLE),
+      placed: { x: 0, y: 0 },
       overlayDirty: false,
       listeners: [],
       io: null,
@@ -4314,6 +4493,7 @@ ET.viewer = (function () {
     },
     parseColour: parseColour,
     safeCssValue: safeCssValue,
+    makeProjector: makeProjector,
     SHADOW: SHADOW,
   };
 })();

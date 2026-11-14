@@ -10,7 +10,8 @@
 // ---------------------------------------------------------------------------
 (function () {
   var M = ET.modes;
-  var KNN_SLICE_MS = 1; // a unit of neighbour work stops after its first row once this has passed
+  var KNN_SLICE_MS = 1; // a unit of neighbour work stops after its first piece once this has passed
+  var KNN_PIECE = 1 << 12; // multiply-adds between two looks at the clock (a few candidates of one row)
   var SALT_RESUME = 0x1a77ce; // the swap schedule that starts after a swing draws from its own stream
 
   var DEFAULTS = {
@@ -64,6 +65,11 @@
     var fitAtEntry = false; // decided once per entry: the entry waits for the fit
     var fitShare = null; // share of variance in those directions
     var swapBasis = null; // { basis, rows } the swap tour draws hidden directions from, when guided
+    // Zoom bases (M.zoomWith), when guided: every frame of a swap schedule lies in the
+    // span of the fitted directions and the frame the schedule started from, so the
+    // framing need not pass over the sample in full dimension on every frame.
+    var zoomBase = null; // over the fitted directions alone
+    var zoomBasis = null; // with the entry's starting frame: the entry's schedule
     var swings = null; // the swings toward the searches (M.makeSwings)
     var epoch = 0; // bumped by enter and leave: work queued for an earlier entry does nothing
     var hold = null;
@@ -98,6 +104,8 @@
       guided = false;
       fitShare = null;
       swapBasis = null;
+      zoomBase = null;
+      zoomBasis = null;
       swings = M.makeSwings(D, seed);
       fitAtEntry = wantsGuided(s);
       epoch++;
@@ -136,6 +144,8 @@
       var fitSet = set;
       var cen = null;
       var tourSt = null;
+      var zoomJob = null;
+      var base = null;
       return [
         {
           required: true,
@@ -157,15 +167,18 @@
           },
           run: function () {
             if (mine !== epoch) return true;
+            var rows = fitSet.count > opt.fitRows ? opt.fitRows : undefined;
             if (!tourSt) {
               tourSt = ET.math.makeGuidedTour(cen.result.data, fitSet.count, D, {
                 seed: seed,
                 subspace: Math.min(opt.subspace, D),
-                sampleRows: fitSet.count > opt.fitRows ? opt.fitRows : undefined,
+                sampleRows: rows,
+                pca: M.fittedDirections(fitSet, seed, opt.subspace, rows),
               });
             }
             if (!tourSt.step(0)) return false;
             var tour = tourSt.result;
+            M.keepDirections(fitSet, seed, opt.subspace, rows, tour.pca);
             cen = null; // the centred copy is not kept
             tourSt = null;
             swap = ET.math.makeSwapTour(hold, D, {
@@ -174,9 +187,30 @@
               basis: tour.basis,
               basisRows: tour.subspace,
             });
-            guided = true;
             swapBasis = { basis: tour.basis, rows: tour.subspace };
             fitShare = tour.varianceShare;
+            return true;
+          },
+        },
+        {
+          required: true,
+          weight: 0.5,
+          progress: function () {
+            if (!zoomJob) return 0;
+            return base ? zoomJob.progress() : zoomJob.progress() * 0.7;
+          },
+          run: function () {
+            if (mine !== epoch) return true;
+            if (!zoomJob) zoomJob = M.zoomBasisJob(fitSet.vectors, fitSet.count, D, swapBasis.basis, swapBasis.rows, opt.zoomSample);
+            if (!zoomJob.run()) return false;
+            if (!base) {
+              base = zoomJob.result;
+              zoomJob = M.zoomExtendJob(base, fitSet.vectors, hold, 3);
+              return false;
+            }
+            zoomBase = base;
+            zoomBasis = zoomJob.result;
+            guided = true;
             return true;
           },
         },
@@ -196,14 +230,20 @@
         },
         run: function () {
           if (knn !== stepper) return true; // superseded by a newer measurement
-          // Query rows one at a time until about KNN_SLICE_MS has passed (at
-          // least one row, at most sliceRows). The rows are measured in order
-          // whatever the slicing, so the wires never depend on it.
+          // A few candidates of the row in progress at a time (about KNN_PIECE
+          // multiply-adds) until about KNN_SLICE_MS has passed: at least one
+          // piece, at most sliceRows rows' worth. A whole row is up to
+          // neighbourLimit * D multiply-adds, which on a device that runs
+          // JavaScript slowly held a frame for tens of milliseconds. The rows
+          // and their candidates are measured in order whatever the slicing,
+          // so the wires never depend on it.
           var start = M.now();
-          var rows = 0;
-          while (!stepper.done && rows < opt.sliceRows && (rows === 0 || M.now() - start < KNN_SLICE_MS)) {
-            stepper.step(1);
-            rows++;
+          var piece = Math.max(1, Math.floor(KNN_PIECE / D));
+          var from = stepper.next;
+          var first = true;
+          while (!stepper.done && stepper.next - from < opt.sliceRows && (first || M.now() - start < KNN_SLICE_MS)) {
+            stepper.stepPart(piece);
+            first = false;
           }
           if (!stepper.done) return false;
           buildWires(s, stepper);
@@ -300,7 +340,7 @@
       } else {
         swapAt(sw, t).frameAt(sw ? t - sw.U : t, out.frame);
         glide.at(t, out.centre);
-        zoom = M.autoZoom(set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample);
+        zoom = M.zoomWith(zoomFor(sw), set.vectors, set.count, D, out.frame, out.centre, opt.zoomSample);
       }
       var sc = st.radius / M.REFERENCE_RADIUS;
       var draw = {
@@ -340,6 +380,16 @@
         sw.cache.swap = ET.math.makeSwapTour(M.swingEnd(sw).frame, D, o);
       }
       return sw.cache.swap;
+    }
+
+    // The zoom basis of the schedule in force (swapAt): the entry's, or after a
+    // swing the fitted directions with the frame shown at the swing's end, built
+    // once per swing (three passes over the sample, the cost of one frame before).
+    // Null when the hidden directions come from the full space.
+    function zoomFor(sw) {
+      if (!sw || !zoomBase) return zoomBasis;
+      if (!sw.cache.zoomBasis) sw.cache.zoomBasis = M.extendZoomBasis(zoomBase, set.vectors, M.swingEnd(sw).frame);
+      return sw.cache.zoomBasis;
     }
 
     function swapStateAt(sw, t) {

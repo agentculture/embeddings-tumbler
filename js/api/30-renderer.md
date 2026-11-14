@@ -80,6 +80,14 @@ shader computes). `state` uses `zoom`, `yaw`, `pitch`, `radius`, `focus` (defaul
 as below). Returns canvas pixels with `y` growing downward, the perspective
 `scale`, and `depth` relative to the focus plane.
 
+### `ET.renderer.placer(state, width, height) -> (a, b, c, out) => out`
+
+`place` for many points under one state. `place` merges the state with the
+defaults on every call (a new object each time); `placer` does it once and
+returns a function that writes `out.x` and `out.y`, the same numbers `place`
+returns for `[a, b, c]` (tested equal). The viewer uses it for the label
+sample.
+
 ### `ET.renderer.DEFAULTS`
 
 The frozen default draw state (the reference's values). See the table under
