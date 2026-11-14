@@ -9,6 +9,13 @@
 // sample set). It fetches a data file and its sibling .f32 block itself, same
 // origin only, and hands the in-memory form to update, which validates it and
 // shows any refusal inside the viewer. The page's own messages use textContent.
+//
+// Search: the page asks its OWN origin whether the helper route is there
+// (POST /_tumbler/search {"op":"describe"}, from `viewer serve --embed`). If it
+// answers, the viewer is mounted with embed (and rerank) callbacks that post to
+// that same route; otherwise with none, and search matches the loaded points.
+// The route's address is fixed here: no query parameter and no data file field
+// can change it.
 (function () {
   "use strict";
 
@@ -21,9 +28,26 @@
   // when the server sends none. The binary .f32 block is not limited here.
   const MAX_RECORDS_BYTES = 64 * 1024 * 1024;
   const MAX_RECORDS_TEXT = "64 MB";
+  // The helper route: a fixed path on the page's own origin, never configurable.
+  const ROUTE = "/_tumbler/search";
+  const PROBE_MS = 2500; // how long the describe request may take
+  const DEFAULT_CANDIDATE_CHARS = 4000;
+  // What the page says for each refusal code of the route. The server's own text is
+  // never shown: these are the page's words.
+  const ROUTE_MESSAGES = {
+    "rate-limited": "The search helper is busy: too many searches in the last minute.",
+    "text-too-long": "The search text is too long for the search helper.",
+    "too-many-candidates": "Too many candidates were sent to the reranker.",
+    "gateway-timeout": "The embedding service did not answer in time.",
+    "gateway-failed": "The embedding service did not answer.",
+    "rerank-unavailable": "The search helper does not offer reranking.",
+  };
+  const ROUTE_UNREACHABLE = "The search helper could not be reached.";
+  const ROUTE_REFUSED = "The search helper refused the request.";
 
   const doc = document;
   const body = doc.body;
+  let helperReady = Promise.resolve({}); // the helper's callbacks, set in start()
   const space = doc.getElementById("space");
   const wait = doc.getElementById("wait");
   const waitText = doc.getElementById("wait-text");
@@ -130,11 +154,103 @@
     }
   }
 
+  // ---------- the helper route (search by embedding) ----------
+
+  // The route's address, built from this page's own location. It is the same on every
+  // page load and nothing the query string or a data file says reaches it.
+  function routeAddress() {
+    const url = new URL(ROUTE, window.location.href);
+    return sameOrigin(url) ? url.href : null;
+  }
+
+  function refusalText(answer) {
+    const code = answer && typeof answer === "object" ? answer.code : null;
+    return (typeof code === "string" && Object.hasOwn(ROUTE_MESSAGES, code) && ROUTE_MESSAGES[code]) || ROUTE_REFUSED;
+  }
+
+  // One request to the route. Resolves with the answer object, or throws an Error whose
+  // message is plain text of the page's own (never the server's text).
+  async function callRoute(address, payload, signal) {
+    let res;
+    try {
+      res = await window.fetch(address, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "same-origin",
+        redirect: "error",
+        cache: "no-store",
+        signal: signal,
+      });
+    } catch (err) {
+      throw new Error(ROUTE_UNREACHABLE);
+    }
+    let answer = null;
+    try {
+      answer = await res.json();
+    } catch (err) {
+      answer = null;
+    }
+    if (!res.ok || !answer || answer.ok !== true) throw new Error(refusalText(answer));
+    return answer;
+  }
+
+  function limitOf(described, name, fallback) {
+    const value = Number(described.limits?.[name]);
+    return Number.isInteger(value) && value > 0 ? value : fallback;
+  }
+
+  function helperCallbacks(address, described) {
+    const maxChars = limitOf(described, "maxCandidateChars", DEFAULT_CANDIDATE_CHARS);
+    const callbacks = {
+      embed: async function (text) {
+        const answer = await callRoute(address, { op: "embed", text: text });
+        return { vector: answer.vector, model: answer.model, queryForm: answer.query_form };
+      },
+    };
+    if (described.rerank && typeof described.rerank === "object") {
+      callbacks.rerank = async function (query, candidates) {
+        const cut = candidates.map((c) => String(c).slice(0, maxChars));
+        const answer = await callRoute(address, { op: "rerank", query: query, candidates: cut });
+        return { scores: answer.scores, model: answer.model };
+      };
+    }
+    return callbacks;
+  }
+
+  // Ask the page's own origin for the helper. Always resolves: with the callbacks when
+  // the route answers `describe`, and with {} for anything else (a static server's
+  // 404 or 501, a network error, an answer that is not JSON, no answer in time). One
+  // request, no retry.
+  async function findHelper() {
+    const page = window.location;
+    if (page.protocol !== "http:" && page.protocol !== "https:") return {};
+    const address = routeAddress();
+    if (!address) return {};
+    let controller = null;
+    try {
+      controller = new AbortController();
+    } catch (err) {
+      controller = null;
+    }
+    const timer = window.setTimeout(() => controller?.abort(), PROBE_MS);
+    try {
+      const described = await callRoute(address, { op: "describe" }, controller?.signal);
+      if (typeof described.embed?.model !== "string" || described.embed.model === "") return {};
+      return helperCallbacks(address, described);
+    } catch (err) {
+      return {};
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
   // ---------- mounting ----------
 
-  function show(data, options, source) {
+  async function show(data, options, source) {
     const api = window.EmbeddingsTumbler;
     mark("tumbler-page-data-ready");
+    const callbacks = await helperReady;
     wait.remove();
     const opts = {
       title: TITLE,
@@ -143,6 +259,8 @@
     };
     if (options.mode) opts.mode = options.mode;
     if (options.seed !== undefined) opts.seed = options.seed;
+    if (callbacks.embed) opts.embed = callbacks.embed;
+    if (callbacks.rerank) opts.rerank = callbacks.rerank;
     const handle = api.mount(space, opts);
     mark("tumbler-page-mount");
     const result = handle.update(data);
@@ -176,11 +294,9 @@
           fail("The sample set could not be generated.");
           return;
         }
-        try {
-          show(data, options, { sample: true, name: "the built-in sample set" });
-        } catch (err) {
+        show(data, options, { sample: true, name: "the built-in sample set" }).catch(function () {
           fail("The page could not start the viewer.");
-        }
+        });
       }, 0);
     });
   }
@@ -263,7 +379,7 @@
     if (!isFileForm(records, v)) {
       // Not a readable file-form set: the viewer refuses it with its own message.
       load.done = true;
-      show(records, options, { sample: false, name: name });
+      await show(records, options, { sample: false, name: name });
       return;
     }
     if (!PLAIN_FILE.test(v.file)) {
@@ -274,7 +390,7 @@
     load.done = true;
     // The descriptor stays, with the block beside it: the viewer checks the
     // file form's own fields (dtype, byte order, declared length) against it.
-    show({ ...records, vectors: { ...v, data: block } }, options, { sample: false, name: name });
+    await show({ ...records, vectors: { ...v, data: block } }, options, { sample: false, name: name });
   }
 
   function showFile(address, options) {
@@ -344,6 +460,7 @@
       return;
     }
     const query = readQuery();
+    helperReady = findHelper();
     try {
       if (query.data) showFile(query.data, query.options);
       else showSample(query.options);
