@@ -2737,6 +2737,552 @@
   };
 })();
 // ---------------------------------------------------------------------------
+// 26-search-sets.js: several searches at once (ET.searchSets).
+//
+// Up to four searches are active together. Given their rankings (the shape
+// ET.search makes, js/api/24-search.md) this module answers what is lit and
+// how strongly under the three lit settings, which points carry the shared
+// mark, the report for each pair of searches, the point-of-view scale of one
+// search, and the seeded linear view that faces the searches.
+//
+// Pure: no DOM, no WebGL, no network. The only random numbers are drawn from
+// ET.math.makeRandom on a seed derived from the view seed, so the same data,
+// searches and seed give the same frame bit for bit. Every projection is
+// linear: the facing frame is three orthonormal rows applied to every point.
+//
+// Documented in js/api/26-search-sets.md.
+// ---------------------------------------------------------------------------
+ET.searchSets = (function () {
+  var MAX_SEARCHES = 4;
+  var LETTERS = Object.freeze(["A", "B", "C", "D"]);
+  var LIT_SETTINGS = Object.freeze(["even", "close", "named"]);
+  var DEFAULT_LIT = "even";
+  var LIT_THRESHOLD = 0.02;
+  var CLOSE_REACH = 2.2;
+  var CLOSE_POWER = 1.6;
+  var FACE_SALT = 0x46414345;
+  var FACE_ITERATIONS = 25;
+  var FACE_ZOOM = 0.7;
+  var FACE_MIN_REACH = 1e-3;
+  // A candidate axis is kept when what is left after removing the axes so far
+  // is longer than KEEP times its length before.
+  var KEEP = 1e-6;
+  // The facing-frame stepper pauses after this many multiply-adds (counted, not
+  // timed, so the pauses fall at the same places on every run).
+  var FACE_UNIT = 1 << 17;
+
+  // ----- small functions -----------------------------------------------------
+
+  function letter(j) {
+    if (!Number.isInteger(j) || j < 0 || j >= MAX_SEARCHES) {
+      throw new RangeError("a search position is an integer from 0 to " + (MAX_SEARCHES - 1));
+    }
+    return LETTERS[j];
+  }
+
+  function litSetting(value) {
+    return LIT_SETTINGS.includes(value) ? value : DEFAULT_LIT;
+  }
+
+  function isVectorLike(v) {
+    return v !== null && typeof v === "object" && typeof v.length === "number";
+  }
+
+  function scaleFor(vector) {
+    if (!isVectorLike(vector)) throw new TypeError("scaleFor: the query vector must be an array of numbers");
+    var s = new Float32Array(vector.length);
+    for (var d = 0; d < vector.length; d++) s[d] = Math.abs(vector[d]);
+    return s;
+  }
+
+  function checkSearches(searches) {
+    if (!Array.isArray(searches)) throw new TypeError("searches must be an array");
+    if (searches.length > MAX_SEARCHES) {
+      throw new RangeError("at most " + MAX_SEARCHES + " searches can be active at once");
+    }
+  }
+
+  function hasResults(ranking) {
+    return typeof ranking.radius === "number" && ranking.hits.length > 0;
+  }
+
+  // ----- lit values ----------------------------------------------------------
+
+  function closeValue(d, near, reach) {
+    var x = Math.min(Math.max(1 - (d - near) / (reach - near), 0), 1);
+    return x ** CLOSE_POWER;
+  }
+
+  // The value one search gives a point at distance d (named results are set apart).
+  function searchValue(how, d, isIn, near, reach) {
+    if (how === "close") return closeValue(d, near, reach);
+    return how === "even" && isIn ? 1 : 0;
+  }
+
+  function lightNamed(ranking, count, out) {
+    for (var h = 0; h < ranking.hits.length; h++) {
+      var at = ranking.hits[h].index;
+      if (at < count) out.lit[at] = 1;
+    }
+  }
+
+  // Adds one search to `out`; returns how many points are inside it.
+  function lightSearch(ranking, count, how, out) {
+    if (!hasResults(ranking)) return 0;
+    var dist = ranking.distances;
+    var n = Math.min(count, dist.length);
+    var radius = ranking.radius;
+    var near = ranking.near;
+    var reach = near + (radius - near) * CLOSE_REACH + 1e-6;
+    var inside = 0;
+    for (var i = 0; i < n; i++) {
+      var isIn = dist[i] <= radius;
+      if (isIn) {
+        out.inside[i]++;
+        inside++;
+      }
+      var v = searchValue(how, dist[i], isIn, near, reach);
+      if (v > out.lit[i]) out.lit[i] = v;
+    }
+    if (how === "named") lightNamed(ranking, count, out);
+    return inside;
+  }
+
+  function litValues(searches, count, setting) {
+    checkSearches(searches);
+    if (!Number.isInteger(count) || count < 0) throw new RangeError("count must be a non-negative integer");
+    var how = litSetting(setting);
+    var out = {
+      lit: new Float32Array(count),
+      shared: new Uint8Array(count),
+      inside: new Uint8Array(count),
+      insideCounts: [],
+      litCount: 0,
+      sharedCount: 0,
+    };
+    for (var s = 0; s < searches.length; s++) out.insideCounts.push(lightSearch(searches[s], count, how, out));
+    for (var i = 0; i < count; i++) {
+      if (out.lit[i] > LIT_THRESHOLD) out.litCount++;
+      if (out.inside[i] >= 2 && out.lit[i] > 0) {
+        out.shared[i] = 1;
+        out.sharedCount++;
+      }
+    }
+    return out;
+  }
+
+  // ----- pair reports --------------------------------------------------------
+
+  function checkIndex(index, count) {
+    if (!Number.isInteger(index) || index < 0 || index >= count) {
+      throw new RangeError("a named result's index is not a row of the set: " + index);
+    }
+  }
+
+  // The length of every named result's row, in double precision.
+  function hitLengths(X, D, count, hits) {
+    var lengths = new Float64Array(hits.length);
+    for (var h = 0; h < hits.length; h++) {
+      checkIndex(hits[h].index, count);
+      var o = hits[h].index * D;
+      var sum = 0;
+      for (var d = 0; d < D; d++) sum += X[o + d] * X[o + d];
+      lengths[h] = Math.sqrt(sum);
+    }
+    return lengths;
+  }
+
+  // Plain cosine distance between two loaded rows; a zero row is at distance 1.
+  function rowDistance(X, D, i, j, li, lj) {
+    if (li === 0 || lj === 0) return 1;
+    var oi = i * D;
+    var oj = j * D;
+    var dot = 0;
+    for (var d = 0; d < D; d++) dot += X[oi + d] * X[oj + d];
+    var cos = Math.min(Math.max(dot / (li * lj), -1), 1);
+    return 1 - cos;
+  }
+
+  function sharedBetween(ra, rb) {
+    if (!hasResults(ra) || !hasResults(rb)) return 0;
+    var n = Math.min(ra.distances.length, rb.distances.length);
+    var shared = 0;
+    for (var i = 0; i < n; i++) {
+      if (ra.distances[i] <= ra.radius && rb.distances[i] <= rb.radius) shared++;
+    }
+    return shared;
+  }
+
+  function closestPair(X, D, ra, rb, la, lb) {
+    var best = null;
+    for (var x = 0; x < ra.hits.length; x++) {
+      var ia = ra.hits[x].index;
+      for (var y = 0; y < rb.hits.length; y++) {
+        var ib = rb.hits[y].index;
+        if (ia === ib) continue;
+        var dist = rowDistance(X, D, ia, ib, la[x], lb[y]);
+        if (best === null || dist < best.distance) best = { a: ia, b: ib, distance: dist };
+      }
+    }
+    return best;
+  }
+
+  function pairReports(set, searches) {
+    checkSearches(searches);
+    var X = set.vectors;
+    var D = set.dimension;
+    var lengths = [];
+    for (var s = 0; s < searches.length; s++) lengths.push(hitLengths(X, D, set.count, searches[s].hits));
+    var pairs = [];
+    for (var a = 0; a < searches.length; a++) {
+      for (var b = a + 1; b < searches.length; b++) {
+        var ra = searches[a];
+        var rb = searches[b];
+        var inB = new Set();
+        for (var h = 0; h < rb.hits.length; h++) inB.add(rb.hits[h].index);
+        var commonIndices = [];
+        for (var g = 0; g < ra.hits.length; g++) {
+          if (inB.has(ra.hits[g].index)) commonIndices.push(ra.hits[g].index);
+        }
+        pairs.push({
+          a: a,
+          b: b,
+          shared: sharedBetween(ra, rb),
+          common: commonIndices.length,
+          commonIndices: commonIndices,
+          closest: closestPair(X, D, ra, rb, lengths[a], lengths[b]),
+        });
+      }
+    }
+    return pairs;
+  }
+
+  // ----- the facing frame: vector helpers (double precision) -----------------
+
+  function dotD(a, b, D) {
+    var s = 0;
+    for (var d = 0; d < D; d++) s += a[d] * b[d];
+    return s;
+  }
+
+  function lengthD(a, D) {
+    return Math.sqrt(dotD(a, a, D));
+  }
+
+  // Removes from v its components along each of `axes` (orthonormal rows), once.
+  function removeAxes(v, axes, D) {
+    for (var k = 0; k < axes.length; k++) {
+      var p = dotD(v, axes[k], D);
+      for (var d = 0; d < D; d++) v[d] -= p * axes[k][d];
+    }
+  }
+
+  // Step 3: Gram-Schmidt against the axes so far (twice); kept when what is left
+  // is longer than KEEP times the candidate, then normalised and appended.
+  function offer(axes, candidate, D) {
+    var before = lengthD(candidate, D);
+    removeAxes(candidate, axes, D);
+    removeAxes(candidate, axes, D);
+    var after = lengthD(candidate, D);
+    if (before > 0 && after > KEEP * before) {
+      for (var d = 0; d < D; d++) candidate[d] /= after;
+      axes.push(candidate);
+      return true;
+    }
+    return false;
+  }
+
+  // Step 6: the standard basis vectors e_0, e_1, ... in order until one is kept.
+  // With fewer than three axes and D >= 3 one always is.
+  function offerBasis(axes, D) {
+    for (var d = 0; d < D; d++) {
+      var e = new Float64Array(D);
+      e[d] = 1;
+      if (offer(axes, e, D)) return;
+    }
+  }
+
+  function checkLength(v, length, what) {
+    if (!isVectorLike(v) || v.length !== length) {
+      throw new TypeError("facing frame: " + what + " must have " + length + " values");
+    }
+  }
+
+  function checkOption(v, length, what) {
+    if (v === null || v === undefined) return null;
+    if (!(v instanceof Float32Array) || v.length !== length) {
+      throw new TypeError("facing frame: " + what + " must be a Float32Array of " + length + " values");
+    }
+    return v;
+  }
+
+  function checkFacing(set, searches) {
+    var D = set.dimension;
+    for (var j = 0; j < searches.length; j++) {
+      checkLength(searches[j].query, D, "each query");
+      if (!Array.isArray(searches[j].hits)) throw new TypeError("facing frame: each search needs a hits array");
+      for (var h = 0; h < searches[j].hits.length; h++) checkIndex(searches[j].hits[h].index, set.count);
+    }
+  }
+
+  // ----- the facing frame: the computation, as a generator --------------------
+
+  // Counts multiply-adds and says when a unit of work is over.
+  function FaceWork(total) {
+    this.total = total;
+    this.done = 0;
+    this.acc = 0;
+  }
+  FaceWork.prototype.add = function (cost) {
+    this.done += cost;
+    this.acc += cost;
+    if (this.acc < FACE_UNIT) return false;
+    this.acc = 0;
+    return true;
+  };
+
+  // One search's rows: its query and its named results' loaded vectors.
+  function searchRows(X, D, search) {
+    var mine = [search.query];
+    for (var h = 0; h < search.hits.length; h++) {
+      var o = search.hits[h].index * D;
+      mine.push(X.subarray(o, o + D));
+    }
+    return mine;
+  }
+
+  // The mean of rows (each optionally scaled by s), in double precision.
+  function meanOfRows(rows, D, s) {
+    var c = new Float64Array(D);
+    for (var r = 0; r < rows.length; r++) {
+      for (var d = 0; d < D; d++) c[d] += s ? rows[r][d] * s[d] : rows[r][d];
+    }
+    for (var e = 0; e < D; e++) c[e] /= rows.length;
+    return c;
+  }
+
+  // (row * s) - c for one row, in double precision.
+  function offsetOf(row, D, s, c) {
+    var v = new Float64Array(D);
+    for (var d = 0; d < D; d++) v[d] = (s ? row[d] * s[d] : row[d]) - c[d];
+    return v;
+  }
+
+  // The rows of every search (its query and its named results), unscaled, each
+  // search's centre scaled and unscaled, and each scaled row's offset from its
+  // search's scaled centre.
+  function gatherRows(fit) {
+    var out = { scaledCentres: [], plainCentres: [], offsets: [], plainRows: [] };
+    for (var j = 0; j < fit.searches.length; j++) {
+      var mine = searchRows(fit.X, fit.D, fit.searches[j]);
+      var c = meanOfRows(mine, fit.D, fit.scale);
+      out.scaledCentres.push(c);
+      out.plainCentres.push(meanOfRows(mine, fit.D, null));
+      for (var r = 0; r < mine.length; r++) {
+        out.plainRows.push(mine[r]);
+        out.offsets.push(offsetOf(mine[r], fit.D, fit.scale, c));
+      }
+    }
+    return out;
+  }
+
+  // Step 5: a power iteration on the spread of the rows about their own centres,
+  // from a seeded start. Returns the candidate, or null when the spread left
+  // outside the axes so far is zero (then the basis fallback applies).
+  function* spreadAxis(fit, offsets, axes, wk) {
+    var D = fit.D;
+    var v = new Float64Array(D);
+    ET.math.makeRandom(ET.math.mixSeed(fit.seed, FACE_SALT + axes.length)).fillGauss(v);
+    for (var it = 0; it < FACE_ITERATIONS; it++) {
+      var w = new Float64Array(D);
+      for (var r = 0; r < offsets.length; r++) {
+        var row = offsets[r];
+        var p = dotD(row, v, D);
+        for (var d = 0; d < D; d++) w[d] += p * row[d];
+        if (wk.add(2 * D)) yield;
+      }
+      var before = lengthD(w, D);
+      removeAxes(w, axes, D);
+      var after = lengthD(w, D);
+      if (after <= KEEP * before) return null;
+      for (var e = 0; e < D; e++) w[e] /= after;
+      v = w;
+    }
+    return v;
+  }
+
+  // Step 7: with a scale, axis a becomes a * s and the three are made
+  // orthonormal again in order; a degenerate one is replaced by the basis rule.
+  function mapBack(axes, origins, s, D) {
+    var mapped = [];
+    for (var k = 0; k < axes.length; k++) {
+      var m = new Float64Array(D);
+      for (var d = 0; d < D; d++) m[d] = axes[k][d] * s[d];
+      if (!offer(mapped, m, D)) {
+        offerBasis(mapped, D);
+        origins[k] = "basis";
+      }
+    }
+    return mapped;
+  }
+
+  // Step 8: the frame's rows, each negated when it points away from the same
+  // row of the current frame.
+  function signedFrame(axes, current, D) {
+    var frame = new Float32Array(3 * D);
+    for (var k = 0; k < 3; k++) {
+      var away = current !== null && dotD(axes[k], current.subarray(k * D, (k + 1) * D), D) < 0;
+      var sign = away ? -1 : 1;
+      for (var d = 0; d < D; d++) frame[k * D + d] = sign * axes[k][d];
+    }
+    return frame;
+  }
+
+  // Step 9: the length of frame (x - centre).
+  function shownLength(frame, x, centre, D) {
+    var sq = 0;
+    for (var a = 0; a < 3; a++) {
+      var p = 0;
+      for (var f = 0; f < D; f++) p += (x[f] - centre[f]) * frame[a * D + f];
+      sq += p * p;
+    }
+    return Math.sqrt(sq);
+  }
+
+  function countOf(origins, what) {
+    return origins.filter((o) => o === what).length;
+  }
+
+  // Steps 8 and 9: signs against the current frame, then centre and zoom.
+  function finish(fit, rows, axes, origins) {
+    var D = fit.D;
+    var frame = signedFrame(axes, fit.current, D);
+    var centre = Float32Array.from(meanOfRows(rows.plainCentres, D, null));
+    var reach = FACE_MIN_REACH;
+    for (var r = 0; r < rows.plainRows.length; r++) {
+      reach = Math.max(reach, shownLength(frame, rows.plainRows[r], centre, D));
+    }
+    return {
+      frame: frame,
+      centre: centre,
+      zoom: FACE_ZOOM / reach,
+      fromCentres: countOf(origins, "centres"),
+      fromSpread: countOf(origins, "spread"),
+      fromBasis: countOf(origins, "basis"),
+    };
+  }
+
+  function* facingGen(fit, wk) {
+    var D = fit.D;
+    var rows = gatherRows(fit);
+    wk.add(rows.offsets.length * D);
+    yield;
+    var axes = [];
+    var origins = [];
+    var cs = rows.scaledCentres;
+    for (var j = 1; j < cs.length && axes.length < 3; j++) {
+      var join = new Float64Array(D);
+      for (var d = 0; d < D; d++) join[d] = cs[j][d] - cs[0][d];
+      if (offer(axes, join, D)) origins.push("centres");
+    }
+    while (axes.length < 3) {
+      var candidate = yield* spreadAxis(fit, rows.offsets, axes, wk);
+      if (candidate && offer(axes, candidate, D)) {
+        origins.push("spread");
+      } else {
+        offerBasis(axes, D);
+        origins.push("basis");
+      }
+    }
+    if (fit.scale) axes = mapBack(axes, origins, fit.scale, D);
+    return finish(fit, rows, axes, origins);
+  }
+
+  function now() {
+    return performance.now();
+  }
+
+  // { step(budgetMs?) -> done, done, progress, result }, as ET.math's steppers:
+  // step(budgetMs) runs units until budgetMs ms have passed (at least one);
+  // step() runs to the end. The clock decides only how many units run per call.
+  function faceStepper(gen, wk) {
+    var st = { done: false, progress: 0, result: null, step: null };
+    st.step = function (budgetMs) {
+      if (st.done) return true;
+      var limit = budgetMs === undefined ? Infinity : budgetMs;
+      var start = now();
+      do {
+        var r = gen.next();
+        if (r.done) {
+          st.done = true;
+          st.result = r.value;
+          st.progress = 1;
+          return true;
+        }
+      } while (now() - start < limit);
+      st.progress = Math.min(0.99, wk.done / wk.total);
+      return false;
+    };
+    return st;
+  }
+
+  function makeFacingFrame(set, searches, options) {
+    var o = options || {};
+    checkSearches(searches);
+    var D = set.dimension;
+    if (!(D >= 3)) throw new RangeError("the facing frame needs at least 3 dimensions");
+    var fit = {
+      X: set.vectors,
+      D: D,
+      searches: searches,
+      seed: ET.math.toSeed(o.seed === undefined ? 1 : o.seed),
+      scale: checkOption(o.scale, D, "scale"),
+      current: checkOption(o.current, 3 * D, "current"),
+    };
+    checkFacing(set, searches);
+    if (!searches.length) {
+      return {
+        done: true,
+        progress: 1,
+        result: null,
+        step: function () {
+          return true;
+        },
+      };
+    }
+    var rowCount = 0;
+    for (var j = 0; j < searches.length; j++) rowCount += 1 + searches[j].hits.length;
+    var wk = new FaceWork(rowCount * D * (1 + 2 * FACE_ITERATIONS * 3));
+    return faceStepper(facingGen(fit, wk), wk);
+  }
+
+  function facingFrame(set, searches, options) {
+    var st = makeFacingFrame(set, searches, options);
+    st.step();
+    return st.result;
+  }
+
+  return {
+    MAX_SEARCHES: MAX_SEARCHES,
+    LETTERS: LETTERS,
+    LIT_SETTINGS: LIT_SETTINGS,
+    DEFAULT_LIT: DEFAULT_LIT,
+    LIT_THRESHOLD: LIT_THRESHOLD,
+    CLOSE_REACH: CLOSE_REACH,
+    CLOSE_POWER: CLOSE_POWER,
+    FACE_SALT: FACE_SALT,
+    FACE_ITERATIONS: FACE_ITERATIONS,
+    FACE_ZOOM: FACE_ZOOM,
+    letter: letter,
+    litSetting: litSetting,
+    scaleFor: scaleFor,
+    litValues: litValues,
+    pairReports: pairReports,
+    makeFacingFrame: makeFacingFrame,
+    facingFrame: facingFrame,
+  };
+})();
+// ---------------------------------------------------------------------------
 // 30-renderer.js: WebGL 2 drawing (ET.renderer).
 //
 // Ported from the reference page (docs/specs/reference/embedding-tumbler-demo.html):

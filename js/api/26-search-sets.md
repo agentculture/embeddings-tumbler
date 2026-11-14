@@ -1,7 +1,8 @@
 # `ET.searchSets`: several searches at once (`js/src/26-search-sets.js`)
 
-Status: **interface, written before the code** (task t1). Task t3 implements it
-exactly as written here, and stops and reports if it cannot. One search's
+Status: **implemented** (task t3), from the interface written before the code
+(task t1). The clarifications t3 added are listed under "Clarifications from
+the build" at the end. One search's
 ranking is `js/api/24-search.md`; the rest of the search interface is
 `docs/search-interface.md`.
 
@@ -91,7 +92,8 @@ exists).
 ### `ET.searchSets.scaleFor(vector) -> Float32Array(D)`
 
 The point-of-view scale of a query: `|vector[d]|` for every `d`, as a new
-array. Pass it as `scale` to `ET.search.makeRank` for the one search the option
+array (any array or typed array is read; anything without a `length` throws
+`TypeError`). Pass it as `scale` to `ET.search.makeRank` for the one search the option
 belongs to, and to `makeFacingFrame`. With the scale, ranking and the shown
 distances are cosine distances between `x * s` and `q * s` (element-wise), which
 is "scale every dimension by the query's own size there, renormalise, then
@@ -104,8 +106,13 @@ options, and only the search the option belongs to gets a scale.
 What is lit, for the active searches. `searches` is an array of 0 to 4
 rankings (`js/api/24-search.md`), in letter order; `count` is the number of
 points in the view now; `setting` passes through `litSetting`. Throws
-`RangeError` for more than `MAX_SEARCHES` searches. Blocking: it is `O(count x
-searches)` with no per-dimension work.
+`RangeError` for more than `MAX_SEARCHES` searches or a `count` that is not a
+non-negative integer, and `TypeError` when `searches` is not an array.
+Blocking: it is `O(count x searches)` with no per-dimension work. Measured
+(node 24, development machine under load, 10,000 points, four searches of 20
+results, 15 runs): median 0.21 ms evenly, 0.37 ms by closeness, 0.12 ms named
+only; the slowest single run 1.3 ms (under a load average of about 32: medians
+0.3, 0.7 and 0.3 ms, slowest 6.6 ms).
 
 Returns:
 
@@ -164,11 +171,26 @@ The report for each pair of searches, in order (A and B, A and C, ..., C and D).
 search (a hit of `a` and a hit of `b` that are not the same point), by plain
 cosine distance between the two loaded points in the full space; ties go to
 the earlier hit of `a`, then the earlier hit of `b`. It is `null` when there is
-no such pair (every named result in common). Decided here: the plain measure,
+no such pair: one side has no named results, or both sides have only one and
+it is the same point. (Two searches with the same several results still have a
+closest pair: two different results, one from each list, as in the sky
+reference.) The distance is `1 - clamp(x . y / (|x| |y|), -1, 1)` in double
+precision, and a zero row is at distance 1 from everything, as in
+`js/api/24-search.md`. A hit whose `index` is not a row of `set` throws
+`RangeError`. Decided here: the plain measure,
 because a pair compares two searches and the point-of-view scaling belongs to
 one search only. Cost: at most `k_a x k_b` dot products of `D` per pair (20 x
-20 x 6 pairs at 1,024-d is about 2.5 million multiply-adds), so it is blocking;
-t3 measures it on 10,000 x 1,024 and records the time on its API page.
+20 x 6 pairs at 1,024-d is about 2.5 million multiply-adds), plus one pass over
+the two searches' `distances` per pair for `shared`. It is blocking. Measured
+(node 24, development machine under a load average of about 18 on 12 cores,
+10,000 points of 1,024 dimensions, four searches of 20 results, 15 runs):
+median 2.5 ms, fastest 2.1 ms, slowest 7.7 ms (the first, cold run). Measured
+again under a load average of about 32 (two runs of 15): medians 3.4 and 4.4 ms,
+slowest 9.5 and 14.3 ms, again the cold first call each time. The typical call
+is well inside one frame's 8 ms budget, and it runs once per change of the
+searches, not every frame, so it stays a single call, not a stepper. If the
+viewer finds the cold first call costs a long frame in practice, slicing it
+the way the facing frame is sliced is the remedy.
 
 ### `ET.searchSets.makeFacingFrame(set, searches, options?) -> stepper`
 
@@ -187,8 +209,30 @@ The stepper follows the `ET.math` convention (`step(budgetMs?) -> done`,
 `done`, `progress`, `result`), its units stay under 4 ms on 1,024-d, and its
 result is identical bit for bit whatever the budgets and on every fresh run
 with the same set, searches, seed, `current` and `scale`. Throws `RangeError`
-when `D < 3` or there are more than 4 searches; with no searches its result is
-`null` at once.
+when `D < 3` or there are more than 4 searches, or a hit's `index` is not a row
+of `set`; throws `TypeError` when `searches` is not an array, a query does not
+have `D` values, a search has no `hits` array, `scale` is given and is not a
+`Float32Array(D)`, `current` is given and is not a `Float32Array(3 * D)`, or the
+seed is neither a number nor a string. With no searches its result is `null` at
+once (the stepper is made already done).
+
+A unit of the stepper ends after 2^17 multiply-adds, counted, not timed, so the
+pauses fall at the same places on every run and the clock decides only how many
+units one `step` runs. Measured (node 24, same machine and load, 10,000 x 1,024,
+searches of 20 results, `step(0)` until done, 5 runs each):
+
+| Searches | Spread axes | Blocking call (median) | Units | Largest unit |
+|----------|-------------|------------------------|-------|--------------|
+| 1 | 3 | 5.0 ms | 26 | 1.8 ms |
+| 1, scaled | 3 | 3.0 ms | 26 | 0.2 ms |
+| 2 | 2 | 3.7 ms | 35 | 0.2 ms |
+| 2, scaled | 2 | 3.6 ms | 35 | 0.9 ms |
+| 4 | 0 | 1.3 ms | 2 | 0.6 ms |
+| 4, scaled | 0 | 0.6 ms | 2 | 0.6 ms |
+
+Measured again under a load average of about 32 (after a refactor that changes
+no result): blocking medians 5.0 to 6.8 ms with spread axes and 1.4 to 1.9 ms
+without, the largest unit 2.8 ms over every case.
 
 The result:
 
@@ -220,14 +264,18 @@ The procedure, all sums in double precision:
    `ET.math.makeRandom(ET.math.mixSeed(ET.math.toSeed(seed), FACE_SALT +
    axesSoFar)).fillGauss(v)`, then `FACE_ITERATIONS` times: `w = sum over rows
    of ((r - c_r) . v) (r - c_r)`, remove the accepted axes from `w`, normalise
-   (stop early if `w` is zero), `v = w`. Offer `v` as the candidate.
-6. **Fallback:** if a candidate is refused, offer the standard basis vectors
-   `e_0, e_1, ...` in order until one is accepted. So a frame always exists for
+   (stop early if `w` is zero), `v = w`. Offer `v` as the candidate. "Zero"
+   means what is left after removing the axes is no longer than `1e-6` times
+   `w` before the removal (the acceptance rule of step 3); there is then no
+   candidate, and step 6 applies.
+6. **Fallback:** if a spread candidate is refused (or there is none), offer
+   the standard basis vectors `e_0, e_1, ...` in order until one is accepted. So a frame always exists for
    `D >= 3` and the swing is always defined. Decided here: the reference gives
    up (no frame) in this case; a fixed basis keeps the result deterministic.
 7. **Back to the loaded vectors:** with a scale, each fitted axis `a` becomes
    `a * s`, and the three are orthonormalised again in order (twice, double
-   precision; a degenerate one is replaced by the fallback rule). Projecting a
+   precision; a degenerate one is replaced by the fallback rule and counted in
+   `fromBasis` instead of where it came from). Projecting a
    loaded point `x` on `a * s` is projecting `x * s` on `a`, so the picture is
    the fitted view of the scaled space, made orthonormal so that it is one
    linear frame applied to every point alike, as the renderer and the honesty
@@ -246,3 +294,26 @@ and to Focus; it is not computed in the modes.
 ### `ET.searchSets.facingFrame(set, searches, options?) -> result | null`
 
 `makeFacingFrame(set, searches, options)` run to the end in one call.
+
+## Clarifications from the build
+
+Task t3 added these while implementing the page; none changes a formula above.
+
+1. The closest pair is `null` only when no two different named results exist
+   (one side has none, or both have the same single one). The interface first
+   said "every named result in common", which is not the same: two searches
+   with the same several results still pair two different ones, as the sky
+   reference does.
+2. In step 5, "`w` is zero" is read with the acceptance rule of step 3 (what is
+   left after removing the axes is at most `1e-6` of `w`). Without it, rounding
+   noise left after the removal would be normalised and accepted as an axis
+   when the data gives none, which decision 8 of `docs/search-interface.md`
+   rules out.
+3. The basis fallback (step 6) applies to spread candidates only. A refused
+   centre join (two searches with the same centre, or three whose centres lie
+   on a line) is skipped, and the spread fills in, as in the reference.
+4. In step 7, an axis replaced by the basis rule is counted in `fromBasis`, so
+   `fromCentres + fromSpread + fromBasis` is always 3.
+5. Errors for malformed arguments are listed under each function (`TypeError`
+   for wrong shapes, `RangeError` for out-of-range values and indices).
+6. `litValues` under `"named"` skips a hit whose index is not below `count`.
