@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; frame-src 'self'">
+<title>Side by side (dev only)</title>
+<link rel="stylesheet" href="page.css">
+</head>
+<body>
+<header class="top">
+  <h1>Reference and build, side by side <small>development only, not shipped</small></h1>
+  <p>Left: the reference demo. Right: the built standalone page. The list below is
+    <code>docs/reference-differences.md</code>, to check off as you compare. Ticking a box here
+    is not the sign-off; that is recorded in the document's last section.</p>
+  <div class="bar" role="group" aria-label="Switch both pages">
+    <span class="bar-label">Show both in</span>
+    <button type="button" data-mode="tumble" aria-pressed="true">Tumble</button>
+    <button type="button" data-mode="lattice" aria-pressed="false">Lattice</button>
+    <button type="button" data-mode="wander" aria-pressed="false">Wander</button>
+    <button type="button" id="restart">Restart both</button>
+  </div>
+  <p class="status" id="status" role="status">Loading both pages.</p>
+</header>
+
+<main>
+  <section class="pair" aria-label="The two pages">
+    <figure class="side">
+      <figcaption>Reference <small>embedding-tumbler-demo.html</small></figcaption>
+      <iframe id="frame-ref" title="The reference demo" src="/docs/specs/reference/embedding-tumbler-demo.html#tumble"></iframe>
+    </figure>
+    <figure class="side">
+      <figcaption>Build <small>embeddings_tumbler/static/index.html</small></figcaption>
+      <iframe id="frame-build" title="The built standalone page" src="/embeddings_tumbler/static/index.html?mode=tumble"></iframe>
+    </figure>
+  </section>
+
+  <section class="checklist" aria-labelledby="check-title">
+    <h2 id="check-title">Intended differences <small id="count"></small></h2>
+    <p class="note" id="check-note">Loading the list.</p>
+    <div id="groups"></div>
+  </section>
+</main>
+<script src="page.js"></script>
+</body>
+</html>

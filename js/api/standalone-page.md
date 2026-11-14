@@ -137,7 +137,7 @@ a machine with the face installed uses it, then falls back:
 | Body | `"IBM Plex Sans", "Segoe UI", Seravek, "Gill Sans Nova", Ubuntu, Calibri, "Source Sans 3", "Noto Sans", "DejaVu Sans", system-ui, sans-serif` |
 | Data | `"IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Ubuntu Mono", "DejaVu Sans Mono", "Liberation Mono", monospace` |
 
-What differs from the reference, face by face: `docs/reference-differences-fonts.md`.
+What differs from the reference, face by face: `docs/reference-differences.md` (section "Fonts").
 
 ## Layout
 
