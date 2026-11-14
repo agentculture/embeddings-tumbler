@@ -123,7 +123,7 @@
       const trimmed = seed.trim();
       options.seed = /^-?\d+(\.\d+)?$/.test(trimmed) && Number.isFinite(Number(trimmed)) ? Number(trimmed) : seed;
     }
-    // A data address of only spaces is no address: the sample set, as for data=.
+    // A data address of only spaces is no address: the default set, as for data=.
     let data = get("data");
     if (data !== null && data.trim() === "") data = null;
     const sample = get("sample");
@@ -179,12 +179,7 @@
   // The address of this page showing the other set: ?sample=synthetic added, or taken
   // away. The mode and the seed are kept; a data address is dropped.
   function switchAddress(synthetic) {
-    let params;
-    try {
-      params = new URLSearchParams(window.location.search);
-    } catch (err) {
-      params = new URLSearchParams();
-    }
+    const params = new URLSearchParams(String(window.location.search || ""));
     params.delete("data");
     if (synthetic) params.set("sample", SYNTHETIC);
     else params.delete("sample");

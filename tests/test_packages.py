@@ -604,6 +604,105 @@ def test_check_packages_passes_on_the_real_build(real_build):
 
 
 @needs_both
+def test_the_notice_for_the_wikipedia_text_ships_in_every_artefact(real_build):
+    out, result = real_build
+    assert result.returncode == 0, result.stdout + result.stderr
+    notice = (ROOT / "NOTICE").read_bytes()
+    assert b"CC BY-SA 4.0" in notice
+    assert b"demo-wikipedia.json" in notice
+    with zipfile.ZipFile(next(out.glob("*.whl"))) as zf:
+        found = [n for n in zf.namelist() if n.endswith(".dist-info/licenses/NOTICE")]
+        assert found, "the wheel carries no NOTICE"
+        assert zf.read(found[0]) == notice
+    with tarfile.open(next(out.glob("*.tgz"))) as tf:
+        assert tf.extractfile("package/NOTICE").read() == notice
+    with tarfile.open(next(out.glob("*.tar.gz"))) as tf:
+        names = [m.name for m in tf.getmembers() if m.name.endswith("/NOTICE")]
+        assert names, "the sdist carries no NOTICE"
+
+
+# The packages stay under 5 MB with the FULL demo pair in them, not only with the small
+# stand-in that may be committed: the stand-in pair in the real artefacts is replaced by a
+# full-size one (every corpus item, 1,024 dimensions, the real JSON layout, incompressible
+# vectors) and each artefact is re-packed with the same kind of compression.
+SIZE_LIMIT = 5_000_000  # bytes, for the wheel and the npm tarball as downloaded
+# The sdist carries the whole repository's sources (about 1.7 MB packed before the pair),
+# so it is held to a looser limit that still catches the pair being carried twice.
+SDIST_LIMIT = 7_000_000
+UNPACKED_LIMIT = 5 * 1024 * 1024  # bytes, for the static folder as installed
+FULL_DIMENSION = 1024
+STATIC_PART = "embeddings_tumbler/static/"
+
+
+def _full_pair() -> dict[str, bytes]:
+    import argparse
+    import random
+
+    demo = _load("build_demo_set_for_size", "build_demo_set.py")
+    header, items = demo.read_corpus(demo.CORPUS)
+    args = argparse.Namespace(
+        stand_in=False,
+        batch=32,
+        model_asked="Qwen/Qwen3-Embedding-0.6B",
+        endpoint_name="lobes gateway",
+        name="demo-wikipedia",
+    )
+    records = demo.build_records(header, items, "Qwen/Qwen3-Embedding-0.6B", FULL_DIMENSION, args)
+    rng = random.Random(7)
+    count = len(items) * FULL_DIMENSION
+    block = struct.pack(f"<{count}f", *(rng.gauss(0.0, 0.03) for _ in range(count)))
+    return {
+        "demo-wikipedia.json": demo.records_text(records).encode("utf-8"),
+        "demo-wikipedia.f32": block,
+    }
+
+
+def _replacement(name: str, replace: dict[str, bytes]) -> bytes | None:
+    if STATIC_PART not in name:
+        return None
+    return replace.get(name.split(STATIC_PART)[-1])
+
+
+def _repack_zip(src: Path, dst: Path, replace: dict[str, bytes]) -> int:
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        for name in zin.namelist():
+            data = _replacement(name, replace)
+            zout.writestr(name, zin.read(name) if data is None else data)
+    return dst.stat().st_size
+
+
+def _repack_tar(src: Path, dst: Path, replace: dict[str, bytes]) -> int:
+    with tarfile.open(src) as tin, tarfile.open(dst, "w:gz") as tout:
+        for member in tin.getmembers():
+            data = tin.extractfile(member).read() if member.isfile() else None
+            new = _replacement(member.name, replace) if data is not None else None
+            if new is not None:
+                data = new
+                member.size = len(data)
+            tout.addfile(member, io.BytesIO(data) if data is not None else None)
+    return dst.stat().st_size
+
+
+@needs_both
+def test_every_artefact_stays_under_5_mb_with_a_full_size_demo_pair(real_build, tmp_path):
+    out, result = real_build
+    assert result.returncode == 0, result.stdout + result.stderr
+    full = _full_pair()
+    assert len(full["demo-wikipedia.f32"]) >= 950 * FULL_DIMENSION * 4
+    unpacked = sum(len(full.get(n) or (STATIC / n).read_bytes()) for n in SHIPPED_STATIC)
+    sizes = {
+        "wheel": _repack_zip(next(out.glob("*.whl")), tmp_path / "w.whl", full),
+        "npm tarball": _repack_tar(next(out.glob("*.tgz")), tmp_path / "t.tgz", full),
+        "sdist": _repack_tar(next(out.glob("*.tar.gz")), tmp_path / "s.tar.gz", full),
+    }
+    print(f"full-size demo pair: unpacked static {unpacked} bytes; packed {sizes}")
+    assert unpacked < UNPACKED_LIMIT, unpacked
+    assert sizes["wheel"] < SIZE_LIMIT, sizes
+    assert sizes["npm tarball"] < SIZE_LIMIT, sizes
+    assert sizes["sdist"] < SDIST_LIMIT, sizes
+
+
+@needs_both
 def test_check_packages_fails_on_a_doctored_real_tarball(real_build, tmp_path):
     out, result = real_build
     assert result.returncode == 0, result.stdout + result.stderr

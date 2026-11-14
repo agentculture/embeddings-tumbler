@@ -85,9 +85,7 @@ class FakeEndpoint:
             return 500, {"error": f"{GATEWAY_TEXT} key {KEY}"}
         dimension = self.dimension + (1 if changed and self.change == "dimension" else 0)
         model = self.model + ("-other" if changed and self.change == "model" else "")
-        rows = [
-            {"index": i, "embedding": _vector(t, dimension)} for i, t in enumerate(texts)
-        ][::-1]
+        rows = [{"index": i, "embedding": _vector(t, dimension)} for i, t in enumerate(texts)][::-1]
         if changed and self.change == "count":
             rows = rows[1:]
         return 200, {"model": model, "data": rows}
@@ -367,7 +365,8 @@ const fetchFile = (url) => {
   const bytes = fs.readFileSync(path.join(dir, url));
   return Promise.resolve({ ok: true, status: 200,
     json: async () => JSON.parse(bytes.toString("utf8")),
-    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
+    arrayBuffer: async () =>
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
 };
 C.loadFile("demo-wikipedia.json", fetchFile, null).then((r) =>
   console.log(JSON.stringify({ ok: r.ok, message: r.message || null,

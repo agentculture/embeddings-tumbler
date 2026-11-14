@@ -219,6 +219,10 @@
      "visible": "slightly"
     },
     {
+     "title": "The page opens on real vectors, and the generated set is one choice away",
+     "visible": "slightly"
+    },
+    {
      "title": "A view seed",
      "visible": "yes"
     }

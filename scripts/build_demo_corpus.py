@@ -54,7 +54,9 @@ ROOT = Path(__file__).resolve().parent.parent
 API = "https://en.wikipedia.org/w/api.php"
 LIST_TITLE = "Wikipedia:Vital articles/Level/3"
 LIST_START = "=Level 3 vital articles="
-USER_AGENT = "embeddings-tumbler-demo-corpus/1 (+https://github.com/agentculture/embeddings-tumbler)"
+USER_AGENT = (
+    "embeddings-tumbler-demo-corpus/1 (+https://github.com/agentculture/embeddings-tumbler)"
+)
 DEFAULT_OUT = ROOT / "data" / "wikipedia-vital-3" / "corpus.jsonl"
 DEFAULT_CACHE = ROOT / ".cache" / "demo-corpus"
 LICENCE = "CC BY-SA 4.0"

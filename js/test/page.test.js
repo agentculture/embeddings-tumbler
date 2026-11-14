@@ -95,6 +95,7 @@ function runPage(search, fetchImpl, extra = {}) {
       ? undefined
       : {
           generate() {
+            if (extra.generateThrows) throw new Error("generator failed");
             world.generated++;
             return { kind: "embeddings-tumbler/data", synthetic: true };
           },
@@ -643,4 +644,23 @@ test("a data address still wins over the default and shows no switch", async () 
   assert.strictEqual(w.generated, 0);
   assert.strictEqual(w.els["set-switch"].hidden, true);
   assert.strictEqual(w.els["note-file"].hidden, false);
+});
+
+test("a refused Wikipedia pair whose fallback generator fails leaves the viewer's refusal", async () => {
+  const w = await settled(runPage("", demoFetch(), { update: () => ({ ok: false }) }));
+  // The fake generator succeeds; make a second page whose generator throws.
+  assert.strictEqual(w.updates.length, 2);
+  const bad = runPage("", demoFetch(), {
+    update: () => ({ ok: false }),
+    generateThrows: true,
+  });
+  await settled(bad);
+  assert.strictEqual(bad.updates.length, 1, "no synthetic set to fall back to");
+  assert.strictEqual(bad.body.getAttribute("data-page-state"), "refused");
+});
+
+test("a viewer that fails to start on the default set is reported plainly", async () => {
+  const w = await settled(runPage("", demoFetch(), { mountThrows: true }));
+  assert.strictEqual(w.body.getAttribute("data-page-state"), "error");
+  assert.match(w.els["wait-text"].textContent, /could not start the viewer/);
 });

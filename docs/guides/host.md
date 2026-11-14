@@ -53,6 +53,7 @@ package, side by side:
 |------|------------|
 | `embeddings-tumbler.js` | The core. Always needed. |
 | `sample-data.js` | A built-in generated sample set, for demos. Optional. |
+| `demo-wikipedia.json`, `demo-wikipedia.f32` | The standalone page's default data: about a thousand Wikipedia articles embedded by a real model. Text under CC BY-SA 4.0 (see the package's `NOTICE`). Only for the standalone page; optional. |
 | `web-component.js` | The `<embeddings-tumbler>` element. Only for the web component form. |
 | `index.html`, `page.css`, `page.js` | The standalone page. Only for that form. |
 
@@ -528,7 +529,8 @@ Then open `http://127.0.0.1:8000/index.html?data=space.json`.
 
 | Address | Shows |
 |---------|-------|
-| `index.html` | The built-in sample set. |
+| `index.html` | The Wikipedia pair beside the page (`demo-wikipedia.json`); the synthetic sample set, with a line saying why, if the pair is missing, the viewer refuses it, or the page is opened as a file. |
+| `index.html?sample=synthetic` | The built-in synthetic sample set (the page also links to it). |
 | `index.html?data=space.json` | That data file (a relative path, or an address on the same origin). |
 | `index.html?data=space.json&mode=lattice&seed=7` | The same, starting in a given mode and with a given seed. |
 
