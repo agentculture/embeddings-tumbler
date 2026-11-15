@@ -290,6 +290,10 @@ def test_search_differences_named_in_the_plan_are_listed():
 
 def test_search_open_items_say_that_nothing_was_decided():
     opened = [(title, rest) for title, rest in _search_items(_text()) if _decided(rest) == "open"]
+    if _check_search_sign_off(_text()) == "recorded":
+        # Once the owner has signed off, nothing may still be open.
+        assert not opened
+        return
     assert len(opened) >= 2
     for title, rest in opened:
         decided = rest[DECIDED.search(rest).start() :].lower()

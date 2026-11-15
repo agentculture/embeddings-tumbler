@@ -129,7 +129,11 @@ def test_package_json_is_publishable_and_dependency_free():
     pkg = _package_json()
     assert pkg["name"] == "@culture.dev/embeddings-tumbler"
     assert not pkg.get("private")
-    assert pkg["license"] == "Apache-2.0"
+    # The code is Apache-2.0; the demo data's Wikipedia text is CC BY-SA 4.0 (NOTICE). The
+    # owner chose to declare both (2026-11-15).
+    assert pkg["license"] == "Apache-2.0 AND CC-BY-SA-4.0"
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject["project"]["license"] == pkg["license"]
     assert pkg["publishConfig"] == {"access": "public"}
     # Trusted publishing checks the repository against the GitHub repo.
     assert pkg["repository"] == {

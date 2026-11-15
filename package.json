@@ -10,7 +10,7 @@
     "projection",
     "web-component"
   ],
-  "license": "Apache-2.0",
+  "license": "Apache-2.0 AND CC-BY-SA-4.0",
   "author": "AgentCulture",
   "homepage": "https://github.com/agentculture/embeddings-tumbler#readme",
   "bugs": "https://github.com/agentculture/embeddings-tumbler/issues",

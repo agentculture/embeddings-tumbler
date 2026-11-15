@@ -61,8 +61,8 @@ view, Focus (`43-mode-focus.js`), the helper route `viewer serve --embed`
 (`embeddings_tumbler/_embed_route.py`), and the Wikipedia demo set. The binding
 interface is `docs/search-interface.md`; the guides are `docs/guides/host.md`
 and `docs/guides/search.md`; what real data showed is
-`docs/evidence/2026-11-14-real-search-proof.md`. The owner's sign-off on the
-search part of `docs/reference-differences.md` is still open. The follow-up
+`docs/evidence/2026-11-14-real-search-proof.md`. The owner signed off the
+search part of `docs/reference-differences.md` on 2026-11-15. The follow-up
 spec is GitHub issue 11 (directions and neighbours computed when the data file
 is made) `(planned)`.
 

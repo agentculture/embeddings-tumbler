@@ -213,5 +213,6 @@ unknown top-level keys, so the section is safe alongside `agents`.
 
 ## License
 
-Apache 2.0 — see [`LICENSE`](LICENSE). The demo data set's Wikipedia text is
-under CC BY-SA 4.0 — see [`NOTICE`](NOTICE).
+The code is Apache 2.0 — see [`LICENSE`](LICENSE). The demo data set's Wikipedia
+text is under CC BY-SA 4.0 — see [`NOTICE`](NOTICE). The packages declare both:
+`Apache-2.0 AND CC-BY-SA-4.0`.

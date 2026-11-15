@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-15T19:41:48Z",
+  "updated": "2026-11-15T19:49:34Z",
   "claims": [
     {
       "id": "c1",
@@ -1073,7 +1073,7 @@
         "js/test/search-panel.test.js in agent/search-morek; fixed in 02a4296"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l14",
@@ -1084,7 +1084,7 @@
         "docs/search-interface.md, Measured with 100 candidates"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l15",
@@ -1095,7 +1095,7 @@
         "tests/browser/test_search_candidates.py"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l16",
@@ -1106,7 +1106,7 @@
         "js/api/50-viewer.md, Slow devices"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l17",
@@ -1117,7 +1117,7 @@
         "tests/browser/test_search_look.py"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l18",
@@ -1128,7 +1128,7 @@
         "docs/evidence/2026-11-14-real-search-proof.md"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l19",
@@ -1139,7 +1139,7 @@
         "js/api/50-viewer.md, A device that runs JavaScript slowly"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l20",
@@ -1150,7 +1150,7 @@
         "js/api/50-viewer.md, A device that runs JavaScript slowly; lapse l19"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     }
   ],
   "obligations": [

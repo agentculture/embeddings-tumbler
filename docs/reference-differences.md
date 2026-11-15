@@ -880,8 +880,8 @@ How to read this part:
 ## Search: open questions
 
 Neither of these is a difference from the sky reference on a dark stage. They
-are listed as items so that they are checked off like the rest, and the search
-sign-off cannot be recorded while either is still open.
+were listed as open so that they were checked off like the rest. The owner
+decided both on 2026-11-15.
 
 ### The readout strip's axis colours on a light background
 
@@ -889,7 +889,7 @@ sign-off cannot be recorded while either is still open.
 - **Build:** the same three colours on a dark stage, which the owner approved "per the artifact" (see "The strip's cells are coloured by screen axis" above). On a light stage three darker colours are used so that they stay readable.
 - **Why:** the reference's colours are too pale on a light background; the darker three were chosen while building.
 - **Visible on comparable data:** no: the references and the standalone page are dark only.
-- **Decided by:** open: the light colours have not been shown to the owner and are not approved.
+- **Decided by:** owner. Approved on 2026-11-15 in the owner's reply "Approved" to the two colour questions put together. The owner had seen the strip on the dark stage only; the light colours were approved without being shown.
 
 ### Search A's amber beside the strip's orange
 
@@ -897,7 +897,7 @@ sign-off cannot be recorded while either is still open.
 - **Build:** the same two colours, from the reference.
 - **Why:** noted by the owner's assistant during the build as a possible clash: two unrelated things in near colours. Nothing was changed.
 - **Visible on comparable data:** yes, on both pages alike.
-- **Decided by:** open: not decided.
+- **Decided by:** owner. Approved as it is on 2026-11-15, in the same reply.
 
 ## Search: looked the same
 
@@ -940,12 +940,21 @@ marked.
 
 ## Search: sign-off
 
-The owner's sign-off of the search comparison is **not yet recorded**. Only the
-owner gives it, after looking at the side-by-side, and it cannot be recorded
-while an item above is still marked open.
+The owner looked at the side-by-side page and at the built pages themselves,
+including the page with a real embedder and reranker, on a desktop and on a
+phone. On being asked for the two colour decisions and the sign-off together,
+the owner answered with one word. Earlier, about the same pages, the owner had
+written: "Yes, I check the site itself and I enjoy it".
 
-The agreed form of the line is:
+Search signed off by the owner on 2026-11-15: Approved
 
-```text
-Search signed off by the owner on YYYY-MM-DD: <the owner's words>
-```
+What the sign-off was given on, so that it is not read as more than it is:
+
+- The owner was told of the differences decided while building (region names
+  not searchable, result lists without group names, no hover box and no "Turn
+  the view to the results" control in Focus, results not fogged in Wander) and
+  did not object to any. The owner did not go through them one by one.
+- The strip's colours for a light background were approved without being seen.
+- After the comparison was written the owner chose a different embedding model
+  for the demo set (`google/embeddinggemma-2`); the comparison itself is on the
+  generated set and on the Focus reference's own vectors, so it is unaffected.
