@@ -2,7 +2,7 @@
   "plan_slug": "search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-14T16:05:41Z",
-  "updated": "2026-11-14T17:31:33Z",
+  "updated": "2026-11-15T21:36:40Z",
   "deviations": [
     {
       "id": "d1",
@@ -49,7 +49,455 @@
       "seq": 3
     }
   ],
-  "evidence": [],
-  "deltas": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "tests/browser/test_search_forms.py::test_lit_points_equal_an_exact_ranking_from_the_same_file",
+      "behavior_text": "result ids in order, distances, radius and the full lit set equal a ranking computed separately in Python from the same file, on the script, web component and standalone forms",
+      "contract_text": "The lit points and their order equal an exact full-space ranking by the stated measure on the same vectors; on-screen position is never an input.",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran green in a real browser on all three forms; also 6 of 6 typed queries per model matched on 10,000 real texts (docs/evidence/2026-11-14-real-search-proof.md). No test removes screen position as an input by construction; that part rests on reading the code",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "tests/browser/test_search_motion.py::test_lit_pixels_change_every_second_during_and_after_the_swing",
+      "behavior_text": "with a search active the lit pixels change in every sampled second, during the swing and after it has ended, in Tumble, Lattice and Wander; a paused view fails the same check",
+      "contract_text": "With a search active the frame keeps changing in every mode; the swing to face the searches ends by itself within the stated time; Pause and reduced motion stop motion exactly as they do without a search.",
+      "evidence_type": "integration",
+      "strength": "sensitivity",
+      "strength_basis": "ran green with a negative control (test_the_check_fails_on_a_paused_view) that fails when the view is paused, so Pause with a search is covered. Reduced motion with a search active is NOT tested, and Focus is covered by a separate test (test_search_look.py::test_focus_keeps_turning_with_a_search). Script form only",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "js/test/search-sets.test.js::a point is shared exactly when it is inside two or more radii and lit",
+      "behavior_text": "a point is marked shared only inside two or more searches' radii, one search alone never marks one, and pair distances are plain full-space cosine distances whatever the searches' scale",
+      "contract_text": "A point is marked as shared only when it lies within the result radius of two or more searches, and each pair's report (shared count, closest pair, distance) is computed from full-space distances.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node unit tests on the assembled file ran green, with the companion tests 'the shared mark needs two searches' radii' and 'pair distances are plain cosine distances in the full space'",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "tests/browser/test_search_panel.py::test_opening_and_closing_keeps_the_search",
+      "behavior_text": "collapsed the panel is one line of 48 px or less on desktop and phone widths, and opening and closing keeps the search",
+      "contract_text": "Collapsed, the panel is one line and the filter stays on; opening and closing never clears a search; expanded state is exposed to assistive technology.",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran green in a browser at two widths with test_collapsed_panel_is_one_line_of_48_px_or_less. That the expanded state is exposed to assistive technology is checked only as an attribute in the node panel tests, not with a screen reader",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "js/test/viewer-search.test.js::typed text goes to the embed callback with the text and nothing else",
+      "behavior_text": "the callback receives the text and nothing else; a malformed answer, an answer with no model, a wrong-length or other-model vector and a failing callback are refused and change nothing",
+      "contract_text": "The viewer calls the callback with the query text and nothing else, accepts only a finite vector of the data's dimension with a matching model id, and makes no network request itself.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node tests ran green; in a browser test_search_forms.py::test_no_request_leaves_the_origin_while_searching shows the viewer itself makes no request, with a negative control that catches a foreign request",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_embed_route.py::test_nothing_leaks_in_any_answer_header_or_log_line",
+      "behavior_text": "the route answers only same-origin POSTs with the bound host names, refuses other methods, origins and hosts, and no answer, header or log line holds the key, the gateway address or the query text",
+      "contract_text": "The route exists only when enabled; it answers only same-origin POSTs on a loopback bind unless explicitly widened; no response or log contains the gateway key, the gateway address or the query text.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran green with tests/test_cli_viewer.py::test_serve_without_embed_reads_no_gateway_settings and test_serve_binds_loopback_by_default; the route was also run for the owner with --embed-allow-remote on a private network, by the owner's decision",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "tests/browser/test_search_forms.py::test_nothing_the_browser_or_a_caller_gets_holds_the_planted_key_or_address",
+      "behavior_text": "with a planted key and address only in the helper's environment, no response the browser received, no page content, no direct helper answer (ten kinds, including gateway errors that echo both) and no process output contains either",
+      "contract_text": "No file served to a browser and no response of the helper contains the gateway address or key; the key lives only in the helper's process environment.",
+      "evidence_type": "integration",
+      "strength": "sensitivity",
+      "strength_basis": "ran green against the real helper process; the test also proves the scan finds planted values and that the gateway did receive the key",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "js/test/viewer-search.test.js::words are matched among the loaded points with no embed callback; unmatched words are named",
+      "behavior_text": "with no callback typed words and a picked point produce a search, unmatched words are named, and the note says nothing was sent",
+      "contract_text": "With no embed callback, picking a point or typing words that match labels or texts produces a search; unmatched words are named; the panel says no text was sent anywhere.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node tests ran green; in a browser test_search_panel.py::test_typing_lights_points_found_among_the_loaded_points and test_standalone_page.py::test_served_as_plain_files_search_matches_the_loaded_points",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "js/test/viewer-search.test.js::via: embed with no callback is no-embedder; on a reduced set auto falls back to words with a note",
+      "behavior_text": "embedding search on a reduced set is refused with reduction-not-searchable and falls back to words with that note",
+      "contract_text": "A query is compared only with vectors in the same space; a reduced or shifted file is searched by embedding only with the same change applied to the query, otherwise refused with a plain message.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node tests ran green with search-rank 'checkSameSpace'; on real rotated and top-64 exports the refusal and the words fallback were observed (docs/evidence/2026-11-14-real-search-proof.md). No reduced file carries what is needed to change a query the same way, so that branch of the obligation is not exercised",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "js/test/search-panel.test.js::Reranker: absent with no rerank callback and for a labels-only set; present, named and moving with one",
+      "behavior_text": "no toggle without a rerank callback or for a labels-only set; with one, results show their move and the reranker's name",
+      "contract_text": "Without a reranker there is no toggle; with one, results show their move from embedding order and the reranker's name; a labels-only set offers no reranking.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node tests ran green; in a browser through the real helper route test_search_forms.py::test_the_standalone_page_reranks_through_the_helper. The reranker's effect on real 10,000-text data was not measured",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "js/test/mode-focus.test.js::criterion 1: Focus registers through the existing interface and edits no existing file",
+      "behavior_text": "Focus registers as a fourth mode through the existing interface and lists results as text",
+      "contract_text": "Focus registers as a fourth mode without editing an existing mode or the data contract, fits its view to the results, and lists each result's text or label as text.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node tests ran green with test_search_panel.py::test_focus_lists_results_beside_the_stage_and_disables_face in a browser. The 'edits no existing file' claim held when Focus was added; later tasks did edit other modes for search and for the slow-device fix",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "tests/browser/test_side_by_side.py::test_sky_reference_and_built_page_show_the_same_searches",
+      "behavior_text": "on comparable data each reference and the built view show the same searches, and the Focus pair lists the same results; every intended difference is listed and the owner's sign-off is recorded",
+      "contract_text": "On comparable data the built views show what docs/specs/reference/tumbler-sky-search.html and tumbler-focus-view.html show (searches, lit and dimmed points, links, shared points, the swing, the collapsed panel, the toggles, the Focus list); every intended difference is listed in the repository and the user signs off the side-by-side comparison before release.",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran green with test_focus_reference_and_built_focus_list_the_same_results and tests/test_reference_differences.py; the sign-off line is in docs/reference-differences.md, dated 2026-11-15. The owner did not go through the build-decided differences one by one, and the document says so",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o13",
+      "test_ref": "tests/browser/test_search_panel.py::test_markup_in_a_label_creates_no_element",
+      "behavior_text": "markup in labels, queries and results creates no element and shows as text",
+      "contract_text": "Query text, labels and result texts are inserted as text only; markup in any of them creates no element.",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran green in a browser with the node test 'markup in labels, queries and results creates no element and shows as text'",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o14",
+      "test_ref": "js/test/search-rank.test.js::a scale ranks in the scaled measure and reports the plain one",
+      "behavior_text": "with the point of view on, ranking uses the per-dimension scale and reports the plain distance too; lit values use each search's own distances; the facing frame is fitted in the scaled space",
+      "contract_text": "With the option on, ranking, shown distances and the fitted picture all use the same per-dimension scaling by that search's vector; with it off, nothing is scaled; the view states which is in effect.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node tests ran green with 'lit values read each search's own distances' and 'with a scale, the frame is the fit of the scaled space'. The point of view was not compared as a picture in a browser and not measured on real data",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o15",
+      "test_ref": "js/test/search-sets.test.js::by closeness: the interface's formula, 1 at the nearest result, 0 a little beyond the last",
+      "behavior_text": "the three lit settings decide which points are lit and how strongly; by closeness a nearer point is never dimmer",
+      "contract_text": "The lit setting decides which points are lit and how strongly; with brightness by closeness, a nearer point is never dimmer than a farther one for the same search; the panel names the setting in use.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node tests ran green with 'evenly' and 'named results only'; in a browser test_search_panel.py::test_the_lit_menu_changes_the_lit_count",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o16",
+      "test_ref": "js/test/viewer-strip.test.js::a cell fed by one axis shows that axis's colour exactly (dark stage)",
+      "behavior_text": "a cell's colour is the mix of the three axis colours by squared component, exact for one axis, and opacity is the existing formula",
+      "contract_text": "A cell's colour is the mix of the three axis colours weighted by that dimension's squared component on each axis; a dimension that feeds only one axis shows that axis's colour exactly; opacity equals the existing contribution formula.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node tests ran green on dark and light stages, with 'a cell fed by two axes mixes them by squared component' and 'opacity per cell is the existing contribution formula'. The owner approved the light colours without seeing them",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o17",
+      "test_ref": "tests/browser/test_standalone_page.py::test_with_no_query_the_wikipedia_pair_is_shown_with_its_own_numbers",
+      "behavior_text": "the standalone page opens on the real Wikipedia pair and states source, model and licence; the synthetic set is one link away",
+      "contract_text": "The standalone page opens on real vectors by default and says where they came from, by which model and under which licence; neighbours in it reflect meaning (a real model's distances), and the synthetic set is one explicit choice away.",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran green with test_sample_set_is_the_explicit_choice_and_links_back and tests/test_demo_set.py::test_the_committed_pair_says_honestly_whether_it_is_a_stand_in. That neighbours reflect meaning was checked by eye on a few titles and by the owner on the page, not by a test of quality",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 20
+    },
+    {
+      "id": "e18",
+      "obligation_ref": "o18",
+      "test_ref": "js/test/search-candidates.test.js::50 candidates, top 20, a reranker that reverses: the 20 last of the 50 nearest",
+      "behavior_text": "candidates are the nearest named points, the reranker's top X are the results, without one the first K are, and every count is stated",
+      "contract_text": "N candidates are taken by full-space distance among named points; with a reranker the top X by its scores are the results; without one the first K by distance are; every count is stated.",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "node tests ran green with 'the ranking states its counts'; in a browser test_search_candidates.py::test_the_reranker_got_exactly_100_candidates_and_30_were_kept. Browser test at desktop width, Chromium only",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-11-15T21:21:23",
+        "commit": "978b3be"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 21
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "In Lattice, wires not attached to lit points dim while a search is shown, and crowded wires are drawn fainter with or without a search; the released no-search Lattice picture changed.",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "While a mode prepares, the cloud keeps a slow turn and the status line shows progress; the picture no longer stands still until ready.",
+      "caused_by": [
+        "d3"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "added",
+      "behavior_text": "The standalone page opens on 999 real Wikipedia articles instead of the generated set, embedded with google/embeddinggemma-2 (the owner's choice of model during the build); viewer serve --embed asks for that model by default.",
+      "caused_by": [
+        "c48"
+      ],
+      "evidence_refs": [
+        "e17"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "added",
+      "behavior_text": "Search takes 3 to 100 candidates (default 50); a reranker keeps the top X (default 20); Results goes up to 100; each candidate text sent to the reranker is limited to 2,000 characters, down from 4,000.",
+      "caused_by": [
+        "c49"
+      ],
+      "evidence_refs": [
+        "e18"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "added",
+      "behavior_text": "Preparation work is cut into pieces of about 4,096 multiply-adds, labels and zoom no longer project full vectors each frame, and Lattice reuses Tumble's fit. Zoom differs from the previous release by up to 3.9e-9 relative and label positions by under 0.01 px.",
+      "caused_by": [
+        "d3"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b6",
+      "kind": "added",
+      "behavior_text": "A new option adaptivePixelRatio, off by default, lowers the drawing resolution when frames stay under 25 per second. Built by a task agent without the owner's approval and switched off by the main agent; the owner left it off.",
+      "caused_by": [
+        "d3"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b7",
+      "kind": "amended",
+      "behavior_text": "The packages declare Apache-2.0 AND CC-BY-SA-4.0 instead of Apache-2.0, by the owner's decision on 2026-11-15, because the demo set carries Wikipedia text.",
+      "caused_by": [
+        "c48"
+      ],
+      "evidence_refs": [
+        "e17"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b8",
+      "kind": "amended",
+      "behavior_text": "Face the searches follows the view on a mode switch; before, it stayed enabled in Focus until the search next changed.",
+      "caused_by": [
+        "c12"
+      ],
+      "evidence_refs": [
+        "e11"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }
