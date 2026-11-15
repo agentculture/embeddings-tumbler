@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-15T19:49:34Z",
+  "updated": "2026-11-15T19:58:31Z",
   "claims": [
     {
       "id": "c1",
@@ -963,7 +963,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l2",
@@ -972,7 +972,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l3",
@@ -981,7 +981,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l4",
@@ -990,7 +990,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l5",
@@ -999,7 +999,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l6",
@@ -1008,7 +1008,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l7",
@@ -1017,7 +1017,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l8",
@@ -1026,7 +1026,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l9",
@@ -1035,7 +1035,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l10",
@@ -1044,7 +1044,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l11",
@@ -1053,7 +1053,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l12",
@@ -1062,7 +1062,7 @@
       "skipped_check": "",
       "refs": [],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l13",
