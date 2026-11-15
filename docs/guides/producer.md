@@ -104,7 +104,7 @@ Types used below:
 | `schema_version` | integer | yes | The contract version this data was written under. Write `1`. |
 | `kind` | string, exactly `"embeddings-tumbler/data"` | yes | Marks the object as viewer data. |
 | `op` | `"replace"` or `"append"` | no, default `"replace"` | Whether this set replaces what the view holds or is added to it. See [Replace and append files](#replace-and-append-files). |
-| `model` | non-empty string | yes | The embedding model id exactly as you used it, for example `Qwen/Qwen3-Embedding-0.6B`. One view shows one model. |
+| `model` | non-empty string | yes | The embedding model id exactly as you used it, for example `Qwen/Qwen3-Embedding-0.6B`. One view shows one model. For a file people will search by typed text, write the name the embedding service answers with, not an alias or a lane name: a query is refused unless its model matches this id exactly. |
 | `dimension` | integer ≥ 1 | yes | The number of float32 values per point in the `.f32` file. With a top-k reduction this is the number of directions kept, not the model's native dimension. |
 | `count` | integer ≥ 0 | yes | The number of points. It must equal the length of `points`. |
 | `text_included` | boolean | yes | `true` if labels or metadata may carry corpus text; `false` for a labels-only set. |

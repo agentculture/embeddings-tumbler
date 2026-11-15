@@ -40,6 +40,7 @@
       describe: describe,
       refit: refit,
       mark: mark,
+      face: face,
       leave: leave,
     };
 
@@ -51,7 +52,8 @@
     var emptyReady = false;
     var st = null; // set statistics (mean, radius)
     var glide = null;
-    // Fitted tours in switch-time order: { tour, al (alignment or null), t0, share, count }.
+    // Fitted tours in switch-time order: { tour, al (alignment or null), t0, share, count,
+    // zb (the zoom basis over the tour's directions, M.zoomWith) }.
     // The first has t0 = -Infinity; a refit adds one at its switch time T.
     var tours = [];
     var pending = null; // a finished refit whose switch time is not fixed yet
@@ -66,6 +68,7 @@
     // touches no state, so it can never make the instance ready on old data.
     var gen = 0;
     var refitGen = 0;
+    var swings = null; // the swings toward the searches (M.makeSwings)
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Tumble");
@@ -85,6 +88,7 @@
       refitRunning = false;
       requestedAt = null;
       progress = 0;
+      swings = M.makeSwings(D, seed);
       self.time = 0;
       self.varianceShare = null;
       hold = entry ? entry.frame : M.startFrame(D, seed);
@@ -94,11 +98,17 @@
     // The fit, in small units: centring (ET.math.makeCentre), then the
     // principal directions and the tour (ET.math.makeGuidedTour), each pumped
     // one unit (about a millisecond) per run(). The tour is bit-identical to
-    // the blocking ET.math.guidedTour on the same data and seed.
-    function fit(onDone, live) {
+    // the blocking ET.math.guidedTour on the same data and seed. Last, the zoom
+    // basis over the tour's directions (and, with `extra`, three more rows: the
+    // entry frame the first seconds blend from), so that framing a frame of the
+    // tour does not cost a pass over the sample in full dimension on every frame.
+    function fit(onDone, live, extra) {
       var fitSet = null;
       var cen = null;
       var tourSt = null;
+      var tour = null;
+      var zoomJob = null;
+      var extended = false;
       return [
         {
           required: true,
@@ -123,19 +133,41 @@
           },
           run: function () {
             if (!live()) return true;
+            var rows = fitSet.count > opt.fitRows ? opt.fitRows : undefined;
             if (!tourSt) {
               tourSt = ET.math.makeGuidedTour(cen.result.data, fitSet.count, D, {
                 seed: seed,
                 subspace: opt.subspace,
                 speed: opt.speed,
-                sampleRows: fitSet.count > opt.fitRows ? opt.fitRows : undefined,
+                sampleRows: rows,
+                pca: M.fittedDirections(fitSet, seed, opt.subspace, rows),
               });
             }
             if (!tourSt.step(0)) return false;
-            var tour = tourSt.result;
+            tour = tourSt.result;
+            M.keepDirections(fitSet, seed, opt.subspace, rows, tour.pca);
             cen = null; // the centred copy is not kept
             tourSt = null;
-            onDone(tour, fitSet.count);
+            return true;
+          },
+        },
+        {
+          required: true,
+          weight: 0.5,
+          progress: function () {
+            if (!zoomJob) return 0;
+            return extra && !extended ? zoomJob.progress() * 0.7 : zoomJob.progress();
+          },
+          run: function () {
+            if (!live()) return true;
+            if (!zoomJob) zoomJob = M.zoomBasisJob(fitSet.vectors, fitSet.count, D, tour.basis, tour.subspace, opt.zoomSample);
+            if (!zoomJob.run()) return false;
+            if (extra && !extended) {
+              extended = true;
+              zoomJob = M.zoomExtendJob(zoomJob.result, fitSet.vectors, extra, 3);
+              return false;
+            }
+            onDone(tour, fitSet.count, zoomJob.result);
             return true;
           },
         },
@@ -188,11 +220,15 @@
           },
         },
       ].concat(
-        fit(function (tour, count) {
-          var al = entry ? M.alignment(tour.frameAt(0), entry.frame, D) : null;
-          tours = [{ tour: tour, al: al, t0: -Infinity, share: tour.varianceShare, count: count }];
-          self.varianceShare = tour.varianceShare;
-        }, live),
+        fit(
+          function (tour, count, zb) {
+            var al = entry ? M.alignment(tour.frameAt(0), entry.frame, D) : null;
+            tours = [{ tour: tour, al: al, t0: -Infinity, share: tour.varianceShare, count: count, zb: zb }];
+            self.varianceShare = tour.varianceShare;
+          },
+          live,
+          entry ? entry.frame : null,
+        ),
       );
       return tracked(M.stepper(tasks), live);
     }
@@ -243,7 +279,15 @@
       var t0 = Math.max(T, lastSwitch());
       var shown = innerFrame(t0, new Float32Array(3 * D));
       var al = M.alignment(pending.tour.frameAt(t0), shown, D);
-      var next = { tour: pending.tour, al: al, t0: t0, share: pending.tour.varianceShare, count: pending.count, blend: null };
+      var next = {
+        tour: pending.tour,
+        al: al,
+        t0: t0,
+        share: pending.tour.varianceShare,
+        count: pending.count,
+        zb: pending.zb,
+        blend: null,
+      };
       var start = tourFrame(next, t0, new Float32Array(3 * D));
       next.blend = makeRefitBlend(shown, start, D);
       next.blend.duration = refitDuration(next.blend, pending.tour, t0);
@@ -273,10 +317,14 @@
       return need;
     }
 
-    function drawFor(frame, centre, t) {
+    // The draw parameters at t. `zoom` is the zoom when the caller has it (a
+    // swing sets its own); otherwise the frame is framed through the active
+    // tour's zoom basis (M.zoomWith: autoZoom's answer, in the tour's span).
+    function drawFor(frame, centre, t, zoom) {
       var sc = st.radius / M.REFERENCE_RADIUS;
+      var zb = tours[activeIndex(t)].zb;
       var draw = {
-        zoom: M.autoZoom(set.vectors, set.count, D, frame, centre, opt.zoomSample),
+        zoom: zoom === undefined ? M.zoomWith(zb, set.vectors, set.count, D, frame, centre, opt.zoomSample) : zoom,
         wires: 0,
         dim: 1,
         trails: 0.17,
@@ -294,13 +342,56 @@
       if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
       if (pending) fixSwitch(t); // no time was given: the first query fixes it
       out.t = t;
-      frameAt(t, out.frame);
-      glide.at(t, out.centre);
-      out.draw = drawFor(out.frame, out.centre, t);
+      var sw = swings.at(t);
+      if (sw && t < sw.U) {
+        var zoom = M.swingState(sw, t, out.frame, out.centre);
+        out.draw = drawFor(out.frame, out.centre, t, zoom);
+        out.draw.zoom = zoom;
+      } else {
+        frameAt(t, out.frame);
+        glide.at(t, out.centre);
+        if (sw) released(sw, t);
+        out.draw = drawFor(out.frame, out.centre, t);
+        if (sw) out.draw.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), out.centre, out.draw.zoom);
+      }
       out.wires = null;
       out.focus = null;
       out.status = status(t);
       return out;
+    }
+
+    // After a swing ends at U, Tumble turns back onto its tour from the frame
+    // shown at U the way it turns onto a refitted tour: the tour's axes are
+    // relabelled (order and sign) to match that frame, and a fixed rotation that
+    // takes the tour's frame at U to the frame shown unwinds along refitEase over
+    // a length chosen as for a refit ("auto": the turn adds at most half the
+    // tour's mean rate). A blend over `transition` seconds, as on entry, turned up
+    // to five times faster than the tour moves (measured). The centre and zoom
+    // come back over `transition` (stateAt).
+    function released(sw, t) {
+      var c = sw.cache;
+      if (!c.turn) {
+        var end = M.swingEnd(sw);
+        var raw = frameAt(sw.U, new Float32Array(3 * D));
+        c.al = M.alignment(raw, end.frame, D);
+        var start = M.applyAlignment(raw, c.al, D);
+        c.turn = makeRefitBlend(end.frame, start, D);
+        c.turn.duration = refitDuration(c.turn, tours[activeIndex(sw.U)].tour, sw.U);
+      }
+      M.applyAlignment(new Float32Array(out.frame), c.al, D, out.frame);
+      var u = (t - sw.U) / c.turn.duration;
+      if (u < 1) applyRefitBlend(c.turn, 1 - refitEase(u), out.frame, D);
+    }
+
+    // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
+    // face(null, t) ends a swing in progress at t.
+    function face(target, time, options) {
+      if (!isReady() || empty) return false;
+      if (target === null) return swings.end(time);
+      return swings.face(target, time, options, function (T) {
+        var s = stateAt(T);
+        return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), zoom: s.draw.zoom };
+      });
     }
 
     function step(dt) {
@@ -312,6 +403,8 @@
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
       if (!isReady()) return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
+      var sw = swings.at(t);
+      if (sw && t < sw.U) return M.swingStatus(sw, "tumbling");
       var cur = tours[activeIndex(t)];
       var s = "tour of " + cur.tour.subspace + " strongest directions · " + (cur.share * 100).toFixed(1) + "% of variance";
       var since = set.count - cur.count;
@@ -359,8 +452,8 @@
       var rg = refitGen;
       return M.stepper(
         fit(
-          function (tour, count) {
-            pending = { tour: tour, count: count };
+          function (tour, count, zb) {
+            pending = { tour: tour, count: count, zb: zb };
             if (requestedAt !== null) fixSwitch(requestedAt);
           },
           function () {
@@ -392,6 +485,7 @@
         refitAt: last?.t0 > -Infinity ? last.t0 : null,
         refitTransition: last?.blend ? last.blend.duration : null,
         refitPending: refitRunning,
+        facing: swings ? swings.describe() : null,
         empty: empty,
       };
     }

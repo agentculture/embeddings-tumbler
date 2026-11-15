@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embeddings viewer: web component with search</title>
+  <link rel="stylesheet" href="host.css">
+</head>
+<body>
+  <main>
+    <h1>My vectors, with search</h1>
+    <form id="ask">
+      <label for="query">Point id to search from (for example p0007)</label>
+      <input id="query" name="query" type="text" value="p0007" autocomplete="off">
+      <button type="submit">Search</button>
+    </form>
+    <p><output id="note">Loading.</output></p>
+    <embeddings-tumbler id="space" src="space.json" mode="tumble" seed="7"></embeddings-tumbler>
+  </main>
+  <script src="embeddings-tumbler.js"></script>
+  <script src="web-component.js"></script>
+  <script src="host.js"></script>
+</body>
+</html>

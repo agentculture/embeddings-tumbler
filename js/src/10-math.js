@@ -155,11 +155,23 @@
     // nothing else. It falls after UNIT multiply-adds of work, or earlier once
     // SLICE_MS milliseconds have passed since the unit began (memory-bound loops
     // and code the engine has not optimised yet run slower per multiply-add).
-    // The clock is read about every CHECK multiply-adds.
+    // The clock is read about every CHECK multiply-adds, and no piece of work
+    // between two possible pauses is much larger than CHECK (PIECE is what the
+    // generators aim for). That bound is what keeps a unit short on a device
+    // that runs JavaScript without a compiler (an iPhone in Lockdown Mode, for
+    // one): there a multiply-add costs 40 to 90 ns, not 1, so a piece of 2^20 of
+    // them (one row of the Gram matrix of 999 points in 1,024-d, as it was)
+    // held a frame for 50 to 90 ms whatever budget it had been given.
 
-    var UNIT = 1 << 20; // multiply-adds per unit at most: about 0.6 ms of arithmetic in node
-    var CHECK = UNIT >> 4;
+    var UNIT = 1 << 20; // multiply-adds per unit at most: about a millisecond of compiled arithmetic
+    var CHECK = 1 << 12; // multiply-adds between two looks at the clock
+    var PIECE = CHECK; // the generators pause-point at least this often (or once per vector)
     var SLICE_MS = 1;
+
+    // How many items of `cost` multiply-adds each make one piece (at least one).
+    function perPiece(cost) {
+      return Math.max(1, Math.floor(PIECE / Math.max(1, cost)));
+    }
 
     // Counts work done and says when a unit is over.
     function Tracker(total) {
@@ -345,14 +357,23 @@
       return M;
     }
 
-    // The same, sliced by rows (one row costs about 4 * i * D multiply-adds).
+    // The same, sliced inside each row: a pause may fall after each earlier row
+    // is removed (2 * D multiply-adds), so a row of a wide block (4 * i * D in
+    // all) never holds a unit. The arithmetic and its order are orthoRow's.
     function* orthonormalizeGen(M, rows, D, wk) {
       checkDim(D);
       if (rows > D) throw new RangeError("cannot fit more orthonormal rows than the dimension");
       var v = new Float64Array(D);
       for (var i = 0; i < rows; i++) {
-        orthoRow(M, i, D, v);
-        if (wk.add((4 * i + 3) * D)) yield;
+        var before = loadRowForOrtho(M, i, D, v);
+        for (var pass = 0; pass < 2; pass++) {
+          for (var j = 0; j < i; j++) {
+            removeRow(v, 0, M, j * D, D);
+            if (wk.add(2 * D)) yield;
+          }
+        }
+        finishOrthoRow(M, i, D, v, before);
+        if (wk.add(3 * D)) yield;
       }
       return M;
     }
@@ -368,24 +389,39 @@
     // (row-major, meant to be orthonormal), one row at a time, in two passes.
     function removeSpan(v, vo, M, rows, D) {
       for (var pass = 0; pass < 2; pass++) {
-        for (var j = 0; j < rows; j++) {
-          var oj = j * D;
-          var dp = 0;
-          for (var d = 0; d < D; d++) dp += v[vo + d] * M[oj + d];
-          for (var d2 = 0; d2 < D; d2++) v[vo + d2] -= dp * M[oj + d2];
-        }
+        for (var j = 0; j < rows; j++) removeRow(v, vo, M, j * D, D);
       }
+    }
+
+    // Remove from v[vo .. vo + D) its component along the row of M at offset oj.
+    function removeRow(v, vo, M, oj, D) {
+      var dp = 0;
+      for (var d = 0; d < D; d++) dp += v[vo + d] * M[oj + d];
+      for (var d2 = 0; d2 < D; d2++) v[vo + d2] -= dp * M[oj + d2];
     }
 
     // Row i of M made orthogonal to rows 0..i-1 (twice) and normalised; v is scratch.
     function orthoRow(M, i, D, v) {
+      var before = loadRowForOrtho(M, i, D, v);
+      removeSpan(v, 0, M, i, D);
+      finishOrthoRow(M, i, D, v, before);
+    }
+
+    // Copy row i of M into v; returns its squared length.
+    function loadRowForOrtho(M, i, D, v) {
       var oi = i * D;
       var before = 0;
       for (var d = 0; d < D; d++) {
         v[d] = M[oi + d];
         before += v[d] * v[d];
       }
-      removeSpan(v, 0, M, i, D);
+      return before;
+    }
+
+    // v (row i with rows 0..i-1 removed) normalised into row i of M, or the
+    // fallback row when it collapsed.
+    function finishOrthoRow(M, i, D, v, before) {
+      var oi = i * D;
       var nn = sqNorm(v, 0, D);
       if (!above(nn, 1e-24) || nn <= 1e-12 * before) nn = fallbackRow(M, i, D, v);
       var inv = 1 / Math.sqrt(nn);
@@ -781,20 +817,33 @@
       result.share = clamp01(s);
     }
 
+    // The Gram matrix Y Y^T, a few entries at a time: a whole row of it is up to
+    // N * D multiply-adds (a million for 999 points in 1,024-d), far too long
+    // for one piece. Each entry is its own sum, so where a pause falls changes
+    // nothing.
     function* gramGen(Y, N, D, wk) {
       var G = new Float64Array(N * N);
+      var chunk = perPiece(D);
       for (var a = 0; a < N; a++) {
-        var oa = a * D;
-        for (var b = a; b < N; b++) {
-          var ob = b * D;
-          var s = 0;
-          for (var d = 0; d < D; d++) s += Y[oa + d] * Y[ob + d];
-          G[a * N + b] = s;
-          G[b * N + a] = s;
+        for (var b = a; b < N; b += chunk) {
+          var end = Math.min(N, b + chunk);
+          gramEntries(Y, G, a, b, end, N, D);
+          if (wk.add((end - b) * D)) yield;
         }
-        if (wk.add((N - a) * D)) yield;
       }
       return G;
+    }
+
+    // G[a][b] and G[b][a] for b in [from, to): the dot product of rows a and b.
+    function gramEntries(Y, G, a, from, to, N, D) {
+      var oa = a * D;
+      for (var b = from; b < to; b++) {
+        var ob = b * D;
+        var s = 0;
+        for (var d = 0; d < D; d++) s += Y[oa + d] * Y[ob + d];
+        G[a * N + b] = s;
+        G[b * N + a] = s;
+      }
     }
 
     // W (p rows of length n) = A Q for symmetric dense A (n x n), Q given as rows.
@@ -818,13 +867,21 @@
       // four points (a quarter of the memory traffic). A missing row at the end
       // repeats the last real row with weight zero. The order of additions is
       // fixed, so the result is still deterministic.
+      // A group of four rows against all p directions is 8 * p * D
+      // multiply-adds (131,072 at p = 16 in 1,024-d), so a pause may fall
+      // between directions: row j of W depends only on row j of Q.
       W.fill(0);
       var z = new Float64Array(4 * p);
+      var chunk = perPiece(8 * D);
       for (var i = 0; i < N; i += 4) {
         var live = Math.min(4, N - i); // real rows in this group
-        projectFour(Y, i * D, live, Q, p, D, z);
-        accumulateFour(Y, i * D, live, z, p, D, W);
-        if (wk.add(8 * p * D)) yield;
+        var group = { oa: i * D, live: live };
+        for (var j = 0; j < p; j += chunk) {
+          var end = Math.min(p, j + chunk);
+          projectFour(Y, group, Q, j, end, D, z);
+          accumulateFour(Y, group, z, j, end, D, W);
+          if (wk.add(8 * (end - j) * D)) yield;
+        }
       }
     }
 
@@ -834,13 +891,15 @@
       return r < live ? oa + r * D : oa;
     }
 
-    // z[4j + r] = (Y row r of the group at oa) . (Q row j), 0 for a row beyond
-    // the `live` real ones.
-    function projectFour(Y, oa, live, Q, p, D, z) {
+    // z[4j + r] = (Y row r of the group at group.oa) . (Q row j), 0 for a row
+    // beyond the group.live real ones, for j in [from, to).
+    function projectFour(Y, group, Q, from, to, D, z) {
+      var oa = group.oa;
+      var live = group.live;
       var ob = rowOffset(oa, 1, live, D);
       var oc = rowOffset(oa, 2, live, D);
       var od = rowOffset(oa, 3, live, D);
-      for (var j = 0; j < p; j++) {
+      for (var j = from; j < to; j++) {
         var sa = 0;
         var sb = 0;
         var sc = 0;
@@ -860,12 +919,15 @@
       }
     }
 
-    // W row j += the four rows weighted by z[4j .. 4j + 3], in a fixed order.
-    function accumulateFour(Y, oa, live, z, p, D, W) {
+    // W row j += the four rows weighted by z[4j .. 4j + 3], in a fixed order,
+    // for j in [from, to).
+    function accumulateFour(Y, group, z, from, to, D, W) {
+      var oa = group.oa;
+      var live = group.live;
       var ob = rowOffset(oa, 1, live, D);
       var oc = rowOffset(oa, 2, live, D);
       var od = rowOffset(oa, 3, live, D);
-      for (var j2 = 0; j2 < p; j2++) {
+      for (var j2 = from; j2 < to; j2++) {
         var a = z[4 * j2];
         var b = z[4 * j2 + 1];
         var c = z[4 * j2 + 2];
@@ -923,8 +985,8 @@
           for (var x = 0; x < n; x++) s += Q[a * n + x] * W[b * n + x];
           B[a * p + b] = s;
           B[b * p + a] = s;
+          if (wk.add(n)) yield;
         }
-        if (wk.add((p - a) * n)) yield;
       }
     }
 
@@ -1279,9 +1341,14 @@
     // Exact k nearest neighbours by Euclidean distance in the full D-dimensional
     // space, among the first `limit` points (default N). Ties go to the lower
     // index. Cost: O(limit^2 * D) multiply-adds in total, done row by row so a
-    // caller can spread it over many slices with step(rows).
+    // caller can spread it over many slices with step(rows), or a part of a row
+    // at a time with stepPart(candidates): one query row is up to limit * D
+    // multiply-adds (a million for 1,000 points in 1,024-d), too long for one
+    // unit on a device that runs JavaScript slowly. The candidates of a row are
+    // tried in the same order however it is sliced, so the result is the same.
     // Returns a stepper { k, count, indices: Int32Array(count*k),
-    // distances: Float32Array(count*k), next, done, step(rows) -> done }.
+    // distances: Float32Array(count*k), next, done, step(rows) -> done,
+    // stepPart(candidates) -> done }.
     function makeKnn(X, N, D, k, opts) {
       checkData(X, N, D);
       var o = opts || {};
@@ -1298,10 +1365,16 @@
         state.done = true;
       }
 
-      function row(i) {
-        var filled = 0;
+      // The row in progress (state.next): the next candidate and how many of
+      // the best are filled.
+      var rowAt = 0;
+      var filled = 0;
+
+      // Up to `count` more candidates of row i; true once the row is written.
+      function rowPart(i, count) {
         var oi = i * D;
-        for (var j = 0; j < S; j++) {
+        var stop = Math.min(S, rowAt + count);
+        for (var j = rowAt; j < stop; j++) {
           if (j === i) continue;
           var bound = filled === K ? bestD[K - 1] : Infinity;
           var s = partialSqDistance(X, oi, j * D, D, bound);
@@ -1310,19 +1383,34 @@
           insertBest(bestD, bestI, Math.min(filled, K - 1), s, j);
           if (filled < K) filled++;
         }
+        rowAt = stop;
+        if (stop < S) return false;
         for (var q = 0; q < K; q++) {
           indices[i * K + q] = bestI[q];
           distances[i * K + q] = Math.sqrt(bestD[q]);
         }
+        rowAt = 0;
+        filled = 0;
+        return true;
       }
 
       state.step = function (rows) {
         var r = rows === undefined ? S : Math.max(1, toInt32(rows));
         if (state.done) return true;
         var stop = Math.min(S, state.next + r);
-        for (var i = state.next; i < stop; i++) row(i);
+        for (var i = state.next; i < stop; i++) rowPart(i, S);
         state.next = stop;
         state.done = stop >= S;
+        return state.done;
+      };
+      // Up to `candidates` more candidates of the row in progress (at least one).
+      state.stepPart = function (candidates) {
+        if (state.done) return true;
+        var c = candidates === undefined ? S : Math.max(1, toInt32(candidates));
+        if (rowPart(state.next, c)) {
+          state.next++;
+          state.done = state.next >= S;
+        }
         return state.done;
       };
       return state;

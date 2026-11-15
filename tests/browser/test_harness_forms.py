@@ -34,7 +34,7 @@ RUNS = {
     "component-script-src-self": ("component-host.html", "wc", "script-src 'self'", False),
     "component-default-src-self": ("component-host.html", "wc", "default-src 'self'", False),
     "component-bypass-csp": ("component-host.html", "wc", "script-src 'self'", True),
-    "standalone-sample": ("index.html", "space", None, False),
+    "standalone-sample": ("index.html?sample=synthetic", "space", None, False),
     "standalone-data": ("index.html?data=twin-blobs.json", "space", None, False),
     "standalone-bypass-csp": ("index.html?data=twin-blobs.json", "space", None, True),
 }

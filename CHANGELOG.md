@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-11-15
+
+### Added
+
+- Search in the viewer. Type a text, or up to four, and the nearest named points light up, each search in its own colour; every point as near as the last result is lit. Distances are cosine distances in the full space. The view keeps moving while a search is shown and swings to face it.
+- Typed text is embedded through a host `embed` callback, or matched as words among the loaded points when there is none. An optional `rerank` callback reorders up to 100 candidates and keeps the top ones (defaults: 50 candidates, top 20). Results go up to 100.
+- A search panel that opens and closes, with the lit choice (including stronger light for nearer points), distance differences, a point-of-view option, Face the searches, suggestions and a line saying where typed text was sent.
+- A fourth view, Focus: one search, its ranked results beside the stage.
+- `viewer serve --embed`: a local helper route for embedding and reranking. The gateway address and key stay in the server process and never reach a page. Loopback only unless `--embed-allow-remote` is given.
+- The standalone page's default data is a real set: 999 of Wikipedia's Level 3 vital articles, embedded with `google/embeddinggemma-2` (768 dimensions). Text is under CC BY-SA 4.0 and credited in `NOTICE`. The generated set is at `?sample=synthetic`.
+- Handle methods `setSearches`, `clearSearches`, `setSearchSettings`, `searchSettings`, `faceSearches`, `setSearchCallbacks`, and `info().search`.
+- Guides: a search section in the host guide and a new search guide (`docs/guides/search.md`), each with tested example pages. Records: the reference comparison for search with the owner's sign-off, and the real-data proof (`docs/evidence/2026-11-14-real-search-proof.md`).
+
+### Changed
+
+- The readout strip is coloured by screen axis: each cell mixes three colours by its dimension share of the horizontal, vertical and depth axes, with a legend; opacity is unchanged.
+- In Lattice, wires follow the search, and crowded wires are drawn fainter.
+- The view keeps turning slowly while a mode prepares (option `spinWhilePreparing`).
+- Preparation work is cut into much smaller pieces and its per-frame budget follows the frame rate; labels and zoom no longer project full vectors every frame; Lattice reuses Tumble's fit. On the owner's phone the page went from 6.7 to 59.8 frames per second.
+- The packages declare `Apache-2.0 AND CC-BY-SA-4.0`, because the demo set carries Wikipedia text.
+- New option `adaptivePixelRatio` (off by default): lower the drawing resolution when frames stay under 25 per second.
+
+### Fixed
+
+- A failed equality assertion on two fake DOM nodes in the JavaScript tests printed and diffed the whole object graph and could use more than 40 GB of memory; it now fails with one line.
+
 ## [0.11.6] - 2026-11-14
 
 ### Added

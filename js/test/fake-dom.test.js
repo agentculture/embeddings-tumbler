@@ -183,3 +183,39 @@ test("guard rails still hold", () => {
   assert.equal(a.children.length, 0);
   assert.equal(a.textContent, "<b>x</b>");
 });
+
+// One failed equality assertion on two nodes once used more than 40 GB: node printed and
+// diffed everything each node reaches. The helper makes such a failure one short line.
+test("a failed equality assertion on fake nodes is one short line, for both assert modules", () => {
+  const { dom, a, b } = tree();
+  // Something large reachable from every node, as the viewer and its vectors are.
+  dom.document.body.heavy = Array.from({ length: 2000 }, (_, i) => ({ i, text: "x".repeat(200) }));
+  const loose = require("node:assert");
+  const started = Date.now();
+  for (const mod of [assert, loose]) {
+    for (const name of ["equal", "strictEqual", "deepEqual", "deepStrictEqual"]) {
+      mod[name](a, a);
+      mod[name]([a, b], [a, b]);
+      let err = null;
+      try {
+        mod[name](a, b);
+      } catch (e) {
+        err = e;
+      }
+      assert.ok(err instanceof loose.AssertionError, name);
+      assert.equal(err.message, "expected <span#b>, got <span#a>");
+      assert.equal(err.actual, undefined);
+      assert.equal(err.expected, undefined);
+      assert.throws(() => mod[name](a, null, "told"), { message: "told (expected null, got <span#a>)" });
+      assert.throws(() => mod[name]([a], [b]), { message: "expected [<span#b>], got [<span#a>]" });
+    }
+    for (const name of ["notEqual", "notStrictEqual", "notDeepEqual", "notDeepStrictEqual"]) {
+      mod[name](a, b);
+      assert.throws(() => mod[name](a, a), { message: "expected something other than <span#a>" });
+    }
+  }
+  assert.ok(Date.now() - started < 2000);
+  // Values that are not nodes go to node's own assertions unchanged.
+  assert.throws(() => assert.strictEqual(1, 2), { actual: 1, expected: 2 });
+  assert.throws(() => assert.deepStrictEqual({ a: 1 }, { a: 2 }), { code: "ERR_ASSERTION" });
+});

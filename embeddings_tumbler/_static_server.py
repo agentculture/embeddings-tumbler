@@ -3,6 +3,10 @@
 Standard library only. It serves regular files under one folder, GET and HEAD
 only. It reads no environment variable and no file other than the ones it
 serves, so no gateway address or key can reach it.
+
+When ``viewer serve --embed`` builds it with an ``embed`` route object
+(``embeddings_tumbler._embed_route.EmbedRoute``), requests for that route's one
+path are handed to the route; everything else is served exactly as without it.
 """
 
 from __future__ import annotations
@@ -180,10 +184,18 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = "embeddings-tumbler"
     sys_version = ""
 
-    def __init__(self, *args, root: Path, quiet: bool, **kwargs) -> None:
+    def __init__(self, *args, root: Path, quiet: bool, embed=None, **kwargs) -> None:
         self._root = root
         self._quiet = quiet
+        self._embed = embed
         super().__init__(*args, **kwargs)
+
+    def _to_route(self) -> bool:
+        """Hand the request to the embed route if it is on and owns the path."""
+        if self._embed is None or not self._embed.owns(self.path):
+            return False
+        self._embed.handle(self)
+        return True
 
     def _send_head(self) -> Path | None:
         location = directory_redirect(self._root, self.path)
@@ -208,6 +220,8 @@ class _Handler(BaseHTTPRequestHandler):
         return target
 
     def do_GET(self) -> None:  # noqa: N802
+        if self._to_route():
+            return
         target = self._send_head()
         if target is not None:
             # Streamed, as http.server does, rather than read whole into memory.
@@ -215,9 +229,12 @@ class _Handler(BaseHTTPRequestHandler):
                 shutil.copyfileobj(source, self.wfile)
 
     def do_HEAD(self) -> None:  # noqa: N802
-        self._send_head()
+        if not self._to_route():
+            self._send_head()
 
     def _not_allowed(self) -> None:
+        if self._to_route():
+            return
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         self.send_header("Allow", "GET, HEAD")
         self.send_header(CONTENT_LENGTH, "0")
@@ -235,12 +252,18 @@ class _ThreadingHTTPServerV6(ThreadingHTTPServer):
 
 
 def make_server(
-    root: Path, host: str = DEFAULT_HOST, port: int = 0, *, quiet: bool = False
+    root: Path, host: str = DEFAULT_HOST, port: int = 0, *, quiet: bool = False, embed=None
 ) -> ThreadingHTTPServer:
-    """Build (bind) the server without starting it. ``port`` 0 picks a free port."""
+    """Build (bind) the server without starting it. ``port`` 0 picks a free port.
+
+    ``embed``, when given, is told the bound address (``embed.bind(host, port)``) and
+    answers requests for its own path; None (the default) is a static-only server.
+    """
     real_root = Path(os.path.realpath(root))
-    handler = partial(_Handler, root=real_root, quiet=quiet)
+    handler = partial(_Handler, root=real_root, quiet=quiet, embed=embed)
     server_class = _ThreadingHTTPServerV6 if address_family(host) == socket.AF_INET6 else None
     server = (server_class or ThreadingHTTPServer)((host, port), handler)
     server.daemon_threads = True
+    if embed is not None:
+        embed.bind(host, server.server_address[1])
     return server

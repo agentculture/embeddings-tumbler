@@ -59,6 +59,7 @@ registers one from a test). The public API (`ET.api`) is t8's; it may expose
 | `status(t?) -> string` | The status line at `t` (default `inst.time`); the same text as `stateAt(t).status`. A pure query: calling it at any times changes no later answer (tested). Kept short (about 70 characters at most); detail is in `describe()`. |
 | `dataChanged(newSet, { op, added, t }) -> { work, restart }` | The set changed at mode time `t` (see "Data changes"). `work` is a stepper to pump, or `null`. `restart: true` means the mode re-entered and its time restarted at 0: the viewer resets its mode clock to 0 and waits for `isReady()`. |
 | `mark(t)` (optional) | Fix the time of a finished event at mode time `t` (see "Events"). All three shipped modes have it; it does nothing when no event is waiting. |
+| `face(target, t, options?)` (optional) | The swing toward the searches (see "Facing the searches"). All three shipped modes have it; it is not in `INTERFACE`, so a mode without it still conforms. |
 | `describe() -> object` | What the provenance block needs: `{ id, projection, seed, varianceShare, ... }` (per mode below). `projection` always says it is linear. |
 | `leave()` | Drop the instance's references; it is not used again. |
 
@@ -82,6 +83,16 @@ The state:
 The state object and its arrays are **owned by the instance and reused** on the
 next `stateAt`/`step`/`status` call. Copy what you keep (the viewer keeps the
 last state as the next mode's `from`, so it copies it).
+
+### Optional: `inst.spin`
+
+A number, in radians per second: the yaw speed at which the viewer turns the
+view on top of the mode's frame while the mode is shown. Absent (or not a
+finite number of 0 or more): the viewer's own 0.06. Only Focus sets it (0.13,
+its reference's, while a search is shown); Tumble, Lattice and Wander do not, so their frames are
+unchanged. The viewer's spin clock advances by `spin / 0.06` times the elapsed
+time, so the yaw stays continuous across a change of mode. Added after the
+owner's browser look (2026-11-14).
 
 ### Preparation: `prepare()` and steppers
 
@@ -117,15 +128,25 @@ What is ready when (measured below):
 
 | Mode | Required before frames | Extra work (drawn when it arrives) |
 |------|------------------------|------------------------------------|
-| Tumble | mean and spread, centring (`ET.math.makeCentre`), principal directions and tour (`ET.math.makeGuidedTour`) | none |
-| Lattice | mean and spread | true neighbours, query rows one at a time until about 1 ms has passed (at most `sliceRows`, 16, per unit); then the wire list |
+| Tumble | mean and spread, centring (`ET.math.makeCentre`), principal directions and tour (`ET.math.makeGuidedTour`), the zoom basis over the tour's directions (`zoomBasisJob`) | none |
+| Lattice | mean and spread; with `hidden: "strongest"` also the fit and the zoom basis | true neighbours, a few candidates of one query row at a time (about 4,096 multiply-adds) until about 1 ms has passed (at most `sliceRows`, 16, rows per unit); then the wire list |
 | Wander | mean and spread, the visit list and the neighbour pool (one unit, `O(N)`), the first stop (its neighbour scan in pieces, then its local frame via `ET.math.makeLocalFrame`) | none at preparation; each later stop is computed ahead of need in the same small pieces, one piece per `stateAt`, during the hop before it |
 
-Every unit is small: the mean and spread are added about 2^19 values per unit
+Every unit is small: the mean and spread are added about 2^13 values per unit
 (`ET.modes.statsJob`), and Tumble's fit runs one `ET.math` stepper unit per
-unit (about 2^20 multiply-adds, or less once 1 ms has passed). No unit takes
+unit (about 2^20 multiply-adds, or less once 1 ms has passed, with a look at
+the clock every 4,096; see `js/api/10-math.md`). No unit takes
 more than a few milliseconds (measured below), so the viewer's per-frame
-budget holds. The fit still uses at most `fitRows` (4,096) rows taken at an
+budget holds, also on a device that runs JavaScript without a compiler
+(`js/api/50-viewer.md`, "Slow devices").
+
+Framing: Tumble and Lattice frame every frame with `autoZoom`'s rule. Done
+directly that is a pass over the 512-point sample in full dimension on every
+frame (1.5 million multiply-adds in 1,024-d). Their frames stay inside the
+span of a few fixed directions (Tumble: the tour's eight, and the entry frame
+during the entry blend; Lattice: the fitted eight and the frame its swap
+schedule started from), so each builds a zoom basis once, in small units while
+it prepares, and frames through `zoomWith` (below). The fit still uses at most `fitRows` (4,096) rows taken at an
 even stride when the set is larger (the variance shares are exact over all
 rows). The frames are bit-identical to a blocking preparation, whatever the
 budgets (tested: `js/test/modes-refit.test.js` pumps Tumble's preparation in
@@ -231,6 +252,85 @@ true, and `stateAt` returns a hold state that does not move: the entry frame
 (or the mode's start frame), the entry centre (or zeros), the entry's draw
 parameters, no wires, status `no points yet`. The first append with points
 re-enters the mode from that view (`restart: true`).
+
+### Facing the searches (`face`)
+
+The contract is `docs/search-interface.md`, "Modes (t6)". `inst.face(target,
+t, { duration: 6, searches })` starts a swing at mode time `t` toward `target =
+{ frame, centre, zoom }` (the result of `ET.searchSets.makeFacingFrame`; copied,
+each target axis flipped to the shorter turn from the frame shown). It returns
+`false`, changing nothing, when the instance is not ready, the set is empty, the
+frame does not have `3 * D` values, the centre does not have `D` values, a value
+is not finite, the zoom is not a positive finite number, or `duration` is given
+and is not a positive finite number. `searches` is rounded and kept within 1 to
+4 (missing: 1). A time that is not finite throws `RangeError`, as `stateAt`
+does. `face(null, t)` ends the newest swing at `t` if it is in progress then and
+returns `true`; otherwise `false`.
+
+A swing is an event at a fixed time T (see "Events"); a `t` earlier than the
+last swing's start is moved up to it. From T to its end U (`T + duration`):
+
+- **Frame.** The closed-form solution of the reference's per-frame pull
+  (`F += (Q - F)(1 - exp(-2 dt))`) with a drift velocity of 0.21 rad/s per axis
+  (half the reference tumble's 0.42) whose direction turns at 1.5 rad/s inside a
+  plane of two seeded directions per axis, orthonormalised:
+  `F = orth(Q + exp(-2 tau)(A - Q) + a(tau) H1 + b(tau) H2)` with `tau = t - T`, A
+  the frame shown at T, Q the target's frame, `a + ib = 0.21 (e^{1.5 i tau} -
+  e^{-2 tau}) / (2 + 1.5 i)`. So the pull has weight `1 - exp(-2 tau)` and the
+  drift keeps the view moving about the target (about 0.2 of Frobenius change
+  per second once it is close, measured) instead of settling there. H1 and H2
+  are drawn from the view seed and the swing's number since the entry, so the
+  frames are a pure function of data, seed, entry view, event times and `t`.
+- **Centre and zoom** (the mode's: `state.centre`, `state.draw.zoom`):
+  `C0 + (1 - exp(-2 tau))(target.centre - C0)` and the same for the zoom, from
+  the values shown at T. The other draw parameters are the mode's own.
+- **Status:** `swinging to face the search, then <verb> on` or `swinging to
+  face the N searches, then <verb> on` (`tumbling`, `swapping axes`,
+  `wandering`).
+- Lattice's wires stay drawn; Wander's `focus` is the one shown at T (the
+  spokes of the hop it interrupts).
+
+At U the swing ends by itself and the mode's own motion carries on from the
+frame, centre and zoom shown at U, with no jump (mode time does not restart):
+
+- **Tumble** turns back onto its tour as it turns onto a refitted tour: the
+  tour's axes are relabelled (order and sign) to the frame at U, and a fixed
+  rotation taking the tour's frame at U to the frame shown unwinds along the
+  refit turn's ease over a length chosen as for a refit (`refitTransition`,
+  "auto": at most half the tour's mean rate added). Centre and zoom come back
+  to the glide and the auto-zoom over `transition` (smoothstep). Measured on the
+  48-d sample set: the largest per-frame change in the 30 s after U was 1.18
+  times the largest in normal running (an entry-style blend over 1.5 s gave
+  5.2 times).
+- **Lattice** starts a new swap schedule (`ET.math.makeSwapTour`) from the frame
+  at U, seeded from the view seed and the swing's number, over the same
+  directions, and keeps swapping axes (`swap 1 · axis X …` again). Centre and
+  zoom come back over `transition`.
+- **Wander** starts a new leg at U: the hop after the one the swing interrupted
+  flies from the frame and centre shown at U to the route's next stop (`focus.from`
+  is -1 and the status says `heading to`), then the route goes on as before.
+  The stops are the route's; the leg's frames are the route's frames relabelled
+  (order and sign) to the frame at U, the same relabelling for every hop of the
+  leg. The zoom comes back over `transition`. Wander still dwells 2 s at each
+  stop with the frame still, as it does with no search.
+
+A new `face` during a swing ends it at its time and starts a new swing from the
+frame shown then. `dataChanged` with an append keeps a swing (Wander's next leg
+then chooses its stops with the new points); a replace or any other restart
+re-enters the mode with no swing. `leave()` ends it. With no `face` call, every
+frame is bit-identical to a mode without this hook (the determinism tests are
+unchanged). `describe().facing` is `null`, or `{ at, until }` of the newest
+swing in mode time (it may have ended; compare with the time).
+
+Pause and reduced motion stop a swing as they stop everything: it runs on mode
+time. Tested in `js/test/modes-face.test.js` (frames compared bit for bit
+over 601 frames in two fresh loads with the same calls; every pair of
+consecutive seconds during and after a swing differs, against a control that
+holds the frame).
+
+`ET.modes` shares the pieces: `makeSwings(D, seed)`, `swingState`,
+`swingEnd`, `swingRelease`, `releaseCentreZoom`, `swingStatus` and
+`SWING_DURATION` (6), documented in the source.
 
 ## Tumble (`"tumble"`)
 
@@ -354,8 +454,8 @@ still shown); it is gone once those axes have been traded away.
 
 Wires: each of the first `neighbourLimit` points is wired to its
 `wireNeighbours` true nearest neighbours **in the full space** among those
-points (`ET.math.makeKnn`, exact, run one row at a time until about 1 ms has
-passed, at most `sliceRows` rows per unit), deduplicated,
+points (`ET.math.makeKnn`, exact, run a few candidates of one row at a time
+until about 1 ms has passed, at most `sliceRows` rows per unit), deduplicated,
 with their true lengths. As in the reference, points with no group get no wires
 of their own when any point in the limit has a group (the unstructured halo
 stays unwired); they can still be another point's neighbour. When the set has
@@ -366,7 +466,7 @@ no groups at all, every point gets wires.
 | `period` | 3.4 | seconds per swap (the reference's) |
 | `neighbourLimit` | 1000 | only the first this-many points get neighbours (the reference's) |
 | `wireNeighbours` | 3 | wires per point (the reference's) |
-| `sliceRows` | 16 | at most this many query rows per unit of neighbour work (the reference's); a unit also stops after its first row once 1 ms has passed |
+| `sliceRows` | 16 | at most this many query rows per unit of neighbour work (the reference's); a unit also stops after its first piece of a row (about 4,096 multiply-adds) once 1 ms has passed |
 | `transition` | 1.2 | seconds to blend draw parameters in |
 | `wireFade` | 1.2 | seconds for the wires to fade in once measured |
 | `centreTau` | 0.7 | seconds, the centre's glide to the mean |
@@ -486,8 +586,17 @@ set with one point (no variance) reports a share of 0.
   fails, `previous` is ignored and the stats are recomputed in full (tested).
 - `statsJob(set) -> { run() -> done, progress(), result }`: the same
   statistics as `stats(set)` (the same object, cached, bit-identical values),
-  added about 2^19 values per `run()`, for a stepper task. A set already cached
+  added about 2^13 values per `run()`, for a stepper task. A set already cached
   finishes in one call. `now()`: the clock the steppers use.
+- `fittedDirections(set, seed, subspace, sampleRows) -> pca | undefined` and
+  `keepDirections(set, seed, subspace, sampleRows, pca)`: a finished fit of the
+  strongest directions, kept with its set (a `WeakMap`). Tumble and Lattice
+  fit the same directions of the same set, and the fit is the longest
+  preparation there is, so the second to ask hands the kept result to
+  `ET.math.makeGuidedTour` as `pca` and is ready in a fraction of the work. It
+  is the result the fit would produce again (tested: a Lattice that took a
+  kept fit shows the same frames, bit for bit, as one that fitted for itself).
+  An appended set is another set and is fitted afresh.
 - `requireDimension(set, min, title)`, `holdState(...)`, `changed(work,
   restart)`, `EMPTY_STATUS`: shared by the three modes for the rules above.
 - `REFERENCE_RADIUS = 0.963`: the sample set's radius (measured: 0.963 at
@@ -505,6 +614,27 @@ set with one point (no variance) reports a share of 0.
   extent fell from up to 1.38 of the half-stage to at most 0.85). A fixed
   sample, so appends past it do not move the framing. Zoom is a draw
   parameter; frames are unchanged. Wander's flight uses its own fixed zoom.
+- `zoomBasisJob(X, N, D, rows, count, sample?) -> { run() -> done, progress(),
+  result }` builds a zoom basis from `count` directions (rows of `rows`) in
+  small pieces for a stepper task: the directions made orthonormal (`B`) and
+  the coordinates of the first `sample` (512) points along each (`Z`).
+  `zoomExtendJob(base, X, rows, count)` does the same for a copy of `base`
+  with more directions (the two share what they have in common), and
+  `extendZoomBasis(base, X, rows, count?)` runs that to the end in one call
+  (3 rows by default: a frame). `zoomWith(zb, X, N, D, frame, centre,
+  sample?)` is `autoZoom`'s rule from those coordinates when every row of the
+  frame lies inside the basis's span (less than 1e-5 of its length outside
+  it): `3 * k * D` multiply-adds for the frame's coefficients and `3 * k * n`
+  for the sample, about a thirtieth of the direct pass. It returns
+  `autoZoom(...)` itself when there is no basis, the sample size differs
+  (points appended to a set smaller than the sample) or the frame is outside
+  the span (a turn onto a refitted tour, a turn back after a swing). Which of
+  the two answers depends on the frame and the basis alone, and the basis on
+  the data, the seed and the entry, so the zoom is still a function of data,
+  seed and time (tested: two instances asked in different orders give
+  identical zooms). The two agree to rounding: measured over 300 s on the
+  sample set at 999 x 1,024, at most 1.5e-9 apart (relative) in Tumble and
+  3.9e-9 in Lattice. `zb.fast` and `zb.exact` count the answers of each kind.
 - `makeGlide`, `alignment`, `applyAlignment`, `entryFrom`, `blendDraw`,
   `startFrame`, `thousands`, `isLabelled`, `checkTime`, `stepper`: the pieces
   the three modes share, documented in the source.

@@ -40,9 +40,16 @@ than bundled. Rules, with where each comes from:
     error-decoder link, is dropped: nothing here ships React.
     J3 (extended): no protocol-relative string literal (``"//host..."``, ``'//host'`` or
     `` `//host` ``), which a bundled scan would miss and a browser resolves against the page.
+``f32`` (a data contract vector block, ``.f32``)
+    V1 (added here): raw little-endian float32 numbers, which the page fetches as an
+    ``ArrayBuffer`` and never parses as markup, style or script, so there is no address to
+    find in it. It is accepted unscanned only when its length is a multiple of 4 and a
+    ``.json`` file beside it with the same stem names it in ``vectors.file``; any other
+    ``.f32`` is a finding. (The demo set's ``demo-wikipedia.f32`` ships this way; its
+    ``.json`` is scanned as text like any other file.)
 ``binary`` (anything that is not valid UTF-8, or a font/image/media suffix)
     B1 (extended): reported as "not scanned"; a new file type must be added to this script
-    on purpose before it can ship. Today every shipped file is text.
+    on purpose before it can ship. Every other shipped file is text.
 Set rules
     S1 (ported in spirit: the original failed when its worklet asset was missing): with
     ``--expect NAME``, each named file must be among the files scanned; and a scan that finds
@@ -106,7 +113,6 @@ BINARY_SUFFIXES = {
     ".mp4",
     ".webm",
     ".wasm",
-    ".f32",
 }
 
 
@@ -234,10 +240,31 @@ def check_html_text(text: str, label: str = "index.html") -> list[str]:
     return scan.findings
 
 
+def _names_block(records: Path, name: str) -> bool:
+    try:
+        data = json.loads(records.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    vectors = data.get("vectors") if isinstance(data, dict) else None
+    return isinstance(vectors, dict) and vectors.get("file") == name
+
+
+def check_vector_block(path: Path, data: bytes, label: str) -> list[str]:
+    """V1 over a ``.f32`` file. Returns findings, empty when it is a described vector block."""
+    if len(data) % 4 == 0 and _names_block(path.with_suffix(".json"), path.name):
+        return []
+    return [
+        f"{label}: a .f32 file is accepted only as a vector block of whole float32 values "
+        "named by the .json beside it [V1]"
+    ]
+
+
 def check_file(path: Path, label: str | None = None) -> list[str]:
     label = label or str(path)
     suffix = path.suffix.lower()
     data = path.read_bytes()
+    if suffix == ".f32":
+        return check_vector_block(path, data, label)
     if suffix in BINARY_SUFFIXES:
         return [f"{label}: binary file type {suffix!r} is not scanned; add a rule first [B1]"]
     try:

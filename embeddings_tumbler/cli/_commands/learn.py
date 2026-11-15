@@ -32,7 +32,9 @@ Commands
   embeddings-tumbler viewer overview    Describe the viewer verbs.
   embeddings-tumbler viewer write <dir> Write the viewer files into a host folder
                                         (preview; --apply writes; --force overwrites).
-  embeddings-tumbler viewer serve <dir> Serve a folder as static files on loopback.
+  embeddings-tumbler viewer serve <dir> Serve a folder as static files on loopback
+                                        (--embed adds a same-origin search route;
+                                        the gateway key stays in the server process).
 
 Machine-readable output
 -----------------------
@@ -71,7 +73,8 @@ def _as_json_payload() -> dict[str, object]:
             },
             {
                 "path": ["viewer", "serve"],
-                "summary": "Serve a folder as static files, loopback by default.",
+                "summary": "Serve a folder as static files, loopback by default; "
+                "--embed adds a same-origin search route.",
             },
         ],
         "exit_codes": {

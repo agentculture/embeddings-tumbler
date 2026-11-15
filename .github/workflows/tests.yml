@@ -15,6 +15,8 @@ defaults:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A stuck browser test once held this job for half an hour and more; it should fail fast.
+    timeout-minutes: 30
     permissions:
       contents: read
     # Promote SONAR_TOKEN to job env so the SonarCloud step can gate on
@@ -67,7 +69,18 @@ jobs:
       - name: install Chromium for Playwright
         run: uv run --locked --no-build playwright install --with-deps chromium
 
-      - run: uv run --locked --no-build pytest -n auto --cov=. --cov-report=xml:coverage.xml --cov-report=term -v
+      # Two runs into one coverage report. The browser tests draw with software rendering,
+      # which uses every processor by itself, so they run one at a time: measured on this
+      # runner (2026-11-15), one at a time took 11 minutes for the whole browser suite, two
+      # at a time took 20 for less of it, and one per processor timed out. Everything else
+      # runs in parallel.
+      - name: pytest, everything but the browser tests
+        run: uv run --locked --no-build pytest -n auto --ignore=tests/browser --cov=. --cov-report= -v
+
+      - name: pytest, the browser tests
+        run: >-
+          uv run --locked --no-build pytest tests/browser --cov=. --cov-append
+          --durations=15 --cov-report=xml:coverage.xml --cov-report=term -v
 
       - name: SonarCloud Scan
         if: env.SONAR_TOKEN != ''

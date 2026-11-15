@@ -16,8 +16,8 @@
 // ---------------------------------------------------------------------------
 ET.modes = (function () {
   // Members every mode instance must have (see js/api/40-modes.md).
-  // Optional members: mark(t) (fix the time of a finished event) and, for
-  // Tumble, refit(t).
+  // Optional members: mark(t) (fix the time of a finished event), face(target,
+  // t, options) (the swing toward the searches) and, for Tumble, refit(t).
   var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
   var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
   var registry = [];
@@ -157,6 +157,12 @@ ET.modes = (function () {
   var statsCache = typeof WeakMap === "function" ? new WeakMap() : null;
 
   function addRows(st, X, from, to, D) {
+    sumRows(st, X, from, to, D);
+    finishStats(st, D);
+  }
+
+  // The sums over rows [from, to), without the mean and spread (finishStats).
+  function sumRows(st, X, from, to, D) {
     for (var i = from; i < to; i++) {
       var o = i * D;
       for (var d = 0; d < D; d++) {
@@ -166,7 +172,6 @@ ET.modes = (function () {
       }
     }
     st.count = to;
-    finishStats(st, D);
   }
 
   function finishStats(st, D) {
@@ -224,11 +229,14 @@ ET.modes = (function () {
   }
 
   // A sliced form of stats(set) for a stepper task. run() adds the next rows
-  // (about STATS_WORK values, so about half a millisecond) and returns true
+  // (about STATS_WORK values: a few microseconds of compiled arithmetic, under a
+  // millisecond on a device that runs JavaScript without a compiler, where the
+  // 2^19 values it used to add took 20 to 45 ms) and returns true
   // once the statistics are complete and cached; job.result is then the same
   // object stats(set) returns, with the same values bit for bit (the rows are
-  // added in the same order). A set whose statistics are cached finishes at once.
-  var STATS_WORK = 1 << 19;
+  // added in the same order, and the mean and spread are worked out from the
+  // finished sums). A set whose statistics are cached finishes at once.
+  var STATS_WORK = 1 << 13;
   function statsJob(set) {
     var D = set.dimension;
     var rows = Math.max(1, Math.floor(STATS_WORK / Math.max(1, D)));
@@ -246,14 +254,47 @@ ET.modes = (function () {
           return true;
         }
         if (!st) st = { count: 0, dimension: D, sum: new Float64Array(D), sumSq: 0, mean: new Float32Array(D) };
-        addRows(st, set.vectors, st.count, Math.min(set.count, st.count + rows), D);
+        sumRows(st, set.vectors, st.count, Math.min(set.count, st.count + rows), D);
         if (st.count < set.count) return false;
+        finishStats(st, D);
         if (statsCache && !statsCache.has(set)) statsCache.set(set, st);
         job.result = statsCache ? statsCache.get(set) : st;
         return true;
       },
     };
     return job;
+  }
+
+  // ----- the fitted directions, kept per set -----------------------------------
+  //
+  // Tumble and Lattice fit the same strongest directions of the same set (the
+  // same seed, the same number of directions, the same rows). The fit is by far
+  // the longest preparation there is (700 million multiply-adds for 999 points
+  // in 1,024-d: half a second compiled, over a minute on a device that runs
+  // JavaScript without a compiler), so a finished fit is kept with its set and
+  // the next mode to ask for the same one gets it at once. It is the very result
+  // the fit would produce again (ET.math.makeGuidedTour takes it as `pca`), so
+  // nothing a mode shows depends on whether it was kept.
+
+  var fitCache = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function sameFit(e, seed, subspace, sampleRows) {
+    return e.seed === seed && e.subspace === subspace && e.sampleRows === sampleRows;
+  }
+
+  // The kept fit of `set` for these options, or undefined.
+  function fittedDirections(set, seed, subspace, sampleRows) {
+    var list = fitCache?.get(set);
+    if (!list) return undefined;
+    for (var e of list) if (sameFit(e, seed, subspace, sampleRows)) return e.pca;
+    return undefined;
+  }
+
+  function keepDirections(set, seed, subspace, sampleRows, pca) {
+    if (!fitCache || !pca || fittedDirections(set, seed, subspace, sampleRows)) return;
+    var list = fitCache.get(set) || [];
+    list.push({ seed: seed, subspace: subspace, sampleRows: sampleRows, pca: pca });
+    fitCache.set(set, list);
   }
 
   // ----- shared motion helpers ------------------------------------------------
@@ -392,6 +433,11 @@ ET.modes = (function () {
       sq += r2;
       radii[i] = r2;
     }
+    return zoomFromRadii(n, sq);
+  }
+
+  // The zoom from the first n squared radii (in `radii`) and their sum.
+  function zoomFromRadii(n, sq) {
     var rms = Math.sqrt(sq / n);
     var spread = rms > 0; // false for NaN too
     if (!spread) return 1;
@@ -400,6 +446,230 @@ ET.modes = (function () {
     var p98 = Math.sqrt(view[Math.min(n - 1, Math.floor(0.98 * (n - 1)))]);
     var zoom = 0.78 / rms;
     return p98 > 0 && AUTO_FIT / p98 < zoom ? AUTO_FIT / p98 : zoom;
+  }
+
+  // ----- auto-framing inside a known subspace ---------------------------------
+  //
+  // autoZoom projects its sample through the frame in full dimension: 3 * n * D
+  // multiply-adds on every frame (1.5 million for 512 points in 1,024-d), which
+  // on a device that runs JavaScript without a compiler is most of a tenth of a
+  // second per frame. A mode whose frames stay inside the span of a few fixed
+  // directions (Tumble: the tour's basis; Lattice: the fitted directions and its
+  // starting frame) hands those directions over once. A zoom basis keeps them
+  // orthonormal (B) with the sample's coordinates along each (Z, one column per
+  // direction), and zoomWith() then needs the frame's coefficients in B
+  // (3 * k * D) and 3 * k * n more: about a thirtieth of the work.
+  //
+  // It is a pure function of the data, the directions, the frame and the centre,
+  // so the rule that a frame depends on data, seed and time alone still holds.
+  // A frame that is not inside the span (a row keeps more than ZOOM_TOL of its
+  // length outside it: an entry blend from another view, a turn onto a refitted
+  // tour, a swing) is framed by autoZoom itself; which of the two answers
+  // depends on the frame and the basis only. Inside the span the two agree to
+  // about ZOOM_TOL times the ratio of a point's distance to its projected
+  // radius (measured: within 2e-5 of each other, relative, on the demo sets).
+
+  var ZOOM_TOL2 = 1e-10; // a frame row may keep this share of its squared length outside the span
+  var ZOOM_PIECE = 1 << 12; // multiply-adds between two pauses while a basis is built
+
+  function removeFrom(q, b, D) {
+    var dp = 0;
+    for (var d = 0; d < D; d++) dp += q[d] * b[d];
+    for (var d2 = 0; d2 < D; d2++) q[d2] -= dp * b[d2];
+  }
+
+  // col[i] = (row i of X) . q for i in [from, to).
+  function columnPart(X, D, q, col, from, to) {
+    for (var i = from; i < to; i++) {
+      var o = i * D;
+      var s = 0;
+      for (var d = 0; d < D; d++) s += X[o + d] * q[d];
+      col[i] = s;
+    }
+  }
+
+  // Add `count` directions (rows of `rows`, D values each) to the basis zb: each
+  // is made orthogonal to the ones before it (twice) and normalised, then the
+  // sample's coordinates along it are worked out. A direction already inside
+  // the span adds a zero row. Pauses (yields) every ZOOM_PIECE multiply-adds or
+  // so; where they fall changes nothing.
+  function* zoomRowsGen(zb, X, rows, count, work) {
+    var D = zb.D;
+    var n = zb.n;
+    var per = Math.max(1, Math.floor(ZOOM_PIECE / D));
+    for (var r = 0; r < count; r++) {
+      var q = new Float64Array(D);
+      var before = loadDirection(rows, r, D, q);
+      for (var pass = 0; pass < 2; pass++) {
+        for (var b of zb.B) {
+          removeFrom(q, b, D);
+          work.done += 2 * D;
+          yield;
+        }
+      }
+      var col = new Float64Array(n);
+      if (unitOrZero(q, D, before)) {
+        for (var i = 0; i < n; i += per) {
+          columnPart(X, D, q, col, i, Math.min(n, i + per));
+          work.done += per * D;
+          yield;
+        }
+      }
+      zb.B.push(q);
+      zb.Z.push(col);
+    }
+    return zb;
+  }
+
+  // Row r of `rows` into q; returns its squared length.
+  function loadDirection(rows, r, D, q) {
+    var before = 0;
+    for (var d = 0; d < D; d++) {
+      q[d] = rows[r * D + d];
+      before += q[d] * q[d];
+    }
+    return before;
+  }
+
+  // q scaled to unit length (true), or set to zero when nothing of the
+  // direction it started as (squared length `before`) is left (false).
+  function unitOrZero(q, D, before) {
+    var nn = 0;
+    for (var d = 0; d < D; d++) nn += q[d] * q[d];
+    var left = nn > 1e-24 && nn > 1e-12 * before; // false for NaN too
+    if (!left) {
+      q.fill(0);
+      return false;
+    }
+    var inv = 1 / Math.sqrt(nn);
+    for (var d2 = 0; d2 < D; d2++) q[d2] *= inv;
+    return true;
+  }
+
+  function newZoomBasis(n, D) {
+    return { n: n, D: D, B: [], Z: [], coef: null, fast: 0, exact: 0 };
+  }
+
+  // A stepper task's job that builds a zoom basis over the first min(N, sample)
+  // rows of X from `count` directions (rows of `rows`): { run() -> done,
+  // progress(), result }. Each run() is one small piece.
+  function zoomBasisJob(X, N, D, rows, count, sample) {
+    var n = Math.max(0, Math.min(N, sample || 512));
+    return zoomJob(newZoomBasis(n, D), X, rows, count);
+  }
+
+  // The same for a copy of `base` with `count` more directions (the base is
+  // not changed; the two share what they have in common).
+  function zoomExtendJob(base, X, rows, count) {
+    var zb = newZoomBasis(base.n, base.D);
+    zb.B = base.B.slice();
+    zb.Z = base.Z.slice();
+    return zoomJob(zb, X, rows, count);
+  }
+
+  function zoomJob(zb, X, rows, count) {
+    var work = { done: 0 };
+    var total = Math.max(1, count * (zb.n * zb.D + 4 * (zb.B.length + count) * zb.D));
+    var gen = zoomRowsGen(zb, X, rows, count, work);
+    var job = {
+      result: null,
+      progress: function () {
+        return job.result ? 1 : Math.min(0.99, work.done / total);
+      },
+      run: function () {
+        if (job.result) return true;
+        if (!gen.next().done) return false;
+        job.result = zb;
+        return true;
+      },
+    };
+    return job;
+  }
+
+  // zoomExtendJob run to the end in one call: `base` with `count` more
+  // directions (3 by default: a frame's rows).
+  function extendZoomBasis(base, X, rows, count) {
+    var job = zoomExtendJob(base, X, rows, count === undefined ? 3 : count);
+    var done = job.run();
+    while (!done) done = job.run();
+    return job.result;
+  }
+
+  // The frame's coefficients in the basis, into zb.coef (3 rows of k); false
+  // when a row is not inside the span (or is not finite).
+  function zoomCoefficients(zb, frame) {
+    var D = zb.D;
+    var k = zb.B.length;
+    if (zb.coef?.length !== 3 * k) zb.coef = new Float64Array(3 * k);
+    for (var r = 0; r < 3; r++) {
+      var o = r * D;
+      var nf = 0;
+      for (var d = 0; d < D; d++) nf += frame[o + d] * frame[o + d];
+      var got = 0;
+      for (var j = 0; j < k; j++) {
+        var b = zb.B[j];
+        var c = 0;
+        for (var d2 = 0; d2 < D; d2++) c += frame[o + d2] * b[d2];
+        zb.coef[r * k + j] = c;
+        got += c * c;
+      }
+      var inside = nf - got <= ZOOM_TOL2 * nf; // false for NaN too
+      if (!inside) return false;
+    }
+    return true;
+  }
+
+  var zoomA = new Float64Array(0);
+  var zoomB = new Float64Array(0);
+  var zoomC = new Float64Array(0);
+
+  // autoZoom's answer for a frame inside the basis's span, from the sample's
+  // coordinates in the basis; autoZoom itself otherwise (no basis, another
+  // sample size, a frame outside the span).
+  function zoomWith(zb, X, N, D, frame, centre, sample) {
+    var n = Math.min(N, sample || 512);
+    var usable = !!zb && zb.n === n && zb.D === D && n > 0;
+    if (!usable || !zoomCoefficients(zb, frame)) {
+      if (zb) zb.exact++;
+      return autoZoom(X, N, D, frame, centre, sample);
+    }
+    zb.fast++;
+    var k = zb.B.length;
+    if (zoomA.length < n) {
+      zoomA = new Float64Array(n);
+      zoomB = new Float64Array(n);
+      zoomC = new Float64Array(n);
+    }
+    if (radii.length < n) radii = new Float64Array(n);
+    var f0 = 0;
+    var f1 = 0;
+    var f2 = 0;
+    for (var d = 0; d < D; d++) {
+      f0 += centre[d] * frame[d];
+      f1 += centre[d] * frame[D + d];
+      f2 += centre[d] * frame[2 * D + d];
+    }
+    zoomA.fill(-f0, 0, n);
+    zoomB.fill(-f1, 0, n);
+    zoomC.fill(-f2, 0, n);
+    for (var j = 0; j < k; j++) {
+      var col = zb.Z[j];
+      var c0 = zb.coef[j];
+      var c1 = zb.coef[k + j];
+      var c2 = zb.coef[2 * k + j];
+      for (var i = 0; i < n; i++) {
+        zoomA[i] += c0 * col[i];
+        zoomB[i] += c1 * col[i];
+        zoomC[i] += c2 * col[i];
+      }
+    }
+    var sq = 0;
+    for (var i2 = 0; i2 < n; i2++) {
+      var r2 = zoomA[i2] * zoomA[i2] + zoomB[i2] * zoomB[i2] + zoomC[i2] * zoomC[i2];
+      sq += r2;
+      radii[i2] = r2;
+    }
+    return zoomFromRadii(n, sq);
   }
 
   // The sample set's typical radius (root mean squared distance from the mean,
@@ -469,6 +739,188 @@ ET.modes = (function () {
     return t;
   }
 
+  // ----- the swing toward the searches (js/api/40-modes.md, "Facing the searches")
+  //
+  // A swing is an event at a fixed time T. From T to its end U the frame is
+  // pulled toward the facing frame Q with weight w = 1 - exp(-PULL (t - T)) while
+  // it keeps drifting: the frame is the closed-form solution of the reference's
+  // per-frame pull (F += (Q - F)(1 - exp(-2 dt))) with a drift velocity of
+  // SWING_DRIFT rad/s per axis whose direction turns at SWING_TURN rad/s, then
+  // orthonormalised. The drift's directions are drawn from the view seed and the
+  // swing's number, so the frames are a pure function of the calls. The centre
+  // and zoom are pulled toward the target's with the same weight. After U the
+  // mode's own motion carries on from the state shown at U (each mode file).
+  var SWING_DURATION = 6; // seconds of mode time (the reference's)
+  var SWING_PULL = 2; // 1/s: the reference's pull, 1 - exp(-2 dt) per frame
+  var SWING_DRIFT = 0.21; // rad/s per axis: half the reference tumble's 0.42
+  var SWING_TURN = 1.5; // rad/s: how fast the drift's direction turns
+  var SALT_SWING = 0x5e1f0c;
+
+  function allFinite(a) {
+    for (var x of a) if (!Number.isFinite(x)) return false;
+    return true;
+  }
+
+  // A checked copy of a facing target { frame, centre, zoom }, or null.
+  function faceTarget(target, D) {
+    if (!target || typeof target !== "object") return null;
+    var f = target.frame;
+    var c = target.centre;
+    var z = target.zoom;
+    if (f?.length !== 3 * D || c?.length !== D) return null;
+    var good = z > 0 && Number.isFinite(z); // false for a missing or non-numeric zoom too
+    if (!good) return null;
+    var frame = Float32Array.from(f);
+    var centre = Float32Array.from(c);
+    if (!allFinite(frame) || !allFinite(centre)) return null;
+    ET.math.orthonormalize(frame, 3, D);
+    return { frame: frame, centre: centre, zoom: z };
+  }
+
+  // { duration, searches } from face()'s options, or null when the duration is
+  // not a positive finite number.
+  function swingOptions(options) {
+    var o = options || {};
+    var duration = o.duration === undefined ? SWING_DURATION : o.duration;
+    var good = duration > 0 && Number.isFinite(duration);
+    if (!good) return null;
+    var n = Math.round(o.searches);
+    if (Number.isNaN(n) || n < 1) n = 1; // a missing or non-numeric count is one search
+    return { duration: duration, searches: Math.min(4, n) };
+  }
+
+  function makeSwing(tg, shown, T, op, seed, index, D) {
+    var Q = tg.frame;
+    var A = shown.frame;
+    // Each target axis is flipped to the shorter turn from the frame shown, so
+    // the pull never passes through a row that cancels out.
+    for (var r = 0; r < 3; r++) {
+      var dp = 0;
+      for (var d = 0; d < D; d++) dp += Q[r * D + d] * A[r * D + d];
+      if (dp < 0) for (var d2 = 0; d2 < D; d2++) Q[r * D + d2] = -Q[r * D + d2];
+    }
+    var rng = ET.math.makeRandom(ET.math.mixSeed(ET.math.mixSeed(seed, SALT_SWING), index));
+    var H = new Float64Array(6 * D);
+    rng.fillGauss(H, 0, 6 * D);
+    for (var row = 0; row < 6; row++) {
+      var n = 0;
+      for (var d3 = 0; d3 < D; d3++) n += H[row * D + d3] * H[row * D + d3];
+      n = Math.sqrt(n) || 1;
+      for (var d4 = 0; d4 < D; d4++) H[row * D + d4] /= n;
+    }
+    return {
+      index: index,
+      T: T,
+      U: T + op.duration,
+      n: op.searches,
+      A: A,
+      C0: shown.centre,
+      Z0: shown.zoom,
+      Q: Q,
+      Qc: tg.centre,
+      Qz: tg.zoom,
+      H: H,
+      info: shown.info || null,
+      cache: {},
+    };
+  }
+
+  // The swing's frame and centre at mode time t (clamped to [T, U]) written
+  // into `frame` and `centre`; returns the zoom.
+  function swingState(s, t, frame, centre) {
+    var D = s.Qc.length;
+    var tau = Math.min(Math.max(t - s.T, 0), s.U - s.T);
+    var k = Math.exp(-SWING_PULL * tau); // 1 - w
+    var c = Math.cos(SWING_TURN * tau) - k;
+    var sn = Math.sin(SWING_TURN * tau);
+    var den = SWING_PULL * SWING_PULL + SWING_TURN * SWING_TURN;
+    // The drift's offset: the integral of exp(-PULL (tau - u)) times the turning
+    // velocity, in closed form (zero at tau = 0, so the swing starts with no jump).
+    var a = (SWING_DRIFT * (SWING_PULL * c + SWING_TURN * sn)) / den;
+    var b = (SWING_DRIFT * (SWING_PULL * sn - SWING_TURN * c)) / den;
+    var x = new Float64Array(3 * D);
+    var H = s.H;
+    for (var i = 0; i < 3 * D; i++) x[i] = s.Q[i] + k * (s.A[i] - s.Q[i]) + a * H[i] + b * H[3 * D + i];
+    ET.math.orthonormalize(x, 3, D);
+    for (var i2 = 0; i2 < 3 * D; i2++) frame[i2] = x[i2];
+    for (var d = 0; d < D; d++) centre[d] = s.Qc[d] + k * (s.C0[d] - s.Qc[d]);
+    return s.Qz + k * (s.Z0 - s.Qz);
+  }
+
+  // The state shown at the swing's end U: { frame, centre, zoom }, computed once.
+  function swingEnd(s) {
+    if (!s.cache.end) {
+      var D = s.Qc.length;
+      var e = { frame: new Float32Array(3 * D), centre: new Float32Array(D), zoom: 0 };
+      e.zoom = swingState(s, s.U, e.frame, e.centre);
+      s.cache.end = e;
+    }
+    return s.cache.end;
+  }
+
+  // How far the mode has come back after the swing: 0 at U, 1 from U + duration on.
+  function swingRelease(s, t, duration) {
+    var blending = t - s.U < duration; // false for a NaN duration too
+    return blending ? ET.math.smoothstep((t - s.U) / duration) : 1;
+  }
+
+  // centre := from + (centre - from) e, in place; returns the zoom blended the same way.
+  function releaseCentreZoom(end, e, centre, zoom) {
+    if (e >= 1) return zoom;
+    for (var d = 0; d < centre.length; d++) centre[d] = end.centre[d] + (centre[d] - end.centre[d]) * e;
+    return end.zoom + (zoom - end.zoom) * e;
+  }
+
+  function swingStatus(s, verb) {
+    return "swinging to face " + (s.n > 1 ? "the " + s.n + " searches" : "the search") + ", then " + verb + " on";
+  }
+
+  // The swings of one mode entry, in start order. shownAt(T) answers the state
+  // shown at T as { frame, centre, zoom, info? } (copies); `info` is kept on the
+  // swing for the mode's own use.
+  function makeSwings(D, seed) {
+    var list = [];
+
+    // The latest swing that has started by t (it may have ended), or null.
+    function at(t) {
+      for (var i = list.length - 1; i >= 0; i--) if (list[i].T <= t) return list[i];
+      return null;
+    }
+
+    function face(target, time, options, shownAt) {
+      var tg = faceTarget(target, D);
+      var op = swingOptions(options);
+      if (!tg || !op) return false;
+      var T = checkTime(time);
+      var last = list.length ? list.at(-1) : null;
+      if (last && last.T > T) T = last.T; // a fixed past is never rewritten
+      var shown = shownAt(T);
+      if (last && last.U > T) {
+        last.U = T; // a new swing starts from the frame shown at its time
+        last.cache = {};
+      }
+      list.push(makeSwing(tg, shown, T, op, seed, list.length, D));
+      return true;
+    }
+
+    // End the newest swing at t if it is in progress then.
+    function end(time) {
+      var t = checkTime(time);
+      var last = list.length ? list.at(-1) : null;
+      if (!last || t < last.T || t >= last.U) return false;
+      last.U = t;
+      last.cache = {};
+      return true;
+    }
+
+    function describe() {
+      var last = list.length ? list.at(-1) : null;
+      return last ? { at: last.T, until: last.U } : null;
+    }
+
+    return { at: at, face: face, end: end, describe: describe, list: list };
+  }
+
   return {
     INTERFACE: INTERFACE.slice(),
     register: register,
@@ -481,6 +933,8 @@ ET.modes = (function () {
     now: now,
     stats: stats,
     statsJob: statsJob,
+    fittedDirections: fittedDirections,
+    keepDirections: keepDirections,
     makeGlide: makeGlide,
     alignment: alignment,
     applyAlignment: applyAlignment,
@@ -488,6 +942,10 @@ ET.modes = (function () {
     blendDraw: blendDraw,
     startFrame: startFrame,
     autoZoom: autoZoom,
+    zoomBasisJob: zoomBasisJob,
+    zoomExtendJob: zoomExtendJob,
+    extendZoomBasis: extendZoomBasis,
+    zoomWith: zoomWith,
     AUTO_FIT: AUTO_FIT,
     REFERENCE_RADIUS: REFERENCE_RADIUS,
     thousands: thousands,
@@ -498,5 +956,12 @@ ET.modes = (function () {
     changed: changed,
     isPrefix: isPrefix,
     EMPTY_STATUS: EMPTY_STATUS,
+    SWING_DURATION: SWING_DURATION,
+    makeSwings: makeSwings,
+    swingState: swingState,
+    swingEnd: swingEnd,
+    swingRelease: swingRelease,
+    releaseCentreZoom: releaseCentreZoom,
+    swingStatus: swingStatus,
   };
 })();

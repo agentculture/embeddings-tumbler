@@ -6,8 +6,10 @@
 
 Every file directly under ``js/shells/`` and ``js/page/`` (except Markdown) is
 shipped, byte-identical and under its own name, in ``embeddings_tumbler/static/``.
-The core file is built by ``scripts/assemble.py`` and the sample set is copied
-by ``scripts/sync_sample.py``; this script never touches those two.
+The core file is built by ``scripts/assemble.py``, the sample set is copied by
+``scripts/sync_sample.py`` and the demo pair (``demo-wikipedia.json`` and ``.f32``) is
+written straight into the static folder by ``scripts/build_demo_set.py``; this script
+never touches those four.
 """
 
 from __future__ import annotations
@@ -18,7 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DIRS = (ROOT / "js" / "shells", ROOT / "js" / "page")
 SHIPPED_DIR = ROOT / "embeddings_tumbler" / "static"
-RESERVED = frozenset({"embeddings-tumbler.js", "sample-data.js"})
+RESERVED = frozenset(
+    {"embeddings-tumbler.js", "sample-data.js", "demo-wikipedia.json", "demo-wikipedia.f32"}
+)
 
 
 def sources() -> list[Path]:

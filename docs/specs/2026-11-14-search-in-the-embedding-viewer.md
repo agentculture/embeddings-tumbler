@@ -25,6 +25,7 @@
   - instruction: Measure in a browser that lit pixels keep changing every second during and after a search, in each mode.
   - honesty: After any search the frame is still changing every second in every mode; the swing ends by itself and never leaves the view held; reduced-motion and Pause still stop motion as before.
 - The filter holds in Tumble, Lattice and Wander, and each keeps its own motion.
+  - ⚠ contested by `d1` (acceptable): The owner tried the build on 2026-11-14 and said 'Lattice appears very bright. and a bit pixelated'; measured with no search: 11,710 lit pixels of 57,600, 3,812 near white. Asked whether to tone the wires down when there is no search, the owner answered 'Please do'.
   - honesty: Switching mode with searches active keeps the lit set and the query markers, and Lattice still swaps axes and Wander still flies between points.
 - The search panel takes room only when needed: collapsed by default to one line that names the current searches and how many points are lit; each search's result list is collapsed until opened. The filter stays on while the panel is closed.
   - honesty: Collapsed, the panel is one line; closing it never clears or pauses the searches; it works by keyboard and states its expanded state to assistive technology.
@@ -76,6 +77,12 @@
 - Each cell of the readout strip is coloured by which screen axis its dimension feeds: it mixes three colours according to how much that dimension contributes to the picture's horizontal, vertical and depth axes. Opacity keeps meaning what it means now, the size of the contribution.
   - instruction: docs/specs/reference/tumbler-sky-search.html shows it: the share of each axis in the cell's contribution weights three fixed colours, and a legend names them.
   - honesty: The three colours are named beside the strip, they are distinguishable from each other on the dark and the light treatment, opacity is computed exactly as before, and the change from the reference's single-colour strip is listed as an intended difference.
+- The demo's default data is real: about 1,000 items taken from Wikipedia and embedded by a real model, small enough to ship (about 4 MB). The synthetic set from the reference stays available.
+  - instruction: Owner's words on 2026-11-14: 'keep existing fake or use wikipedia real data, but keep the size small (4m, 1000 items is fine)'. Asked for after seeing that 'sear' and 'searing' are unrelated in the synthetic set, where a real model puts them at 0.212.
+  - honesty: The provenance on the page names the source (Wikipedia, with the list and the retrieval date), the model and the licence of the text; the set is produced by a committed script from a committed list so it can be rebuilt; the package stays under 5 MB; and the synthetic set still loads when asked for.
+- A search takes more candidates and can keep the best of them: the nearest N by embedding are the candidates (3 to 100, 50 by default), and with the reranker on the top X of them are kept (20 by default). With no reranker the results stay at 8 by default and can be raised to 100.
+  - instruction: Owner's words on 2026-11-14: 'we need more results, 50 or 100, and add reranker and top x out of that (top 20?)', then chose '50 candidates, top 20'. This replaces the earlier range of 3 to 20 results.
+  - honesty: The number of candidates and the number kept are both shown wherever a search states what it used; the lit radius follows the results actually kept; the reranker never sees more than the stated number of candidates; and the embed route's own limit admits 100 candidates.
 
 ## Honesty conditions
 

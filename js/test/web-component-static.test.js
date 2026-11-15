@@ -5,6 +5,7 @@
 // object only through its public API. What the scan PERMITS on the core object, exactly:
 //
 //   * T.mount, T.update, T.destroy   (the plan's three members), and nothing else.
+//   * On the viewer handle: setMode and setSearchCallbacks, and nothing else.
 //     In particular any reference to `sample` fails: a host that wants the built-in
 //     sample set calls el.update(EmbeddingsTumbler.sample.generate()) in its own script.
 //
@@ -26,6 +27,9 @@ const { ROOT } = require("./helpers/load.js");
 const FILE = path.join(ROOT, "js", "shells", "web-component.js");
 const SHIPPED = path.join(ROOT, "embeddings_tumbler", "static", "web-component.js");
 const ALLOWED = new Set(["mount", "update", "destroy"]);
+// What the scan permits on the viewer handle (this._handle): the mode switch, and the
+// search callbacks (task t10). Nothing else, so the shell cannot start searches itself.
+const HANDLE_ALLOWED = new Set(["setMode", "setSearchCallbacks"]);
 
 // Remove comments, leaving strings. Strings in this file hold plain English messages.
 function stripComments(src) {
@@ -52,6 +56,13 @@ function scan(source) {
     members.add(m[1]);
     if (!ALLOWED.has(m[1])) flag("core member not in the public API subset: T." + m[1]);
   }
+  const used = new Set();
+  for (const m of code.matchAll(/\b_handle\s*\??\.\s*([A-Za-z_$][\w$]*)/g)) {
+    used.add(m[1]);
+    if (!HANDLE_ALLOWED.has(m[1])) flag("handle member not in the allowed set: " + m[1]);
+  }
+  if (/\b_handle\s*\??\[/.test(code)) flag("bracket access on the viewer handle");
+  if (!used.has("setSearchCallbacks")) flag("the shell must use handle.setSearchCallbacks");
   if (/\bT\s*\[/.test(code)) flag("bracket access on the core object");
   if (/=\s*T\s*[;,)]/.test(code.replace(/(var|let|const) T = (getCore\(\)|root\.EmbeddingsTumbler);/g, ""))) {
     flag("the core object is copied to another name");
@@ -102,7 +113,7 @@ function scan(source) {
 
 const source = fs.readFileSync(FILE, "utf8");
 
-test("the web component calls only mount, update and destroy on the core", () => {
+test("the web component calls only mount, update and destroy on the core and two members of the handle", () => {
   assert.deepStrictEqual(scan(source), []);
 });
 
@@ -116,10 +127,14 @@ test("the scan flags deliberate breaches (it can fail)", () => {
     "_internal": source.replace("T.destroy(this);", "T.destroy(this); T._internal.math;"),
     "registerMode": source.replace("T.destroy(this);", "T.registerMode({});"),
     "bracket access": source.replace("T.destroy(this);", 'T["get"](this);'),
+    "a handle method not allowed": source.replace("_clearNote() {", "_clearNote() { this._handle.setSearches([]);"),
+    "a handle method by optional chain": source.replace("_clearNote() {", "_clearNote() { this._handle?.clearSearches();"),
+    "handle bracket access": source.replace("_clearNote() {", "_clearNote() { this._handle['info']();"),
+    "no use of setSearchCallbacks": source.split("setSearchCallbacks").join("setMode"),
     "an alias": source.replace("const T = getCore();\n      let url;", "const T = getCore();\n      const C = T;\n      let url;"),
     "direct global use": source.replace("const T = root.EmbeddingsTumbler;", "const T = root.EmbeddingsTumbler; root.EmbeddingsTumbler.get(1);"),
     "a sample reference": source.replace("_clearNote() {", "_clearNote() { T.sample.generate();"),
-    "getContext": source.replace("this._note = null;\n    }\n\n    get handle", "this._note = null;\n      this.getContext('webgl2');\n    }\n\n    get handle"),
+    "getContext": source.replace("this._rerank = null;\n    }\n\n    get handle", "this._rerank = null;\n      this.getContext('webgl2');\n    }\n\n    get handle"),
     "gl call": source.replace("_clearNote() {", "_clearNote() { gl.drawArrays(0, 0, 1);"),
     "a shader word": source.replace("_clearNote() {", "_clearNote() { var shaderSource = 1;"),
     "a matrix word": source.replace("_clearNote() {", "_clearNote() { var matrix = 1;"),

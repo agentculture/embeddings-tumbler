@@ -155,6 +155,21 @@ and code the engine has not optimised yet are slower per multiply-add); the
 clock decides only where a unit ends, never what is computed. After `done`,
 `step` returns `true` and does nothing.
 
+The clock is looked at about every 4,096 multiply-adds, and no piece of work
+between two possible pauses is much larger than that (one vector of the
+dimension at least): a row of the Gram matrix pauses between entries, a group
+of four rows against the directions pauses between directions, a row being
+made orthogonal pauses after each earlier row. Up to 0.12.0 a look fell every
+65,536 multiply-adds and a piece could be a whole row of the Gram matrix,
+2^20 multiply-adds for 999 points in 1,024-d. With compiled JavaScript that is
+a millisecond. On a device that runs JavaScript without a compiler (a
+multiply-add costs 40 to 90 ns there, not 1) it was 50 to 90 ms inside one
+unit, whatever budget the caller had. Measured with node `--jitless` on the
+development machine, 999 x 1,024 (the Gram route), `makeGuidedTour`, `step(0)`
+until done: units before, 99th percentile 22.8 ms and longest 29.4 ms; now
+1.2 ms and 4.3 ms; the whole fit 33.8 s before and 33.3 s now; the same
+directions bit for bit.
+
 Largest single unit, node 24 on the development machine (AMD Ryzen with Radeon
 760M, shared with other jobs), built-in sample set centred, `makeGuidedTour`
 with `subspace: 8`, `step(0)` until done:
@@ -256,7 +271,11 @@ variance in the data it is `0` and the frames are still orthonormal.
 ## True nearest neighbours
 
 - `makeKnn(X, N, D, k, { limit }?) -> stepper` and `knn(...)` (the same, run to
-  completion).
+  completion). `step(rows)` measures whole query rows; `stepPart(candidates)`
+  measures up to that many more candidates of the row in progress (a whole row
+  is up to `limit * D` multiply-adds, too long for one unit on a slow device).
+  The rows and their candidates are taken in the same order either way, and
+  the two can be mixed: the result is the same bit for bit.
 
 ```js
 {

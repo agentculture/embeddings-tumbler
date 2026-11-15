@@ -171,16 +171,49 @@ right content types (`.js`, `.html`, `.css`, `.json`, `.f32`, fonts) and
 `Cache-Control: no-store`.
 
 It binds to `127.0.0.1` by default. A non-loopback `--host` must be given
-explicitly and is noted on stderr. `--port 0` picks a free port. The server
-reads no gateway address or key from anywhere.
+explicitly and is noted on stderr. `--port 0` picks a free port. Without
+`--embed` the server reads no environment variable and no gateway address or
+key from anywhere.
+
+## The search route (`--embed`)
+
+`--embed` adds one path, `POST /_tumbler/search`, that embeds a query (and,
+with `--rerank-model`, reranks candidates) through an OpenAI-compatible
+gateway, so the standalone page can search by meaning. The gateway key is read
+from the server's own environment and never reaches a page, an answer or a log.
+
+- `--embed-model MODEL`: the embedding model (default `EMBEDDINGS_EMBED_MODEL`,
+  else `Qwen/Qwen3-Embedding-0.6B`).
+- `--rerank-model MODEL`: offer the `rerank` operation with this model.
+- `--query-prefix TEXT`: put this text before every query before embedding.
+- `--embed-allow-remote`: allow `--embed` on a non-loopback `--host`; without
+  it that is refused (exit 1). A wildcard address is always refused.
+
+Environment, read only with `--embed`: `EMBEDDINGS_EMBED_URL` (the gateway's
+base address including `/v1`, default the local gateway on port 8001) and
+`EMBEDDINGS_API_KEY`, else `COLLEAGUE_API_KEY`. Start the server under
+`grant run` so the key is only in its environment.
+
+The route answers only a POST whose `Host` names the bound address, whose
+`Origin` is the server itself, and whose body is JSON (at most 1 MiB); it
+allows 120 requests a minute, 8,000 characters per query and 60 candidates of
+at most 4,000 characters. It sends no cross-origin headers. Operations:
+`describe`, `embed` (answers `vector`, `model`, `query_form`) and `rerank`
+(answers `scores`, `model`). Refusals are JSON `{"ok": false, "code",
+"message"}` with fixed messages; the full table is in
+`docs/search-interface.md`.
 
 ## Usage
 
     embeddings-tumbler viewer serve ./public/tumbler
     embeddings-tumbler viewer serve ./public/tumbler --port 0 --json
+    grant run --inject EMBEDDINGS_API_KEY=... -- \
+        embeddings-tumbler viewer serve ./public/tumbler --embed
 
-`--json` prints `{"host", "port", "url", "root"}` once, then serves until
-interrupted. Exit codes: 0 stopped, 1 bad folder or port, 2 could not bind.
+`--json` prints `{"host", "port", "url", "root"}` once (plus `"embed": {"enabled",
+"route", "model", "rerank_model", "query_form"}` with `--embed`, never the
+gateway address or key), then serves until interrupted. Exit codes: 0 stopped,
+1 bad folder, port or flag combination, 2 could not bind or no gateway key.
 """
 
 

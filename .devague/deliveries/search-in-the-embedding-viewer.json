@@ -1,0 +1,55 @@
+{
+  "plan_slug": "search-in-the-embedding-viewer",
+  "schema_version": 2,
+  "created": "2026-11-14T16:05:41Z",
+  "updated": "2026-11-14T17:31:33Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Lattice's neighbour wires are toned down when they pile up, with or without a search. This changes the released viewer's no-search picture in Lattice, which the build's rule and task t4's first criterion ('with no search the frame is byte-identical to today's') forbade. Tumble, Wander and Focus with no search stay identical.",
+      "task_ref": "t4",
+      "reason": "The owner tried the build on 2026-11-14 and said 'Lattice appears very bright. and a bit pixelated'; measured with no search: 11,710 lit pixels of 57,600, 3,812 near white. Asked whether to tone the wires down when there is no search, the owner answered 'Please do'.",
+      "affects": [
+        "t6",
+        "c8"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Two pieces of work are added to the search build at the owner's instruction, ahead of their plan tasks: a real-vector demo set from Wikipedia as the standalone page's default, and candidates (3 to 100, default 50) with the reranker keeping the top X (default 20).",
+      "task_ref": "t9",
+      "reason": "Owner on 2026-11-14: 'Yes, replace the demo default with real vectors. Plus, we need more results, 50 or 100, and add reranker and top x out of that (top 20?)'. The plan cannot take new tasks until the new requirements' honesty conditions are confirmed, and the owner asked for the work now.",
+      "affects": [
+        "t2",
+        "t5",
+        "t8",
+        "t11"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "While a mode prepares (at start and on entering a view) the cloud keeps its slow turn and the status line shows progress; the picture no longer stands still until the mode is ready. This changes how the released viewer starts with no search.",
+      "task_ref": "t8",
+      "reason": "On the owner's phone the still picture during preparation read as frozen ('possibly it takes time to start. And I can still move it manually'). Asked whether to keep the view turning while it prepares, the owner answered on 2026-11-14: 'Keep the view turning while it prepares, yes'.",
+      "affects": [
+        "t6",
+        "c7"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

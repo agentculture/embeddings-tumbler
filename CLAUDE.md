@@ -10,7 +10,8 @@ through the full-dimensional space. A rotating tesseract is a 4-D shape seen
 through a 3-D window that keeps turning; this is the same idea with hundreds or
 thousands of dimensions. The data never moves. Only the viewing frame does.
 
-Three modes ship first, and a mode is a separable unit so more can be added:
+Three modes shipped first, and a mode is a separable unit so more can be added
+(the search build adds a fourth, Focus):
 
 - **Tumble** — the frame drifts through the space on a guided tour.
 - **Lattice** — points are wired to their true nearest neighbours (measured in
@@ -28,7 +29,7 @@ As of 2026-11-13 no repository surveyed for this work (`embeddings-lens`,
 viewer; the only one was a demo page whose data is generated in the page. That
 page is the reference: `docs/specs/reference/embedding-tumbler-demo.html`.
 
-## Current state: built and released; search specced
+## Current state: built and released; search built, not yet released
 
 The viewer is built from the converged spec and plan (18 tasks, by a workforce
 run that ended 2026-11-14). In the repository: the data contract and its
@@ -47,12 +48,23 @@ Released on npm and PyPI since 2026-11-14: 0.11.2 was the one-time manual first
 npm publish, and from 0.11.4 on CI publishes both by trusted publishing with no
 token (`docs/release.md`). What the build delivered, measured against the plan,
 is in `docs/deliveries/2026-11-13-embeddable-space-viewer.md`. Not done yet:
-only Chromium has been tested automatically. Search
-(type text, or several texts, and see what links to each) is specced and
-planned (`docs/plans/2026-11-14-search-in-the-embedding-viewer.md`, 16 tasks)
-but not built `(planned)`: `docs/specs/2026-11-14-search-in-the-embedding-viewer.md`,
-its obligations in the file of the same name ending `-obligations.md`, and two
-reference pages beside the original one in `docs/specs/reference/`.
+only Chromium has been tested automatically.
+
+Search (type text, or several texts, and see what links to each) is built on
+the branch `build/search-view` as version 0.12.0 and not yet released: all 18
+tasks of `docs/plans/2026-11-14-search-in-the-embedding-viewer.md`, from
+`docs/specs/2026-11-14-search-in-the-embedding-viewer.md` and its obligations
+(the file of the same name ending `-obligations.md`), with two reference pages
+beside the original one in `docs/specs/reference/`. It adds the search modules
+(`js/src/24-search.js`, `26-search-sets.js`, `45-search-panel.js`), a fourth
+view, Focus (`43-mode-focus.js`), the helper route `viewer serve --embed`
+(`embeddings_tumbler/_embed_route.py`), and the Wikipedia demo set. The binding
+interface is `docs/search-interface.md`; the guides are `docs/guides/host.md`
+and `docs/guides/search.md`; what real data showed is
+`docs/evidence/2026-11-14-real-search-proof.md`. The owner signed off the
+search part of `docs/reference-differences.md` on 2026-11-15. The follow-up
+spec is GitHub issue 11 (directions and neighbours computed when the data file
+is made) `(planned)`.
 
 What real vectors showed, and what was changed because of it (Lattice's hidden
 directions, brightness of crowded sets), is in
@@ -107,6 +119,17 @@ one turns out to be wrong, stop and use the `deviate` skill.
   as markup.
 
 ## Shipping
+
+Both packages ship the same static files: the core file, `web-component.js`,
+`sample-data.js`, the standalone page (`index.html`, `page.css`, `page.js`) and
+the page's default data pair, `demo-wikipedia.json` and `demo-wikipedia.f32`
+(Wikipedia's Level 3 vital articles; text under CC BY-SA 4.0, see `NOTICE`, which
+ships too). The pair is written straight into `embeddings_tumbler/static/` by
+`scripts/build_demo_set.py` from the committed corpus
+`data/wikipedia-vital-3/corpus.jsonl` (built by `scripts/build_demo_corpus.py`).
+The committed pair is the real one: 999 items, 768 dimensions, embedded with
+`google/embeddinggemma-2` through the gateway on 2026-11-14 (the owner's choice of
+model; it is also the default model of `viewer serve --embed`).
 
 Two channels carry the same unmodified core file: the Python wheel (package
 data, with CLI verbs that write the files into a host folder or serve a folder

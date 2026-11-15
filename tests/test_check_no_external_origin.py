@@ -215,6 +215,24 @@ def test_a_planted_file_in_a_shipped_folder_fails_the_whole_scan(written_folder,
     assert "extra.js" in done.stderr
 
 
+def test_a_vector_block_is_accepted_only_beside_the_json_that_names_it(tmp_path):
+    block = tmp_path / "set.f32"
+    block.write_bytes(b"\x00" * 8)
+    assert any("[V1]" in f for f in scan.check_file(block)), "no .json beside it"
+    (tmp_path / "set.json").write_text('{"vectors": {"file": "other.f32"}}', encoding="utf-8")
+    assert any("[V1]" in f for f in scan.check_file(block)), "the .json names another file"
+    (tmp_path / "set.json").write_text("not json", encoding="utf-8")
+    assert any("[V1]" in f for f in scan.check_file(block)), "the .json is not JSON"
+    (tmp_path / "set.json").write_text('{"vectors": {"file": "set.f32"}}', encoding="utf-8")
+    assert scan.check_file(block) == []
+    block.write_bytes(b"\x00" * 7)
+    assert any("[V1]" in f for f in scan.check_file(block)), "not whole float32 values"
+    block.write_bytes(b"https://elsewhere.example/x\x00")  # 28 bytes, but described
+    assert scan.check_file(block) == [], "a described block is data, not scanned"
+    done = _run(str(tmp_path / "set.json"), str(block), cwd=tmp_path)
+    assert done.returncode == 0, done.stderr
+
+
 def test_set_rules(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()

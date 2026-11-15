@@ -1,0 +1,17 @@
+/* Dev-only host page for the built Focus view on the Focus reference's data. Not shipped. */
+body {
+  margin: 0;
+  background: #04060b;
+  color: #e9eef6;
+  font: 15px/1.5 system-ui, sans-serif;
+}
+.intro {
+  margin: 0;
+  padding: 8px 16px;
+  color: #8a96ab;
+  font: 12px/1.5 ui-monospace, Menlo, monospace;
+}
+.space {
+  padding: 0 16px 32px;
+  --tumbler-stage-height: clamp(380px, 60vh, 620px);
+}

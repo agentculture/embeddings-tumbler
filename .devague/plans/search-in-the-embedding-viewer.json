@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-11-14T13:25:21Z",
-  "updated": "2026-11-14T14:30:12Z",
+  "updated": "2026-11-14T17:30:38Z",
   "targets": [
     {
       "id": "c1",
@@ -482,6 +482,34 @@
       "text": "The three colours are named beside the strip, they are distinguishable from each other on the dark and the light treatment, opacity is computed exactly as before, and the change from the reference's single-colour strip is listed as an intended difference.",
       "deferred": false,
       "deferred_reason": ""
+    },
+    {
+      "id": "c48",
+      "kind": "requirement",
+      "text": "The demo's default data is real: about 1,000 items taken from Wikipedia and embedded by a real model, small enough to ship (about 4 MB). The synthetic set from the reference stays available.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h35",
+      "kind": "honesty",
+      "text": "The provenance on the page names the source (Wikipedia, with the list and the retrieval date), the model and the licence of the text; the set is produced by a committed script from a committed list so it can be rebuilt; the package stays under 5 MB; and the synthetic set still loads when asked for.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "A search takes more candidates and can keep the best of them: the nearest N by embedding are the candidates (3 to 100, 50 by default), and with the reranker on the top X of them are kept (20 by default). With no reranker the results stay at 8 by default and can be raised to 100.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h36",
+      "kind": "honesty",
+      "text": "The number of candidates and the number kept are both shown wherever a search states what it used; the lit radius follows the results actually kept; the reranker never sees more than the stated number of candidates; and the embed route's own limit admits 100 candidates.",
+      "deferred": false,
+      "deferred_reason": ""
     }
   ],
   "tasks": [
@@ -864,6 +892,44 @@
         "h34"
       ],
       "instruction": "Touch only the strip code in js/src/50-viewer.js, its tests, the API page and the differences document. It runs in the first wave, before the viewer API task touches the same file. The GL frame is not affected, so the frame hash must not change. The colours and legend are as on docs/specs/reference/tumbler-sky-search.html."
+    },
+    {
+      "id": "t17",
+      "summary": "Real-vector demo set: about 1,000 Wikipedia items embedded by a real model, shipped as the standalone page's default, with the synthetic set kept (scripts, a committed corpus, js/page/, packaging).",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A committed script builds the corpus from a rule-based Wikipedia list and a second builds the data pair from it through an embeddings endpoint; both are tested against fake endpoints, and the key never appears in any output",
+        "The standalone page opens on the shipped real pair by default, falls back to the synthetic set when the pair is missing, and offers the synthetic set as an explicit choice; the provenance names the source, the model and the text's licence",
+        "The pair is byte-identical in the wheel, the sdist and the npm tarball, viewer write writes it, an attribution notice ships with both packages, and each package stays under 5 MB"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c48",
+        "h35"
+      ],
+      "instruction": "Started ahead of this task under approved deviation d2. The main agent runs the embedding step once with the gateway key injected by grant and commits the real pair."
+    },
+    {
+      "id": "t18",
+      "summary": "Candidates and top X: a search takes 3 to 100 candidates (50 by default) and the reranker keeps the top X (20 by default); with no reranker the results are 8 by default, up to 100 (search core, viewer, panel, embed route).",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "With a fake reranker that reverses the order, 50 candidates and top 20 give the last 20 of the 50 nearest named points, the radius is the farthest kept result, and the reranker received exactly 50 candidates",
+        "info().search, the provenance row and the panel state the candidates and the kept count; the panel's controls appear only when a reranker is connected",
+        "The embed route accepts 100 candidates and refuses 101, and describe reports the limit"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c49",
+        "h36"
+      ],
+      "instruction": "Started ahead of this task under approved deviation d2. Replaces the earlier 3 to 20 range and the hidden pool factor."
     }
   ],
   "risks": [
@@ -912,6 +978,14 @@
       "text": "Only Chromium is tested automatically; search adds DOM and input behaviour that may differ in Firefox and Safari.",
       "kind": "follow_up",
       "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "Decided by the owner on 2026-11-14, for its own spec after this build: the producer step computes the strongest directions and each point's nearest neighbours once and writes them into the data file as an optional section; the viewer uses them when present and computes them itself when missing. Reason: on a phone drawing at 17 frames a second, Lattice had measured 22 percent of its neighbours after 30 seconds. Not part of this build; needs a change to the data contract and to embeddings export.",
+      "kind": "follow_up",
+      "task_id": null,
       "resolved": false,
       "resolution": ""
     }
