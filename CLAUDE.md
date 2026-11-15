@@ -29,7 +29,7 @@ As of 2026-11-13 no repository surveyed for this work (`embeddings-lens`,
 viewer; the only one was a demo page whose data is generated in the page. That
 page is the reference: `docs/specs/reference/embedding-tumbler-demo.html`.
 
-## Current state: built and released; search built, not yet released
+## Current state: built and released, with search
 
 The viewer is built from the converged spec and plan (18 tasks, by a workforce
 run that ended 2026-11-14). In the repository: the data contract and its
@@ -50,9 +50,8 @@ token (`docs/release.md`). What the build delivered, measured against the plan,
 is in `docs/deliveries/2026-11-13-embeddable-space-viewer.md`. Not done yet:
 only Chromium has been tested automatically.
 
-Search (type text, or several texts, and see what links to each) is built on
-the branch `build/search-view` as version 0.12.0 and not yet released: all 18
-tasks of `docs/plans/2026-11-14-search-in-the-embedding-viewer.md`, from
+Search (type text, or several texts, and see what links to each) was released
+as 0.12.0 on 2026-11-15: all 18 tasks of `docs/plans/2026-11-14-search-in-the-embedding-viewer.md`, from
 `docs/specs/2026-11-14-search-in-the-embedding-viewer.md` and its obligations
 (the file of the same name ending `-obligations.md`), with two reference pages
 beside the original one in `docs/specs/reference/`. It adds the search modules
@@ -62,7 +61,9 @@ view, Focus (`43-mode-focus.js`), the helper route `viewer serve --embed`
 interface is `docs/search-interface.md`; the guides are `docs/guides/host.md`
 and `docs/guides/search.md`; what real data showed is
 `docs/evidence/2026-11-14-real-search-proof.md`. The owner signed off the
-search part of `docs/reference-differences.md` on 2026-11-15. The follow-up
+search part of `docs/reference-differences.md` on 2026-11-15. What it delivered,
+measured against the plan, is in
+`docs/deliveries/2026-11-14-search-in-the-embedding-viewer.md`. The follow-up
 spec is GitHub issue 11 (directions and neighbours computed when the data file
 is made) `(planned)`.
 

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-11-15
+
+### Added
+
+- The delivery summary for the search build: `docs/deliveries/2026-11-14-search-in-the-embedding-viewer.md`.
+- Delivery records for the search plan: evidence for 18 obligations and eight behaviour changes, proposed for the owner to confirm.
+
+### Changed
+
+- `CLAUDE.md` says search is released (0.12.0) and points to its records.
+
 ## [0.12.0] - 2026-11-15
 
 ### Added
