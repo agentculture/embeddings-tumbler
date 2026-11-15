@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-14T11:40:57Z",
-  "updated": "2026-11-14T22:34:38Z",
+  "updated": "2026-11-15T19:41:48Z",
   "claims": [
     {
       "id": "c1",
@@ -1137,6 +1137,17 @@
       "skipped_check": "a reading on the owner's phone after the fix",
       "refs": [
         "js/api/50-viewer.md, A device that runs JavaScript slowly"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l20",
+      "code": "assumption-for-measurement",
+      "what": "I told the owner the phone was very likely running JavaScript without its compiler. The phone then loaded the fixed build in a few seconds at 59.8 frames per second, which does not fit that inference. The cause of the first reading's slowness is not settled; the record in js/api/50-viewer.md now says so.",
+      "skipped_check": "",
+      "refs": [
+        "js/api/50-viewer.md, A device that runs JavaScript slowly; lapse l19"
       ],
       "origin": "llm",
       "status": "proposed"

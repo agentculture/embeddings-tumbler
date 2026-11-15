@@ -839,6 +839,15 @@ budget of 4.0 ms, 0.0 ms in the draw call. The built-in sample set (12,288
 points in 384-d, 290 named) had run at about 17. The smaller set was the
 slower one: the cost followed the dimension, not the point count.
 
+**On the phone after the fix (2026-11-15).** The owner opened the same page on
+the fixed build with the 999-point, 768-dimension set: 59.8 frames per second,
+5.0 ms of script per frame, 1.0 ms of drawing, 16.6 ms between frames, pixel
+ratio 2, and loading in "a few seconds", which the owner called fair. That
+loading time does not fit the inference below (a fit without a compiler would
+take minutes), so either the first reading came from a different browser or
+mode on the phone, or the inference is wrong. The faults found were real either
+way; the cause of the first reading's slowness is not settled.
+
 What the readings mean. One unit of the fit then was one row of the Gram
 matrix, up to 999 x 1,024 multiply-adds. 90 ms for that is about 90 ns per
 multiply-add, where compiled JavaScript takes about 1. That is the speed of a
