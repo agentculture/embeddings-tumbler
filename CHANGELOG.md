@@ -10,7 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - The delivery summary for the search build: `docs/deliveries/2026-11-14-search-in-the-embedding-viewer.md`.
-- Delivery records for the search plan: evidence for 18 obligations and eight behaviour changes, proposed for the owner to confirm.
+- Delivery records for the search plan: evidence for 18 obligations and eight behaviour changes, confirmed by the owner.
 
 ### Changed
 

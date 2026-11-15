@@ -97,7 +97,7 @@ After: A search panel under the stage takes one search per line, up to four. Eac
 
 ## Delivery Claims
 
-Each claim's evidence record (`e1` to `e18`) was filed by the agent and is **proposed**: the owner has not yet confirmed them. The confidence levels are the agent's, capped by the approved lapses below. Why a claim is at medium:
+Each claim's evidence record (`e1` to `e18`) was filed by the agent and confirmed by the owner on 2026-11-15, together with the behaviour changes `b1` to `b8`. The confidence levels are the agent's, capped by the approved lapses below. Why a claim is at medium:
 
 - `c7`: reduced motion with a search active is not tested.
 - `c9`: no screen reader, keyboard-only use or focus order was checked in a real browser (`l12`).
@@ -158,7 +158,6 @@ Lapse ledger evidence:
 
 - `t14` (partial): frame rate with four searches on software rendering is under target — measure on a real slow device before treating it as a defect; software rendering is what CI uses.
 - `t14` (partial): the reranker and EmbeddingGemma's task prefixes on queries and articles were not measured on real data — embed the set both ways and compare.
-- Evidence `e1` to `e18` and behaviour changes `b1` to `b8` are proposed — the owner confirms or rejects them.
 - Preparation still happens in the browser for every file — GitHub issue 11, the next spec (directions and neighbours computed when the data file is made).
 - Only Chromium is tested automatically — WebKit and Firefox runs.
 - The cause of the phone's first slow reading is not settled (`l20`).
