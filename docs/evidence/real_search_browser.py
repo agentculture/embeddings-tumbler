@@ -5,7 +5,7 @@ gateway.
     grant run --inject EMBEDDINGS_API_KEY=<name of the stored key> -- \\
       env EMBEDDINGS_EMBED_URL=<gateway base ending in /v1> \\
       uv run --with numpy python docs/evidence/real_search_browser.py <site folder> \\
-        --file atlas-a.json --embed-model <model> [--query-prefix <text>] \\
+        --file atlas-a.json --embed-model <model> \\
         [--reduced atlas-rot.json --reduced atlas-top.json] [--seconds 10] [--out result.json]
 
 The gateway address and key are read only by the helper process this script starts (from the
@@ -39,6 +39,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -62,14 +63,20 @@ QUERIES = [
     "threads and locks",
 ]
 K = 8
+# docs/data-contract.md: vectors.file is one path segment that cannot be "." or "..".
+PLAIN_FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# A model id as gateways name them: letters, digits and ./_:- only, never starting with "-".
+MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:-]*")
+# The helper serves, and the viewer's files are written into, the process's own folder.
+HERE = "."
 
 
-def _confined(base_dir: str, value: str) -> str:
+def _confined(base_dir: str, value: str, where: str = "the current folder") -> str:
     base = os.path.realpath(base_dir)
     full = os.path.realpath(os.path.join(base, value))
     if full.startswith(base + os.sep):
         return full
-    raise SystemExit(f"{value} is outside the current folder {base}")
+    raise SystemExit(f"{value} is outside {where} {base}")
 
 
 def _named(point: dict) -> bool:
@@ -82,9 +89,13 @@ def _named(point: dict) -> bool:
 
 
 def _load(site: str, name: str):
-    with open(os.path.join(site, name), encoding="utf-8") as fh:
+    """The data file ``name`` in ``site`` and its vector block; both must be inside ``site``."""
+    with open(_confined(site, name, "the site folder"), encoding="utf-8") as fh:
         meta = json.load(fh)
-    block = np.fromfile(os.path.join(site, meta["vectors"]["file"]), dtype="<f4")
+    block_name = meta["vectors"]["file"]
+    if not isinstance(block_name, str) or not PLAIN_FILE_NAME.fullmatch(block_name):
+        raise SystemExit(f"{name}: vectors.file {block_name!r} is not a plain file name")
+    block = np.fromfile(_confined(site, block_name, "the site folder"), dtype="<f4")
     vectors = block.reshape(meta["count"], meta["dimension"]).astype(np.float64)
     return meta, vectors
 
@@ -99,13 +110,14 @@ def _exact(meta: dict, vectors: np.ndarray, query: list[float]) -> list[tuple[st
 
 
 class Helper:
-    def __init__(self, site: str, model: str, prefix: str | None):
-        command = [sys.executable, "-m", "embeddings_tumbler", "viewer", "serve", site]
+    def __init__(self, site: str, model: str):
+        if not MODEL_ID.fullmatch(model):
+            raise SystemExit(f"--embed-model {model!r} is not a model id")
+        command = [sys.executable, "-m", "embeddings_tumbler", "viewer", "serve", HERE]
         command += ["--port", "0", "--embed", "--embed-model", model, "--json"]
-        if prefix:
-            command += ["--query-prefix", prefix]
-        self.process = subprocess.Popen(  # noqa: S603 - our own CLI, fixed arguments
-            command, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+        # Our own CLI, run in the site folder, with a checked model id as its only variable part.
+        self.process = subprocess.Popen(  # noqa: S603
+            command, cwd=site, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
         )
         line = self.process.stdout.readline()
         if not line.strip():
@@ -241,7 +253,6 @@ def main() -> int:
     ap.add_argument("site")
     ap.add_argument("--file", required=True)
     ap.add_argument("--embed-model", required=True)
-    ap.add_argument("--query-prefix")
     ap.add_argument("--reduced", action="append", default=[])
     ap.add_argument("--word", default="Monday")
     ap.add_argument("--seconds", type=float, default=10)
@@ -249,12 +260,13 @@ def main() -> int:
     args = ap.parse_args()
     site = _confined(os.getcwd(), args.site)
     out = _confined(os.getcwd(), args.out) if args.out else None
-    done = subprocess.run(  # noqa: S603 - our own CLI, fixed arguments
-        [sys.executable, "-m", "embeddings_tumbler", "viewer", "write", site, "--apply", "--force"],
+    # Our own CLI with fixed arguments, run in the site folder.
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "embeddings_tumbler", "viewer", "write", HERE, "--apply", "--force"],
         capture_output=True,
         text=True,
         check=False,
-        cwd=str(ROOT),
+        cwd=site,
     )
     if done.returncode != 0:
         raise SystemExit(done.stderr)
@@ -272,7 +284,7 @@ def main() -> int:
         "machine": platform.processor() or platform.machine(),
         "seconds": args.seconds,
     }
-    helper = Helper(site, args.embed_model, args.query_prefix)
+    helper = Helper(site, args.embed_model)
     try:
         with sync_playwright() as pw:
             browser = harness.launch(pw)

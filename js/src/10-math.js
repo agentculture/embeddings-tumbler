@@ -875,10 +875,11 @@
       var chunk = perPiece(8 * D);
       for (var i = 0; i < N; i += 4) {
         var live = Math.min(4, N - i); // real rows in this group
+        var group = { oa: i * D, live: live };
         for (var j = 0; j < p; j += chunk) {
           var end = Math.min(p, j + chunk);
-          projectFour(Y, i * D, live, Q, j, end, D, z);
-          accumulateFour(Y, i * D, live, z, j, end, D, W);
+          projectFour(Y, group, Q, j, end, D, z);
+          accumulateFour(Y, group, z, j, end, D, W);
           if (wk.add(8 * (end - j) * D)) yield;
         }
       }
@@ -890,9 +891,11 @@
       return r < live ? oa + r * D : oa;
     }
 
-    // z[4j + r] = (Y row r of the group at oa) . (Q row j), 0 for a row beyond
-    // the `live` real ones, for j in [from, to).
-    function projectFour(Y, oa, live, Q, from, to, D, z) {
+    // z[4j + r] = (Y row r of the group at group.oa) . (Q row j), 0 for a row
+    // beyond the group.live real ones, for j in [from, to).
+    function projectFour(Y, group, Q, from, to, D, z) {
+      var oa = group.oa;
+      var live = group.live;
       var ob = rowOffset(oa, 1, live, D);
       var oc = rowOffset(oa, 2, live, D);
       var od = rowOffset(oa, 3, live, D);
@@ -918,7 +921,9 @@
 
     // W row j += the four rows weighted by z[4j .. 4j + 3], in a fixed order,
     // for j in [from, to).
-    function accumulateFour(Y, oa, live, z, from, to, D, W) {
+    function accumulateFour(Y, group, z, from, to, D, W) {
+      var oa = group.oa;
+      var live = group.live;
       var ob = rowOffset(oa, 1, live, D);
       var oc = rowOffset(oa, 2, live, D);
       var od = rowOffset(oa, 3, live, D);
