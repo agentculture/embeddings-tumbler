@@ -305,8 +305,12 @@ def test_script_form_relative_page_turns_relative_on_and_reports_it(opened):
     ]
 
     # Turning the setting off and on again goes through the handle and sends nothing.
+    # The view turns back onto the plain tour first, so `active` goes false a moment later.
     off = _press(
-        page, "relative", "Done: Relative on or off", lambda s: not s["relative"]["relative"]
+        page,
+        "relative",
+        "Done: Relative on or off",
+        lambda s: not s["relative"]["relative"] and not s["relative"]["active"],
     )
     assert off["relative"]["active"] is False
     on = _press(page, "relative", "Done: Relative on or off", lambda s: s["relative"]["settled"])
@@ -314,7 +318,9 @@ def test_script_form_relative_page_turns_relative_on_and_reports_it(opened):
     shown = _press(page, "origin", "Done: Show the origin", lambda s: s["relative"]["showOrigin"])
     assert shown["relative"]["showOrigin"] is True
 
-    cleared = _press(page, "clear", "Done: Clear.", lambda s: not s["active"])
+    cleared = _press(
+        page, "clear", "Done: Clear.", lambda s: not s["active"] and not s["relative"]["active"]
+    )
     assert cleared["relative"]["active"] is False
     assert [r for r in tab.requests if r["method"] != "GET"] == []
     _clean(base, tab)

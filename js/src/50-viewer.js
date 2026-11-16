@@ -4614,7 +4614,10 @@ ET.viewer = (function () {
           .map(function (d) {
             return d.letter;
           })
-          .join("");
+          .join("") +
+        // settled is part of what a host reads (info().search.relative.settled), so the end
+        // of a turn is announced too
+        (active ? (rel.settled ? ":settled" : ":turning") : "");
     }
     if (key !== s.relKey) {
       s.relKey = key;

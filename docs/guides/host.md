@@ -1253,8 +1253,9 @@ Three things to know about those, because they are not symmetrical:
 not a boolean is ignored, and a key left out keeps its value. It is synchronous
 and returns the settings now in force, `{ relative, showOrigin }`. It re-ranks
 nothing, supersedes nothing and calls none of your callbacks, but
-`onSearchChange` is called when either value changed. After `destroy` it does
-nothing. Turning Relative on replaces a swing toward the searches that is in
+`onSearchChange` is called when either value changed, and again when the
+relative view appears or goes, when its pinned or dropped searches change, and
+when a turn ends (`settled` becomes true). After `destroy` it does nothing. Turning Relative on replaces a swing toward the searches that is in
 progress: the view turns onto the pinned frame instead, in about a second and a
 half of view time, and pause and reduced motion stop that turn as they stop
 everything else. While Relative is on, the panel's **Face the searches** button

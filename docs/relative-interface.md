@@ -723,7 +723,8 @@ superseded, no callback is called, no request is made). The settings are kept
 in every mode and with no search; in Tumble they are passed on with
 `inst.setRelative(settings, clock)` and, when the mode is entered later, right
 after it is entered (with `searchChanged` as for Focus). `onSearchChange` fires
-when either value changes. After `destroy` it returns the last settings and
+when either value changes, and when the relative view appears or goes, its
+pinned or dropped letters change, or a turn ends (`settled` flips). After `destroy` it returns the last settings and
 does nothing.
 
 #### `handle.relativeSettings() -> { relative, showOrigin }`
