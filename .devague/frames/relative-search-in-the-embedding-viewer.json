@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-16T17:49:58Z",
-  "updated": "2026-11-16T18:02:22Z",
+  "updated": "2026-11-16T19:34:15Z",
   "claims": [
     {
       "id": "c1",
@@ -400,6 +400,189 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "The reference page docs/specs/reference/tumbler-relative-search.html (published as https://claude.ai/artifact/JtQQjRJ64tUmvTrktBhZu7), with its data files beside it, is part of this spec: where the words and the page differ and the difference is not listed as intended, the page is what was agreed. (Owner, 2026-11-16: 'The artifact is part of the spec'.)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "The page and its two data files open from a plain local web server started in the repository with no network access apart from fonts, and the published copy and the committed copy are the same file.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Keep the page, demo-wikipedia-rerank.json and scripts/build_reference_rerank.py in the repository; list every intended difference in docs/reference-differences.md.",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Named results are chosen by the viewer's existing measure, cosine distance, whatever the vectors' lengths. When the vectors are not all of length one, height (length along the search) and rank (cosine) can disagree: the view says so wherever it names the measure, and each named result shows its cosine as well as its height.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "The mixed-length fixture is real or realistic (lengths spread at least 20 percent), and the label wording for it has been read by the owner on a page, not only asserted in a test.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Test with a fixture of vectors of mixed lengths where the nearest by cosine is not the highest along the search; read both numbers from the label.",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "The point-of-view option does not change the relative view's axis. With point of view on for a search, its ranking uses the scaled measure as today, and height stays the plain vector measured along the plain search direction; the status line says that rank and height then use different measures.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "The guide's point-of-view section says in plain words that height is not the scaled measure, with an example where a result ranked first is not the highest.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Test: with pointOfView set, frames are bit-identical to pointOfView off for the same data, seed, searches and time; only the named results differ.",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "Drawing the relative view nearly flat is a renderer setting with a default that leaves every existing picture unchanged. Today the perspective constant is fixed in the shader (js/src/30-renderer.js place(): 3.0 / max(0.6, 3.0 + z2)).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "The unchanged-pixels check runs on both renderers the browser tests use (software and GPU) and covers Tumble, Lattice, Wander and Focus.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Renderer test: with the setting at its default, the rendered pixels of the existing renderer fixtures are unchanged.",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "A change of searches or of the relative setting takes effect at a recorded time, as a data refit does today. The fit of the remaining directions is prepared in small units while the view keeps moving, and how long the fit took never changes which frame is shown at a given time after the switch.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "The recorded switch time is part of what mark() and a seek reproduce: seeking to a time before a switch shows the view as it was then.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Unit test: run the same sequence of changes with the fit pumped in one step and in many small steps; frames after each switch time are bit-identical.",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "With relative on, a new search does not swing and release as plain Tumble does. The view turns onto the pinned frame within the existing transition time and stays pinned. When the first search is removed and another remains, that one becomes the vertical axis by the same turn, and every search keeps its letter.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "The turn onto the pinned frame keeps the frame orthonormal at every moment (no fold), measured the way the refit blend is measured today.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Browser test: add A, add B, remove A; B keeps the letter B and ends on the vertical ruler; no frame jumps by more than the existing transition allows.",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "Searches that cannot give an axis are handled and named: a search vector of zero length pins nothing and says so; a search pointing the same way as an earlier one adds no axis and says so; a set with fewer dimensions or points than the free axes need still gives three orthonormal rows.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "Each degenerate case shows a message a person can read in the status line or the panel, checked by reading the rendered text, and none throws.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Unit tests: a zero query; two identical queries; a 3-dimensional set with one, two and three searches; a set of 2 points.",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "The ruler covers whatever the data gives: from the lowest point's height to the higher of the search's own length and the highest point, including heights below zero, with the origin marked whenever zero is inside the window.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "The window is computed from all points, not from a sample, so no point is ever drawn off the ruler's range without the view having been zoomed by the person.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Unit test of the window with a fixture holding vectors opposite to the search.",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "When the data changes while relative is on (replace or append), the searches are kept as they are today and the remaining directions are fitted again at a recorded time.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "A data change that removes the point a search was made from keeps that search's vector, as today, and the test covers it.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Unit test through dataChanged with relative on, compared with a fresh instance given the final data.",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "assumption",
+      "text": "A typed search embedded by the model behaves like an article used as a search. Probed on 2026-11-16 through the gateway with google/embeddinggemma-2, plain query form: 'rice', 'a grain that feeds half the world' and 'how do volcanoes form?' each came back with length 1.0, top cosines 0.80 to 0.83, medians 0.61 to 0.64 and minima 0.53 to 0.57, the same band as article searches.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -415,6 +598,33 @@
     {
       "id": "v2",
       "text": "Label collisions among named results near the ruler (visible in the reference with the search Rice): the placement rule is not decided",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "On sets larger than the fit cap (4,096 rows) the reported share of the remaining spread comes from a sample of rows; how far it can be from the true share is not measured",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "The reference page shows one and two searches; the agreed third-search behaviour (depth pinned, nothing tours) has no picture to compare a build against",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "Whether a second real model keeps its vectors in as narrow a cone as embeddinggemma-2 (mean length 0.79); the view's default window is taken from the data so it adapts, but the why-it-matters figures are from one model",
       "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,
@@ -467,8 +677,200 @@
         "c19",
         "c20"
       ]
+    },
+    {
+      "id": "s8",
+      "surface": "challenge pass / adjacent-systems lens: docs/search-interface.md Distance and pointOfView, docs/guides/search.md",
+      "finding": "Ranking is cosine distance whatever the lengths, so on a set that is not unit length rank and height can disagree; and the existing point-of-view option rescales dimensions for one search's ranking. Neither was in the frame. Seeded c25 and c26.",
+      "seeds": [
+        "c25",
+        "c26"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "challenge pass / hidden-dependencies lens: js/src/30-renderer.js place()",
+      "finding": "Perspective is a constant in the shader, shared by all four views; the reference's flat drawing needs a renderer change that must leave existing pictures unchanged. Seeded c27.",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "challenge pass / concurrency and reproducibility lens: js/src/40-mode-tumble.js fit(), refit(), fixSwitch()",
+      "finding": "Fits are pumped in small units and a refit switches at a fixed time T, so reproducibility survives slow fits today; a search change in relative needs the same treatment or the frame would depend on machine speed. The generation counters (gen, refitGen) already discard abandoned fits. Seeded c28 and c32.",
+      "seeds": [
+        "c28",
+        "c32"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "challenge pass / lifecycle and failure-modes lens: js/src/39-modes.js swings and requireDimension, js/src/24-search.js",
+      "finding": "Plain Tumble swings and releases on a search; removal of a search, a zero or repeated search vector, tiny sets and heights below zero were not covered by any claim. Seeded c29, c30, c31 and questions q4 (Lit setting against brightness decision c23) and q5 (Face the searches control).",
+      "seeds": [
+        "c29",
+        "c30",
+        "c31"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "challenge pass / cheap-probe lens: typed queries through the gateway (google/embeddinggemma-2, 2026-11-16)",
+      "finding": "Three typed searches embedded for real gave unit-length vectors and the same cosine band as article searches (top 0.80 to 0.83, minimum 0.53 to 0.57), so the ruler window found on the reference page holds for typed text on this model. One model only. Seeded c33.",
+      "seeds": [
+        "c33"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / security, privacy and operations lens: boundary c6, embeddings_tumbler/_embed_route.py, docs/guides/search.md privacy table",
+      "finding": "Clean on what was read: relative adds no callback, no request and no new text leaving the page; reranking in relative sends exactly what reranking sends today. The reference page's reranker file was made by sending Wikipedia text (CC BY-SA) to the owner's local gateway, nothing private. Residual: the ruler draws the search's label on the canvas, which is text drawing, not markup.",
+      "seeds": []
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / unexamined surfaces",
+      "finding": "Not read or not measured in this pass: whether a search from a point names the point itself among its results (the reference leaves it out; success signal c16 lists eight results without Rice); js/shells/web-component.js, js/page/ and js/src/45-search-panel.js where the setting's control will live; Lattice, Wander and Focus code beyond their headers; frame rate of stems, rings and labels on the 12,288-point sample set and on a phone; any browser but Chromium; a second real model or a set that is not unit length (none is in the repository); legibility of ruler labels at phone width (only overflow was checked on the reference).",
+      "seeds": []
     }
   ],
   "lapses": [],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c9",
+      "seam": "search vector -> vertical axis",
+      "behavior": "For every point, the coordinate along the pinned frame row equals the dot product of its vector with the unit search direction to float32 accuracy, at every settled moment; while the view is still turning onto the pinned frame the ruler is not drawn as exact.",
+      "source_text": "The pinned axis is exact: for every point, its coordinate along the pinned frame row equals the dot product of its vector with the unit search direction, to float32 accuracy, at every moment of the tour.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c10",
+      "seam": "set minus search directions -> free axes",
+      "behavior": "The free rows are orthogonal to every pinned row and lie in the strongest directions of the centred remainder; the share shown is the share of that remainder held by exactly those directions on the rows fitted.",
+      "source_text": "The free axes are orthogonal to every pinned search direction and tour the strongest directions of the centred set after those directions are removed; the share of the remaining variance they hold is reported in the status line.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c11",
+      "seam": "data, seed, searches, time -> frame",
+      "behavior": "The same data, seed, sequence of search changes with their recorded times, and elapsed time give the same frame bit for bit, however time was sliced and however long any fit took.",
+      "source_text": "The relative view is reproducible: the same data, seed, searches and elapsed time give the same frame.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c12",
+      "seam": "vector lengths -> words on screen",
+      "behavior": "The ruler, the status line and the labels say cosine only when every vector's length is within the stated tolerance of one; otherwise they say length along the search, and each named result also shows its cosine.",
+      "source_text": "The view says what the axis means. The ruler and the status line name the measure: cosine when every vector's length is within a stated tolerance of one, otherwise length along the search direction. The view keeps stating that it is a shadow, and which axes are exact and which are not.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c13",
+      "seam": "origin control -> picture",
+      "behavior": "With the control on, the relative view includes the all-zero vector at the foot of the ruler and the plain view marks where it falls with its true distance from the centre and the visible part of it; the unit circle is drawn only for unit-length sets.",
+      "source_text": "The origin can be shown. In the relative view a control zooms out to include the all-zero vector at the foot of the ruler. In the plain view the same control marks where the origin falls and states its true distance from the centre and how much of that distance is visible.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c14",
+      "seam": "renderer -> drawn height",
+      "behavior": "In the relative view, untilted, two points of equal height are drawn at the same screen height to within 2 percent of the ruler's visible length; with the flatness setting at its default every existing view renders the same pixels as before.",
+      "source_text": "The relative view is drawn so that heights read true: flat enough that two points with the same similarity are drawn at the same height to within 2 percent of the ruler's visible length when the view is not tilted by the user.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c15",
+      "seam": "second, third and fourth search -> axes",
+      "behavior": "The second search's direction lies exactly in the plane of the vertical and horizontal axes and is drawn as a ruler from the origin; a third pins depth so nothing tours; a fourth is lit and has no axis; a search that adds no new direction pins nothing and says so.",
+      "source_text": "A second search is drawn as a second ruler from the origin. The plane holding both search directions is shown exactly: the horizontal axis is the part of the second direction that the first does not already contain, and only depth tours.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c20",
+      "seam": "reranker -> relative view",
+      "behavior": "Reranking changes no frame and no point's position. Named results carry reranker ranks 1 to top, the ruler marks the lowest candidate sent, and on a reranker failure, timeout or a search without text the view shows embedding order with no ranks, no mark and the existing note.",
+      "source_text": "Reranking never moves a point in the relative view. Height stays the embedding's measure along the search; the reranker changes only which points are named and their order. Each named result carries its reranker rank, and the ruler marks the lowest candidate that was sent to the reranker.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c3",
+      "seam": "relative off -> existing views",
+      "behavior": "With relative off, every frame of Tumble, Lattice, Wander and Focus is bit-identical to release 0.12.1 for the same data, seed and time, and every existing test passes unchanged.",
+      "source_text": "A search lights its results and swings or fits the view to them, but the middle of the screen is an average (of the set in Tumble, of the results in Focus) and no axis has a meaning. Position on screen cannot be read as similarity to the search, and the origin is not shown anywhere.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c21",
+      "seam": "Tumble setting -> host, web component, standalone page",
+      "behavior": "Relative is turned on and off through a documented setting reachable from the script API, the web component and the standalone page's Tumble controls; the shells hold no projection logic; with no search the setting is kept and the view is plain Tumble.",
+      "source_text": "Relative is a setting inside Tumble, not a fifth view. It is the same tour with one or more axes pinned. (Owner, 2026-11-16: approved.)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c24",
+      "seam": "reference page -> build",
+      "behavior": "For the same search on the Wikipedia demo set the built viewer and the reference page agree on which axis is pinned, on each named result's height to 2 decimal places, and on the reranked order; every other difference is listed as intended in docs/reference-differences.md before the owner is asked to sign.",
+      "source_text": "The reference page docs/specs/reference/tumbler-relative-search.html (published as https://claude.ai/artifact/JtQQjRJ64tUmvTrktBhZu7), with its data files beside it, is part of this spec: where the words and the page differ and the difference is not listed as intended, the page is what was agreed. (Owner, 2026-11-16: 'The artifact is part of the spec'.)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c6",
+      "seam": "relative view -> network and data contract",
+      "behavior": "Turning relative on or off, adding searches and showing the origin make no network request, and no byte of the data contract, its loader or the helper route changes.",
+      "source_text": "Relative search changes only the frame, the centre, the zoom and what is drawn over the picture. It adds no new kind of projection, changes no vector, changes nothing in the data contract and sends nothing anywhere. It is a way of viewing existing searches (typed words, a host embed callback, or the helper route), not a new way of searching.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c28",
+      "seam": "search change -> switch time",
+      "behavior": "A change of searches or of the setting switches at a recorded time; the view keeps moving while the fit is prepared; an abandoned fit never changes what is shown.",
+      "source_text": "A change of searches or of the relative setting takes effect at a recorded time, as a data refit does today. The fit of the remaining directions is prepared in small units while the view keeps moving, and how long the fit took never changes which frame is shown at a given time after the switch.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c29",
+      "seam": "search added or removed -> motion",
+      "behavior": "The view turns onto the new pinned frame within the existing transition time and stays orthonormal throughout; searches keep their letters; Pause and reduced motion stop the tour exactly as they do in plain Tumble.",
+      "source_text": "With relative on, a new search does not swing and release as plain Tumble does. The view turns onto the pinned frame within the existing transition time and stays pinned. When the first search is removed and another remains, that one becomes the vertical axis by the same turn, and every search keeps its letter.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o15",
+      "claim_id": "c26",
+      "seam": "point-of-view option -> relative view",
+      "behavior": "The point-of-view option changes only which results are named; the frame and every height are the same as with it off, and the status line says rank and height use different measures.",
+      "source_text": "The point-of-view option does not change the relative view's axis. With point of view on for a search, its ranking uses the scaled measure as today, and height stays the plain vector measured along the plain search direction; the status line says that rank and height then use different measures.",
+      "origin": "llm",
+      "status": "approved"
+    }
+  ]
 }

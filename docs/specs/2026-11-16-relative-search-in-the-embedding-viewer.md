@@ -48,6 +48,33 @@
 - Reranking never moves a point in the relative view. Height stays the embedding's measure along the search; the reranker changes only which points are named and their order. Each named result carries its reranker rank, and the ruler marks the lowest candidate that was sent to the reranker.
   - instruction: Unit test: frames with reranking on and off are bit-identical for the same data, seed, searches and time. Browser test: labels carry ranks 1 to top, and the cut-off mark sits at the lowest candidate's height.
   - honesty: When the reranker fails, times out, or the search has no text to send, the relative view keeps embedding order, draws no ranks and no cut-off mark, and shows the existing note; covered by tests for each case.
+- The reference page docs/specs/reference/tumbler-relative-search.html (published as <https://claude.ai/artifact/JtQQjRJ64tUmvTrktBhZu7>), with its data files beside it, is part of this spec: where the words and the page differ and the difference is not listed as intended, the page is what was agreed. (Owner, 2026-11-16: 'The artifact is part of the spec'.)
+  - instruction: Keep the page, demo-wikipedia-rerank.json and scripts/`build_reference_rerank.py` in the repository; list every intended difference in docs/reference-differences.md.
+  - honesty: The page and its two data files open from a plain local web server started in the repository with no network access apart from fonts, and the published copy and the committed copy are the same file.
+- Named results are chosen by the viewer's existing measure, cosine distance, whatever the vectors' lengths. When the vectors are not all of length one, height (length along the search) and rank (cosine) can disagree: the view says so wherever it names the measure, and each named result shows its cosine as well as its height.
+  - instruction: Test with a fixture of vectors of mixed lengths where the nearest by cosine is not the highest along the search; read both numbers from the label.
+  - honesty: The mixed-length fixture is real or realistic (lengths spread at least 20 percent), and the label wording for it has been read by the owner on a page, not only asserted in a test.
+- The point-of-view option does not change the relative view's axis. With point of view on for a search, its ranking uses the scaled measure as today, and height stays the plain vector measured along the plain search direction; the status line says that rank and height then use different measures.
+  - instruction: Test: with pointOfView set, frames are bit-identical to pointOfView off for the same data, seed, searches and time; only the named results differ.
+  - honesty: The guide's point-of-view section says in plain words that height is not the scaled measure, with an example where a result ranked first is not the highest.
+- Drawing the relative view nearly flat is a renderer setting with a default that leaves every existing picture unchanged. Today the perspective constant is fixed in the shader (js/src/30-renderer.js place(): 3.0 / max(0.6, 3.0 + z2)).
+  - instruction: Renderer test: with the setting at its default, the rendered pixels of the existing renderer fixtures are unchanged.
+  - honesty: The unchanged-pixels check runs on both renderers the browser tests use (software and GPU) and covers Tumble, Lattice, Wander and Focus.
+- A change of searches or of the relative setting takes effect at a recorded time, as a data refit does today. The fit of the remaining directions is prepared in small units while the view keeps moving, and how long the fit took never changes which frame is shown at a given time after the switch.
+  - instruction: Unit test: run the same sequence of changes with the fit pumped in one step and in many small steps; frames after each switch time are bit-identical.
+  - honesty: The recorded switch time is part of what mark() and a seek reproduce: seeking to a time before a switch shows the view as it was then.
+- With relative on, a new search does not swing and release as plain Tumble does. The view turns onto the pinned frame within the existing transition time and stays pinned. When the first search is removed and another remains, that one becomes the vertical axis by the same turn, and every search keeps its letter.
+  - instruction: Browser test: add A, add B, remove A; B keeps the letter B and ends on the vertical ruler; no frame jumps by more than the existing transition allows.
+  - honesty: The turn onto the pinned frame keeps the frame orthonormal at every moment (no fold), measured the way the refit blend is measured today.
+- Searches that cannot give an axis are handled and named: a search vector of zero length pins nothing and says so; a search pointing the same way as an earlier one adds no axis and says so; a set with fewer dimensions or points than the free axes need still gives three orthonormal rows.
+  - instruction: Unit tests: a zero query; two identical queries; a 3-dimensional set with one, two and three searches; a set of 2 points.
+  - honesty: Each degenerate case shows a message a person can read in the status line or the panel, checked by reading the rendered text, and none throws.
+- The ruler covers whatever the data gives: from the lowest point's height to the higher of the search's own length and the highest point, including heights below zero, with the origin marked whenever zero is inside the window.
+  - instruction: Unit test of the window with a fixture holding vectors opposite to the search.
+  - honesty: The window is computed from all points, not from a sample, so no point is ever drawn off the ruler's range without the view having been zoomed by the person.
+- When the data changes while relative is on (replace or append), the searches are kept as they are today and the remaining directions are fitted again at a recorded time.
+  - instruction: Unit test through dataChanged with relative on, compared with a fresh instance given the final data.
+  - honesty: A data change that removes the point a search was made from keeps that search's vector, as today, and the test covers it.
 
 ## Honesty conditions
 
@@ -80,6 +107,7 @@
 ## Assumptions
 
 - Fitting the remaining directions on a new search takes under half a second for sets up to the fit cap of 4,096 rows (measured: about 0.3 s for 999 rows of 768 dimensions in node), and can run in the existing small-unit steppers so the view keeps moving.
+- A typed search embedded by the model behaves like an article used as a search. Probed on 2026-11-16 through the gateway with google/embeddinggemma-2, plain query form: 'rice', 'a grain that feeds half the world' and 'how do volcanoes form?' each came back with length 1.0, top cosines 0.80 to 0.83, medians 0.61 to 0.64 and minima 0.53 to 0.57, the same band as article searches.
 
 ## Scope exploration
 
@@ -91,6 +119,18 @@
 - `s6` — `docs/specs/reference/tumbler-relative-search.html (https://claude.ai/artifact/JtQQjRJ64tUmvTrktBhZu7)`: A working reference page on the real Wikipedia set was built first. It shows: search A pinned to the vertical axis with a ticked ruler from the origin; results joined by stems to the height they are read at; two free axes touring 8 directions orthogonal to the search; a second search B drawn as a second ruler in the plane it shares with A (horizontal axis is what B adds beyond A) with only depth touring; a Show the origin control; a Plain view for comparison in which the origin marker reports its true and its visible distance. A search there is an article in the set or the mean of matched titles, because the page has no embedding model.
 - `s7` — `js/src/24-search.js rerankOrder, docs/search-interface.md Reranking, embeddings_tumbler/_embed_route.py`: The reranker is a host callback rerank(query, candidates) returning scores and a model id; the core file never fetches. The pool is the 50 nearest named points by default and the best 20 are kept; each hit records its embedding rank, new rank, places moved and score. viewer serve --embed --rerank-model offers Qwen/Qwen3-Reranker-0.6B through the gateway. An Artifact page cannot call it, so the reference page reads scores made ahead of time by scripts/`build_reference_rerank.py` (one search per article, the article's text against its 50 nearest others).
   - seeds: `c19`, `c20`
+- `s8` — `challenge pass / adjacent-systems lens: docs/search-interface.md Distance and pointOfView, docs/guides/search.md`: Ranking is cosine distance whatever the lengths, so on a set that is not unit length rank and height can disagree; and the existing point-of-view option rescales dimensions for one search's ranking. Neither was in the frame. Seeded c25 and c26.
+  - seeds: `c25`, `c26`
+- `s9` — `challenge pass / hidden-dependencies lens: js/src/30-renderer.js place()`: Perspective is a constant in the shader, shared by all four views; the reference's flat drawing needs a renderer change that must leave existing pictures unchanged. Seeded c27.
+  - seeds: `c27`
+- `s10` — `challenge pass / concurrency and reproducibility lens: js/src/40-mode-tumble.js fit(), refit(), fixSwitch()`: Fits are pumped in small units and a refit switches at a fixed time T, so reproducibility survives slow fits today; a search change in relative needs the same treatment or the frame would depend on machine speed. The generation counters (gen, refitGen) already discard abandoned fits. Seeded c28 and c32.
+  - seeds: `c28`, `c32`
+- `s11` — `challenge pass / lifecycle and failure-modes lens: js/src/39-modes.js swings and requireDimension, js/src/24-search.js`: Plain Tumble swings and releases on a search; removal of a search, a zero or repeated search vector, tiny sets and heights below zero were not covered by any claim. Seeded c29, c30, c31 and questions q4 (Lit setting against brightness decision c23) and q5 (Face the searches control).
+  - seeds: `c29`, `c30`, `c31`
+- `s12` — `challenge pass / cheap-probe lens: typed queries through the gateway (google/embeddinggemma-2, 2026-11-16)`: Three typed searches embedded for real gave unit-length vectors and the same cosine band as article searches (top 0.80 to 0.83, minimum 0.53 to 0.57), so the ruler window found on the reference page holds for typed text on this model. One model only. Seeded c33.
+  - seeds: `c33`
+- `s13` — `challenge pass / security, privacy and operations lens: boundary c6, embeddings_tumbler/_embed_route.py, docs/guides/search.md privacy table`: Clean on what was read: relative adds no callback, no request and no new text leaving the page; reranking in relative sends exactly what reranking sends today. The reference page's reranker file was made by sending Wikipedia text (CC BY-SA) to the owner's local gateway, nothing private. Residual: the ruler draws the search's label on the canvas, which is text drawing, not markup.
+- `s14` — `challenge pass / unexamined surfaces`: Not read or not measured in this pass: whether a search from a point names the point itself among its results (the reference leaves it out; success signal c16 lists eight results without Rice); js/shells/web-component.js, js/page/ and js/src/45-search-panel.js where the setting's control will live; Lattice, Wander and Focus code beyond their headers; frame rate of stems, rings and labels on the 12,288-point sample set and on a phone; any browser but Chromium; a second real model or a set that is not unit length (none is in the repository); legibility of ruler labels at phone width (only overflow was checked on the reference).
 
 ## Decisions
 
@@ -101,4 +141,7 @@
 ## Open parks
 
 - [unknown_nonblocking] Label collisions among named results near the ruler (visible in the reference with the search Rice): the placement rule is not decided
+- [unknown_nonblocking] On sets larger than the fit cap (4,096 rows) the reported share of the remaining spread comes from a sample of rows; how far it can be from the true share is not measured
+- [unknown_nonblocking] The reference page shows one and two searches; the agreed third-search behaviour (depth pinned, nothing tours) has no picture to compare a build against
+- [unknown_nonblocking] Whether a second real model keeps its vectors in as narrow a cone as embeddinggemma-2 (mean length 0.79); the view's default window is taken from the data so it adapts, but the why-it-matters figures are from one model
 - [follow_up] Whether the relative view should also be offered in Lattice and Wander
