@@ -191,7 +191,7 @@ Pure functions in `js/src/10-math.js`, added to the object `ET.math` returns.
 t4 must stay green). Shapes and errors follow `js/api/10-math.md` (a malformed
 call throws `RangeError` or `TypeError`; inputs are finite).
 
-<!-- interface-names module="10-math.js" object="ET.math" match="present" task="t2" prefix="ET.math." landed="auto" -->
+<!-- interface-names module="10-math.js" object="ET.math" match="present" task="t2" prefix="ET.math." landed="yes" -->
 ```text
 relativeDirections
 unitLength
@@ -202,7 +202,7 @@ relativeFit
 makeRelativeFit
 ```
 
-<!-- interface-names module="10-math.js" object="ET.math" match="constants" task="t2" prefix="ET.math." landed="auto" -->
+<!-- interface-names module="10-math.js" object="ET.math" match="constants" task="t2" prefix="ET.math." landed="yes" -->
 ```text
 RELATIVE_UNIT_TOLERANCE
 RELATIVE_ZERO_LENGTH

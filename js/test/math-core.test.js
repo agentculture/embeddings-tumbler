@@ -166,6 +166,9 @@ test("project is a linear map of the centred data", () => {
 test("the module exports exactly the linear tool set and contains no non-linear layout", () => {
   const m = math();
   assert.deepStrictEqual(Object.keys(m).sort(byCodeUnits), [
+    "RELATIVE_SAME_DIRECTION",
+    "RELATIVE_UNIT_TOLERANCE",
+    "RELATIVE_ZERO_LENGTH",
     "alignTo",
     "blendFrames",
     "centre",
@@ -173,6 +176,7 @@ test("the module exports exactly the linear tool set and contains no non-linear 
     "frameSeparation",
     "groupSeparation",
     "guidedTour",
+    "heightWindow",
     "hiddenDirection",
     "knn",
     "localFrame",
@@ -182,8 +186,11 @@ test("the module exports exactly the linear tool set and contains no non-linear 
     "makeLocalFrame",
     "makePrincipalDirections",
     "makeRandom",
+    "makeRelativeFit",
+    "makeRelativeTour",
     "makeSwapTour",
     "makeTour",
+    "makeTourRows",
     "meanOf",
     "mixSeed",
     "mulberry32",
@@ -191,12 +198,15 @@ test("the module exports exactly the linear tool set and contains no non-linear 
     "principalDirections",
     "project",
     "randomFrame",
+    "relativeDirections",
+    "relativeFit",
     "smoothstep",
     "swapAngle",
     "swapStep",
     "symmetricEigen",
     "toSeed",
     "totalVariance",
+    "unitLength",
     "varianceShare",
   ]);
   const src = fs.readFileSync(path.join(SRC_DIR, "10-math.js"), "utf8");
