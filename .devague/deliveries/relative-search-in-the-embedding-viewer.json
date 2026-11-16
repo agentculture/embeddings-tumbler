@@ -1,0 +1,59 @@
+{
+  "plan_slug": "relative-search-in-the-embedding-viewer",
+  "schema_version": 2,
+  "created": "2026-11-16T22:05:02Z",
+  "updated": "2026-11-16T22:05:02Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Add panning to the viewer in this build, as an added task t17: right-drag pans (also Shift+left-drag, a two-finger drag on touch, and the arrow keys with focus); left-drag keeps turning; the reset control resets the pan as well as the zoom. It applies to all four views.",
+      "task_ref": "t10",
+      "reason": "The owner, trying the built relative view on 2026-11-17, said: 'I lack the ability to move without rotate. Like right click and drag or left click moves and ctrl+left click rotates'. Asked which gestures and when, the owner chose 'Right-drag pans' and 'In this build'.",
+      "affects": [
+        "t3",
+        "t13",
+        "t14",
+        "t15",
+        "c3"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Two fixes outside the plan, made at the owner's report during live testing: the picture is no longer wiped when the search panel opens or closes around an unchanged stage (a flicker present since 0.12.1), and hosts are told when a turn ends (onSearchChange fires when settled flips).",
+      "task_ref": "t10",
+      "reason": "The owner reported the flicker on 2026-11-17 ('When I click search there is a jump', 'It's a flicker') and confirmed the fix ('doesn't reproduce that little flicker'). The settled notice was found when the guide example's browser test first ran: its report stayed on 'still turning'.",
+      "affects": [
+        "t3",
+        "t9",
+        "c3"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "Two existing tests were changed, against obligation o9's words 'every existing test passes unchanged': the search panel's expected control list gained Relative and Show the origin, and the one-second gap check in the motion test allows float rounding. Also the reference page's reranker data is kept out of the source distribution to stay under its size limit, and the preparation of the reference comparison (t15) was delegated to a task agent where the approved split had the main agent do it; the sign-off stays the owner's.",
+      "task_ref": "t13",
+      "reason": "A new visible control cannot exist without the first change; the second is a float rounding flake unrelated to relative search (1.5 - 0.5000000000000001); the sdist went 1 KB over its 7 MB limit; the delegation kept the main session's context for merges and the sign-off.",
+      "affects": [
+        "t8",
+        "t15",
+        "t16",
+        "c3"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 3
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

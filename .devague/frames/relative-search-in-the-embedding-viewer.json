@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-16T17:49:58Z",
-  "updated": "2026-11-16T20:06:26Z",
+  "updated": "2026-11-16T21:09:26Z",
   "claims": [
     {
       "id": "c1",
@@ -804,6 +804,18 @@
       "refs": [
         "t8",
         "js/test/search-panel.test.js"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l5",
+      "code": "grader-unverified",
+      "what": "Task t14 committed a browser test for its new example page that it had never run; it failed three ways at merge (two in the test's timing, one a real gap in the viewer: hosts were never told when a turn ended). The agent reported that the test was unrun. Fixed by the main agent at merge.",
+      "skipped_check": "running the new browser test before committing it",
+      "refs": [
+        "t14",
+        "tests/browser/test_guide_examples.py"
       ],
       "origin": "llm",
       "status": "proposed"
