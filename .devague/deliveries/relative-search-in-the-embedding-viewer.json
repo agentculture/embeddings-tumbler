@@ -2,7 +2,7 @@
   "plan_slug": "relative-search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-16T22:05:02Z",
-  "updated": "2026-11-16T23:12:03Z",
+  "updated": "2026-11-16T23:17:03Z",
   "deviations": [
     {
       "id": "d1",
@@ -85,6 +85,23 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "The brightness of the points that are not results becomes a setting of the relative view with three levels (the three examples shown to the owner), with the brightest as the default, offered as a control in the search panel and through the handle, the mount options, the web component and the page's address. Folded into task t19.",
+      "task_ref": "t9",
+      "reason": "Shown three live examples on 2026-11-17 (A as built, B low base with a medium gradient, C higher base with a strong gradient), the owner answered: 'C ... Is best, though option toggle is event better'.",
+      "affects": [
+        "t8",
+        "t11",
+        "t12",
+        "t14",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 6
     }
   ],
   "evidence": [],
