@@ -522,7 +522,7 @@ A new module, `js/src/46-relative-overlay.js`. Pure numbers in, a draw list
 out; then the canvas part and the text part are painted separately, because
 the viewer draws no text on a canvas.
 
-<!-- interface-names module="46-relative-overlay.js" object="ET.relativeOverlay" match="present" task="t7" prefix="ET.relativeOverlay." landed="auto" -->
+<!-- interface-names module="46-relative-overlay.js" object="ET.relativeOverlay" match="present" task="t7" prefix="ET.relativeOverlay." landed="yes" -->
 ```text
 build
 paint
@@ -575,9 +575,11 @@ What it holds (the reference's look; `m` is `relative.mix`):
   answer above); the search markers at each search's raw query; with two
   pinned, ruler B from the origin (or `max(0, bottom - 0.2)`) to `max(1,
   len(q_B)) + 0.04` along B's own direction with dots and labels at 0.1 to 0.9;
-  with `cut`, a dashed line across ruler A at `cut.height`; with Show the
-  origin, the origin cross at height 0 and, only on a unit-length set, the
-  unit circle about it.
+  with `cut`, a dashed line across ruler A at `cut.height`; the origin cross
+  at height 0 and its text whenever height 0 lies inside the window shown
+  (`bottom <= 0 <= top`), whether or not Show the origin is on (this follows
+  the spec's requirement c31); with Show the origin (which widens the window to
+  include 0), only on a unit-length set, the unit circle about it.
 - **Relative view, not settled** (`relative.settled` false): ruler A's line
   only, faint; **no ticks, no rings, no tick labels, no stems, no cut-off
   line** (o1: the ruler is not drawn as exact while the view turns).
@@ -605,7 +607,7 @@ result).
 
 ### Overlay strings (t7)
 
-<!-- interface-strings module="46-relative-overlay.js" task="t7" landed="auto" -->
+<!-- interface-strings module="46-relative-overlay.js" task="t7" landed="yes" -->
 ```text
 {measure} to {letter}
 {sent} candidates above this line went to the reranker
