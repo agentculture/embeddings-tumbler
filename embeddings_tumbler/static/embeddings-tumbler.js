@@ -3971,6 +3971,9 @@ ET.searchSets = (function () {
 //   * Perspective: the draw key perspective (P in s = P / max(0.6, P + z2)) is 3 by default,
 //     drawn by the programs above, unchanged. Any other value is drawn by variant programs
 //     that read it as the uniform uPersp, compiled the first time such a value is drawn.
+//   * Pan (task t17): the draw key pan moves the drawn picture on screen without turning it.
+//     [0, 0] (the default) draws with the original programs, unchanged; any other value is
+//     drawn by the same variant programs, which also read it as the uniform uPan.
 //
 // The API is documented in js/api/30-renderer.md.
 // ---------------------------------------------------------------------------
@@ -4014,6 +4017,12 @@ ET.renderer = (function () {
     // the perspective constant P in s = P / max(0.6, P + z2); larger is flatter. 3 (the default)
     // draws with the original programs; the relative view uses RELATIVE_PERSPECTIVE.
     perspective: 3,
+    // [x, y]: a screen-space offset of the whole picture, added after zoom and perspective, in
+    // units of R = min(width, height) * radius (one unit of the picture after zoom and
+    // perspective, so a pan follows the stage when it is resized). Positive x moves the picture
+    // to the right, positive y moves it up. [0, 0] (the default) draws with the original
+    // programs; any other value with the variant programs.
+    pan: Object.freeze([0, 0]),
   });
 
   var RELATIVE_PERSPECTIVE = 60; // the settled relative view: nearly flat, so heights read true
@@ -4024,7 +4033,7 @@ ET.renderer = (function () {
   // The point program's uniforms (the lit programs add uFilter and uUnlit).
   var POINT_UNIFORMS = ["uPx", "uMinPx", "uFog", "uTime", "uGain", "uDim", "uTwinkle", "uDof", "uFogNear", "uFogWidth"];
   var VIEW_UNIFORMS = ["uX", "uF", "uRot", "uView", "uZoom", "uFocus"];
-  var FLAT_VIEW_UNIFORMS = VIEW_UNIFORMS.concat(["uPersp"]); // the variant programs add uPersp
+  var FLAT_VIEW_UNIFORMS = VIEW_UNIFORMS.concat(["uPersp", "uPan"]); // the variant programs add these
 
   var MAX_ROW_WIDTH = 4096; // preferred texture row width (texels) before widening
   var INT32_MAX = 2147483647;
@@ -4053,7 +4062,8 @@ ET.renderer = (function () {
       pointLit: null, // the point program that reads lit values, compiled on first setLit
       line: null,
       lineLit: null, // the wire program that reads each wire's lit value, compiled with pointLit
-      // the same four programs reading the perspective as uPersp, compiled when first needed
+      // the same four programs reading the perspective as uPersp and the pan as uPan, compiled
+      // when first needed
       pointFlat: null,
       lineFlat: null,
       pointLitFlat: null,
@@ -4204,9 +4214,12 @@ ET.renderer = (function () {
   }
 
   // opts.perspective true: the variant sources whose place() reads the perspective from the
-  // uniform uPersp. Without it the sources are the original ones, with the constant 3.
+  // uniform uPersp. Without it the sources are the original ones, with the constant 3. With
+  // opts.pan true as well, place() also adds the uniform uPan after the perspective (the
+  // renderer always compiles its variants with both).
   function shaderSources(lay, opts) {
     var flat = !!opts?.perspective;
+    var panned = flat && !!opts?.pan;
     var T = lay.texelsPerPoint;
     var P = lay.pointsPerRow;
     var wireScale = Math.sqrt(lay.dimension / 3).toFixed(4);
@@ -4229,7 +4242,7 @@ ET.renderer = (function () {
       "  dist = sqrt(dd);",
       "  return p;",
       "}",
-      "uniform vec4 uRot; uniform vec2 uView; uniform float uZoom; uniform float uFocus;" + (flat ? " uniform float uPersp;" : ""),
+      "uniform vec4 uRot; uniform vec2 uView; uniform float uZoom; uniform float uFocus;" + (flat ? " uniform float uPersp;" : "") + (panned ? " uniform vec2 uPan;" : ""),
       // place(): turn by yaw and pitch, then a gentle perspective. zf is the depth
       // relative to the focus plane, used for depth of field.
       "vec4 place(vec3 p, out float zf) {",
@@ -4238,7 +4251,9 @@ ET.renderer = (function () {
       "  float y2 = p.y * uRot.z - z1 * uRot.w; float z2 = p.y * uRot.w + z1 * uRot.z;",
       flat ? "  float s = uPersp / max(0.6, uPersp + z2);" : "  float s = 3.0 / max(0.6, 3.0 + z2);",
       "  zf = z2 - uFocus;",
-      "  return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);",
+      panned
+        ? "  return vec4((x1 * s + uPan.x) * uView.x, (y2 * s + uPan.y) * uView.y, 0.0, s);"
+        : "  return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);",
       "}",
     ].join("\n");
     var pointVertex = head + proj + "\n" + pointMain(false);
@@ -4382,6 +4397,23 @@ ET.renderer = (function () {
     return typeof p === "number" && p > 0 && Number.isFinite(p) ? p : DEFAULTS.perspective;
   }
 
+  // The pan a merged draw state asks for, as [x, y]: draw.pan when it holds two finite numbers,
+  // else [0, 0]. place(), placer() and draw() all read it here, so they agree.
+  var NO_PAN = DEFAULTS.pan;
+  function panOf(s) {
+    var p = s.pan;
+    if (p === NO_PAN || p === null || typeof p !== "object" || p.length !== 2) return NO_PAN;
+    var x = p[0];
+    var y = p[1];
+    return typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y) ? [x, y] : NO_PAN;
+  }
+
+  // True when the variant programs must draw: a perspective other than 3 or a pan other than 0.
+  function needsVariant(s) {
+    var pan = panOf(s);
+    return perspectiveOf(s) !== DEFAULTS.perspective || pan[0] !== 0 || pan[1] !== 0;
+  }
+
   // p: [x, y, z] coordinates along the frame (already centred). Returns canvas pixels
   // (y grows downward), the perspective scale and the depth relative to the focus plane.
   function place(p, state, width, height) {
@@ -4392,6 +4424,7 @@ ET.renderer = (function () {
       sp = Math.sin(s.pitch);
     var R = Math.min(width, height) * s.radius;
     var P = perspectiveOf(s);
+    var pan = panOf(s);
     var x = p[0] * s.zoom,
       y = p[1] * s.zoom,
       z = p[2] * s.zoom;
@@ -4400,7 +4433,7 @@ ET.renderer = (function () {
     var y2 = y * cp - z1 * sp,
       z2 = y * sp + z1 * cp;
     var k = P / Math.max(0.6, P + z2);
-    return { x: width / 2 + x1 * k * R, y: height / 2 - y2 * k * R, scale: k, depth: z2 - s.focus };
+    return { x: width / 2 + (x1 * k + pan[0]) * R, y: height / 2 - (y2 * k + pan[1]) * R, scale: k, depth: z2 - s.focus };
   }
 
   // place() for many points under one state: the state is merged once, not per point
@@ -4415,6 +4448,8 @@ ET.renderer = (function () {
     var R = Math.min(width, height) * s.radius;
     var zoom = s.zoom;
     var P = perspectiveOf(s);
+    var panX = panOf(s)[0];
+    var panY = panOf(s)[1];
     return function (p0, p1, p2, out) {
       var x = p0 * zoom,
         y = p1 * zoom,
@@ -4424,8 +4459,8 @@ ET.renderer = (function () {
       var y2 = y * cp - z1 * sp,
         z2 = y * sp + z1 * cp;
       var k = P / Math.max(0.6, P + z2);
-      out.x = width / 2 + x1 * k * R;
-      out.y = height / 2 - y2 * k * R;
+      out.x = width / 2 + (x1 * k + panX) * R;
+      out.y = height / 2 - (y2 * k + panY) * R;
       return out;
     };
   }
@@ -4707,17 +4742,18 @@ ET.renderer = (function () {
       gpu.texF = floatTexture(gpu.fWidth, 4, gpu.fStage);
     }
 
-    // The variant programs for a perspective other than 3: the point and wire ones, and with
+    // The variant programs for a perspective other than 3 or a pan other than 0 (they read both
+    // as uniforms): the point and wire ones, and with
     // lit true the lit ones too. Each is compiled once per layout, the first time it is needed.
     function ensureFlat(lit) {
       var src = null;
       if (!gpu.pointFlat) {
-        src = shaderSources(gpu.progLayout, { perspective: true });
+        src = shaderSources(gpu.progLayout, { perspective: true, pan: true });
         gpu.pointFlat = compile(src.pointVertex, src.pointFragment, FLAT_VIEW_UNIFORMS.concat(POINT_UNIFORMS));
         gpu.lineFlat = compile(src.lineVertex, src.lineFragment, FLAT_VIEW_UNIFORMS.concat(["uGain", "uWireDof"]));
       }
       if (lit && !gpu.pointLitFlat) {
-        src = src || shaderSources(gpu.progLayout, { perspective: true });
+        src = src || shaderSources(gpu.progLayout, { perspective: true, pan: true });
         gpu.pointLitFlat = compile(
           src.pointVertexLit,
           src.pointFragment,
@@ -5012,6 +5048,7 @@ ET.renderer = (function () {
       gl.uniform1f(p.u.uZoom, s.zoom);
       gl.uniform1f(p.u.uFocus, s.focus);
       if (p.u.uPersp) gl.uniform1f(p.u.uPersp, perspectiveOf(s)); // the variant programs only
+      if (p.u.uPan) gl.uniform2f(p.u.uPan, panOf(s)[0], panOf(s)[1]); // the same
     }
 
     // True when this frame draws with the lit values: some are set and filter is above 0.
@@ -5024,7 +5061,7 @@ ET.renderer = (function () {
     function drawScene(s, gain, W, H) {
       var R = Math.min(W, H) * s.radius;
       var lit = litApplies(s);
-      var flat = perspectiveOf(s) !== DEFAULTS.perspective;
+      var flat = needsVariant(s);
       if (wires.count && s.wires > 0.02 && gpu.vaoLine) drawWires(s, gain, W, H, R, lit && gpu.vaoLineLit !== null, flat);
       var prog = lit ? gpu.pointLit : gpu.point;
       if (flat) prog = lit ? gpu.pointLitFlat : gpu.pointFlat;
@@ -5049,7 +5086,7 @@ ET.renderer = (function () {
     }
 
     // The wires. litWires false: the program and calls used before search existed. flat: the
-    // variant programs that read the perspective.
+    // variant programs that read the perspective and the pan.
     function drawWires(s, gain, W, H, R, litWires, flat) {
       var prog = litWires ? gpu.lineLit : gpu.line;
       if (flat) prog = litWires ? gpu.lineLitFlat : gpu.lineFlat;
@@ -5306,7 +5343,7 @@ ET.renderer = (function () {
         if (!usable()) return false;
         var s = merge(state);
         var hasData = store.count > 0 && gpu.point;
-        if (hasData && perspectiveOf(s) !== DEFAULTS.perspective) {
+        if (hasData && needsVariant(s)) {
           try {
             ensureFlat(litApplies(s));
           } catch (e) {
@@ -12038,6 +12075,10 @@ ET.viewer = (function () {
   var STATUS_EVERY = 0.12; // seconds between status-line updates (the reference's)
   var ZOOM_MIN = 0.2;
   var ZOOM_MAX = 12;
+  // The user pan (task t17) is the renderer's draw key pan: [x, y] in units of the stage's
+  // R = min(W, H) * radius (one unit of the picture after zoom and perspective), x to the right
+  // and y up. An arrow key moves the picture by PAN_STEP of those units.
+  var PAN_STEP = 0.1;
   var SPIN = 0.06; // rad/s of yaw while running (the reference's)
   // Heavy work's budget per frame (see "Heavy work" in js/api/50-viewer.md): a share of the
   // measured frame interval, between prepareBudgetMs and BUDGET_CEILING times it; cut to half
@@ -12593,7 +12634,7 @@ ET.viewer = (function () {
       fontSize: "12px",
     });
     v.playButton = pillButton(v, "tumbler-play", "Pause");
-    v.zoomResetButton = pillButton(v, "tumbler-zoom-reset", "Reset zoom");
+    v.zoomResetButton = pillButton(v, "tumbler-zoom-reset", "Reset view");
     var speedLabel = make(v, "label", "tumbler-speed", { display: "inline-flex", alignItems: "center", gap: "8px" });
     speedLabel.appendChild(text(v, "span", "", "Speed"));
     var speed = make(v, "input", "", { width: "130px" });
@@ -12622,9 +12663,10 @@ ET.viewer = (function () {
       v,
       "span",
       "tumbler-hint",
-      "Drag to turn. Pinch, or Ctrl + wheel, to zoom; double-click or double-tap resets. Keys 1-" +
+      "Drag to turn; right-drag, Shift + drag or two fingers move. Pinch, or Ctrl + wheel, to zoom; " +
+        "double-click or double-tap resets. Keys 1-" +
         Math.max(1, Math.min(9, defs.length)) +
-        " switch views while the viewer has focus."
+        " switch views and arrows move while the viewer has focus."
     );
     ctl.appendChild(v.playButton);
     ctl.appendChild(v.zoomResetButton);
@@ -13530,7 +13572,7 @@ ET.viewer = (function () {
     v.set = set;
     v.last = null;
     v.spin = 0;
-    v.drag = { active: false, yaw: 0, pitch: 0, x: 0, y: 0 };
+    v.drag = { active: false, yaw: 0, pitch: 0, x: 0, y: 0, pan: false };
     v.needClear = true;
     v.sinceAppend = Infinity;
     var oldMode = v.mode;
@@ -13702,7 +13744,10 @@ ET.viewer = (function () {
       rootW = w;
     }
     layoutForWidth(v, rootW || w);
-    if (!sameStage) v.needClear = true;
+    if (!sameStage) {
+      v.needClear = true;
+      v.pan = clampPan(v, v.pan[0], v.pan[1]); // a smaller stage holds the picture's centre too
+    }
     invalidate(v);
   }
 
@@ -14032,6 +14077,7 @@ ET.viewer = (function () {
     var line = s.status;
     if (relativeShown(v, s)) line += relativeStatusTail(v, s.relative);
     if (v.userZoom !== 1) line += " · zoom " + v.userZoom.toFixed(1) + "×";
+    if (panned(v)) line += " · moved";
     if (!v.running) line += " · paused";
     if (line !== v.statusText) {
       v.status.textContent = line;
@@ -14049,6 +14095,9 @@ ET.viewer = (function () {
     out.frame = s.frame;
     out.centre = s.centre;
     out.zoom = (d.zoom || 1) * v.userZoom;
+    // The user pan moves the drawn picture (the key is left out at rest, so the draw state is
+    // exactly as before panning existed).
+    if (panned(v)) out.pan = [v.pan[0], v.pan[1]];
     out.yaw = 0.4 + v.drag.yaw + SPIN * v.spin;
     // The relative view eases the stage's tilt to level by its mix (0 in the plain view, so
     // the expression is exactly the plain one there).
@@ -14621,6 +14670,50 @@ ET.viewer = (function () {
     return v.userZoom;
   }
 
+  // ---------- the user pan ----------
+
+  // Device pixels per pan unit: the renderer's R for this stage (the radius of the draw state
+  // last drawn, which no mode changes, else the renderer's default).
+  function panUnit(v) {
+    var r = v.lastDraw?.radius;
+    var radius = typeof r === "number" && r > 0 ? r : ET.renderer.DEFAULTS.radius;
+    return Math.max(1e-6, Math.min(v.W || 1, v.H || 1) * radius);
+  }
+
+  // The pan clamped so the picture's centre (the point the zoom scales about) stays on the
+  // stage: |x| at most half the stage's width and |y| half its height, in pan units.
+  function clampPan(v, x, y) {
+    var u = panUnit(v);
+    var lx = (v.W || 1) / 2 / u;
+    var ly = (v.H || 1) / 2 / u;
+    return [clamp(x, -lx, lx), clamp(y, -ly, ly)];
+  }
+
+  function panned(v) {
+    return v.pan[0] !== 0 || v.pan[1] !== 0;
+  }
+
+  function setPan(v, x, y) {
+    var ok = typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y);
+    v.pan = ok ? clampPan(v, x, y) : [0, 0];
+    v.statusClock = STATUS_EVERY;
+    invalidate(v);
+    return [v.pan[0], v.pan[1]];
+  }
+
+  // Move the picture by (dx, dy) CSS pixels on screen (y down, as pointer coordinates are).
+  function panByPixels(v, dx, dy) {
+    var u = panUnit(v);
+    setPan(v, v.pan[0] + (dx * v.dpr) / u, v.pan[1] - (dy * v.dpr) / u);
+  }
+
+  // Zoom 1 and no pan: what double-click, double-tap, the 0 key, the Reset view button and the
+  // handle's resetView() and resetZoom() all do.
+  function resetView(v) {
+    setZoom(v, 1);
+    setPan(v, 0, 0);
+  }
+
   function hasFocus(v) {
     var a = v.doc.activeElement;
     return !!a && (a === v.root || (typeof v.root.contains === "function" && v.root.contains(a)));
@@ -14659,11 +14752,19 @@ ET.viewer = (function () {
       return true;
     }
     if (k === "0") {
-      setZoom(v, 1);
+      resetView(v);
+      return true;
+    }
+    var arrow = Object.hasOwn(ARROWS, k) ? ARROWS[k] : null;
+    if (arrow) {
+      setPan(v, v.pan[0] + arrow[0] * PAN_STEP, v.pan[1] + arrow[1] * PAN_STEP);
       return true;
     }
     return false;
   }
+
+  // The arrow keys move the picture the way they point (x right, y up).
+  var ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
 
   // Keys 1-9: the view of that mode button, if there is one.
   function switchByKey(v, idx) {
@@ -14688,6 +14789,12 @@ ET.viewer = (function () {
       }
       return { x: e.clientX - r.left, y: e.clientY - r.top };
     }
+    function pinchMid() {
+      var ids = Object.keys(pointers);
+      var a = pointers[ids[0]];
+      var b = pointers[ids[1]];
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
     function pinchDistance() {
       var ids = Object.keys(pointers);
       if (ids.length < 2) return 0;
@@ -14704,10 +14811,18 @@ ET.viewer = (function () {
       return t === stage || t === v.canvas || t === v.overlay || t === v.labelLayer;
     }
 
+    // The left button turns (with Shift it pans); the right button pans; others do nothing.
     listen(v, stage, "pointerdown", function (e) {
-      if (e.button !== undefined && e.button > 0) return;
+      if (e.button !== undefined && e.button !== 0 && e.button !== 2) return;
       if (!onSky(e)) return;
-      pointers[e.pointerId] = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: now(v) };
+      pointers[e.pointerId] = {
+        x: e.clientX,
+        y: e.clientY,
+        sx: e.clientX,
+        sy: e.clientY,
+        t: now(v),
+        pan: e.button === 2 || !!e.shiftKey, // a pan press is never a Focus click
+      };
       count = Object.keys(pointers).length;
       try {
         if (stage.setPointerCapture) stage.setPointerCapture(e.pointerId);
@@ -14723,9 +14838,11 @@ ET.viewer = (function () {
       }
       if (count >= 2) {
         v.drag.active = false;
-        v.pinch = { d0: pinchDistance() || 1, z0: v.userZoom };
+        var mid = pinchMid();
+        v.pinch = { d0: pinchDistance() || 1, z0: v.userZoom, mx: mid.x, my: mid.y, px: v.pan[0], py: v.pan[1] };
       } else {
         v.drag.active = true;
+        v.drag.pan = e.button === 2 || !!e.shiftKey;
         v.drag.x = e.clientX;
         v.drag.y = e.clientY;
         stage.style.cursor = "grabbing";
@@ -14739,7 +14856,18 @@ ET.viewer = (function () {
         pt.y = e.clientY;
       }
       if (v.pinch && count >= 2) {
+        // the fingers' distance zooms; their midpoint's movement pans
         setZoom(v, v.pinch.z0 * (pinchDistance() / v.pinch.d0));
+        var mid = pinchMid();
+        var u = panUnit(v);
+        setPan(v, v.pinch.px + ((mid.x - v.pinch.mx) * v.dpr) / u, v.pinch.py - ((mid.y - v.pinch.my) * v.dpr) / u);
+        return;
+      }
+      if (v.drag.active && pt && v.drag.pan) {
+        panByPixels(v, e.clientX - v.drag.x, e.clientY - v.drag.y);
+        v.drag.x = e.clientX;
+        v.drag.y = e.clientY;
+        v.hover = null;
         return;
       }
       if (v.drag.active && pt) {
@@ -14763,16 +14891,17 @@ ET.viewer = (function () {
       if (count < 2) v.pinch = null;
       if (count === 0) {
         v.drag.active = false;
+        v.drag.pan = false;
         stage.style.cursor = "grab";
       }
-      if (e.type === "pointerup" && pt) focusClick(v, e, pt, pos(e));
+      if (e.type === "pointerup" && pt && !pt.pan) focusClick(v, e, pt, pos(e));
       // Double tap (touch or pen) resets the zoom; a mouse uses dblclick.
       if (e.type === "pointerup" && pt && e.pointerType && e.pointerType !== "mouse") {
         var moved = Math.abs(e.clientX - pt.sx) + Math.abs(e.clientY - pt.sy);
         var t = now(v);
         if (moved < 12 && t - pt.t < 300) {
           if (lastTap && t - lastTap.t < 350 && Math.abs(e.clientX - lastTap.x) + Math.abs(e.clientY - lastTap.y) < 32) {
-            setZoom(v, 1);
+            resetView(v);
             lastTap = null;
           } else lastTap = { t: t, x: e.clientX, y: e.clientY };
         }
@@ -14788,7 +14917,11 @@ ET.viewer = (function () {
     listen(v, stage, "dblclick", function (e) {
       if (!onSky(e)) return;
       if (e.preventDefault) e.preventDefault();
-      setZoom(v, 1);
+      resetView(v);
+    });
+    // A right-drag pans, so the browser's context menu is not opened over the sky.
+    listen(v, stage, "contextmenu", function (e) {
+      if (onSky(e) && e.preventDefault) e.preventDefault();
     });
     // Wheel zooms only over the stage and only with Ctrl or Cmd held (a trackpad pinch
     // arrives that way) or while the viewer has focus; otherwise the page scrolls.
@@ -14825,7 +14958,7 @@ ET.viewer = (function () {
       setRunning(v, !v.running);
     });
     listen(v, v.zoomResetButton, "click", function () {
-      setZoom(v, 1);
+      resetView(v);
     });
     listen(v, v.noticeDismiss, "click", function () {
       clearNotice(v);
@@ -16839,7 +16972,8 @@ ET.viewer = (function () {
       spin: 0,
       drawTime: 0,
       userZoom: 1,
-      drag: { active: false, yaw: 0, pitch: 0, x: 0, y: 0 },
+      pan: [0, 0], // the user pan, the renderer's draw key pan (see PAN_STEP)
+      drag: { active: false, yaw: 0, pitch: 0, x: 0, y: 0, pan: false },
       pinch: null,
       hover: null,
       needClear: true,
@@ -17068,8 +17202,20 @@ ET.viewer = (function () {
         if (z !== undefined && !v.destroyed) setZoom(v, Number(z) || 1);
         return v.userZoom;
       },
+      // Zoom 1 and no pan (since t17 it resets the pan too, as the button does).
       resetZoom: function () {
-        if (!v.destroyed) setZoom(v, 1);
+        if (!v.destroyed) resetView(v);
+      },
+      // The user pan: read it, or set it with [x, y] (clamped; anything else is [0, 0]).
+      pan: function (p) {
+        if (p !== undefined && !v.destroyed) {
+          var ok = p !== null && typeof p === "object" && p.length === 2;
+          setPan(v, ok ? Number(p[0]) : Number.NaN, ok ? Number(p[1]) : Number.NaN);
+        }
+        return [v.pan[0], v.pan[1]];
+      },
+      resetView: function () {
+        if (!v.destroyed) resetView(v);
       },
       refreshTheme: function () {
         refreshTheme(v);
@@ -17133,6 +17279,7 @@ ET.viewer = (function () {
     safeCssValue: safeCssValue,
     makeProjector: makeProjector,
     SHADOW: SHADOW,
+    PAN_STEP: PAN_STEP,
     // The relative overlay's results and cut-off for a mounted handle (t10 draws them).
     relativeOverlayData: function (handle) {
       var v = handle?._viewer;
