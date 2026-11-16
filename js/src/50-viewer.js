@@ -432,6 +432,19 @@ ET.viewer = (function () {
     });
     labels.setAttribute("aria-hidden", "true");
     v.labelLayer = labels;
+    // The relative overlay's texts (ruler ticks, title, result labels, origin): DOM spans
+    // placed by ET.relativeOverlay.placeLabels, right after the overlay canvas.
+    var relLabels = make(v, "div", "tumbler-relative-labels", {
+      position: "absolute",
+      left: "0",
+      top: "0",
+      right: "0",
+      bottom: "0",
+      overflow: "hidden",
+      pointerEvents: "none",
+    });
+    relLabels.setAttribute("aria-hidden", "true");
+    v.relLabelLayer = relLabels;
 
     var mast = make(v, "div", "tumbler-masthead", {
       position: "absolute",
@@ -523,6 +536,7 @@ ET.viewer = (function () {
 
     stage.appendChild(gl);
     stage.appendChild(overlay);
+    stage.appendChild(relLabels);
     stage.appendChild(labels);
     stage.appendChild(mast);
     stage.appendChild(status);
@@ -765,6 +779,9 @@ ET.viewer = (function () {
     for (var i = 0; i < MAX_GROUP_PROPS; i++) {
       t.groups.push(colour("--tumbler-group-" + (i + 1)));
     }
+    // The search colours the relative overlay strokes with (the panel's custom properties).
+    t.searches = [];
+    for (var j = 0; j < SEARCH_DEFAULTS_DARK.length; j++) t.searches.push(colour("--tumbler-search-" + (j + 1)));
     return t;
   }
 
@@ -870,6 +887,11 @@ ET.viewer = (function () {
     });
     v.outline = outlineShadow(t.background);
     v.stageFg = fg;
+    v.stageBg = bg;
+    var searchDefaults = t.light ? SEARCH_DEFAULTS_LIGHT : SEARCH_DEFAULTS_DARK;
+    v.searchColours = searchDefaults.map(function (d, j) {
+      return t.searches?.[j] ? cssRgb(t.searches[j]) : d;
+    });
     // The reference's Wander names: the stop in white, its neighbours #c5cddb (the
     // foreground three-eighths of the way to the muted colour). On a light stage the
     // stop takes the foreground, so it stays dark ink.
@@ -1995,6 +2017,7 @@ ET.viewer = (function () {
     v.lastDraw = ds;
     noteRelativeChange(v, s);
     drawLabels(v, s, ds);
+    drawRelativeOverlay(v, s, ds);
     drawSearchOverlay(v, s, ds);
     drawStrip(v, s.frame);
     v.statusClock += dt;
@@ -2013,6 +2036,7 @@ ET.viewer = (function () {
     if (r && v.rendering) r.draw({ clear: true, dt: dt });
     v.status.textContent = v.set ? "this view cannot show the data" : "";
     clearLabels(v, 0);
+    clearRelativeOverlay(v);
   }
 
   // A frame on which the mode is ready: note when it first became ready, move the
@@ -2095,7 +2119,10 @@ ET.viewer = (function () {
     out.centre = s.centre;
     out.zoom = (d.zoom || 1) * v.userZoom;
     out.yaw = 0.4 + v.drag.yaw + SPIN * v.spin;
-    out.pitch = clamp(0.16 + v.drag.pitch, -1.3, 1.3);
+    // The relative view eases the stage's tilt to level by its mix (0 in the plain view, so
+    // the expression is exactly the plain one there).
+    var relMix = relativeMix(v, s);
+    out.pitch = relMix > 0 ? clamp(0.16 * (1 - relMix) + v.drag.pitch, -1.3, 1.3) : clamp(0.16 + v.drag.pitch, -1.3, 1.3);
     out.pointSize = 6.5 * v.dpr;
     out.time = v.drawTime;
     out.dt = dt;
@@ -4235,6 +4262,8 @@ ET.viewer = (function () {
       light: !!v.theme?.light,
       labels: v.showLabels,
       mode: v.modeId,
+      // The relative view draws its own stems and result labels; the panel then draws none.
+      relative: relativeShown(v, v.last),
       hidden: function (i) {
         return hiddenPoint(v, i);
       },
@@ -4260,6 +4289,10 @@ ET.viewer = (function () {
 
   // ----- the relative view (docs/relative-interface.md, "Viewer (t9, t10)") -----
 
+  // The search colours by letter (A to D) when the host sets no --tumbler-search-N: the same
+  // values as the search panel's defaults, so a search's ruler and its ring agree.
+  var SEARCH_DEFAULTS_DARK = ["#ffc56b", "#6be0ff", "#ff8fb3", "#b6ff8a"];
+  var SEARCH_DEFAULTS_LIGHT = ["#a35f00", "#00708a", "#b0245a", "#3d7a00"];
   var RELATIVE_GRADIENT = 0.2; // the brightest point that is not a result, as a lit value
   var OWN_POINT_DISTANCE = 1e-7; // a point this close to its search, at its length, is its own
   var OWN_POINT_LENGTH = 1e-6;
@@ -4465,8 +4498,12 @@ ET.viewer = (function () {
     var L = rel.pinned.map(function (p) {
       return p.letter;
     });
-    var parts = ["The vertical axis is exact: height is " + rel.measure + " to " + L[0] + "."];
-    if (L.length >= 2) {
+    // The pinned axes are exact only once the turn onto them has ended (state.relative.settled);
+    // during the turn the exactness sentences are left out (the mode's status says it turns).
+    var exact = rel.settled === true;
+    var parts = [];
+    if (exact) parts.push("The vertical axis is exact: height is " + rel.measure + " to " + L[0] + ".");
+    if (exact && L.length >= 2) {
       parts.push(
         "The horizontal axis is exact too: it is the part of " +
           L[1] +
@@ -4479,7 +4516,7 @@ ET.viewer = (function () {
           " is shown exactly."
       );
     }
-    if (L.length >= 3) {
+    if (exact && L.length >= 3) {
       parts.push("The depth axis is exact too: all three axes are pinned, so the space of " + relLetters(L) + " is shown exactly and nothing tumbles.");
     }
     if (L.length < 3 && rel.subspace > 0) {
@@ -4648,6 +4685,138 @@ ET.viewer = (function () {
     return { named: named, cut: cut };
   }
 
+  // ----- drawing the relative view (docs/relative-interface.md, "Drawing (t10)") -----
+
+  // How far the view is into the relative look (flatness and pitch): Tumble's
+  // state.relative.mix, 0 in other modes and in the plain view.
+  function relativeMix(v, st) {
+    if (v.modeId !== "tumble") return 0;
+    var m = st?.relative?.mix;
+    return typeof m === "number" && m > 0 ? Math.min(1, m) : 0;
+  }
+
+  // A search's colour follows its letter (A to D), as the panel colours it.
+  function searchColour(v, q, j) {
+    var at = typeof q.letter === "string" ? "ABCD".indexOf(q.letter) : -1;
+    var list = v.searchColours || SEARCH_DEFAULTS_DARK;
+    return list[at >= 0 ? at : j % list.length];
+  }
+
+  // The overlay's named results and cut-off, worked out again only when the searches, the set
+  // or the vertical search change (not every frame).
+  function overlayDataFor(v, rel) {
+    var s = v.search;
+    var vertical =
+      (rel?.pinned?.length ? rel.pinned[0].letter : "") +
+      ":" +
+      s.shown
+        .map(function (q) {
+          return q.letter;
+        })
+        .join("");
+    var c = v.relOverlayCache;
+    if (c?.shown === s.shown && c.set === s.shownSet && c.vertical === vertical) return c.data;
+    var data = relativeOverlayData(v);
+    v.relOverlayCache = { shown: s.shown, set: s.shownSet, vertical: vertical, data: data };
+    return data;
+  }
+
+  // Once a frame, after the names and before the panel's rings: in Tumble, with the relative
+  // view shown or Show the origin on, the overlay's draw list from the mode's state and the
+  // draw state given to the renderer, its shapes painted on the overlay canvas and its texts
+  // placed as spans. Otherwise nothing of it is drawn and its label layer is emptied.
+  function drawRelativeOverlay(v, s, ds) {
+    var shown = relativeShown(v, s);
+    if (!v.set || v.modeId !== "tumble" || !(shown || v.rel.showOrigin)) {
+      clearRelativeOverlay(v);
+      return;
+    }
+    var od = shown ? overlayDataFor(v, s.relative) : { named: [], cut: null };
+    var list = ET.relativeOverlay.build({
+      width: v.W,
+      height: v.H,
+      dpr: v.dpr,
+      view: ds,
+      vectors: v.set.vectors,
+      dimension: v.set.dimension,
+      frame: s.frame,
+      centre: s.centre,
+      relative: shown ? s.relative : null,
+      searches: shown
+        ? v.search.shown.map(function (q, j) {
+            return { letter: q.letter, colour: searchColour(v, q, j), query: q.query };
+          })
+        : [],
+      named: od.named,
+      cut: od.cut,
+      showOrigin: v.rel.showOrigin,
+      labels: v.showLabels,
+      ink: v.stageFg,
+      paper: v.stageBg,
+    });
+    // The panel already rings every query (and letters it): with the panel mounted the
+    // overlay's own search markers are left out, so no search is ringed twice. Without the
+    // panel they are the only mark at a query and are kept.
+    if (typeof v.search.panel?.drawOverlay === "function") {
+      list.marks = list.marks.filter(function (mk) {
+        return mk.kind !== "search";
+      });
+    }
+    var ctx = overlayContext(v);
+    var painted = false;
+    if (ctx) {
+      try {
+        painted = ET.relativeOverlay.paint(ctx, list);
+      } catch (err) {
+        // A 2-D context that throws: the overlay's shapes are not drawn this frame.
+        painted = false;
+      }
+      if (painted) v.overlayDirty = true;
+    }
+    var placed = ET.relativeOverlay.placeLabels(v.relLabelLayer, list, v.doc);
+    v.relativeDrawn = relativeDrawnRecord(v, list, shown && s.relative.settled === true, painted, placed);
+  }
+
+  // The test hook's record of the overlay drawn this frame (handle._viewer.relativeDrawn), in
+  // device pixels of the overlay canvas (divide by dpr for CSS pixels). For each named result
+  // with a stem: its drawn position (x, y), the point on the ruler at its height (rulerX,
+  // rulerY, through the renderer's placer) and where its height falls on the straight line
+  // between the ruler's two ends (mappedX, mappedY).
+  function relativeDrawnRecord(v, list, settled, painted, placed) {
+    var ruler = list.ruler ? { ...list.ruler } : null;
+    var origin = list.marks.find(function (mk) {
+      return mk.kind === "origin";
+    });
+    return {
+      units: "device",
+      dpr: v.dpr,
+      width: v.W,
+      height: v.H,
+      settled: settled,
+      painted: painted,
+      labels: placed,
+      ruler: ruler,
+      origin: origin ? { x: origin.x, y: origin.y, far: origin.far, seen: origin.seen } : null,
+      results: list.results.map(function (r) {
+        var out = { index: r.index, height: r.height, x: r.x, y: r.y, rulerX: r.rulerX, rulerY: r.rulerY, mappedX: null, mappedY: null };
+        if (ruler && ruler.to !== ruler.from) {
+          var f = (r.height - ruler.from) / (ruler.to - ruler.from);
+          out.mappedX = ruler.x0 + f * (ruler.x1 - ruler.x0);
+          out.mappedY = ruler.y0 + f * (ruler.y1 - ruler.y0);
+        }
+        return out;
+      }),
+    };
+  }
+
+  // Nothing of the relative overlay is shown: its spans hidden, the hook's record dropped.
+  // The canvas part goes with the overlay's next clear (it was marked dirty when painted).
+  function clearRelativeOverlay(v) {
+    if (v.relativeDrawn === null) return;
+    if (v.relLabelLayer) ET.relativeOverlay.placeLabels(v.relLabelLayer, null, v.doc);
+    v.relativeDrawn = null;
+  }
+
   // ----- Focus: a click on a point searches from it -----
 
   function focusClick(v, e, pt, at) {
@@ -4756,6 +4925,9 @@ ET.viewer = (function () {
       sampleCoords: new Float64Array(3 * LABEL_SAMPLE),
       placed: { x: 0, y: 0 },
       overlayDirty: false,
+      // The relative overlay drawn this frame, for tests (relativeDrawnRecord); null when none.
+      relativeDrawn: null,
+      relOverlayCache: null,
       listeners: [],
       io: null,
       ro: null,
