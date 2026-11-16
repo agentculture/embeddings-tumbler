@@ -5432,7 +5432,9 @@ ET.renderer = (function () {
 ET.modes = (function () {
   // Members every mode instance must have (see js/api/40-modes.md).
   // Optional members: mark(t) (fix the time of a finished event), face(target,
-  // t, options) (the swing toward the searches) and, for Tumble, refit(t).
+  // t, options) (the swing toward the searches), searchChanged(search, t) (Focus,
+  // and Tumble's relative setting) and, for Tumble, refit(t) and setRelative(settings,
+  // t) (docs/relative-interface.md).
   var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
   var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
   var registry = [];
@@ -6403,7 +6405,91 @@ ET.modes = (function () {
     fitRows: 4096, // fit the directions on at most this many rows (shares stay exact)
     centreTau: 0.7, // seconds: the camera glides to the data's mean (the reference's)
     zoomSample: 512, // points used for auto-framing
+    relativeTransition: 1.5, // seconds to turn onto (or off) the relative frame (docs/relative-interface.md)
   };
+
+  // ----- the relative setting (docs/relative-interface.md, "Tumble (t6)") -----
+  //
+  // With the setting on and a search that gives an axis, the frame is pinned:
+  // row 1 to the first search's direction, row 0 to the part of the second the
+  // first does not contain, row 2 to the third's new part (ET.math.relativeFit
+  // and makeRelativeTour). A change of the searches or of the setting is an
+  // event at a fixed time T, like a refit: the fit is prepared in small units
+  // while the view keeps moving, T is fixed by mark(t) (or the first stateAt
+  // after the fit is done), and from T the frame turns onto the new one with
+  // the refit turn over relativeTransition seconds. The centre and zoom glide to
+  // the ruler's window over the same time. Only the searches' letters and query
+  // vectors are read, so the point of view and the reranker never reach the
+  // frame. With the setting off nothing here runs and Tumble is unchanged.
+
+  var RELATIVE_MARGIN = 0.04; // the window's margin above the top and below the bottom (the reference's)
+  var RELATIVE_ORIGIN_MARGIN = 0.06; // with Show the origin, the window reaches at least this far past 0
+  var RELATIVE_FILL = 0.78 / 0.46; // the window fills 78 percent of the stage's shorter side
+  var RELATIVE_ZOOM_CAP = 0.5 / (0.42 * 0.46); // the reference's cap for a narrow stage
+  var RELATIVE_AXES = ["vertical", "horizontal", "depth"];
+
+  // "A", "A and B", "A, B and C".
+  function joinLetters(letters) {
+    if (letters.length < 2) return letters.join("");
+    return letters.slice(0, -1).join(", ") + " and " + letters.at(-1);
+  }
+
+  // The searches Tumble reads: [{ letter, query: Float32Array(D) }] (copies), in
+  // the order given. Entries without a query of D values are left out.
+  function readQueries(search, D) {
+    var list = [];
+    var given = search && Array.isArray(search.searches) ? search.searches : [];
+    for (var q of given) {
+      var v = q?.query;
+      if (v?.length !== D) continue;
+      list.push({ letter: typeof q.letter === "string" ? q.letter : String(list.length + 1), query: Float32Array.from(v) });
+    }
+    return list;
+  }
+
+  // Two float32 vectors with the same bits.
+  function sameBits(x, y) {
+    if (x.length !== y.length) return false;
+    var a = new Uint32Array(x.buffer, x.byteOffset, x.length);
+    var b = new Uint32Array(y.buffer, y.byteOffset, y.length);
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  // Two lists of searches with the same query bytes in the same order (and,
+  // with `letters`, the same letters).
+  function sameQueries(a, b, letters) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (letters && a[i].letter !== b[i].letter) return false;
+      if (!sameBits(a[i].query, b[i].query)) return false;
+    }
+    return true;
+  }
+
+  // The status line of the relative view (docs/relative-interface.md, "Status strings (t6)").
+  function relativeStatus(turn, settled) {
+    var fit = turn.fit;
+    var letters = fit.pinned.map(function (p) {
+      return turn.list[p.index].letter;
+    });
+    var measure = fit.unit.unit ? "cosine" : "length along the search";
+    var s = "relative to " + joinLetters(letters);
+    if (settled) s += " · vertical = " + measure + " to " + letters[0] + ", exact";
+    else s += " · turning until vertical = " + measure + " to " + letters[0];
+    var share = Math.round((fit.share || 0) * 100) + "%";
+    if (fit.count === 1) {
+      s += " · the other two axes tumble through " + fit.subspace + " directions holding " + share + " of the remaining spread";
+    } else if (fit.count === 2) {
+      s += " · the plane of " + letters[0] + " and " + letters[1] + " is shown exactly";
+      s += " · depth tumbles through " + fit.subspace + " directions holding " + share + " of the remaining spread";
+    } else {
+      s += " · all three axes are pinned: the space of " + joinLetters(letters) + " is shown exactly";
+      s += " · nothing tumbles";
+    }
+    for (var dd of fit.dropped) s += " · " + turn.list[dd.index].letter + " pins no axis";
+    return s;
+  }
 
   function create(options) {
     var opt = {};
@@ -6423,6 +6509,8 @@ ET.modes = (function () {
       refit: refit,
       mark: mark,
       face: face,
+      searchChanged: searchChanged,
+      setRelative: setRelative,
       leave: leave,
     };
 
@@ -6451,12 +6539,31 @@ ET.modes = (function () {
     var gen = 0;
     var refitGen = 0;
     var swings = null; // the swings toward the searches (M.makeSwings)
+    // The relative setting. The settings and the searches are kept across enter();
+    // the events and fits belong to one entry.
+    var relOn = false;
+    var showOrigin = false;
+    var queries = []; // the searches last given to searchChanged: [{ letter, query }]
+    // Relative events in time order: { t0, afterSwings, turn, framing, info }.
+    // turn: { t0, tour (null: back to the plain tour), fit, list, set, blend,
+    // duration, mixFrom, mixTo }; framing: { t0, duration, centre, zoom (shown at
+    // t0), target (null: the plain framing) }. A Show the origin change adds an
+    // event that shares the turn in force and starts a new framing.
+    var relEvents = [];
+    var relPending = null; // a relative fit started and not yet switched in: { list, set, fit }
+    var relFits = []; // finished fits kept for reuse on the same set: { set, list, fit }
+    var relGen = 0; // a fit of an earlier call that is pumped later does nothing
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Tumble");
       var o = opts || {};
       gen++;
       refitGen++;
+      relGen++;
+      relEvents = [];
+      relPending = null;
+      relFits = [];
+      if (queries.some((q) => q.query.length !== s.dimension)) queries = [];
       set = s;
       D = s.dimension;
       seed = o.seed === undefined ? 0 : o.seed;
@@ -6474,7 +6581,16 @@ ET.modes = (function () {
       self.time = 0;
       self.varianceShare = null;
       hold = entry ? entry.frame : M.startFrame(D, seed);
-      out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
+      out = {
+        t: 0,
+        frame: new Float32Array(3 * D),
+        centre: new Float32Array(D),
+        draw: null,
+        wires: null,
+        status: "",
+        focus: null,
+        relative: null,
+      };
     }
 
     // The fit, in small units: centring (ET.math.makeCentre), then the
@@ -6721,25 +6837,371 @@ ET.modes = (function () {
 
     function stateAt(time) {
       var t = M.checkTime(time);
-      if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
-      if (pending) fixSwitch(t); // no time was given: the first query fixes it
-      out.t = t;
-      var sw = swings.at(t);
-      if (sw && t < sw.U) {
-        var zoom = M.swingState(sw, t, out.frame, out.centre);
-        out.draw = drawFor(out.frame, out.centre, t, zoom);
-        out.draw.zoom = zoom;
-      } else {
-        frameAt(t, out.frame);
-        glide.at(t, out.centre);
-        if (sw) released(sw, t);
-        out.draw = drawFor(out.frame, out.centre, t);
-        if (sw) out.draw.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), out.centre, out.draw.zoom);
+      if (!isReady() || empty) {
+        M.holdState(out, hold, entry, t, status(t));
+        out.relative = relInfo(t);
+        return out;
       }
+      if (pending) fixSwitch(t); // no time was given: the first query fixes it
+      if (relPending?.fit) fixRelative(t); // likewise for a finished relative fit
+      out.t = t;
+      out.draw = composeState(t, out.frame, out.centre);
       out.wires = null;
       out.focus = null;
       out.status = status(t);
+      out.relative = relInfo(t);
       return out;
+    }
+
+    // The frame and centre at t written into `frame` and `centre`; returns the
+    // draw parameters. With no relative event this is plain Tumble's state, the
+    // same arithmetic in the same order: a swing, or the tour (with the turn
+    // back after a swing), the glide and the auto zoom.
+    function composeState(t, frame, centre) {
+      var ev = relAt(t);
+      var sw = swingAt(t, ev);
+      if (sw && t < sw.U) {
+        var zoom = M.swingState(sw, t, frame, centre);
+        var draw = drawFor(frame, centre, t, zoom);
+        draw.zoom = zoom;
+        return draw;
+      }
+      viewFrame(t, ev, frame);
+      if (sw) released(sw, t, frame);
+      var dr = viewDraw(t, ev, frame, centre);
+      if (sw) dr.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), centre, dr.zoom);
+      return dr;
+    }
+
+    // ----- relative events -----
+
+    function lastRelT() {
+      return relEvents.length ? relEvents.at(-1).t0 : -Infinity;
+    }
+
+    function lastSwingT() {
+      return swings?.list.length ? swings.list.at(-1).T : -Infinity;
+    }
+
+    // The latest relative event at or before t (on a tie the later one), or null.
+    function relAt(t) {
+      for (var i = relEvents.length - 1; i >= 0; i--) if (relEvents[i].t0 <= t) return relEvents[i];
+      return null;
+    }
+
+    // The turn in force (the newest event's), or null before any event.
+    function heading() {
+      return relEvents.length ? relEvents.at(-1).turn : null;
+    }
+
+    // The swing that applies at t: the latest one started by t, unless a relative
+    // event came after it (a switch starts from the swing's frame and replaces it).
+    function swingAt(t, ev) {
+      var sw = swings.at(t);
+      if (sw && ev && sw.index < ev.afterSwings) return null;
+      return sw;
+    }
+
+    function relDuration() {
+      var d = opt.relativeTransition;
+      return d > 0 && Number.isFinite(d) ? d : DEFAULTS.relativeTransition;
+    }
+
+    // The frame with the relative events applied (no swing): the plain frame, or
+    // the target of the turn in force (the relative tour or the plain frame),
+    // turned onto from the frame shown at the turn's start.
+    function viewFrame(t, ev, res) {
+      if (!ev) return frameAt(t, res);
+      var tr = ev.turn;
+      if (tr.tour) tr.tour.frameAt(t, res);
+      else frameAt(t, res);
+      if (tr.blend && t - tr.t0 < tr.duration) applyRefitBlend(tr.blend, 1 - refitEase((t - tr.t0) / tr.duration), res, D);
+      return res;
+    }
+
+    // How far the view is into the relative look at t (0 in the plain view).
+    function mixAt(t, ev) {
+      if (!ev) return 0;
+      var tr = ev.turn;
+      if (t - tr.t0 < tr.duration) return tr.mixFrom + (tr.mixTo - tr.mixFrom) * refitEase((t - tr.t0) / tr.duration);
+      return tr.mixTo;
+    }
+
+    // The centre (written into `centre`) and the draw parameters at t for the
+    // frame given: the plain glide and zoom, or the relative framing, glided
+    // from the values shown at the framing's start.
+    function viewDraw(t, ev, frame, centre) {
+      if (!ev) {
+        glide.at(t, centre);
+        return drawFor(frame, centre, t);
+      }
+      var fr = ev.framing;
+      var draw;
+      if (fr.target) {
+        centre.set(fr.target.centre);
+        draw = drawFor(frame, centre, t, fr.target.zoom);
+        draw.zoom = fr.target.zoom;
+      } else {
+        glide.at(t, centre);
+        draw = drawFor(frame, centre, t);
+      }
+      if (t - fr.t0 < fr.duration) {
+        var e = ET.math.smoothstep((t - fr.t0) / fr.duration);
+        for (var d = 0; d < D; d++) centre[d] = fr.centre[d] + (centre[d] - fr.centre[d]) * e;
+        draw.zoom = fr.zoom + (draw.zoom - fr.zoom) * e;
+      }
+      var mix = mixAt(t, ev);
+      if (mix > 0) draw.perspective = 3 + (ET.renderer.RELATIVE_PERSPECTIVE - 3) * mix;
+      return draw;
+    }
+
+    // The centre and zoom that frame the ruler's window along the vertical search.
+    function framingTarget(fit) {
+      var w = fit.window;
+      var top = w.high + RELATIVE_MARGIN;
+      var bottom = w.low - RELATIVE_MARGIN;
+      if (showOrigin) {
+        bottom = Math.min(bottom, -RELATIVE_ORIGIN_MARGIN);
+        top = Math.max(top, RELATIVE_ORIGIN_MARGIN);
+      }
+      var mid = (top + bottom) / 2;
+      var c = new Float32Array(D);
+      for (var d = 0; d < D; d++) c[d] = mid * fit.directions[d];
+      var zoom = Math.min(RELATIVE_FILL / (top - bottom), RELATIVE_ZOOM_CAP);
+      return { centre: c, zoom: zoom, low: w.low, high: w.high, bottom: bottom, top: top };
+    }
+
+    // The state shown at T (before any event at T is added): { frame, centre, zoom, mix }.
+    function shownAt(T) {
+      var frame = new Float32Array(3 * D);
+      var centre = new Float32Array(D);
+      var draw = composeState(T, frame, centre);
+      return { frame: frame, centre: centre, zoom: draw.zoom, mix: mixAt(T, relAt(T)) };
+    }
+
+    // A switch at T (never earlier than the previous relative event or swing):
+    // onto the relative tour of `fit`, or back onto the plain tour (fit null).
+    function addSwitch(time, fit, list) {
+      var T = Math.max(time, lastRelT(), lastSwingT());
+      var shown = shownAt(T);
+      swings.end(T); // a swing in progress gives way to the switch
+      var tour = fit
+        ? ET.math.makeRelativeTour(fit.directions, fit.count, fit.basis, fit.subspace, D, { seed: seed, speed: opt.speed })
+        : null;
+      var start = tour ? tour.frameAt(T) : frameAt(T, new Float32Array(3 * D));
+      // Already on the new frame (a search that adds no axis): nothing turns.
+      var still = sameBits(shown.frame, start);
+      var turn = {
+        t0: T,
+        tour: tour,
+        fit: fit,
+        list: list,
+        set: set,
+        blend: still ? null : makeRefitBlend(shown.frame, start, D),
+        duration: still ? 0 : relDuration(),
+        mixFrom: shown.mix,
+        mixTo: tour ? 1 : 0,
+      };
+      relEvents.push({
+        t0: T,
+        afterSwings: swings.list.length,
+        turn: turn,
+        framing: { t0: T, duration: relDuration(), centre: shown.centre, zoom: shown.zoom, target: tour ? framingTarget(fit) : null },
+        info: null,
+      });
+    }
+
+    // Show the origin changed while the relative view is in force: the centre and
+    // zoom glide from the values shown at T to the new framing; no fit, no turn.
+    function addFraming(time) {
+      var T = Math.max(time, lastRelT(), lastSwingT());
+      var shown = shownAt(T);
+      var turn = heading();
+      relEvents.push({
+        t0: T,
+        afterSwings: swings.list.length,
+        turn: turn,
+        framing: { t0: T, duration: relDuration(), centre: shown.centre, zoom: shown.zoom, target: framingTarget(turn.fit) },
+        info: null,
+      });
+    }
+
+    function fixRelative(time) {
+      var p = relPending;
+      relPending = null;
+      addSwitch(time, p.fit, p.list);
+    }
+
+    function cancelRelative() {
+      relGen++;
+      relPending = null;
+    }
+
+    function keptFit(list) {
+      for (var k of relFits) if (k.set === set && sameQueries(k.list, list, false)) return k.fit;
+      return null;
+    }
+
+    function keepFit(fitSet, list, fit) {
+      relFits.push({ set: fitSet, list: list, fit: fit });
+      if (relFits.length > 4) relFits.shift();
+    }
+
+    // A relative fit of `list` on the current set, as a stepper (one unit of
+    // ET.math.makeRelativeFit per run). When it is done the switch waits for its
+    // time (mark, or the first stateAt).
+    function startFit(list) {
+      relGen++;
+      var g = gen;
+      var rg = relGen;
+      var fitSet = set;
+      var p = { list: list, set: fitSet, fit: null };
+      var job = null;
+      relPending = p;
+      return M.stepper([
+        {
+          required: true,
+          weight: 1,
+          progress: function () {
+            return job ? job.progress : 0;
+          },
+          run: function () {
+            if (g !== gen || rg !== relGen) return true;
+            if (!job) {
+              var qs = list.map(function (q) {
+                return q.query;
+              });
+              job = ET.math.makeRelativeFit(fitSet.vectors, fitSet.count, D, qs, {
+                seed: seed,
+                subspace: opt.subspace,
+                sampleRows: opt.fitRows,
+              });
+            }
+            if (!job.step(0)) return false;
+            p.fit = job.result;
+            keepFit(fitSet, list, job.result);
+            return true;
+          },
+        },
+      ]);
+    }
+
+    // Bring what is shown in line with the setting, the searches and the set:
+    // start a fit (returned as a stepper), switch now (a fit kept for the same
+    // searches on the same set, or turning off), or nothing.
+    function reconcile(t) {
+      var h = heading();
+      var shownFit = h ? h.fit : null;
+      var dirs = relOn && set && !empty ? ET.math.relativeDirections(queries.map((q) => q.query), D) : null;
+      if (!dirs?.count) {
+        if (relPending) cancelRelative();
+        if (shownFit) addSwitch(t, null, null);
+        return null;
+      }
+      if (relPending?.set === set && sameQueries(relPending.list, queries, true)) return null;
+      if (relPending) cancelRelative();
+      if (shownFit && h.set === set && sameQueries(h.list, queries, true)) return null;
+      var kept = keptFit(queries);
+      if (kept) {
+        relPending = { list: queries, set: set, fit: kept };
+        if (isReady()) fixRelative(t);
+        return null;
+      }
+      return startFit(queries);
+    }
+
+    // inst.searchChanged(search, t): only the letters and the query vectors are
+    // read. With the setting off the searches are stored and nothing changes.
+    function searchChanged(search, time) {
+      var t = M.checkTime(time === undefined ? self.time : time);
+      var list = set ? readQueries(search, D) : [];
+      var same = sameQueries(list, queries, true);
+      queries = list;
+      if (!relOn || same) return null;
+      return reconcile(t);
+    }
+
+    // inst.setRelative({ relative?, showOrigin? }, t): a missing key keeps its value.
+    function setRelative(settings, time) {
+      var t = M.checkTime(time === undefined ? self.time : time);
+      var s = settings || {};
+      var wasOrigin = showOrigin;
+      if (typeof s.relative === "boolean") relOn = s.relative;
+      if (typeof s.showOrigin === "boolean") showOrigin = s.showOrigin;
+      var before = relEvents.length;
+      var work = reconcile(t);
+      var h = heading();
+      if (showOrigin !== wasOrigin && relEvents.length === before && h?.fit) addFraming(t);
+      return work;
+    }
+
+    // state.relative at t (docs/relative-interface.md): null in the plain view
+    // with the setting off.
+    function relInfo(t) {
+      var ev = isReady() && !empty ? relAt(t) : null;
+      var tr = ev ? ev.turn : null;
+      var turning = !!tr && t - tr.t0 < tr.duration;
+      var mix = mixAt(t, ev);
+      if (!tr?.fit) {
+        if (!relOn && !turning) return null;
+        return {
+          relative: relOn,
+          showOrigin: showOrigin,
+          active: false,
+          settled: false,
+          mix: mix,
+          pinned: [],
+          dropped: [],
+          measure: null,
+          unit: null,
+          window: null,
+          share: null,
+          subspace: 0,
+          free: 3,
+          fixed: 0,
+        };
+      }
+      if (!ev.info) ev.info = eventInfo(tr, ev.framing.target);
+      var i = ev.info;
+      return {
+        relative: relOn,
+        showOrigin: showOrigin,
+        active: true,
+        settled: !turning,
+        mix: mix,
+        pinned: i.pinned,
+        dropped: i.dropped,
+        measure: i.measure,
+        unit: i.unit,
+        window: i.window,
+        share: i.share,
+        subspace: i.subspace,
+        free: i.free,
+        fixed: i.fixed,
+      };
+    }
+
+    // The parts of state.relative that stay the same for an event.
+    function eventInfo(tr, target) {
+      var fit = tr.fit;
+      var letterOf = function (j) {
+        return tr.list[j].letter;
+      };
+      return {
+        pinned: fit.pinned.map(function (p, k) {
+          return { letter: letterOf(p.index), axis: RELATIVE_AXES[k], length: p.length };
+        }),
+        dropped: fit.dropped.map(function (dd) {
+          return { letter: letterOf(dd.index), reason: dd.reason, against: dd.against.map(letterOf) };
+        }),
+        measure: fit.unit.unit ? "cosine" : "length along the search",
+        unit: { unit: fit.unit.unit, min: fit.unit.min, max: fit.unit.max, tolerance: fit.unit.tolerance },
+        window: { low: target.low, high: target.high, bottom: target.bottom, top: target.top },
+        share: fit.share,
+        subspace: fit.subspace,
+        free: 3 - fit.count,
+        fixed: fit.fixed,
+      };
     }
 
     // After a swing ends at U, Tumble turns back onto its tour from the frame
@@ -6750,26 +7212,32 @@ ET.modes = (function () {
     // tour's mean rate). A blend over `transition` seconds, as on entry, turned up
     // to five times faster than the tour moves (measured). The centre and zoom
     // come back over `transition` (stateAt).
-    function released(sw, t) {
+    function released(sw, t, frame) {
       var c = sw.cache;
       if (!c.turn) {
         var end = M.swingEnd(sw);
-        var raw = frameAt(sw.U, new Float32Array(3 * D));
+        var raw = viewFrame(sw.U, relAt(sw.U), new Float32Array(3 * D));
         c.al = M.alignment(raw, end.frame, D);
         var start = M.applyAlignment(raw, c.al, D);
         c.turn = makeRefitBlend(end.frame, start, D);
         c.turn.duration = refitDuration(c.turn, tours[activeIndex(sw.U)].tour, sw.U);
       }
-      M.applyAlignment(new Float32Array(out.frame), c.al, D, out.frame);
+      M.applyAlignment(new Float32Array(frame), c.al, D, frame);
       var u = (t - sw.U) / c.turn.duration;
-      if (u < 1) applyRefitBlend(c.turn, 1 - refitEase(u), out.frame, D);
+      if (u < 1) applyRefitBlend(c.turn, 1 - refitEase(u), frame, D);
     }
 
     // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
-    // face(null, t) ends a swing in progress at t.
+    // face(null, t) ends a swing in progress at t. With the relative view shown,
+    // or a switch to it waiting, it starts nothing and returns false.
     function face(target, time, options) {
       if (!isReady() || empty) return false;
       if (target === null) return swings.end(time);
+      if (relPending) return false;
+      if (relEvents.length) {
+        if (heading().fit) return false;
+        time = Math.max(M.checkTime(time), lastRelT()); // a swing never starts before a switch
+      }
       return swings.face(target, time, options, function (T) {
         var s = stateAt(T);
         return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), zoom: s.draw.zoom };
@@ -6785,7 +7253,9 @@ ET.modes = (function () {
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
       if (!isReady()) return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
-      var sw = swings.at(t);
+      var ev = relAt(t);
+      if (ev?.turn.fit) return relativeStatus(ev.turn, t - ev.turn.t0 >= ev.turn.duration);
+      var sw = swingAt(t, ev);
       if (sw && t < sw.U) return M.swingStatus(sw, "tumbling");
       var cur = tours[activeIndex(t)];
       var s = "tour of " + cur.tour.subspace + " strongest directions · " + (cur.share * 100).toFixed(1) + "% of variance";
@@ -6810,13 +7280,33 @@ ET.modes = (function () {
       if (i.op !== "append" || newSet.dimension !== D || empty || !isReady()) {
         var from = isReady() ? snapshot(t) : entry;
         enter(newSet, { seed: seed, from: from });
-        return M.changed(prepare(), true);
+        var prep = prepare();
+        // With the relative setting on, the searches are kept and fitted on the new
+        // set alongside the preparation; the switch waits for its time as usual.
+        var rel = reconcile(0);
+        return M.changed(rel ? M.stepper([pumpTask(prep, 8), pumpTask(rel, 1)]) : prep, true);
       }
       var old = set;
       set = newSet;
       st = M.stats(newSet, old);
       glide.retarget(t, st.mean);
-      return M.changed(null, false);
+      // The relative view in force (or a switch to it waiting) is fitted again on
+      // the new set, the searches kept, and switches in at a recorded time.
+      return M.changed(relOn ? reconcile(t) : null, false);
+    }
+
+    // A stepper task that pumps another stepper one unit per run.
+    function pumpTask(stp, weight) {
+      return {
+        required: true,
+        weight: weight,
+        progress: function () {
+          return stp.progress;
+        },
+        run: function () {
+          return stp.step(0);
+        },
+      };
     }
 
     // Fit the directions again on the current data. Returns a stepper. The
@@ -6848,6 +7338,18 @@ ET.modes = (function () {
     // Fix the time of a finished event (a refit waiting for its switch).
     function mark(time) {
       if (pending) fixSwitch(M.checkTime(time));
+      if (relPending?.fit && isReady() && !empty) fixRelative(M.checkTime(time));
+    }
+
+    // describe().relative (docs/relative-interface.md).
+    function describeRelative() {
+      var switchAt = relEvents.length ? relEvents.at(-1).t0 : null;
+      var info = relInfo(self.time);
+      if (!info) return { relative: false, showOrigin: showOrigin, active: false, switchAt: switchAt, pending: false };
+      info.switchAt = switchAt;
+      info.pending = relPending !== null;
+      info.transition = relDuration();
+      return info;
     }
 
     function describe() {
@@ -6869,12 +7371,17 @@ ET.modes = (function () {
         refitPending: refitRunning,
         facing: swings ? swings.describe() : null,
         empty: empty,
+        relative: describeRelative(),
       };
     }
 
     function leave() {
       gen++;
       refitGen++;
+      relGen++;
+      relEvents = [];
+      relPending = null;
+      relFits = [];
       tours = [];
       pending = null;
       set = null;
