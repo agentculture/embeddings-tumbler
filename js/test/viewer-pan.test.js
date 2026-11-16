@@ -121,6 +121,19 @@ test("the context menu is suppressed on the sky only", () => {
   h.destroy();
 });
 
+test("two fingers on the sky hold the page still; one finger lets it scroll", () => {
+  const { h, v } = setup();
+  const two = [{ identifier: 1 }, { identifier: 2 }];
+  const one = [{ identifier: 1 }];
+  for (const type of ["touchstart", "touchmove"]) {
+    assert.strictEqual(v.stage.dispatchEvent({ type, touches: two, cancelable: true }).defaultPrevented, true, type);
+    assert.strictEqual(v.stage.dispatchEvent({ type, touches: one, cancelable: true }).defaultPrevented, false, type);
+    // a scroll the browser has already started cannot be refused, and is not asked to be
+    assert.strictEqual(v.stage.dispatchEvent({ type, touches: two, cancelable: false }).defaultPrevented, false, type);
+  }
+  h.destroy();
+});
+
 test("two fingers pan by their midpoint while their distance still zooms", () => {
   const { h, v } = setup();
   const s = v.stage;

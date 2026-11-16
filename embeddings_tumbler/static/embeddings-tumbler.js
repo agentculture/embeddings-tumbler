@@ -14941,6 +14941,15 @@ ET.viewer = (function () {
       { passive: false }
     );
 
+    // Two fingers on the sky move and zoom the picture; the page must not scroll under them.
+    // One finger still scrolls the page vertically (the stage's touch-action allows it).
+    // A touch-action cannot change once a touch has begun, so the scroll is refused here.
+    function holdPage(e) {
+      if (e.touches?.length >= 2 && e.cancelable !== false && e.preventDefault) e.preventDefault();
+    }
+    listen(v, stage, "touchstart", holdPage, { passive: false });
+    listen(v, stage, "touchmove", holdPage, { passive: false });
+
     listen(v, v.root, "keydown", function (e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       var target = e.target;
