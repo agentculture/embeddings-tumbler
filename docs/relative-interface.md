@@ -175,9 +175,9 @@ row and the panel.
 | Search length | `len(q)`, the length of the raw query vector (1 for a point search on a unit-length set; less than 1 for an average of several points). |
 | Height | A point's vector dotted with a search direction, `x . u`: its length along the search. Cosine similarity exactly when the point's own length is 1. |
 | Pinned axis | A frame row fixed to a search: row 1 (vertical) to the first search that gives an axis, row 0 (horizontal) to the part of the second that the first does not contain, row 2 (depth) to the part of the third that the first two do not contain. |
-| Free rows | The frame rows not pinned (3 minus the number pinned). They tour the strongest directions of the centred set after the pinned directions are removed. |
+| Free rows | The frame rows not pinned (3 minus the number pinned). They tour the set's strongest directions (the plain fit's) with the search directions removed (since deviation d4, 2026-11-17; before it, the strongest directions of the remainder, found by a second fit). |
 | Remainder | The centred set with the pinned directions removed from every row. |
-| Remainder share | The variance held by the toured directions divided by the remainder's total variance, both over the rows fitted. |
+| Remainder share | The variance held by the toured directions divided by the remainder's total variance, both over the rows fitted. Exact for whatever directions tour. |
 | Window | Along the vertical search: from the lowest point's height (`low`) to the higher of the search length and the highest point's height (`high`), over **all** points. |
 | Settled | The pinned rows are exact at this moment: the turn onto the pinned frame has finished. While not settled the ruler is not drawn as exact. |
 | Mix | 0 to 1: how far the view is into the relative look (flatness and pitch). 0 in the plain view, 1 once settled. |
@@ -290,33 +290,56 @@ seed, speed, dimension: D, frameAt }`.
 Everything the relative view needs from the data, in one computation;
 `makeRelativeFit` is the same work as a stepper (`js/api/10-math.md`, "Sliced
 work") whose `result` equals `relativeFit`'s bit for bit however it is pumped.
+The stepper's `work` (multiply-adds counted, the same however it is pumped) is
+added by t18.
 
 - `opts`: `seed` (default 0), `subspace` (default 8), `sampleRows` (the fit
-  cap; Tumble passes its `fitRows`, 4,096), and `maxIterations`, `tolerance`,
-  `oversample` passed to the principal-direction fit as for `guidedTour`.
+  cap; Tumble passes its `fitRows`, 4,096), `plain` (t18: the plain fit's
+  directions, below), and `maxIterations`, `tolerance`, `oversample` passed to
+  the principal-direction fit as for `guidedTour`.
 - Steps: `relativeDirections(queries, D)`; when `count` is 0 the result has no
-  tour. Otherwise the remainder (centred rows with the pinned directions
-  removed) is fitted on at most `sampleRows` rows taken at an even stride, to
-  `m = min(max(subspace, 3 - count), D - count)` directions (a subspace smaller
-  than the free rows is raised to them; 0 when nothing tours), each made
-  orthogonal to every pinned direction (`|dot| < 1e-6`); `unitLength` and `heightWindow` (along
-  the first pinned direction, with that query's length) run over **all** rows,
-  in units like the rest.
+  tour. Otherwise `m = min(max(subspace, 3 - count), D - count)` directions are
+  asked for (a subspace smaller than the free rows is raised to them; 0 when
+  nothing tours); `unitLength` and `heightWindow` (along the first pinned
+  direction, with that query's length) run over **all** rows, in units like the
+  rest.
+- **Reused (t18, deviation d4).** With `plain` (`{ directions, count,
+  dimension? }`, the shape `principalDirections` returns: the set's strongest
+  directions, strongest first; Tumble passes its plain tour's `pca` for the same
+  set), the toured directions are **the set's strongest directions with the
+  search directions removed**. Each plain row in turn has the pinned directions
+  and the rows already kept removed (twice, in double precision, as
+  Gram-Schmidt does) and is kept, made unit length, when at least `1e-3` of its
+  squared length is left (an internal tolerance in `10-math.js`, not exported);
+  at most `m` are kept, in the plain order, so the tour opens on the strongest.
+  `subspace` is the number kept and `method` is `"plain-reused"` (with
+  `-sampled` when `fittedRows < N`). A malformed `plain` (a `dimension` other
+  than `D`, a `count` that is not a non-negative integer, fewer than `count *
+  D` values) is a `TypeError`.
+- **Full fit (the fallback).** Without `plain`, or when fewer plain rows
+  survive than there are free rows, the remainder (centred rows with the pinned
+  directions removed) is fitted on at most `sampleRows` rows taken at an even
+  stride, to `m` directions, each made orthogonal to every pinned direction
+  (`|dot| < 1e-6`), exactly as before t18. `method` is the fit's method,
+  prefixed by `fallback-` when `plain` was given.
 - Result:
 
 ```js
 {
   directions, count, pinned, dropped,     // as relativeDirections
-  basis: Float32Array(m * D) | null,      // the toured directions, orthonormal, orthogonal to directions
-  subspace: m,                            // 0 when count is 0 or 3
+  basis: Float32Array(subspace * D) | null,   // the toured directions, orthonormal, orthogonal to directions
+  subspace: number,                       // m for a full fit, the rows kept (at most m) when reused; 0 when count is 0 or 3
   share: number,                          // variance on the basis / remainder total, over the fitted rows; 0 with no variance
-  variances: Float64Array(m), totalVariance: number,   // over the fitted rows
+  variances: Float64Array(subspace), totalVariance: number,   // over the fitted rows; variances in basis order
+                                          // (descending for a full fit, plain order when reused)
   fittedRows: number,                     // rows the fit used (at most sampleRows)
   rank: number,                           // min(fittedRows - 1, D - count): directions the remainder can spread in
   fixed: number,                          // free rows that cannot follow any spread: max(0, (3 - count) - rank)
   window: { low, high, pointHigh, lowest, highest } | null,   // heightWindow along the first pinned direction
   unit: { unit, min, max, tolerance },    // unitLength over all rows
-  method: string,                         // the fit's method, as principalDirections reports it
+  method: string,                         // "plain-reused[-sampled]", the fit's method (principalDirections'),
+                                          // "fallback-" + it, or "none"
+  plain: { given, kept } | null,          // t18: plain rows given and kept; null without plain or when nothing tours
 }
 ```
 
@@ -454,6 +477,18 @@ instance is entered (before `prepare` finishes is allowed) and on every change.
 - **Data.** An append with the relative view shown starts a new relative fit on
   the new set (the searches kept) and switches at a recorded T, as a refit. A
   replace re-enters the mode (the viewer drops the searches, as today).
+- **The plain directions (t18).** The relative fit is given the plain fit's
+  directions of the **same set** it is for: the kept fit
+  (`M.fittedDirections(set, seed, subspace, rows)`, filled by the plain tour, a
+  refit or Lattice) when there is one; otherwise the relative preparation fits
+  them itself, as `makeGuidedTour` does (centring, then
+  `ET.math.makePrincipalDirections` with the same seed, subspace and rows, in
+  units), and keeps them with the set for the refit that follows. It looks for a
+  kept fit again on every run. Both give the same bits, so the view does not
+  depend on which happened (tested: a fit pumped before the preparation, or
+  interleaved with it, shows what a fit after it shows, bit for bit). After an
+  append the plain tour is fitted again only by a refit, so the relative fit
+  fits the new set's directions itself; it never uses the old set's (tested).
 - Pause and reduced motion stop everything as in plain Tumble: it all runs on
   mode time.
 - `draw.fog` stays 0; `draw.perspective` as above; the other draw keys are
@@ -1024,3 +1059,17 @@ the page's 2-D canvas look):
 17. The relative status line is longer than 70 characters. Reason: it must name
     the measure, which axes are exact and the remainder share, as the
     reference's does.
+18. The free rows tour the set's strongest directions (the plain fit's, for the
+    same set) with the search directions removed; the full fit of the remainder
+    is kept only as the fallback, when no plain directions are given or fewer
+    survive than there are free rows (deviation d4, approved by the owner on
+    2026-11-17, task t18). Reason: the second fit cost as much as the page's
+    first (more than 30 s on the owner's iPhone, 10.8 s on a CPU slowed eight
+    times), while the reused directions hold 99.9 to 100 percent of its share on
+    both real models for 29 to 51 times fewer multiply-adds
+    (`docs/evidence/2026-11-relative-search.md`). A plain row is kept when at
+    least `1e-3` of its squared length is left after the searches are removed;
+    kept rows stay in the plain order. When the set's plain directions are not
+    known yet, Tumble's relative preparation fits them itself (the same bits as
+    the plain tour's fit) rather than falling back to the remainder fit, so the
+    free rows always mean the same thing.

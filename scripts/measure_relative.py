@@ -9,14 +9,20 @@ For a data file pair (``<name>.json`` and its float32 block) this prints, and wi
 - for each search (an item's label): the nearest items, and the lowest, median and
   highest cosine to it over all other items;
 - the share of the set's variance held by its 8 strongest directions, and, for each
-  search, the share of what remains after the search direction is removed that the 8
-  strongest remaining directions hold.
+  search, two shares of what remains after the search directions are removed (the
+  remainder): the share its own 8 strongest directions hold (a full fit of the
+  remainder), and the share the set's 8 strongest directions hold once the search
+  directions are removed from them (what the viewer tours since the deviation d4 of
+  2026-11-17: the plain fit reused).
+
+A search is an item's label, or several labels joined by ``+`` (``Rice+Wheat``): their
+directions are taken in order and made orthonormal, as the viewer pins them.
 
 Standard library only. It reads local files and sends nothing anywhere. The figures in
 ``docs/evidence/2026-11-relative-search.md`` come from this script::
 
     python3 scripts/measure_relative.py embeddings_tumbler/static/demo-wikipedia.json \
-        --search Rice --search Jazz --search Volcano
+        --search Rice --search Jazz --search Volcano --search Rice+Wheat
 """
 
 from __future__ import annotations
@@ -33,6 +39,8 @@ SUBSPACE = 8
 OVERSAMPLE = 4
 ITERATIONS = 14
 UNIT_TOLERANCE = 1e-3
+SAME_DIRECTION = 1e-6  # ET.math.RELATIVE_SAME_DIRECTION
+PLAIN_KEEP = 1e-3  # the viewer's tolerance for keeping a plain direction (10-math.js)
 
 
 def load_pair(path: Path) -> tuple[dict, list[list[float]]]:
@@ -58,28 +66,68 @@ def orthonormalize(rows: list[list[float]]) -> None:
             row[:] = [x / norm for x in row]
 
 
-def strongest_share(rows: list[list[float]], remove: list[float] | None, seed: int) -> float:
-    """Share of the centred remainder's variance in its SUBSPACE strongest directions."""
-    if remove is not None:
-        rows = [
-            [x - t * u for x, u in zip(row, remove)]
-            for row in rows
-            for t in [math.sumprod(row, remove)]
-        ]
-    count, dim = len(rows), len(rows[0])
+def remove_directions(row: list[float], directions: list[list[float]]) -> list[float]:
+    """The row with its components along the orthonormal directions removed, twice."""
+    for _ in range(2):
+        for u in directions:
+            t = math.sumprod(row, u)
+            row = [x - t * y for x, y in zip(row, u)]
+    return row
+
+
+def centred(rows: list[list[float]]) -> list[list[float]]:
+    count = len(rows)
     mean = [sum(col) / count for col in zip(*rows)]
-    centred = [[x - m for x, m in zip(row, mean)] for row in rows]
-    columns = [list(col) for col in zip(*centred)]
-    total = sum(math.sumprod(row, row) for row in centred)
+    return [[x - m for x, m in zip(row, mean)] for row in rows]
+
+
+def strongest(rows: list[list[float]], seed: int) -> tuple[list[list[float]], float]:
+    """The SUBSPACE strongest directions of centred rows (strongest first), and the total."""
+    dim = len(rows[0])
+    columns = [list(col) for col in zip(*rows)]
+    total = sum(math.sumprod(row, row) for row in rows)
     rng = random.Random(seed)  # nosec B311 - a seed for a numerical start, not security
     basis = [[rng.gauss(0, 1) for _ in range(dim)] for _ in range(SUBSPACE + OVERSAMPLE)]
     orthonormalize(basis)
     for _ in range(ITERATIONS):
-        weights = [[math.sumprod(row, q) for row in centred] for q in basis]
+        weights = [[math.sumprod(row, q) for row in rows] for q in basis]
         basis = [[math.sumprod(w, col) for col in columns] for w in weights]
         orthonormalize(basis)
-    held = sorted((sum(math.sumprod(row, q) ** 2 for row in centred) for q in basis), reverse=True)
-    return sum(held[:SUBSPACE]) / total if total > 0 else 0.0
+    held = [held_by(rows, q) for q in basis]
+    order = sorted(range(len(basis)), key=lambda k: -held[k])
+    return [basis[k] for k in order[:SUBSPACE]], total
+
+
+def held_by(rows: list[list[float]], q: list[float]) -> float:
+    return sum(math.sumprod(row, q) ** 2 for row in rows)
+
+
+def share_of(rows: list[list[float]], basis: list[list[float]], total: float) -> float:
+    return sum(held_by(rows, q) for q in basis) / total if total > 0 else 0.0
+
+
+def search_directions(vectors: list[list[float]]) -> list[list[float]]:
+    """Search directions in order, made orthonormal; one pointing the same way is dropped."""
+    pinned: list[list[float]] = []
+    for v in vectors:
+        length = math.sqrt(math.sumprod(v, v))
+        u = remove_directions([x / length for x in v], pinned)
+        norm = math.sumprod(u, u)
+        if norm >= SAME_DIRECTION and len(pinned) < 3:
+            pinned.append([x / math.sqrt(norm) for x in u])
+    return pinned
+
+
+def plain_without(plain: list[list[float]], pinned: list[list[float]]) -> list[list[float]]:
+    """The plain directions with the pinned ones removed, as the viewer builds its basis."""
+    kept: list[list[float]] = []
+    for q in plain:
+        before = math.sumprod(q, q)
+        v = remove_directions(list(q), pinned + kept)
+        norm = math.sumprod(v, v)
+        if before > 0 and norm >= PLAIN_KEEP * before:
+            kept.append([x / math.sqrt(norm) for x in v])
+    return kept[:SUBSPACE]
 
 
 def measure(path: Path, searches: list[str], seed: int) -> dict:
@@ -88,6 +136,8 @@ def measure(path: Path, searches: list[str], seed: int) -> dict:
     lengths = [math.sqrt(math.sumprod(r, r)) for r in rows]
     count = len(rows)
     mean = [sum(col) / count for col in zip(*rows)]
+    centred_rows = centred(rows)
+    plain, plain_total = strongest(centred_rows, seed)
     out = {
         "file": path.name,
         "model": meta["model"],
@@ -97,28 +147,37 @@ def measure(path: Path, searches: list[str], seed: int) -> dict:
         "length_max": max(lengths),
         "unit_length": all(abs(v - 1) <= UNIT_TOLERANCE for v in lengths),
         "mean_length": math.sqrt(math.sumprod(mean, mean)),
-        "plain_share": strongest_share(rows, None, seed),
+        "plain_share": share_of(centred_rows, plain, plain_total),
         "subspace": SUBSPACE,
         "seed": seed,
         "searches": [],
     }
-    for name in searches:
-        if name not in labels:
-            raise SystemExit(f"no item is labelled {name!r}")
-        i = labels.index(name)
+    for search in searches:
+        names = search.split("+")
+        for name in names:
+            if name not in labels:
+                raise SystemExit(f"no item is labelled {name!r}")
+        i = labels.index(names[0])
         unit = [x / lengths[i] for x in rows[i]]
         cosines = sorted(
             ((math.sumprod(unit, r) / lengths[j], labels[j]) for j, r in enumerate(rows) if j != i),
             reverse=True,
         )
+        pinned = search_directions([rows[labels.index(name)] for name in names])
+        remainder = [remove_directions(row, pinned) for row in centred_rows]
+        own, total = strongest(remainder, seed)
+        reused = plain_without(plain, pinned)
         out["searches"].append(
             {
-                "search": name,
+                "search": search,
+                "pinned": len(pinned),
                 "nearest": [[label, round(c, 4)] for c, label in cosines[:8]],
                 "cosine_max": cosines[0][0],
                 "cosine_median": cosines[len(cosines) // 2][0],
                 "cosine_min": cosines[-1][0],
-                "remainder_share": strongest_share(rows, unit, seed),
+                "remainder_share": share_of(remainder, own, total),
+                "reused_share": share_of(remainder, reused, total),
+                "reused_directions": len(reused),
             }
         )
     return out
@@ -152,6 +211,13 @@ def main() -> int:
             f"  {s['search']}: cosine {s['cosine_min']:.3f} to {s['cosine_max']:.3f},"
             f" median {s['cosine_median']:.3f}; remainder share {s['remainder_share']:.1%};"
             f" nearest {nearest}"
+        )
+        ratio = s["reused_share"] / s["remainder_share"] if s["remainder_share"] > 0 else 0.0
+        print(
+            f"    remainder held by its own {SUBSPACE} strongest directions (full fit)"
+            f" {s['remainder_share']:.4f}; by the set's {SUBSPACE} strongest with the"
+            f" search removed ({s['reused_directions']} kept) {s['reused_share']:.4f}"
+            f" ({ratio:.2%} of the full fit)"
         )
     if args.apply:
         if not args.out:

@@ -652,3 +652,241 @@ test("relativeFit: malformed calls throw", () => {
   assert.strictEqual(none.count, 0);
   assert.strictEqual(none.share, null);
 });
+
+// ----- t18 (deviation d4): the free axes reuse the plain fit ---------------------
+//
+// relativeFit and makeRelativeFit take `plain` (the plain fit's directions, strongest
+// first, as principalDirections returns them). The free rows then tour those directions
+// with the search directions removed, instead of the strongest directions of the
+// remainder found by a second fit. The share stays exact for whatever is toured.
+
+// The plain fit Tumble holds for a set: the centred set's 8 strongest directions.
+function plainOf(m, X, N, D, seed, k) {
+  return m.principalDirections(m.centre(X, N, D).data, N, D, k || 8, { seed });
+}
+
+for (const [label, fixture] of [
+  ["Wikipedia", wiki],
+  ["mixed-length", mixed],
+]) {
+  test(`t18 (${label}): with the plain directions given, pinned rows are exact, free rows orthogonal, the share exact`, () => {
+    const m = math();
+    const { X, N, D, byLabel } = fixture();
+    const plain = plainOf(m, X, N, D, 7);
+    const rice = row(X, byLabel.Rice, D);
+    const wheat = row(X, byLabel.Wheat, D);
+    const avg = new Float32Array(D);
+    for (let d = 0; d < D; d++) avg[d] = (rice[d] + wheat[d]) / 2;
+    for (const queries of [[rice], [avg], [rice, wheat]]) {
+      const fit = m.relativeFit(X, N, D, queries, { seed: 7, plain });
+      const what = label + ", " + queries.length + " search(es)";
+      assert.strictEqual(fit.method, "plain-reused", what + ": method");
+      assert.deepStrictEqual(fit.plain, { given: 8, kept: 8 }, what + ": plain");
+      assert.strictEqual(fit.subspace, 8);
+      assert.strictEqual(fit.basis.length, 8 * D);
+      assert.strictEqual(fit.variances.length, 8);
+      assert.strictEqual(fit.fittedRows, N);
+      assert.strictEqual(fit.rank, Math.min(N - 1, D - fit.count));
+      // The pinned rows are the directions relativeDirections gives, the first the unit search.
+      const dirs = m.relativeDirections(queries, D);
+      assertSameArray(fit.directions, dirs.directions, what + ": pinned rows");
+      const q = queries[0];
+      const ql = lengthOf(q);
+      for (let d = 0; d < D; d++) assert.strictEqual(fit.directions[d], Math.fround(q[d] / ql), what + ": row 0 at " + d);
+      // The basis: orthonormal and orthogonal to every pinned row below 1e-6.
+      assert.ok(m.frameError(fit.basis, fit.subspace, D) < 1e-6, what + ": basis orthonormal");
+      let worst = 0;
+      for (let k = 0; k < fit.subspace; k++) {
+        for (let p = 0; p < fit.count; p++) worst = Math.max(worst, Math.abs(dotRows(fit.basis, k, fit.directions, p, D)));
+      }
+      assert.ok(worst < 1e-6, what + ": basis against pinned rows (worst " + worst + ")");
+      // The first basis row is the strongest plain direction with the pinned ones removed.
+      const v = Float64Array.from(plain.directions.subarray(0, D));
+      for (let pass = 0; pass < 2; pass++) {
+        for (let p = 0; p < fit.count; p++) {
+          let dp = 0;
+          for (let d = 0; d < D; d++) dp += v[d] * fit.directions[p * D + d];
+          for (let d = 0; d < D; d++) v[d] -= dp * fit.directions[p * D + d];
+        }
+      }
+      const vl = lengthOf(v);
+      let gap = 0;
+      for (let d = 0; d < D; d++) gap = Math.max(gap, Math.abs(fit.basis[d] - v[d] / vl));
+      assert.ok(gap < 1e-6, what + ": basis row 0 is plain row 0 without the searches (gap " + gap + ")");
+      // The share: within 1e-9 of an independent recomputation, and the remainder's total
+      // is the one the full fit reports.
+      const again = recomputeRemainderShare(X, N, D, fit, N);
+      assert.ok(Math.abs(fit.share - again.share) < 1e-9, what + ": share " + fit.share + " vs " + again.share);
+      assert.ok(Math.abs(fit.totalVariance - again.total) < 1e-9 * again.total, what + ": remainder total");
+      const full = m.relativeFit(X, N, D, queries, { seed: 7 });
+      assert.ok(Object.is(fit.totalVariance, full.totalVariance), what + ": the same remainder total as the full fit");
+      assert.deepStrictEqual(fit.window, full.window, what + ": window");
+      assert.deepStrictEqual(fit.unit, full.unit, what + ": unit");
+      // Through the tour: row 1 is the height, free rows orthogonal at ten times.
+      const tour = tourOf(m, fit, D);
+      assertThreeRows(m, tour, D, what);
+      const pinnedRows = queries.length === 1 ? [1] : [1, 0];
+      const freeRows = queries.length === 1 ? [0, 2] : [2];
+      let orth = 0;
+      for (const t of TIMES) {
+        const F = tour.frameAt(t);
+        for (const f of freeRows) for (const p of pinnedRows) orth = Math.max(orth, Math.abs(dotRows(F, f, F, p, D)));
+      }
+      assert.ok(orth < 1e-6, what + ": free rows of the tour orthogonal to pinned rows (worst " + orth + ")");
+    }
+  });
+}
+
+test("t18: the reused share is at least 0.99 of the full fit's on the Wikipedia fixture, for Rice and for Rice with Wheat", () => {
+  const m = math();
+  const { X, N, D, byLabel } = wiki();
+  const plain = plainOf(m, X, N, D, 7);
+  const rice = row(X, byLabel.Rice, D);
+  const wheat = row(X, byLabel.Wheat, D);
+  for (const [name, queries] of [
+    ["Rice", [rice]],
+    ["Rice and Wheat", [rice, wheat]],
+  ]) {
+    const full = m.relativeFit(X, N, D, queries, { seed: 7 });
+    const reused = m.relativeFit(X, N, D, queries, { seed: 7, plain });
+    assert.notStrictEqual(full.method, reused.method);
+    assert.ok(reused.share >= 0.99 * full.share, name + ": reused " + reused.share + " against full " + full.share);
+    assert.ok(reused.share <= full.share + 1e-6, name + ": the full fit is the best (" + reused.share + " vs " + full.share + ")");
+  }
+});
+
+test("t18: the reused preparation is bit-identical however it is pumped, sampled or not", () => {
+  const m = math();
+  const { X, N, D, byLabel } = wiki();
+  const queries = [row(X, byLabel.Rice, D), row(X, byLabel.Wheat, D)];
+  const plain = plainOf(m, X, N, D, 5);
+  for (const opts of [{ seed: 5, plain }, { seed: 5, sampleRows: 60, plain }]) {
+    const blocking = m.relativeFit(X, N, D, queries, opts);
+    const once = m.makeRelativeFit(X, N, D, queries, opts);
+    assert.strictEqual(once.step(), true);
+    const units = m.makeRelativeFit(X, N, D, queries, opts);
+    drive(units, 0);
+    assert.strictEqual(units.progress, 1);
+    assertSameFit(once.result, units.result, "reused: one step vs one-unit steps");
+    assertSameFit(blocking, units.result, "reused: blocking vs one-unit steps");
+    assert.strictEqual(blocking.method, opts.sampleRows ? "plain-reused-sampled" : "plain-reused");
+    assert.deepStrictEqual(blocking.plain, units.result.plain);
+    // The sampled share is over the rows fitted, as the full fit's is.
+    const again = recomputeRemainderShare(X, N, D, blocking, blocking.fittedRows);
+    assert.ok(Math.abs(blocking.share - again.share) < 1e-9, "sampled share " + blocking.share + " vs " + again.share);
+  }
+});
+
+test("t18: the reused preparation counts far fewer multiply-adds than the full fit", () => {
+  const m = math();
+  const { X, N, D, byLabel } = wiki();
+  const plain = plainOf(m, X, N, D, 7);
+  for (const queries of [[row(X, byLabel.Rice, D)], [row(X, byLabel.Rice, D), row(X, byLabel.Wheat, D)]]) {
+    const full = m.makeRelativeFit(X, N, D, queries, { seed: 7 });
+    const reused = m.makeRelativeFit(X, N, D, queries, { seed: 7, plain });
+    assert.strictEqual(full.work, 0, "nothing counted before the first step");
+    full.step();
+    reused.step();
+    assert.ok(full.work > 0 && reused.work > 0);
+    const ratio = full.work / reused.work;
+    // Measured on this fixture (173 x 768): 12.4 times with Rice, 10.6 with Rice and Wheat
+    // (on the 999-item demo set 29 to 38 times, on the 1,024-d second model 42 to 51).
+    assert.ok(ratio > 6, queries.length + " search(es): full " + full.work + " against reused " + reused.work + " (" + ratio.toFixed(1) + "x)");
+    // The work counted does not depend on how it is pumped.
+    const units = m.makeRelativeFit(X, N, D, queries, { seed: 7, plain });
+    drive(units, 0);
+    assert.strictEqual(units.work, reused.work);
+  }
+});
+
+test("t18: fallback to the full fit when no plain directions are given or too few survive", () => {
+  const m = math();
+  const { X, N, D, byLabel } = wiki();
+  const rice = row(X, byLabel.Rice, D);
+  const wheat = row(X, byLabel.Wheat, D);
+  const full = m.relativeFit(X, N, D, [rice], { seed: 3 });
+  assert.ok(!full.method.startsWith("plain") && !full.method.startsWith("fallback"), full.method);
+  assert.strictEqual(full.plain, null, "no plain directions given");
+  for (const none of [undefined, null]) {
+    assertSameFit(m.relativeFit(X, N, D, [rice], { seed: 3, plain: none }), full, "plain " + none);
+  }
+  // No directions at all, or only directions inside the searches' span: the full fit,
+  // bit for bit, and the method says so.
+  const empty = { directions: new Float32Array(0), count: 0, dimension: D };
+  const dirs = m.relativeDirections([rice, wheat], D);
+  const inside = { directions: dirs.directions, count: 2, dimension: D };
+  const ru = m.relativeFit(X, N, D, [rice], { seed: 3, plain: empty });
+  assert.strictEqual(ru.method, "fallback-" + full.method);
+  assert.deepStrictEqual(ru.plain, { given: 0, kept: 0 });
+  assertSameArray(ru.basis, full.basis, "no directions: the full fit's basis");
+  assert.ok(Object.is(ru.share, full.share));
+  const fullRW = m.relativeFit(X, N, D, [rice, wheat], { seed: 3 });
+  const fb = m.relativeFit(X, N, D, [rice, wheat], { seed: 3, plain: inside });
+  assert.strictEqual(fb.method, "fallback-" + fullRW.method);
+  assert.deepStrictEqual(fb.plain, { given: 2, kept: 0 });
+  assertSameArray(fb.basis, fullRW.basis, "directions inside the searches: the full fit's basis");
+  // One direction survives and one free row is needed: reused with a subspace of 1.
+  const plain = plainOf(m, X, N, D, 3);
+  const mixedRows = new Float32Array(3 * D);
+  mixedRows.set(dirs.directions, 0);
+  mixedRows.set(plain.directions.subarray(0, D), 2 * D);
+  const one = m.relativeFit(X, N, D, [rice, wheat], { seed: 3, plain: { directions: mixedRows, count: 3, dimension: D } });
+  assert.strictEqual(one.method, "plain-reused");
+  assert.deepStrictEqual(one.plain, { given: 3, kept: 1 });
+  assert.strictEqual(one.subspace, 1);
+  assertThreeRows(m, tourOf(m, one, D), D, "one survivor");
+  // With one search two free rows are needed: a single survivor is too few (Rice's own
+  // direction leaves nothing, a zero row is never kept).
+  const loneRows = new Float32Array(3 * D);
+  loneRows.set(dirs.directions.subarray(0, D), 0);
+  loneRows.set(plain.directions.subarray(0, D), 2 * D);
+  const lone = m.relativeFit(X, N, D, [rice], { seed: 3, plain: { directions: loneRows, count: 3, dimension: D } });
+  assert.deepStrictEqual(lone.plain, { given: 3, kept: 1 });
+  assert.strictEqual(lone.method, "fallback-" + full.method);
+  // Malformed plain directions are refused.
+  assert.throws(() => m.relativeFit(X, N, D, [rice], { plain: { directions: new Float32Array(D), count: 2 } }), TypeError);
+  assert.throws(() => m.relativeFit(X, N, D, [rice], { plain: { directions: plain.directions, count: 8, dimension: D + 1 } }), TypeError);
+  assert.throws(() => m.relativeFit(X, N, D, [rice], { plain: { directions: plain.directions, count: -1 } }), TypeError);
+  // No search, or three: nothing tours whatever is given.
+  assert.strictEqual(m.relativeFit(X, N, D, [], { plain }).method, "none");
+  const three = ["Rice", "Wheat", "Maize"].map((l) => row(X, byLabel[l], D));
+  const t3 = m.relativeFit(X, N, D, three, { plain });
+  assert.strictEqual(t3.method, "none");
+  assert.strictEqual(t3.basis, null);
+  assert.strictEqual(t3.share, null);
+});
+
+test("t18: small sets with the plain directions given: a 3-dimensional set and a set of 2 points", () => {
+  const m = math();
+  const rng = rngFrom(11);
+  const N = 40;
+  const D = 3;
+  const X = new Float32Array(N * D);
+  for (let i = 0; i < X.length; i++) X[i] = rng.gauss() * (1 + (i % 3));
+  const plain = plainOf(m, X, N, D, 1, 3);
+  const q = [new Float32Array([1, 0.2, 0]), new Float32Array([0.3, 1, 0.1]), new Float32Array([0, 0.4, 1])];
+  for (let c = 1; c <= 3; c++) {
+    const fit = m.relativeFit(X, N, D, q.slice(0, c), { seed: c, plain });
+    assert.strictEqual(fit.count, c);
+    assert.strictEqual(fit.subspace, 3 - c);
+    assert.strictEqual(fit.fixed, 0);
+    if (c < 3) {
+      assert.strictEqual(fit.method, "plain-reused", c + " searches in 3-d");
+      assert.ok(Math.abs(fit.share - 1) < 1e-6, "the remainder share is 1 in 3-d (" + fit.share + ")");
+    }
+    assertThreeRows(m, tourOf(m, fit, D), D, "3-d reused, " + c + " searches");
+  }
+  // Two points in 768-d: one direction of spread, the rest the fit's completion.
+  const w = wiki();
+  const two = new Float32Array(2 * w.D);
+  two.set(row(w.X, w.byLabel.Rice, w.D), 0);
+  two.set(row(w.X, w.byLabel.Maize, w.D), w.D);
+  const plain2 = plainOf(m, two, 2, w.D, 1);
+  const one = m.relativeFit(two, 2, w.D, [row(w.X, w.byLabel.Wheat, w.D)], { seed: 1, plain: plain2 });
+  assert.strictEqual(one.method, "plain-reused");
+  assert.strictEqual(one.rank, 1);
+  assert.strictEqual(one.fixed, 1, "two free rows, one direction of spread: one is filler");
+  assertThreeRows(m, tourOf(m, one, w.D), w.D, "2 points, reused");
+  const again = recomputeRemainderShare(two, 2, w.D, one, 2);
+  assert.ok(Math.abs(one.share - again.share) < 1e-9);
+});

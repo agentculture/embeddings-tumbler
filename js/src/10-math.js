@@ -216,9 +216,10 @@
     // A stepper over a generator: { step(budgetMs?) -> done, done, progress, result }.
     // step(budgetMs) runs units until budgetMs milliseconds have passed (always at
     // least one unit, so step(0) runs exactly one); step() runs to the end.
-    // `result` is null until done.
+    // `result` is null until done. `work` is the multiply-adds counted so far: a
+    // property of the computation, the same however the stepper is pumped.
     function genStepper(gen, tracker) {
-      var st = { done: false, progress: 0, result: null, step: null };
+      var st = { done: false, progress: 0, result: null, work: 0, step: null };
       st.step = function (budgetMs) {
         if (st.done) return true;
         var limit = budgetMs === undefined ? Infinity : budgetMs;
@@ -228,6 +229,7 @@
           first = false;
           tracker.t0 = clockNow();
           var r = gen.next();
+          st.work = tracker.done;
           if (r.done) {
             st.done = true;
             st.result = r.value;
@@ -1169,14 +1171,17 @@
     // ----- the relative frame (Tumble with searches pinned) --------------------
     //
     // One to three frame rows are fixed to search directions (row 1 vertical, row
-    // 0 horizontal, row 2 depth) and the rows left free tour the strongest
-    // directions of what the set holds once those directions are removed (the
-    // remainder). Everything is linear; nothing here changes makeTour or
-    // guidedTour.
+    // 0 horizontal, row 2 depth) and the rows left free tour the set's strongest
+    // directions (the plain fit's, when the caller passes them) with those
+    // search directions removed; without them, the strongest directions of what
+    // the set holds once the search directions are removed (the remainder),
+    // found by a fit of their own. Everything is linear; nothing here changes
+    // makeTour or guidedTour.
 
     var RELATIVE_UNIT_TOLERANCE = 1e-3; // a set is unit-length when min and max lengths are this close to 1
     var RELATIVE_ZERO_LENGTH = 1e-9; // a query no longer than this has no direction
     var RELATIVE_SAME_DIRECTION = 1e-6; // squared new part below this: the same direction as an earlier search
+    var RELATIVE_PLAIN_KEEP = 1e-3; // a plain direction is kept when this share of its squared length is left
 
     // Search directions in order, made orthonormal. A zero-length query, one that
     // points the same way as the directions already pinned, and any after three
@@ -1455,18 +1460,37 @@
       return {
         dirs: dirs,
         pcaOpts: pcaOpts,
+        plain: checkPlain(o.plain, D),
         S: S > 0 && N > S ? S : N,
         // A subspace below the number of free rows is raised to it (no tour exists otherwise).
         m: dirs.count === 0 || free === 0 ? 0 : Math.min(Math.max(sub, free), D - dirs.count),
       };
     }
 
+    // The plain fit's directions (opts.plain): { directions, count[, dimension] },
+    // the shape principalDirections returns, rows strongest first. null when none.
+    function checkPlain(plain, D) {
+      if (plain === undefined || plain === null) return null;
+      if (!intAtLeast(plain.count, 0)) throw new TypeError("plain: count must be a non-negative integer");
+      if (plain.dimension !== undefined && plain.dimension !== D) {
+        throw new TypeError("plain: the directions must have the set's dimension (" + D + ")");
+      }
+      if (plain.directions?.length === undefined || plain.directions.length < plain.count * D) {
+        throw new TypeError("plain: directions needs count * dimension values");
+      }
+      return { directions: plain.directions, count: plain.count };
+    }
+
+    // The work the preparation counts (for progress only). With plain directions
+    // the remainder block and its fit are skipped (assumed: enough survive).
     function relativeFitWork(N, D, plan) {
       var c = plan.dirs.count;
       var S = plan.S;
       var m = plan.m;
+      var held = 3 * N * D + S * D * (4 * c + 1 + m);
+      if (plan.plain && m > 0) return held + plan.plain.count * (4 * (c + m) + 4) * D;
       var fit = m > 0 ? pcaWorkEstimate(S, D, m, plan.pcaOpts) : 0;
-      return 3 * N * D + 2 * S * D * (4 * c + 1) + S * D * m + fit + 4 * (c + m) * (c + m) * D;
+      return held + S * D * (4 * c + 1) + fit + 4 * (c + m) * (c + m) * D;
     }
 
     // The fitted row s of S taken at an even stride over N rows (as the sampled fit takes them).
@@ -1526,6 +1550,51 @@
       return basis;
     }
 
+    // The plain directions with the pinned ones removed, in the plain order
+    // (strongest first): each row has the pinned rows and the rows already kept
+    // removed (twice, in double precision, as Gram-Schmidt does) and is kept, made
+    // unit length, when at least RELATIVE_PLAIN_KEEP of its squared length is left;
+    // at most m are kept. Returns { basis: Float32Array(kept * D), kept }.
+    function* plainBasisGen(dirs, count, plain, m, D, wk) {
+      var B = new Float64Array(m * D);
+      var v = new Float64Array(D);
+      var kept = 0;
+      for (var j = 0; j < plain.count && kept < m; j++) {
+        var oj = j * D;
+        var before = 0;
+        for (var d = 0; d < D; d++) {
+          v[d] = plain.directions[oj + d];
+          before += v[d] * v[d];
+        }
+        for (var pass = 0; pass < 2; pass++) {
+          for (var p = 0; p < count; p++) removeRow(v, 0, dirs, p * D, D);
+          for (var k = 0; k < kept; k++) removeRow(v, 0, B, k * D, D);
+        }
+        var nn = sqNorm(v, 0, D);
+        if (above(before, 0) && atLeast(nn, RELATIVE_PLAIN_KEEP * before)) {
+          var inv = 1 / Math.sqrt(nn);
+          for (var d2 = 0; d2 < D; d2++) B[kept * D + d2] = v[d2] * inv;
+          kept++;
+        }
+        if (wk.add((4 * (count + kept) + 4) * D)) yield;
+      }
+      var basis = new Float32Array(kept * D);
+      for (var i = 0; i < kept * D; i++) basis[i] = B[i];
+      return { basis: basis, kept: kept };
+    }
+
+    // The full fit of the remainder: its m strongest directions, made orthogonal
+    // to the pinned ones. Returns { basis, method }.
+    function* remainderFitGen(X, N, D, plan, mean, wk) {
+      var dirs = plan.dirs;
+      var c = dirs.count;
+      var Ys = yield* remainderBlockGen(X, N, D, mean, dirs.directions, c, plan.S, wk);
+      var pca = yield* pcaGen(Ys, plan.S, D, plan.m, plan.pcaOpts, wk, true);
+      Ys = null;
+      var basis = yield* orthogonalBasisGen(dirs.directions, c, pca.directions, plan.m, D, wk);
+      return { basis: basis, method: pca.method + (plan.S < N ? "-sampled" : "") };
+    }
+
     function* relativeFitGen(X, N, D, plan, wk) {
       var dirs = plan.dirs;
       var c = dirs.count;
@@ -1548,6 +1617,7 @@
         window: null,
         unit: unit,
         method: "none",
+        plain: null,
       };
       if (c === 0) return result;
       result.window = yield* heightWindowGen(X, N, D, dirs.directions.subarray(0, D), dirs.pinned[0].length, wk);
@@ -1561,29 +1631,38 @@
       result.fittedRows = S;
       result.rank = Math.max(0, Math.min(S - 1, D - c));
       result.fixed = Math.max(0, 3 - c - result.rank);
-      if (m > 0) {
-        var Ys = yield* remainderBlockGen(X, N, D, mean, dirs.directions, c, S, wk);
-        var pca = yield* pcaGen(Ys, S, D, m, plan.pcaOpts, wk, true);
-        Ys = null;
-        result.basis = yield* orthogonalBasisGen(dirs.directions, c, pca.directions, m, D, wk);
-        result.subspace = m;
-        result.method = pca.method + (S < N ? "-sampled" : "");
+      if (m > 0 && plan.plain) {
+        var reused = yield* plainBasisGen(dirs.directions, c, plan.plain, m, D, wk);
+        result.plain = { given: plan.plain.count, kept: reused.kept };
+        if (reused.kept >= 3 - c) {
+          result.basis = reused.basis;
+          result.subspace = reused.kept;
+          result.method = "plain-reused" + (S < N ? "-sampled" : "");
+        }
       }
-      var held = yield* remainderVarianceGen(X, N, D, mean, dirs.directions, c, result.basis, m, S, wk);
+      if (m > 0 && !result.basis) {
+        var full = yield* remainderFitGen(X, N, D, plan, mean, wk);
+        result.basis = full.basis;
+        result.subspace = m;
+        result.method = (plan.plain ? "fallback-" : "") + full.method;
+      }
+      var sub = result.subspace;
+      var held = yield* remainderVarianceGen(X, N, D, mean, dirs.directions, c, result.basis, sub, S, wk);
       result.variances = held.variances;
       result.totalVariance = held.totalVariance;
-      if (m > 0) {
+      if (sub > 0) {
         var s = 0;
-        for (var k = 0; k < m; k++) s += held.variances[k];
+        for (var k = 0; k < sub; k++) s += held.variances[k];
         result.share = above(held.totalVariance, 0) ? clamp01(s / held.totalVariance) : 0;
       }
       return result;
     }
 
-    // The search directions, the remainder's toured directions and their share,
-    // the window along the first pinned direction and the unit-length check.
-    // opts: { seed (0), subspace (8), sampleRows (the fit cap), maxIterations,
-    //         tolerance, oversample }. Runs makeRelativeFit to the end.
+    // The search directions, the toured directions and their share of the
+    // remainder, the window along the first pinned direction and the unit-length
+    // check. opts: { seed (0), subspace (8), sampleRows (the fit cap), plain (the
+    // plain fit's directions to reuse), maxIterations, tolerance, oversample }.
+    // Runs makeRelativeFit to the end.
     function relativeFit(X, N, D, queries, opts) {
       var plan = prepareRelativeFit(X, N, D, queries, opts);
       return runAll(relativeFitGen(X, N, D, plan, NO_PAUSE));

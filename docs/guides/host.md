@@ -1206,9 +1206,9 @@ at least one search present, the first search's direction becomes the vertical
 axis, so a point's height is its vector measured along the search. On a set
 whose vectors all have length one that height is cosine similarity. A ticked
 ruler from the origin shows it, and named results are joined to the ruler by
-stems. The other axes still tour the strongest directions of what remains. A
-second search lies in the plane shown exactly and a third pins depth; a fourth
-is only lit. What the setting looks like, and what is exact in it and what is
+stems. The other axes tour the set's strongest directions with the search
+directions removed. A second search lies in the plane shown exactly and a third
+pins depth; a fourth is only lit. What the setting looks like, and what is exact in it and what is
 not, is in the [search guide](search.md#relative-search); this section is for
 the page that hosts the viewer.
 
