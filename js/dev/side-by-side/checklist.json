@@ -615,6 +615,22 @@
     {
      "title": "On vectors not of length one, every label shows its cosine as well",
      "visible": "no"
+    },
+    {
+     "title": "The other axes reuse the first fit",
+     "visible": "slightly"
+    },
+    {
+     "title": "The picture can be moved without turning it",
+     "visible": "no"
+    },
+    {
+     "title": "The reset button resets the move as well, and the hint names it",
+     "visible": "yes"
+    },
+    {
+     "title": "Opening the search panel no longer wipes the picture",
+     "visible": "yes"
     }
    ]
   },

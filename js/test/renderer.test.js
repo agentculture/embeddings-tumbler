@@ -798,7 +798,8 @@ test("perspective: variants follow a layout change, are freed by dispose, and a 
 // (999 x 768, embeddinggemma), a search from each of 12 points spread over the set gives
 // low 0.476 .. 0.561 and high 1 (the search's own length), so top - bottom is at most 0.644 and
 // the zoom is always the cap, 0.5 / (0.42 * 0.46) = 2.588: the largest zoom the framing allows.
-// The depth row tours the 8 principal directions of the remainder (relativeFit's subspace) and
+// The depth row toured the 8 principal directions of the remainder when this was measured
+// (since then: the set's 8 strongest directions with the search removed, nearly the same span) and
 // the centre lies along the search, so a point's depth is x . r for a unit r in that span. Over
 // 4000 directions per search the widest depth range after zoom was 1.661 (worst error 1.38
 // percent); along the first principal direction alone it was about 1.45. The test uses depth

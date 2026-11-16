@@ -1334,6 +1334,38 @@ What was checked about the reference page itself, on 2026-11-17:
 - **Visible on comparable data:** no: every Wikipedia vector has length one. The wording can be read on the build at `/embeddings_tumbler/static/index.html?data=/tests/fixtures/relative/mixed-length.json&relative=1` (the test fixture of 173 articles with lengths spread by their texts' lengths); it was not opened for this document.
 - **Decided by:** spec.
 
+### The other axes reuse the first fit
+
+- **Reference:** each time the searches change it fits the strongest directions of the set again with the search directions removed, and the free axes tour those.
+- **Build:** the free axes tour the set's strongest directions, the ones found when the data was loaded, with the search directions removed from them. The height axis is the search direction itself, as on the reference, and the share in the status line is the true share of the axes shown. A full second fit is kept only for sets too small to reuse.
+- **Why:** on the owner's iPhone the second fit took more than 30 seconds with nothing shown. Reusing the first fit holds 99.87 to 99.98 percent of the share a second fit gives on both models measured, for 30 to 50 times less work (`docs/evidence/2026-11-relative-search.md`).
+- **Visible on comparable data:** slightly: the free axes can start from a different angle and the share differs in its fourth decimal; heights are the same.
+- **Decided by:** owner, by the decision of 2026-11-17 ("change approved"), recorded as deviation d4.
+
+### The picture can be moved without turning it
+
+- **Reference:** none; a drag turns the view and there is no way to move it.
+- **Build:** a right-button drag, Shift with a left drag, two fingers on a touch screen, or the arrow keys move the picture; a left drag turns it as before. The move is of the drawn picture only: the frame, the zoom and every height stay as they were, so the ruler, stems and labels move together. The browser's own menu does not open on a right click over the picture, and two fingers on the picture do not scroll the page. It works in every view.
+- **Why:** the owner asked for it while trying the built relative view ("I lack the ability to move without rotate").
+- **Visible on comparable data:** no, until the picture is moved.
+- **Decided by:** owner, by the decision of 2026-11-17 (right-drag pans, in this build), recorded as deviation d1.
+
+### The reset button resets the move as well, and the hint names it
+
+- **Reference:** none.
+- **Build:** the button beside Pause is "Reset view" (it was "Reset zoom" in the first comparison above) and puts back the zoom and the move, as do a double-click, a double-tap and the `0` key. The hint reads "Drag to turn; right-drag, Shift + drag or two fingers move. Pinch, or Ctrl + wheel, to zoom; double-click or double-tap resets. Keys 1-N switch views and arrows move while the viewer has focus." The status line adds "moved" while the picture is moved.
+- **Why:** it follows from moving the picture; a way back is needed on touch screens, which have no keys.
+- **Visible on comparable data:** yes, as the button's name and the hint; this also changes two entries of the first comparison ("The Reset zoom button", "A longer hint that sits on its own line"), which describe the build as it was when that comparison was signed.
+- **Decided by:** owner, by the decision of 2026-11-17, recorded as deviation d1.
+
+### Opening the search panel no longer wipes the picture
+
+- **Reference:** the search controls are part of the page; nothing opens over or under the stage.
+- **Build:** the picture's accumulated light is wiped only when the stage changes size. Before, it was wiped whenever the viewer's outer box changed size, which happened each time the search panel opened or closed, and showed as a flicker. This was so in the released 0.12.1 as well.
+- **Why:** the owner saw the flicker while trying the build ("It's a flicker") and confirmed the fix.
+- **Visible on comparable data:** yes, as the absence of a flicker when the panel is opened.
+- **Decided by:** owner, by the decision of 2026-11-17 to keep the fix, recorded as deviation d2.
+
 ## Relative search: open questions
 
 These were put to the owner, or noticed while building, and are not decided.

@@ -90,8 +90,13 @@ task agents: `docs/workforce/relative-search.md`), the reference page
 `docs/evidence/2026-11-relative-search.md`. The guides are
 `docs/guides/search.md` ("Relative search") and `docs/guides/host.md`
 ("Relative search", with the example `docs/guides/examples/script-relative/`);
-the module pages are in `js/api/`, with `46-relative-overlay.md` new. The owner's
-sign-off of the relative part of `docs/reference-differences.md` and the
+the module pages are in `js/api/`, with `46-relative-overlay.md` new. The same
+build added, at the owner's request during live testing and recorded as
+deviations in `.devague/deliveries/`: moving the picture without turning it
+(the draw key `pan`; right-drag, Shift + drag, two fingers, arrow keys; the
+button is now "Reset view"), free axes that reuse the plain fit so the switch
+is fast on a phone, and no wipe of the picture when the search panel opens. The
+owner's sign-off of the relative part of `docs/reference-differences.md` and the
 release are `(planned)`.
 
 What real vectors showed, and what was changed because of it (Lattice's hidden
