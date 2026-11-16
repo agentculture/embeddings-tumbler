@@ -376,7 +376,7 @@ No fog in the relative view: Tumble's `fog` is 0 and the relative view keeps it
 Two members are added to the Tumble instance. Both are optional members of the
 mode interface (not in `ET.modes.INTERFACE`), as `face` is.
 
-<!-- interface-names module="40-mode-tumble.js" object="mode:tumble" match="present" task="t6" prefix="inst." landed="auto" -->
+<!-- interface-names module="40-mode-tumble.js" object="mode:tumble" match="present" task="t6" prefix="inst." landed="yes" -->
 ```text
 searchChanged
 setRelative
@@ -495,7 +495,7 @@ The status line in the relative view is built from these pieces, in this order
 (letters are the pinned searches' letters joined as `A`, `A and B`, `A, B and
 C`; `{share}` is the remainder share as a whole percent, `18%`):
 
-<!-- interface-strings module="40-mode-tumble.js,39-modes.js" task="t6" landed="auto" -->
+<!-- interface-strings module="40-mode-tumble.js,39-modes.js" task="t6" landed="yes" -->
 ```text
 relative to {letters} · vertical = {measure} to {letter}, exact
 relative to {letters} · turning until vertical = {measure} to {letter}

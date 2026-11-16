@@ -17,7 +17,9 @@
 ET.modes = (function () {
   // Members every mode instance must have (see js/api/40-modes.md).
   // Optional members: mark(t) (fix the time of a finished event), face(target,
-  // t, options) (the swing toward the searches) and, for Tumble, refit(t).
+  // t, options) (the swing toward the searches), searchChanged(search, t) (Focus,
+  // and Tumble's relative setting) and, for Tumble, refit(t) and setRelative(settings,
+  // t) (docs/relative-interface.md).
   var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
   var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
   var registry = [];
