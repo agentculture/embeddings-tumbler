@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-16T17:49:58Z",
-  "updated": "2026-11-16T19:34:15Z",
+  "updated": "2026-11-16T19:35:31Z",
   "claims": [
     {
       "id": "c1",
@@ -577,6 +577,30 @@
       "kind": "assumption",
       "text": "A typed search embedded by the model behaves like an article used as a search. Probed on 2026-11-16 through the gateway with google/embeddinggemma-2, plain query form: 'rice', 'a grain that feeds half the world' and 'how do volcanoes form?' each came back with length 1.0, top cosines 0.80 to 0.83, medians 0.61 to 0.64 and minima 0.53 to 0.57, the same band as article searches.",
       "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "decision",
+      "text": "In the relative view results follow the existing Lit setting exactly as today, and every other point gets a faint brightness gradient by similarity to the nearest search. This refines the brightness decision c23. (Owner, 2026-11-16.)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "decision",
+      "text": "The Face the searches control is hidden while relative is on and returns when relative is turned off. (Owner, 2026-11-16.)",
+      "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],

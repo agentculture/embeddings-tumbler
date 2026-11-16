@@ -137,6 +137,8 @@
 - Relative is a setting inside Tumble, not a fifth view. It is the same tour with one or more axes pinned. (Owner, 2026-11-16: approved.)
 - A third search takes the depth axis, so all three axes are pinned, nothing tours and the view only spins; a fourth search is only lit and has no axis. The reference page shows one and two searches only. (Owner, 2026-11-16: approved.)
 - No fog in the relative view. Brightness shows similarity to the nearest search, as on the reference page. (Owner, 2026-11-16: approved.)
+- In the relative view results follow the existing Lit setting exactly as today, and every other point gets a faint brightness gradient by similarity to the nearest search. This refines the brightness decision c23. (Owner, 2026-11-16.)
+- The Face the searches control is hidden while relative is on and returns when relative is turned off. (Owner, 2026-11-16.)
 
 ## Open parks
 
