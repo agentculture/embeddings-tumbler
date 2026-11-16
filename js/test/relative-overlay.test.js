@@ -363,10 +363,44 @@ test("relative view with Show the origin: true distance is len(centre), unit cir
   // the unit check false: no circle
   const notUnit = { ...sc.input, relative: { ...sc.input.relative, unit: { ...sc.fit.unit, unit: false } } };
   assert.strictEqual(kindCount(RO.build(notUnit).rings, "unit"), 0);
-  // Show the origin off: no origin, no circle
-  const plainOff = RO.build({ ...sc.input, showOrigin: false });
+  // Show the origin off on the plain Wikipedia fixture (framed without it, so zero is outside
+  // the window): no origin, no circle
+  const off = scene(wiki(), ["Rice"], { showOrigin: false });
+  assert.ok(off.bottom > 0, "zero is outside the window");
+  const plainOff = RO.build(off.input);
   assert.strictEqual(kindCount(plainOff.marks, "origin"), 0);
   assert.strictEqual(kindCount(plainOff.rings, "unit"), 0);
+});
+
+test("heights below zero, Show the origin off: the origin is marked (zero is inside the window), no unit circle", () => {
+  const fx = wiki();
+  const { X, N, D, byLabel, labels } = fx;
+  // the Wikipedia fixture with -Rice appended, as t2's window test does
+  const X2 = new Float32Array((N + 1) * D);
+  X2.set(X, 0);
+  const rice = row(X, byLabel.Rice, D);
+  for (let d = 0; d < D; d++) X2[N * D + d] = -rice[d];
+  const fx2 = { X: X2, N: N + 1, D, byLabel, labels: labels.concat(["-Rice"]) };
+  const sc = scene(fx2, ["Rice"], { showOrigin: false });
+  assert.ok(sc.bottom <= 0 && sc.top >= 0, "zero is inside the window");
+  assert.strictEqual(sc.fit.unit.unit, true);
+  const list = RO.build(sc.input);
+  const origin = list.marks.filter((m) => m.kind === "origin");
+  assert.strictEqual(origin.length, 1);
+  near(origin[0].y, alongPx(sc, sc.u, 0).y, 1e-6, "at height 0");
+  let far = 0;
+  for (const v of sc.centre) far += v * v;
+  near(origin[0].far, Math.sqrt(far), 1e-6, "true distance");
+  const texts = list.texts.filter((t) => t.kind === "origin");
+  assert.strictEqual(texts.length, 1);
+  assert.strictEqual(texts[0].text, "origin (0, 0, … , 0)");
+  assert.strictEqual(kindCount(list.rings, "unit"), 0, "the unit circle stays with Show the origin");
+  assert.strictEqual(list.ruler.from, 0, "the ruler reaches the origin");
+  // the window starts below zero, so ticks start at 0
+  assert.strictEqual(list.texts.find((t) => t.kind === "tick").text, "0.0");
+  // not settled: still ruler A's line only
+  const turning = RO.build(scene(fx2, ["Rice"], { settled: false, mix: 0.5 }).input);
+  assert.strictEqual(kindCount(turning.marks, "origin"), 0);
 });
 
 test("relative view on the mixed-length set with Show the origin: no unit circle", () => {

@@ -312,11 +312,13 @@
         roSegment(list, { x: cp.x - 150 * cx.dpr, y: cp.y }, { x: cp.x + 150 * cx.dpr, y: cp.y }, cx.ink, 0.9 * m, cx.dpr, "cut", [4 * cx.dpr, 4 * cx.dpr]);
         roText(list, cp.x + 156 * cx.dpr, cp.y, input.cut.sent + " candidates above this line went to the reranker", "left", cx.ink, 0.85 * m, "cut");
       }
-      if (showOrigin) {
+      // the origin is marked whenever height 0 is inside the window shown (spec c31); Show the
+      // origin widens the window to include it and, on a unit-length set, adds the unit circle
+      if (showOrigin || (w.bottom <= 0 && w.top >= 0)) {
         var op = roAlong(cx, s0, 0);
         roOriginMark(list, cx, op, m);
         roText(list, op.x + 12 * cx.dpr, op.y, "origin (0, 0, … , 0)", "left", cx.ink, m, "origin");
-        if (rel.unit?.unit === true) roUnitCircle(list, cx, m);
+        if (showOrigin && rel.unit?.unit === true) roUnitCircle(list, cx, m);
       }
       if (rel.pinned.length >= 2) {
         var sB = searches.find(function (s) {
