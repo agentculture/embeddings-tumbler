@@ -162,6 +162,7 @@ def _read_pair(json_path: Path):
         "standalone/space.json",
         "script-search/space.json",
         "web-component-search/space.json",
+        "script-relative/space.json",
     ],
 )
 def test_committed_example_data_is_accepted(rel: str) -> None:
@@ -173,7 +174,13 @@ def test_the_example_folders_carry_the_same_data() -> None:
     names = ("space.json", "space.f32")
     for n in names:
         first = (EXAMPLES / "script" / n).read_bytes()
-        for d in ("web-component", "standalone", "script-search", "web-component-search"):
+        for d in (
+            "web-component",
+            "standalone",
+            "script-search",
+            "web-component-search",
+            "script-relative",
+        ):
             assert (EXAMPLES / d / n).read_bytes() == first
 
 
@@ -411,3 +418,76 @@ def test_host_guide_states_what_search_does_not_do() -> None:
     text = " ".join(_section(HOST, "What search does not do").split())
     assert "Reduced data files cannot be searched by embedding." in text
     assert "Only Chromium has been tested automatically" in text
+
+
+# ---------- relative search: the guides against the code ----------
+
+VIEWER_SOURCE = ROOT / "js" / "src" / "50-viewer.js"
+EVIDENCE = ROOT / "docs" / "evidence" / "2026-11-relative-search.md"
+RELATIVE_EXAMPLE = EXAMPLES / "script-relative"
+
+
+def test_host_guide_documents_the_relative_settings_in_every_form() -> None:
+    text = _section(HOST, "Relative search")
+    for name in (
+        "relative: true", "showOrigin: true", "setRelative", "relativeSettings", "show-origin",
+        "el.relative", "el.showOrigin", "relative=1", "origin=1", "history.replaceState",
+        "not written back", "Letters are kept",
+    ):  # fmt: skip
+        assert name in " ".join(text.split()), name
+    info = _section(HOST, "What `info().search.relative` reports")
+    assert "relativeDrawn" in info and "device pixels" in info
+    for name in (
+        "relative", "showOrigin", "offered", "active", "settled", "measure", "unit", "pinned",
+        "dropped", "free", "fixed", "window", "share", "subspace", "searches",
+        "zero-length", "same-direction", "no-axis-left",
+    ):  # fmt: skip
+        assert f"`{name}`" in info or f'`"{name}"`' in info, name
+
+
+def test_search_guide_quotes_the_relative_sentences_of_the_code() -> None:
+    source = " ".join(VIEWER_SOURCE.read_text("utf-8").split())
+    panel = " ".join(PANEL_SOURCE.read_text("utf-8").split())
+    text = " ".join(SEARCH.read_text("utf-8").split())
+    for sentence in (
+        "Every vector has length one (within 0.001), which is why height is cosine similarity.",
+        "rank and height use different measures.",
+    ):
+        assert sentence.replace("0.001", '" + u.tolerance + "') in source or sentence in source
+        assert sentence in text, sentence
+    for fragment in ("points the same way as", "the first three searches pin all three"):
+        assert fragment in panel, fragment
+        assert fragment in text, fragment
+    assert "candidates above this line went to the reranker" in text
+    assert "origin (0, 0, … , 0)" in text
+    for control in ("**Relative**", "**Show the origin**"):
+        assert control in text, control
+
+
+def test_search_guide_figures_are_the_evidence_pages() -> None:
+    evidence = " ".join(EVIDENCE.read_text("utf-8").split())
+    text = " ".join(SEARCH.read_text("utf-8").split())
+    assert "0.530, 0.633, 0.839" in evidence and "0.793" in evidence and "0.491" in evidence
+    for needle in (
+        "0.53\nand 0.84",
+        "0.79 from the all-zero vector",
+        "0.05 to 0.72",
+        "0.49 from the origin",
+    ):
+        assert " ".join(needle.replace("\n", " ").split()) in text, needle
+    assert "google/embeddinggemma-2" in text and "Qwen/Qwen3-Embedding-0.6B" in text
+
+
+def test_the_relative_example_loads_nothing_from_another_origin_and_runs_no_inline_script() -> None:
+    page = (RELATIVE_EXAMPLE / "example.html").read_text("utf-8")
+    assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", page), "an inline script"
+    assert not re.search(r"\bon[a-z]+=", page), "an inline handler"
+    assert "style=" not in page
+    refs = re.findall(r'(?:src|href)="([^"]+)"', page)
+    assert refs == ["host.css", "embeddings-tumbler.js", "host.js"]
+    script = (RELATIVE_EXAMPLE / "host.js").read_text("utf-8")
+    assert "relative: true" in script and "setRelative" in script
+    assert not re.search(r"https?://|innerHTML|eval\(", script)
+    assert (RELATIVE_EXAMPLE / "host.css").read_bytes() == (
+        EXAMPLES / "script-search" / "host.css"
+    ).read_bytes()

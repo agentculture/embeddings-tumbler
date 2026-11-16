@@ -91,6 +91,8 @@ All optional.
 | `searchTop` | `20` | Search: reranked candidates kept (3 to `searchCandidates`). |
 | `searchLit` | `"even"` | Search: the starting lit setting (`"even"`, `"close"`, `"named"`). |
 | `onSearchChange(search)` | none | Search: called with `info().search` whenever it changes. |
+| `relative` | `false` | Relative search: the Relative setting at mount (see "Relative search"). |
+| `showOrigin` | `false` | Relative search: the Show the origin setting at mount. |
 
 A callback that throws does not break the viewer. Its error is rethrown on a
 later task with `setTimeout`, so it reaches the host's error handling, not
@@ -123,6 +125,8 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 | `searchSettings()` | object | Search: a copy of the settings. |
 | `faceSearches()` | boolean | Search: swing toward the searches again (false in a mode with no `face`, Focus). |
 | `setSearchCallbacks({ embed?, rerank? })` | object | Search: set or remove the callbacks after mount. |
+| `setRelative(patch)` | `{ relative, showOrigin }` | Relative search: change the settings, at once (see "Relative search"). |
+| `relativeSettings()` | `{ relative, showOrigin }` | Relative search: a copy of the settings. |
 
 `info()` returns `{ mode, paused, broken, suspended, hidden, onScreen, destroyed,
 reducedMotion, time, seed, speed, zoom, ready, preparing, count, dimension,
@@ -198,6 +202,111 @@ its "Clarifications from the build (t8)". In short:
   beside the stage (the root becomes a wrapping flex row while in Focus).
 
 Tested in `js/test/viewer-search.test.js`.
+
+## Relative search
+
+Relative is a setting of Tumble, kept by the viewer in every mode and with no
+search. With a search present it makes the first search's direction the vertical
+axis, so a point's height is its vector measured along the search (cosine
+similarity on a set of unit-length vectors), drawn with a ruler. The contract is
+`docs/relative-interface.md`; the mode's side is in `js/api/40-modes.md`
+("Relative"), the drawing in `js/api/46-relative-overlay.md`, the controls in
+`js/api/45-search-panel.md`. The viewer's part:
+
+- **Options.** `relative` and `showOrigin`, booleans, both `false` by default
+  (any value that is not `true` reads as `false`). A viewer mounted without them
+  is exactly as it was before the setting existed.
+- **`handle.setRelative(patch) -> { relative, showOrigin }`.** `patch` is `{
+  relative?, showOrigin? }`. A key that is not a boolean is ignored and a
+  missing key keeps its value. It is synchronous: no ranking is redone, nothing
+  is superseded, no callback of the host's is called, no request is made. It
+  returns the settings now in force. `onSearchChange` is called when either
+  value changed. The settings are kept in every mode and with no search; they
+  act in Tumble. Turning Relative on replaces a swing in progress with the turn
+  onto the pinned frame. After `destroy` it returns the last settings and does
+  nothing. `handle.relativeSettings()` returns a copy.
+- **Letters are kept while Relative is on.** `setSearches(list)` gives an entry
+  that is the same as a search shown now (the same kind, and the same text and
+  `via`, the same point id, or the same vector bytes and model) that search's
+  letter, and the other entries the lowest free letters in list order. So
+  `["rice", "wheat"]` and then `["wheat"]` leaves one search, lettered B, which
+  is then the vertical axis. With Relative off letters are given by position, as
+  before, and turning it off gives positional letters back (a search that was B
+  becomes A if it is alone).
+- **`info().search.relative`** is always present:
+
+  ```js
+  relative: {
+    relative, showOrigin,   // the settings
+    offered,                // the current mode is Tumble (the controls are offered)
+    active,                 // offered, and at least one axis is pinned
+    settled,                // active, and the turn onto the pinned frame has ended
+    measure,                // "cosine" | "length along the search" | null (no data)
+    unit,                   // { unit, min, max, tolerance } | null: are all vectors of length one?
+    pinned,                 // [{ letter, axis, length }] ([] when not active)
+    dropped,                // [{ letter, reason, against }]: searches that give no axis
+    free,                   // free axes: 3 minus pinned (3 when not active)
+    fixed,                  // free axes that are filler, because the set is too small to spread
+    window,                 // { low, high, bottom, top } | null: the heights shown
+    share, subspace,        // the remainder share and directions toured, or null
+    searches,               // [{ letter, results: [{ index, id, height, cosine }] }]
+  }
+  ```
+
+  `searches` lines up with `info().search.searches[j].results`: `height` is the
+  result's vector dotted with that search's direction, and `cosine` is 1 minus
+  its plain distance (never the point-of-view distance). `[]` when not active.
+  While the setting is on in Tumble but no search gives an axis, `dropped` still
+  names the searches that give none.
+- **What is drawn.** In Tumble, with the relative view shown or Show the origin
+  on, the viewer builds the overlay's draw list every frame, paints its shapes on
+  the overlay canvas and places its texts as spans in
+  `div.tumbler-relative-labels` (after the overlay canvas, `aria-hidden`). It
+  passes the draw state's `perspective` to the renderer and to the overlay's
+  placer, so they agree. The pitch is `0.16 * (1 - mix) + drag.pitch`, so the
+  settled view is level until the person tilts it. Nothing is drawn, and the
+  layer is empty, in other modes or with neither shown.
+- **Non-results are faintly brightened by closeness.** With the relative view
+  shown, a point that the Lit setting leaves unlit gets the lit value `0.2 x g^2`,
+  where `g` is, over the shown searches, the largest of `clamp((c - mid) / (hi -
+  mid), 0, 1)`, with `c` the point's plain cosine to the search, `mid` the median
+  cosine over all points and `hi` the highest over all points but the search's
+  own. It uses the plain cosine, never the point-of-view one. Results and points
+  inside the radius keep their lit values. `litCount` and `sharedCount` count
+  only the lit values the Lit setting gave. With the relative view not shown the
+  lit values are exactly as before.
+- **Status and provenance.** The status line is the mode's relative status
+  followed by the viewer's pieces, before its own zoom and paused parts: the words
+  `named results chosen and numbered by the reranker` while a shown search was
+  reranked, `with {letter}'s point of view, rank and height use different
+  measures` while the point of view is on, and `ranked by cosine, so rank and
+  height can disagree` on a set whose vectors are not all of length one. The
+  provenance block gains a `Relative` row (after `View`) while the relative view
+  is shown, with the sentences that apply: that the vertical axis is exact and
+  what the height measures, and that the horizontal and depth axes are exact
+  when pinned (these only once the turn onto the pinned frame has ended); the toured axes' share and that sideways position is still a shadow;
+  that every vector has length one (which is why height is cosine similarity),
+  or the range of lengths and that height is then length along the search; and
+  that with the point of view on, rank is in the scaled measure and height is
+  not. The summary line gains `relative to A`. The shadow sentence of the block
+  stays as it was.
+- **Test hook.** `handle._viewer.relativeDrawn` is `null` while no relative
+  overlay is drawn, and otherwise the record of the last frame's overlay:
+  `{ units: "device", dpr, width, height, settled, painted, labels, ruler,
+  origin, results }`. **Its positions are in device pixels of the overlay
+  canvas** (divide by `dpr` for CSS pixels). `ruler` is `{ x0, y0, x1, y1, from,
+  to }` or `null`; `origin` is `{ x, y, far, seen }` or `null`; `results` has,
+  for each named result with a stem, `{ index, height, x, y, rulerX, rulerY,
+  mappedX, mappedY }`: its drawn position, the point on the ruler at its height
+  as drawn, and where its height falls on the straight line between the ruler's
+  two ends. A test can compare `rulerY` with `mappedY` to see that heights are
+  drawn true. The hook is for tests; hosts use `info()`.
+- **Nothing is sent.** Relative search adds no callback and no request.
+  Turning it on or off, adding searches and showing the origin send nothing
+  anywhere. Reranking in the relative view sends what it sends elsewhere.
+
+Tested in `js/test/viewer-relative.test.js` and
+`js/test/viewer-relative-draw.test.js`.
 
 ## Results of `update`
 

@@ -1,0 +1,1626 @@
+{
+ "schema_version": 1,
+ "kind": "embeddings-tumbler/data",
+ "model": "synthetic/cold-test",
+ "dimension": 12,
+ "count": 320,
+ "text_included": true,
+ "provenance": {
+  "source": "synthetic 4-cluster sample",
+  "producer": "write_data_file.py 0.1.0",
+  "synthetic": true,
+  "seed": 7,
+  "limitations": [
+   "made-up vectors"
+  ],
+  "uncertain": []
+ },
+ "vectors": {
+  "file": "space.f32",
+  "dtype": "float32",
+  "byte_order": "little",
+  "byte_length": 15360
+ },
+ "points": [
+  {
+   "id": "p0000",
+   "label": "sample point 0 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0001",
+   "label": "sample point 1 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0002",
+   "label": "sample point 2 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0003",
+   "label": "sample point 3 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0004",
+   "label": "sample point 4 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0005",
+   "label": "sample point 5 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0006",
+   "label": "sample point 6 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0007",
+   "label": "sample point 7 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0008",
+   "label": "sample point 8 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0009",
+   "label": "sample point 9 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0010",
+   "label": "sample point 10 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0011",
+   "label": "sample point 11 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0012",
+   "label": "sample point 12 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0013",
+   "label": "sample point 13 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0014",
+   "label": "sample point 14 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0015",
+   "label": "sample point 15 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0016",
+   "label": "sample point 16 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0017",
+   "label": "sample point 17 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0018",
+   "label": "sample point 18 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0019",
+   "label": "sample point 19 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0020",
+   "label": "sample point 20 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0021",
+   "label": "sample point 21 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0022",
+   "label": "sample point 22 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0023",
+   "label": "sample point 23 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0024",
+   "label": "sample point 24 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0025",
+   "label": "sample point 25 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0026",
+   "label": "sample point 26 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0027",
+   "label": "sample point 27 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0028",
+   "label": "sample point 28 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0029",
+   "label": "sample point 29 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0030",
+   "label": "sample point 30 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0031",
+   "label": "sample point 31 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0032",
+   "label": "sample point 32 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0033",
+   "label": "sample point 33 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0034",
+   "label": "sample point 34 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0035",
+   "label": "sample point 35 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0036",
+   "label": "sample point 36 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0037",
+   "label": "sample point 37 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0038",
+   "label": "sample point 38 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0039",
+   "label": "sample point 39 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0040",
+   "label": "sample point 40 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0041",
+   "label": "sample point 41 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0042",
+   "label": "sample point 42 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0043",
+   "label": "sample point 43 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0044",
+   "label": "sample point 44 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0045",
+   "label": "sample point 45 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0046",
+   "label": "sample point 46 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0047",
+   "label": "sample point 47 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0048",
+   "label": "sample point 48 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0049",
+   "label": "sample point 49 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0050",
+   "label": "sample point 50 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0051",
+   "label": "sample point 51 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0052",
+   "label": "sample point 52 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0053",
+   "label": "sample point 53 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0054",
+   "label": "sample point 54 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0055",
+   "label": "sample point 55 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0056",
+   "label": "sample point 56 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0057",
+   "label": "sample point 57 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0058",
+   "label": "sample point 58 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0059",
+   "label": "sample point 59 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0060",
+   "label": "sample point 60 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0061",
+   "label": "sample point 61 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0062",
+   "label": "sample point 62 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0063",
+   "label": "sample point 63 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0064",
+   "label": "sample point 64 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0065",
+   "label": "sample point 65 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0066",
+   "label": "sample point 66 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0067",
+   "label": "sample point 67 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0068",
+   "label": "sample point 68 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0069",
+   "label": "sample point 69 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0070",
+   "label": "sample point 70 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0071",
+   "label": "sample point 71 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0072",
+   "label": "sample point 72 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0073",
+   "label": "sample point 73 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0074",
+   "label": "sample point 74 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0075",
+   "label": "sample point 75 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0076",
+   "label": "sample point 76 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0077",
+   "label": "sample point 77 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0078",
+   "label": "sample point 78 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0079",
+   "label": "sample point 79 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0080",
+   "label": "sample point 80 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0081",
+   "label": "sample point 81 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0082",
+   "label": "sample point 82 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0083",
+   "label": "sample point 83 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0084",
+   "label": "sample point 84 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0085",
+   "label": "sample point 85 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0086",
+   "label": "sample point 86 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0087",
+   "label": "sample point 87 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0088",
+   "label": "sample point 88 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0089",
+   "label": "sample point 89 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0090",
+   "label": "sample point 90 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0091",
+   "label": "sample point 91 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0092",
+   "label": "sample point 92 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0093",
+   "label": "sample point 93 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0094",
+   "label": "sample point 94 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0095",
+   "label": "sample point 95 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0096",
+   "label": "sample point 96 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0097",
+   "label": "sample point 97 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0098",
+   "label": "sample point 98 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0099",
+   "label": "sample point 99 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0100",
+   "label": "sample point 100 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0101",
+   "label": "sample point 101 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0102",
+   "label": "sample point 102 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0103",
+   "label": "sample point 103 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0104",
+   "label": "sample point 104 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0105",
+   "label": "sample point 105 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0106",
+   "label": "sample point 106 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0107",
+   "label": "sample point 107 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0108",
+   "label": "sample point 108 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0109",
+   "label": "sample point 109 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0110",
+   "label": "sample point 110 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0111",
+   "label": "sample point 111 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0112",
+   "label": "sample point 112 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0113",
+   "label": "sample point 113 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0114",
+   "label": "sample point 114 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0115",
+   "label": "sample point 115 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0116",
+   "label": "sample point 116 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0117",
+   "label": "sample point 117 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0118",
+   "label": "sample point 118 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0119",
+   "label": "sample point 119 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0120",
+   "label": "sample point 120 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0121",
+   "label": "sample point 121 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0122",
+   "label": "sample point 122 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0123",
+   "label": "sample point 123 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0124",
+   "label": "sample point 124 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0125",
+   "label": "sample point 125 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0126",
+   "label": "sample point 126 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0127",
+   "label": "sample point 127 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0128",
+   "label": "sample point 128 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0129",
+   "label": "sample point 129 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0130",
+   "label": "sample point 130 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0131",
+   "label": "sample point 131 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0132",
+   "label": "sample point 132 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0133",
+   "label": "sample point 133 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0134",
+   "label": "sample point 134 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0135",
+   "label": "sample point 135 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0136",
+   "label": "sample point 136 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0137",
+   "label": "sample point 137 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0138",
+   "label": "sample point 138 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0139",
+   "label": "sample point 139 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0140",
+   "label": "sample point 140 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0141",
+   "label": "sample point 141 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0142",
+   "label": "sample point 142 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0143",
+   "label": "sample point 143 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0144",
+   "label": "sample point 144 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0145",
+   "label": "sample point 145 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0146",
+   "label": "sample point 146 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0147",
+   "label": "sample point 147 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0148",
+   "label": "sample point 148 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0149",
+   "label": "sample point 149 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0150",
+   "label": "sample point 150 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0151",
+   "label": "sample point 151 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0152",
+   "label": "sample point 152 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0153",
+   "label": "sample point 153 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0154",
+   "label": "sample point 154 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0155",
+   "label": "sample point 155 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0156",
+   "label": "sample point 156 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0157",
+   "label": "sample point 157 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0158",
+   "label": "sample point 158 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0159",
+   "label": "sample point 159 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0160",
+   "label": "sample point 160 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0161",
+   "label": "sample point 161 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0162",
+   "label": "sample point 162 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0163",
+   "label": "sample point 163 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0164",
+   "label": "sample point 164 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0165",
+   "label": "sample point 165 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0166",
+   "label": "sample point 166 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0167",
+   "label": "sample point 167 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0168",
+   "label": "sample point 168 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0169",
+   "label": "sample point 169 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0170",
+   "label": "sample point 170 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0171",
+   "label": "sample point 171 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0172",
+   "label": "sample point 172 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0173",
+   "label": "sample point 173 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0174",
+   "label": "sample point 174 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0175",
+   "label": "sample point 175 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0176",
+   "label": "sample point 176 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0177",
+   "label": "sample point 177 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0178",
+   "label": "sample point 178 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0179",
+   "label": "sample point 179 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0180",
+   "label": "sample point 180 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0181",
+   "label": "sample point 181 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0182",
+   "label": "sample point 182 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0183",
+   "label": "sample point 183 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0184",
+   "label": "sample point 184 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0185",
+   "label": "sample point 185 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0186",
+   "label": "sample point 186 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0187",
+   "label": "sample point 187 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0188",
+   "label": "sample point 188 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0189",
+   "label": "sample point 189 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0190",
+   "label": "sample point 190 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0191",
+   "label": "sample point 191 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0192",
+   "label": "sample point 192 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0193",
+   "label": "sample point 193 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0194",
+   "label": "sample point 194 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0195",
+   "label": "sample point 195 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0196",
+   "label": "sample point 196 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0197",
+   "label": "sample point 197 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0198",
+   "label": "sample point 198 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0199",
+   "label": "sample point 199 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0200",
+   "label": "sample point 200 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0201",
+   "label": "sample point 201 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0202",
+   "label": "sample point 202 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0203",
+   "label": "sample point 203 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0204",
+   "label": "sample point 204 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0205",
+   "label": "sample point 205 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0206",
+   "label": "sample point 206 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0207",
+   "label": "sample point 207 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0208",
+   "label": "sample point 208 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0209",
+   "label": "sample point 209 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0210",
+   "label": "sample point 210 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0211",
+   "label": "sample point 211 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0212",
+   "label": "sample point 212 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0213",
+   "label": "sample point 213 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0214",
+   "label": "sample point 214 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0215",
+   "label": "sample point 215 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0216",
+   "label": "sample point 216 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0217",
+   "label": "sample point 217 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0218",
+   "label": "sample point 218 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0219",
+   "label": "sample point 219 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0220",
+   "label": "sample point 220 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0221",
+   "label": "sample point 221 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0222",
+   "label": "sample point 222 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0223",
+   "label": "sample point 223 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0224",
+   "label": "sample point 224 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0225",
+   "label": "sample point 225 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0226",
+   "label": "sample point 226 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0227",
+   "label": "sample point 227 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0228",
+   "label": "sample point 228 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0229",
+   "label": "sample point 229 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0230",
+   "label": "sample point 230 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0231",
+   "label": "sample point 231 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0232",
+   "label": "sample point 232 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0233",
+   "label": "sample point 233 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0234",
+   "label": "sample point 234 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0235",
+   "label": "sample point 235 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0236",
+   "label": "sample point 236 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0237",
+   "label": "sample point 237 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0238",
+   "label": "sample point 238 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0239",
+   "label": "sample point 239 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0240",
+   "label": "sample point 240 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0241",
+   "label": "sample point 241 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0242",
+   "label": "sample point 242 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0243",
+   "label": "sample point 243 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0244",
+   "label": "sample point 244 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0245",
+   "label": "sample point 245 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0246",
+   "label": "sample point 246 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0247",
+   "label": "sample point 247 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0248",
+   "label": "sample point 248 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0249",
+   "label": "sample point 249 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0250",
+   "label": "sample point 250 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0251",
+   "label": "sample point 251 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0252",
+   "label": "sample point 252 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0253",
+   "label": "sample point 253 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0254",
+   "label": "sample point 254 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0255",
+   "label": "sample point 255 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0256",
+   "label": "sample point 256 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0257",
+   "label": "sample point 257 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0258",
+   "label": "sample point 258 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0259",
+   "label": "sample point 259 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0260",
+   "label": "sample point 260 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0261",
+   "label": "sample point 261 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0262",
+   "label": "sample point 262 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0263",
+   "label": "sample point 263 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0264",
+   "label": "sample point 264 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0265",
+   "label": "sample point 265 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0266",
+   "label": "sample point 266 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0267",
+   "label": "sample point 267 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0268",
+   "label": "sample point 268 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0269",
+   "label": "sample point 269 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0270",
+   "label": "sample point 270 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0271",
+   "label": "sample point 271 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0272",
+   "label": "sample point 272 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0273",
+   "label": "sample point 273 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0274",
+   "label": "sample point 274 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0275",
+   "label": "sample point 275 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0276",
+   "label": "sample point 276 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0277",
+   "label": "sample point 277 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0278",
+   "label": "sample point 278 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0279",
+   "label": "sample point 279 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0280",
+   "label": "sample point 280 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0281",
+   "label": "sample point 281 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0282",
+   "label": "sample point 282 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0283",
+   "label": "sample point 283 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0284",
+   "label": "sample point 284 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0285",
+   "label": "sample point 285 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0286",
+   "label": "sample point 286 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0287",
+   "label": "sample point 287 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0288",
+   "label": "sample point 288 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0289",
+   "label": "sample point 289 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0290",
+   "label": "sample point 290 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0291",
+   "label": "sample point 291 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0292",
+   "label": "sample point 292 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0293",
+   "label": "sample point 293 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0294",
+   "label": "sample point 294 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0295",
+   "label": "sample point 295 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0296",
+   "label": "sample point 296 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0297",
+   "label": "sample point 297 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0298",
+   "label": "sample point 298 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0299",
+   "label": "sample point 299 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0300",
+   "label": "sample point 300 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0301",
+   "label": "sample point 301 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0302",
+   "label": "sample point 302 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0303",
+   "label": "sample point 303 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0304",
+   "label": "sample point 304 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0305",
+   "label": "sample point 305 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0306",
+   "label": "sample point 306 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0307",
+   "label": "sample point 307 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0308",
+   "label": "sample point 308 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0309",
+   "label": "sample point 309 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0310",
+   "label": "sample point 310 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0311",
+   "label": "sample point 311 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0312",
+   "label": "sample point 312 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0313",
+   "label": "sample point 313 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0314",
+   "label": "sample point 314 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0315",
+   "label": "sample point 315 <delta>",
+   "group": "delta"
+  },
+  {
+   "id": "p0316",
+   "label": "sample point 316 <alpha>",
+   "group": "alpha"
+  },
+  {
+   "id": "p0317",
+   "label": "sample point 317 <beta>",
+   "group": "beta"
+  },
+  {
+   "id": "p0318",
+   "label": "sample point 318 <gamma>",
+   "group": "gamma"
+  },
+  {
+   "id": "p0319",
+   "label": "sample point 319 <delta>",
+   "group": "delta"
+  }
+ ]
+}
