@@ -708,7 +708,7 @@ t8 lands.
 
 ### Handle methods
 
-<!-- interface-names module="50-viewer.js" object="handle" match="present" task="t9" prefix="handle." landed="auto" -->
+<!-- interface-names module="50-viewer.js" object="handle" match="present" task="t9" prefix="handle." landed="yes" -->
 ```text
 setRelative
 relativeSettings
@@ -797,7 +797,7 @@ count only the lit values from `litValues`.
 The viewer adds to the mode's relative status, in this order, before its own `·
 zoom` and `· paused`:
 
-<!-- interface-strings module="50-viewer.js" task="t9" landed="auto" -->
+<!-- interface-strings module="50-viewer.js" task="t9" landed="yes" -->
 ```text
  · named results chosen and numbered by the reranker
  · with {letter}'s point of view, rank and height use different measures
