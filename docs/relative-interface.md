@@ -743,6 +743,7 @@ relative: {
   unit,                      // { unit, min, max, tolerance } | null
   pinned,                    // [{ letter, axis, length }] (from the mode; [] when not active)
   dropped,                   // [{ letter, reason, against }] (against: letters)
+  free,                      // free rows: 3 - pinned.length (3 when not active)
   fixed,                     // free rows that are filler
   window,                    // { low, high, bottom, top } | null
   share, subspace,           // the remainder share and directions toured, or null
