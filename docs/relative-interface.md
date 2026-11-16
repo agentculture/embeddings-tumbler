@@ -879,7 +879,7 @@ with `history.replaceState` when `onSearchChange` reports a change of either
 setting, so a view can be reopened. The other parameters (`mode`, `seed`,
 `data`, `sample`) are kept as they are.
 
-<!-- interface-text file="js/page/page.js" task="t12" landed="auto" -->
+<!-- interface-text file="js/page/page.js" task="t12" landed="yes" -->
 ```text
 "relative"
 "origin"
