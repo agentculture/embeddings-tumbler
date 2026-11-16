@@ -328,12 +328,12 @@ work") whose `result` equals `relativeFit`'s bit for bit however it is pumped.
 
 ## Renderer (t3): the perspective key
 
-<!-- interface-names module="30-renderer.js" object="ET.renderer.DEFAULTS" match="constants" task="t3" prefix="draw." landed="auto" -->
+<!-- interface-names module="30-renderer.js" object="ET.renderer.DEFAULTS" match="constants" task="t3" prefix="draw." landed="yes" -->
 ```text
 perspective
 ```
 
-<!-- interface-names module="30-renderer.js" object="ET.renderer" match="constants" task="t3" prefix="ET.renderer." landed="auto" -->
+<!-- interface-names module="30-renderer.js" object="ET.renderer" match="constants" task="t3" prefix="ET.renderer." landed="yes" -->
 ```text
 RELATIVE_PERSPECTIVE
 ```
