@@ -135,7 +135,9 @@ test("Relative and Show the origin: first in the controls row, shown in Tumble o
   const kids = row0.children;
   assert.strictEqual(kids[0].className, "tumbler-search-relative");
   assert.strictEqual(kids[1].className, "tumbler-search-origin");
-  assert.strictEqual(kids[2].className, "tumbler-search-face");
+  // t19 (d6): the rest follows them, then Face the searches
+  assert.strictEqual(kids[2].className, "tumbler-search-rest");
+  assert.strictEqual(kids[3].className, "tumbler-search-face");
   const rel = t.q(".tumbler-search-relative");
   const org = t.q(".tumbler-search-origin");
   assert.strictEqual(rel.querySelector("input").type, "checkbox");
@@ -372,7 +374,7 @@ test("colours and result lists follow the search's letter, not its place in the 
   assert.ok(strokes.every((c) => c === "stroke:" + SP.COLOURS.dark[1]), strokes.join(","));
 });
 
-test("frame.relative: rings and letters are drawn, links and result labels are not; off is as today", () => {
+test("frame.relative: rings are drawn, letters, links and result labels are not; off is as today", () => {
   const D = 4;
   const vectors = new Float32Array(3 * D);
   vectors[D] = 1;
@@ -399,19 +401,22 @@ test("frame.relative: rings and letters are drawn, links and result labels are n
     const project = () => ({ x: 10 + 120 * n++, y: 10 + 40 * n });
     assert.strictEqual(panel.drawOverlay(ctx, project, frame), true);
     const layer = stage.querySelector(".tumbler-search-labels");
-    const shown = layer.children.filter((c) => c.style.display !== "none").map(textOf);
+    const shown = layer ? layer.children.filter((c) => c.style.display !== "none").map(textOf) : []; // made on first use
     return { lines: ctx.calls.filter((c) => c === "lineTo").length, arcs: ctx.calls.filter((c) => c === "arc").length, shown };
   }
   const on = draw(true);
   assert.strictEqual(on.lines, 0, "no links");
   assert.strictEqual(on.arcs, 1, "the ring");
-  assert.deepStrictEqual(on.shown, ["A"], "the letter, no result labels");
+  // t19: the relative overlay puts the letter and name beside the ring ("A · a text"), so the
+  // panel places no letter and no result label in the relative view
+  assert.deepStrictEqual(on.shown, [], "no letter, no result labels");
   const off = draw(false);
   assert.strictEqual(off.lines, 2, "links with relative off");
   assert.ok(off.shown.includes("one") && off.shown.includes("two"));
   const absent = draw(undefined);
   assert.strictEqual(absent.lines, off.lines);
   assert.deepStrictEqual(absent.shown, off.shown);
+  assert.ok(off.shown.includes("A"), "the letter with relative off");
 });
 
 test("labels and notes are inserted as text, never as markup", () => {
@@ -423,4 +428,26 @@ test("labels and notes are inserted as text, never as markup", () => {
   assert.ok(textOf(note).includes(evil));
   assert.strictEqual(note.children.length, 0);
   assert.strictEqual(t.q(".tumbler-search-text").children.length, 0);
+});
+
+test("t19 (d6): the rest: a select of faint, visible and bright beside Relative, bright by default, disabled while Relative is off", () => {
+  const t = build("tumble");
+  t.panel.update(search({ relative: relState({ relative: false, rest: "bright" }) }, [oneSearch("A", [result(1, 1, "one")])]));
+  const label = t.q(".tumbler-search-rest");
+  assert.match(textOf(label), /^The rest/);
+  assert.strictEqual(label.hidden, false);
+  const sel = label.querySelector("select");
+  assert.deepStrictEqual(sel.children.map((o) => [o.value, textOf(o)]), [["faint", "faint"], ["visible", "visible"], ["bright", "bright"]]);
+  assert.strictEqual(sel.value, "bright");
+  assert.strictEqual(sel.disabled, true, "Relative off: disabled");
+  t.panel.update(search({ relative: relState({ relative: true, rest: "visible" }) }, [oneSearch("A", [result(1, 1, "one")])]));
+  assert.strictEqual(sel.disabled, false);
+  assert.strictEqual(sel.value, "visible", "it reports the setting");
+  sel.value = "faint";
+  sel.dispatchEvent({ type: "change" });
+  assert.deepStrictEqual(t.calls, ["rest=faint"]);
+  // outside Tumble it is hidden with the other two
+  const l = build("lattice");
+  l.panel.update(search({}, [oneSearch("A", [result(1, 1, "one")])]));
+  assert.strictEqual(l.q(".tumbler-search-rest").hidden, true);
 });

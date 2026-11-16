@@ -93,6 +93,7 @@
     return {
       letter: s.letter,
       colour: s.colour,
+      name: typeof s.name === "string" ? s.name : "",
       query: q,
       length: len,
       u: u,
@@ -248,13 +249,20 @@
       .join(" ");
   }
 
-  // [{ranks} ]{text}  {heights}[  cosine {c}]
+  // What a result is called on the stage: its title when the viewer gives one (a label that
+  // is more than its id), otherwise its text (t19).
+  function roResultName(it) {
+    if (typeof it.title === "string" && it.title !== "") return it.title;
+    return it.text === undefined || it.text === null ? "" : it.text;
+  }
+
+  // [{ranks} ]{title or text}  {heights}[  cosine {c}]
   function roResultText(cx, it, i, pinnedSearches, unit, many) {
     var len = roRowLength(cx, i);
     var heights = pinnedSearches.map(function (s) {
       return roHeight(cx, i, s.u);
     });
-    var str = roShorten(it.text === undefined || it.text === null ? "" : it.text, RO_TEXT_MAX) + "  " + heights.map(function (h) {
+    var str = roShorten(roResultName(it), RO_TEXT_MAX) + "  " + heights.map(function (h) {
       return h.toFixed(2);
     }).join(" · ");
     if (!unit) {
@@ -331,10 +339,13 @@
       // turning: ruler A's line only, faint; it is not drawn as exact
       roRuler(list, cx, s0, foot, top, 0.25 * m);
     }
-    // the searches themselves, each at its raw query
+    // the searches themselves, each at its raw query, with its letter and name beside it
+    // ("A · Rice", the reference's form), placed before any result label (t19)
     for (var s of searches) {
       var qp = roVectorAt(cx, s.query, 0);
       list.marks.push({ x: qp.x, y: qp.y, r: 10 * cx.dpr, colour: s.colour, alpha: 1, kind: "search" });
+      var label = s.name ? s.letter + " · " + roShorten(s.name, RO_TEXT_MAX) : String(s.letter);
+      roText(list, qp.x + 15 * cx.dpr, qp.y + 4 * cx.dpr, label, "left", s.colour, 1, "search", { letter: s.letter });
     }
   }
 

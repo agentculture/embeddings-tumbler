@@ -93,6 +93,7 @@ All optional.
 | `onSearchChange(search)` | none | Search: called with `info().search` whenever it changes. |
 | `relative` | `false` | Relative search: the Relative setting at mount (see "Relative search"). |
 | `showOrigin` | `false` | Relative search: the Show the origin setting at mount. |
+| `relativeRest` | `"bright"` | Relative search: how bright the points that are not results are, `"faint"`, `"visible"` or `"bright"`; any other value is the default. |
 
 A callback that throws does not break the viewer. Its error is rethrown on a
 later task with `setTimeout`, so it reaches the host's error handling, not
@@ -127,8 +128,8 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 | `searchSettings()` | object | Search: a copy of the settings. |
 | `faceSearches()` | boolean | Search: swing toward the searches again (false in a mode with no `face`, Focus). |
 | `setSearchCallbacks({ embed?, rerank? })` | object | Search: set or remove the callbacks after mount. |
-| `setRelative(patch)` | `{ relative, showOrigin }` | Relative search: change the settings, at once (see "Relative search"). |
-| `relativeSettings()` | `{ relative, showOrigin }` | Relative search: a copy of the settings. |
+| `setRelative(patch)` | `{ relative, showOrigin, rest }` | Relative search: change the settings, at once (see "Relative search"). |
+| `relativeSettings()` | `{ relative, showOrigin, rest }` | Relative search: a copy of the settings. |
 
 `info()` returns `{ mode, paused, broken, suspended, hidden, onScreen, destroyed,
 reducedMotion, time, seed, speed, zoom, ready, preparing, count, dimension,
@@ -216,14 +217,16 @@ similarity on a set of unit-length vectors), drawn with a ruler. The contract is
 `js/api/45-search-panel.md`. The viewer's part:
 
 - **Options.** `relative` and `showOrigin`, booleans, both `false` by default
-  (any value that is not `true` reads as `false`). A viewer mounted without them
-  is exactly as it was before the setting existed.
-- **`handle.setRelative(patch) -> { relative, showOrigin }`.** `patch` is `{
-  relative?, showOrigin? }`. A key that is not a boolean is ignored and a
-  missing key keeps its value. It is synchronous: no ranking is redone, nothing
+  (any value that is not `true` reads as `false`), and `relativeRest`, the rest
+  (below), `"bright"` by default. A viewer mounted without them is exactly as
+  it was before the setting existed, until Relative is turned on.
+- **`handle.setRelative(patch) -> { relative, showOrigin, rest }`.** `patch` is
+  `{ relative?, showOrigin?, rest? }`. `relative` or `showOrigin` that is not a
+  boolean is ignored, as is a `rest` other than `"faint"`, `"visible"` or
+  `"bright"`, and a missing key keeps its value. It is synchronous: no ranking is redone, nothing
   is superseded, no callback of the host's is called, no request is made. It
-  returns the settings now in force. `onSearchChange` is called when either
-  value changed. The settings are kept in every mode and with no search; they
+  returns the settings now in force. `onSearchChange` is called when any value
+  changed. The settings are kept in every mode and with no search; they
   act in Tumble. Turning Relative on replaces a swing in progress with the turn
   onto the pinned frame. After `destroy` it returns the last settings and does
   nothing. `handle.relativeSettings()` returns a copy.
@@ -239,7 +242,7 @@ similarity on a set of unit-length vectors), drawn with a ruler. The contract is
 
   ```js
   relative: {
-    relative, showOrigin,   // the settings
+    relative, showOrigin, rest, // the settings
     offered,                // the current mode is Tumble (the controls are offered)
     active,                 // offered, and at least one axis is pinned
     settled,                // active, and the turn onto the pinned frame has ended
@@ -268,15 +271,32 @@ similarity on a set of unit-length vectors), drawn with a ruler. The contract is
   placer, so they agree. The pitch is `0.16 * (1 - mix) + drag.pitch`, so the
   settled view is level until the person tilts it. Nothing is drawn, and the
   layer is empty, in other modes or with neither shown.
-- **Non-results are faintly brightened by closeness.** With the relative view
-  shown, a point that the Lit setting leaves unlit gets the lit value `0.2 x g^2`,
-  where `g` is, over the shown searches, the largest of `clamp((c - mid) / (hi -
+- **Labels and markers.** A named result's label on the ruler shows the
+  point's title (its `label`, when that is more than its id) and otherwise the
+  start of its text; the panel's list and plain search's labels are unchanged.
+  Each search's marker carries `A · Rice`: its letter and its text as the
+  panel's summary names it, or the title of the point it was searched from. The
+  overlay draws that text once, with or without the panel (the panel draws the
+  ring, and no letter, in the relative view).
+- **With the clock still, no turn.** While the view is paused (reduced motion
+  starts paused) the viewer tells Tumble (`inst.setStill(true)`), so turning
+  Relative on or off, adding or removing a search and Show the origin take
+  effect at once: the next frame drawn is the settled relative view (or the
+  plain one), with the ruler exact, and `onSearchChange` reports `settled`
+  true. The mode's preparation keeps being pumped while paused, so a fit
+  finishes and applies without Play. With the clock running the turn is as
+  before.
+- **Non-results are brightened by closeness: the rest.** With the relative view
+  shown, a point that the Lit setting leaves unlit gets the lit value `base +
+  scale x g^2` at the rest's level: `"faint"` 0 + 0.2 g², `"visible"` 0.08 +
+  0.45 g², `"bright"` 0.2 + 0.6 g² (the default). `g` is, over the shown searches, the largest of `clamp((c - mid) / (hi -
   mid), 0, 1)`, with `c` the point's plain cosine to the search, `mid` the median
   cosine over all points and `hi` the highest over all points but the search's
   own. It uses the plain cosine, never the point-of-view one. Results and points
   inside the radius keep their lit values. `litCount` and `sharedCount` count
   only the lit values the Lit setting gave. With the relative view not shown the
-  lit values are exactly as before.
+  lit values are exactly as before, whatever the rest. With Lit "by closeness"
+  every point is usually lit already, so the rest changes nothing.
 - **Status and provenance.** The status line is the mode's relative status
   followed by the viewer's pieces, before its own zoom and paused parts: the words
   `named results chosen and numbered by the reranker` while a shown search was
@@ -459,6 +479,8 @@ texture. On "append 200 points" onto 12,288 points: 44 to 46 ms for the first
   paused**, the Play button is visible, and twinkle is off. Pressing Play
   starts the motion; the user's choice wins. `options.paused` overrides the
   starting state.
+- While paused, a change of the relative view is shown at once with no turn
+  (see "Relative search").
 
 ## Heavy work
 

@@ -24,15 +24,19 @@ twice does nothing the second time. Without custom element support it does nothi
 | `seed` | The view seed, a number or a word. Read at mount; changing it later mounts a fresh viewer and reloads the data (points added with `update()` are lost). |
 | `relative` | Relative search: the Relative setting (see `js/api/50-viewer.md`, "Relative search"). A boolean attribute: present with any value but `"false"` is on; absent, or `"false"`, is off. Read at mount; changing it later calls `handle.setRelative({ relative })` on the running viewer, which does not remount and does not reload. |
 | `show-origin` | The Show the origin setting, the same way (`handle.setRelative({ showOrigin })`). |
+| `relative-rest` | The rest: how bright the points that are not results are in the relative view, `faint`, `visible` or `bright`. Absent, or any other value, is `bright`, the default. Read at mount (passed as `relativeRest` only when present); changing it later calls `handle.setRelative({ rest })`. |
 
 ## Properties, methods, events
 
+- `el.relativeRest`: the rest as a string, `"faint"`, `"visible"` or `"bright"` (the attribute's
+  value when it is one of them, otherwise `"bright"`). Setting it to one of the three sets the
+  attribute; any other value is ignored.
 - `el.relative` and `el.showOrigin`: booleans for the two settings above. Reading one is the
   same as reading its attribute (present, and not `"false"`, is `true`). Setting one sets or
   removes its attribute, and the attribute change reaches the viewer. They may be set before
   the element connects or the core loads; the value is used as a mount option.
 - **The attribute is the one record of the setting, and it goes one way.** A change made with the
-  panel's Relative or Show the origin checkbox reaches the viewer (`el.handle.relativeSettings()`
+  panel's Relative or Show the origin checkbox, or its rest control, reaches the viewer (`el.handle.relativeSettings()`
   and `info().search.relative` show it) but is **not** written back to the attribute or the
   property. Read the viewer, not the attribute, to learn what a visitor chose. If a host sets the
   attribute to the value it already has, nothing happens, so it cannot undo a checkbox this way;

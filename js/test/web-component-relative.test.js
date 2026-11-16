@@ -22,7 +22,7 @@ test("off by default: the properties are false and mount gets false", () => {
   assert.strictEqual(el.relative, false);
   assert.strictEqual(el.showOrigin, false);
   assert.ok(!("relative" in env.calls.mount[0][1]) && !("showOrigin" in env.calls.mount[0][1]));
-  assert.deepStrictEqual(plain(el.handle.relativeSettings()), { relative: false, showOrigin: false });
+  assert.deepStrictEqual(plain(el.handle.relativeSettings()), { relative: false, showOrigin: false, rest: "bright" });
 });
 
 function plain(v) {
@@ -36,7 +36,7 @@ test("attributes present before mount are mount options; \"false\" is off", () =
   assert.ok(!("showOrigin" in env.calls.mount[0][1]));
   assert.strictEqual(el.relative, true);
   assert.strictEqual(el.showOrigin, false);
-  assert.deepStrictEqual(plain(el.handle.relativeSettings()), { relative: true, showOrigin: false });
+  assert.deepStrictEqual(plain(el.handle.relativeSettings()), { relative: true, showOrigin: false, rest: "bright" });
 });
 
 for (const [attr, prop] of PAIRS) {
@@ -119,4 +119,39 @@ test("changing an attribute while disconnected is kept for the next mount", () =
   env.connect(el);
   assert.strictEqual(env.calls.mount[1][1].relative, true);
   assert.strictEqual(el.handle.relativeSettings().relative, true);
+});
+
+// ---------- t19 (deviation d6): relative-rest ----------
+
+test("relative-rest: watched; absent is bright and passes no mount option", () => {
+  const env = makeShellEnv();
+  assert.ok(env.root.customElements.get("embeddings-tumbler").observedAttributes.includes("relative-rest"));
+  const el = env.connect(env.create());
+  assert.strictEqual(el.relativeRest, "bright");
+  assert.ok(!("relativeRest" in env.calls.mount[0][1]));
+  assert.strictEqual(el.handle.relativeSettings().rest, "bright");
+});
+
+test("relative-rest: an attribute before mount is the mount option; changes reach the handle; unknown is ignored", () => {
+  const env = makeShellEnv();
+  const el = env.connect(env.create({ "relative-rest": "faint" }));
+  assert.strictEqual(env.calls.mount[0][1].relativeRest, "faint");
+  assert.strictEqual(el.relativeRest, "faint");
+  assert.strictEqual(el.handle.relativeSettings().rest, "faint");
+  el.setAttribute("relative-rest", "visible");
+  assert.strictEqual(el.handle.relativeSettings().rest, "visible");
+  el.relativeRest = "bright";
+  assert.strictEqual(el.getAttribute("relative-rest"), "bright");
+  assert.strictEqual(el.handle.relativeSettings().rest, "bright");
+  el.relativeRest = "dazzling";
+  assert.strictEqual(el.getAttribute("relative-rest"), "bright", "an unknown value is ignored");
+  el.setAttribute("relative-rest", "faint");
+  el.removeAttribute("relative-rest");
+  assert.strictEqual(el.relativeRest, "bright");
+  assert.strictEqual(el.handle.relativeSettings().rest, "bright", "removed: the default");
+  // a property set before connecting
+  const other = env.create();
+  other.relativeRest = "visible";
+  env.connect(other);
+  assert.strictEqual(env.calls.mount.at(-1)[1].relativeRest, "visible");
 });

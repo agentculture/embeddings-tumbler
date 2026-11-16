@@ -147,6 +147,7 @@ so all of them work from the keyboard.
 | **The text box** | One search per line, up to four. The viewer searches a moment after you stop typing. |
 | **Relative** | Tumble only. Makes the first search the vertical axis, so a point's height is its vector measured along the search. See [Relative search](#relative-search). While it is on, **Face the searches** is not shown. |
 | **Show the origin** | Tumble only. Zooms out to include the all-zero vector, or, in the plain view, marks where it falls. See [Show the origin](#show-the-origin). |
+| **The rest** | Tumble only, and only while Relative is on. How bright the points that are not results are: *faint*, *visible* or *bright* (to begin with). See [What you see, and what it means](#what-you-see-and-what-it-means). |
 | **Face the searches** | Swings the view so that the searches are spread across the picture, then lets it move on. A new search does this once by itself; the button does it again. It does nothing in Focus, where the view is already fitted to the results. |
 | **Lit** | Which points are lit. *The results, evenly*: every point within the radius, all equally bright. *By closeness: nearer is brighter*: a variable lit power, where the nearest result is lit most strongly and points fade with distance, down to nothing a little beyond the radius. *Named results only*: just the results themselves. |
 | **Distance difference** | Writes the distances out. Each result in the lists shows its distance and how much farther it is than the nearest result, with a small bar, and each line on the picture shows its distance. |
@@ -217,7 +218,8 @@ been tested for the rest of the viewer.
 
 Open the panel in Tumble. Two checkboxes are in the controls row, before the
 other controls: **Relative** and **Show the origin**. Both are off to begin
-with. They are offered in Tumble only; the setting is remembered in the other
+with. A menu, **The rest**, follows them; it can be changed once Relative is
+on. They are offered in Tumble only; the setting is remembered in the other
 views and applies when you come back to Tumble. A page can also start with them
 on (the host guide says how).
 
@@ -225,17 +227,24 @@ With **Relative** on and at least one search, the view turns onto the search
 over about a second and a half. While it turns, you see only a faint line for the
 ruler: the ruler is not drawn as exact until the turn has ended. Turning
 Relative on while the view is swinging toward a new search replaces that swing.
+If the view is paused, or you prefer reduced motion (the viewer then starts
+paused), nothing turns: turning Relative on or off, adding or removing a search
+and Show the origin are shown at once, already settled, with the ruler exact.
+You do not need to press Play to see them.
 The **Face the searches** button is not shown while Relative is on, because the
 search itself fixes the view.
 
 ### What you see, and what it means
 
 Search `Rice` and turn Relative on. The searched article, Rice, is a point
-that sits on the ring at the top of a vertical ruler. The ruler has a tick and a
+that sits on the ring at the top of a vertical ruler. Beside each search's ring
+is its letter and name, `A · Rice`: the words you searched for, or the title of
+the point you searched from. The ruler has a tick and a
 faint level ring every 0.1 and a title, `cosine to A`. A point's **height**
 is its vector measured along the search: the number you read off the ruler.
 Each named result is joined to the ruler by a thin stem at its height, and
-carries its text and its height, for example `Cereal  0.84`. With several
+carries its title and its height, for example `Cereal  0.84`. A point with no
+title (only an id) shows the start of its text instead, cut at 28 characters. With several
 searches, a result's label gives its height along each. The panel's lists add
 `cosine 0.839` to each result row.
 
@@ -289,12 +298,18 @@ second model, `Qwen/Qwen3-Embedding-0.6B`, spreads the same articles from about
 demo model's, not a property of every model.
 
 **Labels that would collide are left out.** Ticks and the title are placed
-first, then result labels, the highest on the ruler first. A label that would
+first, then each search's letter and name, then result labels, the highest on
+the ruler first, so a search's name is never hidden by a result's label. A label that would
 overlap one already placed is left out. The panel's lists always carry every
 result.
 
-Points that are not results are drawn faintly brighter the closer they are to a
-search in plain cosine. That is only a hint; results are brighter by far.
+Points that are not results are drawn brighter the closer they are to a search
+in plain cosine. **The rest** says how much: *bright* (to begin with) gives
+every such point some light and the closest ones most; *visible* is dimmer;
+*faint* is a hint only. At every level the results keep the brightness the
+**Lit** setting gives them and stay the brightest. With Lit set to *by
+closeness* every point is usually lit already, so The rest then changes
+nothing.
 
 ### Show the origin
 

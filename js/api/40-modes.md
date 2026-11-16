@@ -434,7 +434,7 @@ Added for relative search (task t6 of
 interface is `docs/relative-interface.md`, "Tumble (t6)"). Relative is a
 setting of Tumble. With it **off** (the default), nothing on this page changes:
 the frames, the centre and the zoom are today's, bit for bit
-(`js/test/relative-off-golden.test.js`). Two optional members join the Tumble
+(`js/test/relative-off-golden.test.js`). Three optional members join the Tumble
 instance, as `face` is optional to the mode interface:
 
 - `inst.searchChanged(search, t) -> stepper | null`. The viewer calls it
@@ -457,6 +457,15 @@ instance, as `face` is optional to the mode interface:
   switch. `showOrigin` changes the framing only: the centre and zoom glide to
   the new framing; no fit and no turn. In the plain view it changes nothing in
   the mode (the viewer draws the marker).
+- `inst.setStill(still)` (task t19, deviation d5). The viewer tells Tumble
+  whether its clock stands still: `true` while paused (reduced motion starts
+  paused), `false` while it runs; anything but `true` is `false`, and the
+  default is `false`. It changes nothing shown by itself and is kept across
+  `enter()`. While still, a switch or a Show the origin framing change has **no
+  turn**: it takes effect at its time T, so `stateAt(T)` is already the settled
+  relative view (or the plain view when turning off), with `settled` true. The
+  still flag is read when the switch is fixed (at the call, or at `mark` for a
+  switch that waited for a fit), not when the fit was started.
 
 The option `relativeTransition` (default 1.5) is the length in seconds of the
 turn onto or off the relative frame.
@@ -495,7 +504,10 @@ when the fit has finished (`inst.mark(t)`), and the frame after it is a pure
 function of data history, seed, entry view, event times and `t`. At T the frame
 turns from the frame shown onto the moving relative frame with the refit turn
 (a rotation, so the frame stays orthonormal and never folds) over
-`relativeTransition`. A swing in progress (`face`) gives way to the switch.
+`relativeTransition`, or with no turn at all when the switch is fixed while the
+mode is still (`setStill(true)`): the event then records duration 0, so seeking
+and two instances given the same events still agree. A swing in progress
+(`face`) gives way to the switch.
 While the relative view is shown, or a switch to it is pending, `face` returns
 `false` and starts nothing; with the setting off it is as before.
 
@@ -529,7 +541,8 @@ relative: null | {        // null: setting off and no turn back in progress (the
 
 `describe()` gains `relative`: the same fields at the instance's time, plus
 `switchAt` (the latest relative switch's T, or `null`), `pending` (a fit or a
-switch is waiting) and `transition`. With the setting off and no turn in progress
+switch is waiting), `transition` and `instant` (the latest switch or framing
+change had no turn because the mode was still). With the setting off and no turn in progress
 it is `{ relative: false, showOrigin, active: false, switchAt, pending: false }`.
 
 **Status.** In the relative view the status line starts `relative to {letters}

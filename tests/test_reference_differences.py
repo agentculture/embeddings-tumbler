@@ -524,14 +524,10 @@ RELATIVE_NAMED = (
     "2-d canvas",  # the page's look
     "own first result",  # whether the search's own point is named
 )
-# The open items, by words of their titles (lower case).
-RELATIVE_OPEN = (
-    "titles or text",
-    "how strong the gradient",
-    "letters should be kept in every view",
-    "search marker carries the search's name",
-    "reduced motion shows the settled",
-)
+# The open items, by words of their titles (lower case). Empty: the five questions put to the
+# owner were decided on 2026-11-17 (deviations d5 and d6). An empty set is accepted while the
+# sign-off is open; a recorded sign-off still allows no open item.
+RELATIVE_OPEN: tuple[str, ...] = ()
 RELATIVE_NOT_YET = "is **not yet recorded**"
 
 
@@ -566,6 +562,18 @@ def _words_after(text: str, found: re.Match) -> str:
         after = text[found.end() :].strip().splitlines()
         words = after[0].strip() if after else ""
     return words
+
+
+def _reopen_last_relative_item(text: str) -> str:
+    """``text`` with the "Decided by" line of the relative part's last item made open."""
+    start = text.index("## " + RELATIVE + ":")
+    end = text.index("## " + RELATIVE_SIGN_OFF)
+    last = None
+    for found in re.finditer(r"^- \*\*Decided by:\*\* .*$", text[start:end], flags=re.MULTILINE):
+        last = found
+    assert last is not None, "no decided item in the relative part"
+    a, b = start + last.start(), start + last.end()
+    return text[:a] + "- **Decided by:** open: not decided." + text[b:]
 
 
 def _check_relative_sign_off(text: str) -> str:
@@ -735,10 +743,9 @@ def _relative_contradiction(case: str) -> str:
         ),
         "claimed without the line": text[:start]
         + text[start:].replace(RELATIVE_NOT_YET, "is recorded"),
-        # the last of the items decided above, which is in the relative part
-        "signed while an item is open": "- **Decided by:** open: not decided.".join(
-            signed.rsplit(DECIDED_LINE, 1)
-        ),
+        # the last item of the relative part marked open again (with no open item left in the
+        # document, the case must make one itself)
+        "signed while an item is open": _reopen_last_relative_item(signed),
         "two lines": signed + signed_line + "\n",
         "no mixed-length line": _signed_relative_text(signed_line),
         "mixed-length line without words": _signed_relative_text(

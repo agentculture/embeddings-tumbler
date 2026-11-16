@@ -195,7 +195,8 @@ def test_the_two_core_files_are_the_release_and_this_checkout(runs):
     assert old["version"] == "0.12.1"
     assert _old_core() != (rs.STATIC / "embeddings-tumbler.js").read_bytes()
     assert old["relative"] is None  # no relative setting before
-    assert new["relative"] == {"relative": False, "showOrigin": False}  # off in the new one
+    # off in the new one (with the rest at its default, d6, which nothing uses while off)
+    assert new["relative"] == {"relative": False, "showOrigin": False, "rest": "bright"}
     assert old["paused"] is True and new["paused"] is True  # reduced motion: a still picture
 
 

@@ -815,6 +815,19 @@
       "showOrigin",
       "Zoom out to the all-zero vector, or, in the plain view, mark where it falls."
     );
+    // The rest: how bright the points that are not results are in the relative view (d6).
+    var rest = spSelect(p, "tumbler-search-rest", "The rest", [
+      ["faint", "faint"],
+      ["visible", "visible"],
+      ["bright", "bright"],
+    ]);
+    p.rest = rest.input;
+    p.restLabel = rest.label;
+    p.restLabel.title = "How bright the points that are not results are in the relative view.";
+    p.rest.value = "bright";
+    spListen(p, p.rest, "change", function () {
+      if (typeof p.handle.setRelative === "function") p.handle.setRelative({ rest: p.rest.value });
+    });
     p.face = spText(p, "button", "tumbler-search-face", "Face the searches");
     p.face.type = "button";
     spListen(p, p.face, "click", function () {
@@ -851,7 +864,7 @@
       spClear(p);
     });
     p.litLabel = lit.label;
-    [p.relative.label, p.origin.label, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
+    [p.relative.label, p.origin.label, p.restLabel, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
       row.appendChild(c);
     });
     return row;
@@ -1107,6 +1120,11 @@
     spShow(p.origin.label, p.tumble, "inline-flex");
     p.relative.input.checked = !!rel && rel.relative === true;
     p.origin.input.checked = !!rel && rel.showOrigin === true;
+    // The rest sits with them in Tumble; it matters only in the relative view, so it is
+    // disabled (not hidden, so the row does not shift) while Relative is off.
+    spShow(p.restLabel, p.tumble, "inline-flex");
+    p.rest.disabled = !(rel && rel.relative === true);
+    if (rel && typeof rel.rest === "string" && p.rest.value !== rel.rest) p.rest.value = rel.rest;
     spShow(p.face, !(p.tumble && rel && rel.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
     spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
@@ -1557,7 +1575,8 @@
     var n = q.results.length;
     ctx.lineWidth = dpr;
     ctx.strokeStyle = colour;
-    // The relative view draws its own stems and result labels: no links and no labels here.
+    // The relative view draws its own stems, result labels and the searches' names: no links
+    // and no labels here.
     if (!view.relative) q.results.forEach(function (r, i) {
       if (view.hidden(r.index)) return;
       var rp = view.project(spPointVector(view.set, r.index));
@@ -1710,7 +1729,8 @@
       var qp = project(vec);
       if (!spFinite(qp)) return;
       spDrawSearch(p, ctx, j, qp, q, view);
-      letters.push({ qp: qp, j: spSlot(q, j), text: view.focus ? q.letter + " query" : q.letter });
+      // In the relative view the overlay puts the letter and name beside the ring (t19).
+      if (!view.relative) letters.push({ qp: qp, j: spSlot(q, j), text: view.focus ? q.letter + " query" : q.letter });
     });
     ctx.globalAlpha = 1;
     ctx.restore?.();

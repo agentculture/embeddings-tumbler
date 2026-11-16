@@ -189,6 +189,11 @@ drawing while it is shown. It still drives the viewer only through the handle.
   `search.relative.showOrigin` on every `update(search)`, so a change made
   through the handle (or by a host's mount option) shows in them. Both carry a
   title (a tooltip); Show the origin works in the plain view and with no search.
+  A third control follows them (task t19, deviation d6): `label.tumbler-search-rest`,
+  a select named **The rest** with the options `faint`, `visible` and `bright`
+  (how bright the points that are not results are in the relative view). A change
+  calls `handle.setRelative({ rest })`; it follows `search.relative.rest`. It is
+  shown in Tumble only, and disabled (not hidden) while Relative is off.
   While Relative is checked in Tumble, **Face the searches** is hidden (the
   view is fitted by the search itself, so there is nothing to swing). It is shown again when
   Relative is unchecked.
@@ -216,8 +221,8 @@ drawing while it is shown. It still drives the viewer only through the handle.
   and so on), not of its place in the list. While Relative is on the viewer
   keeps letters, so B stays in B's colour when A is removed. A letter outside
   A to D falls back to its place in the list.
-- **`frame.relative`.** While it is true the panel draws each search's ring and
-  letter but no links to the results and no result labels: the relative overlay
-  (`ET.relativeOverlay`, `js/api/46-relative-overlay.md`) draws stems and result
-  labels instead. The viewer sets it while `search.relative.active` and the
+- **`frame.relative`.** While it is true the panel draws each search's ring but
+  no letter, no links to the results and no result labels: the relative overlay
+  (`ET.relativeOverlay`, `js/api/46-relative-overlay.md`) draws stems, result
+  labels and each search's letter and name (`A · Rice`) instead (task t19). The viewer sets it while `search.relative.active` and the
   mode is Tumble. With it false or absent the panel draws as before.

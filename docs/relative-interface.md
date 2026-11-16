@@ -406,6 +406,14 @@ searchChanged
 setRelative
 ```
 
+A third optional member, `setStill`, is added by t19 (below, "Motion stopped
+(t19)").
+
+<!-- interface-names module="40-mode-tumble.js" object="mode:tumble" match="present" task="t19" prefix="inst." landed="yes" -->
+```text
+setStill
+```
+
 ### `inst.searchChanged(search, t) -> stepper | null`
 
 The same call and argument the viewer already makes for Focus
@@ -490,7 +498,49 @@ instance is entered (before `prepare` finishes is allowed) and on every change.
   append the plain tour is fitted again only by a refit, so the relative fit
   fits the new set's directions itself; it never uses the old set's (tested).
 - Pause and reduced motion stop everything as in plain Tumble: it all runs on
-  mode time.
+  mode time. A change made while the clock stands still has no turn (next
+  section).
+
+### Motion stopped (t19)
+
+Decided by the owner on 2026-11-17 (deviation d5): when the viewer's clock is
+not advancing, a change that would turn the view takes effect at once.
+
+### `inst.setStill(still)`
+
+`still`: `true` while the viewer's clock stands still (paused, which reduced
+motion starts in), `false` while it runs; anything but `true` counts as
+`false`. The viewer calls it right after the instance is entered (before
+`setRelative`) and whenever Pause or Play changes the clock. It changes nothing
+shown by itself and is kept across `enter()`. Default `false`, so a mode never
+told is today's Tumble, bit for bit.
+
+- While still, a switch (Relative on or off, a search added or removed, a fit
+  kept for the same searches) and a Show the origin framing change are
+  recorded with **no turn**: the event's turn and framing have duration 0 and
+  no blend, so `stateAt(T)` is already the settled relative view (or the plain
+  view when turning off): `settled` true, `mix` at its end, row 1 exact, the
+  framing at its target. The event records `instant: true`;
+  `describe().relative.instant` reports it for the newest event (absent when
+  the setting is off and nothing is shown).
+- **Decided at the switch, not the call.** A fit started while still and
+  finished after Play turns as usual; one started while running and switched
+  in while still has no turn. A switch that needs a fit is fixed by
+  `inst.mark(clock)`, which the viewer calls on every ready frame, paused or
+  not, and the viewer keeps pumping the preparation while paused (its frame
+  loop runs while the mode has jobs), so a fit pumped while paused completes
+  and applies on the frame it finishes.
+- **Reproducible.** The event is fixed at a recorded time with its duration,
+  so the same data, seed, searches, recorded times and the same still flag at
+  each switch give the same frames, and a `t` before the event gives the view
+  before it.
+- With the clock running nothing changes: the turn takes `relativeTransition`
+  as before (tested: frames bit-identical with `setStill(false)` and with no
+  call at all).
+- Decided here: the viewer tells the mode (`setStill`) rather than passing a
+  duration with each call, because a switch that needs a fit is fixed later by
+  `mark`, not by the call that started it; the mode must know the clock's state
+  at the switch.
 - `draw.fog` stays 0; `draw.perspective` as above; the other draw keys are
   Tumble's.
 
@@ -576,8 +626,10 @@ input = {
   vectors, dimension,          // the set's block and D
   frame, centre,               // the mode state's frame and centre this frame
   relative,                    // the mode state's relative (null: the plain view)
-  searches: [{ letter, colour, query }],   // every search shown, letter order, raw query vectors
-  named: [{ index, text, ranks }],         // named results to label, each once; ranks: [{ letter, rank }]
+  searches: [{ letter, colour, query, name }], // every search shown, letter order, raw query vectors;
+                                           // name: what the marker is called (t19), "" for none
+  named: [{ index, text, title, ranks }],  // named results to label, each once; ranks: [{ letter, rank }];
+                                           // title: the point's title, or null (t19)
                                            // (reranker ranks; [] with no reranking or a failed one)
   cut: null | { height, sent },            // the reranker's cut-off for the vertical search:
                                            // the height of the lowest candidate sent, and how many were sent
@@ -608,7 +660,8 @@ What it holds (the reference's look; `m` is `relative.mix`):
   the first multiple of 0.1 at or above the ruler's foot to `top`, each tick
   labelled; the title at `top`; one stem per named result from the result to
   the point on ruler A at its height, except the search's own point (see the
-  answer above); the search markers at each search's raw query; with two
+  answer above); the search markers at each search's raw query, each with
+  its letter and name beside it (below); with two
   pinned, ruler B from the origin (or `max(0, bottom - 0.2)`) to `max(1,
   len(q_B)) + 0.04` along B's own direction with dots and labels at 0.1 to 0.9;
   with `cut`, a dashed line across ruler A at `cut.height`; the origin cross
@@ -618,13 +671,25 @@ What it holds (the reference's look; `m` is `relative.mix`):
   include 0), only on a unit-length set, the unit circle about it.
 - **Relative view, not settled** (`relative.settled` false): ruler A's line
   only, faint; **no ticks, no rings, no tick labels, no stems, no cut-off
-  line** (o1: the ruler is not drawn as exact while the view turns).
+  line** (o1: the ruler is not drawn as exact while the view turns). The
+  search markers and their names stay.
 - **Plain view** (`relative` null) with Show the origin: the origin cross where
   the all-zero vector falls and its text with the true distance `len(centre)` and
   the visible part (the length of the centre's projection on the three rows).
 - Otherwise the list is empty.
 - Result labels (`kind: "result"`) only when `labels` is true; ranks in front
   when given (`1.`, or `A1.` with several searches; joined by a space).
+- **The search's name on its marker (t19, deviation d5).** In the relative
+  view, settled or turning, one text of `kind: "search"` per search: `{letter}
+  · {name}` (the reference's "A · Rice"), `name` cut to 28 characters as a
+  result's text is, or `{letter}` alone when `name` is empty; in the search's
+  colour, left-aligned 15 px right of and 4 px below the marker's centre (the
+  panel's letter place). It is always drawn (with `labels` off too, as the
+  panel's letters were). Decided here: the overlay draws it, not the panel, so
+  that it is placed with the other labels and before every result label; the
+  panel then draws only the ring in the relative view (see "Search panel").
+  The viewer leaves out the overlay's own ring when the panel is mounted, so
+  ring and name are each drawn once with and without the panel.
 
 ### `ET.relativeOverlay.paint(ctx, list) -> boolean`
 
@@ -637,9 +702,10 @@ Puts `list.texts` as `span` elements in `layer` (a `div.tumbler-relative-labels`
 the viewer creates after the overlay canvas, `aria-hidden`), every text with
 `textContent`, styles through `element.style`; reuses its spans (at most 160);
 returns how many are shown. Labels that would overlap one already placed are
-left out, ticks and titles first, then results nearest the top of the ruler
-(the spec's open park on label collisions; the panel's list carries every
-result).
+left out, in this order: the title, the ticks, the cut-off text, the origin
+text, each search's letter and name, then results nearest the top of the
+ruler (the spec's open park on label collisions; the panel's list carries
+every result). So a marker's name is never left out for a result label.
 
 ### Overlay strings (t7)
 
@@ -651,12 +717,18 @@ origin (0, 0, … , 0)
 origin · truly {far} from the centre, {seen} of it visible
 ```
 
+<!-- interface-strings module="46-relative-overlay.js" task="t19" landed="yes" -->
+```text
+{letter} · {name}
+```
+
 - The title is `{measure} to {letter}` (the reference's `MEASURE + ' to A'`):
   `cosine to A`, or `length along the search to A`.
 - Tick labels are the height with one decimal (`0.7`); a negative tick keeps
   its sign (`-0.1`).
-- A result label is `[{ranks} ]{text}  {heights}`: `text` cut to 28 characters
-  as the panel does, `heights` the result's height along each pinned search
+- A result label is `[{ranks} ]{text}  {heights}`: `text` is the point's
+  title when the viewer gives one (`named[k].title`, t19), otherwise its text;
+  cut to 28 characters as the panel does, `heights` the result's height along each pinned search
   with two decimals, joined by ` · `. On a set that is not unit-length,
   two spaces and `cosine {c}` follow (its cosine to each pinned search, two decimals, joined
   by ` · `), so every named result shows both (o4).
@@ -675,6 +747,8 @@ search; it sits beside Relative because both are Tumble's.
 div.tumbler-search-controls
   label.tumbler-search-relative     input[type=checkbox] "Relative"; in the row always, shown only in Tumble
   label.tumbler-search-origin       input[type=checkbox] "Show the origin"; in the row always, shown only in Tumble
+  label.tumbler-search-rest         select "The rest": faint, visible, bright (t19, d6); shown only in Tumble,
+                                    disabled while Relative is off
   button.tumbler-search-face        hidden (display none) while Relative is checked in Tumble; shown again when off
   ...                               the existing controls, unchanged
 ```
@@ -691,10 +765,18 @@ div.tumbler-search-controls
   for a set that is not unit-length.)
 - **Colours follow the letter, not the position**: search B uses
   `--tumbler-search-2` whether or not A is shown (letters are kept, see t9).
+- **The rest (t19, deviation d6)**: a native select labelled `The rest` with
+  the options `faint`, `visible` and `bright` (values the same words), titled
+  `How bright the points that are not results are in the relative view.` A
+  change calls `handle.setRelative({ rest })`; the select follows
+  `search.relative.rest`. Decided here: it is disabled, not hidden, while
+  Relative is off, so the row does not shift and the setting stays visible
+  beside the control it belongs to.
 - **`frame.relative`**: `panel.drawOverlay(ctx, project, frame)` gets `frame.relative`
   (boolean, true while `search.relative.active` and the mode is Tumble). While
-  it is true the panel draws its query rings and letters but **no links and no
-  result labels** (the relative overlay draws stems and result labels).
+  it is true the panel draws its query rings but **no letters, no links and no
+  result labels** (the relative overlay draws stems, result labels and each
+  search's letter and name, t19).
 - **Result lists** while the relative view is shown: each result row adds, after
   the existing parts, `cosine {c}` on a unit-length set, or `length along the
   search {h} · cosine {c}` otherwise (three decimals; `h` the result's height
@@ -741,6 +823,7 @@ t8 lands.
 |--------|---------|---------|
 | `relative` | `false` | The Relative setting at mount. |
 | `showOrigin` | `false` | The Show the origin setting at mount. |
+| `relativeRest` | `"bright"` | The rest at mount: `"faint"`, `"visible"` or `"bright"`; any other value is the default (t19, d6). |
 
 ### Handle methods
 
@@ -750,19 +833,21 @@ setRelative
 relativeSettings
 ```
 
-#### `handle.setRelative(patch) -> { relative, showOrigin }`
+#### `handle.setRelative(patch) -> { relative, showOrigin, rest }`
 
-`patch`: `{ relative?, showOrigin? }`; a key that is not a boolean is ignored,
-a missing key keeps its value. Synchronous (no ranking is redone, nothing is
+`patch`: `{ relative?, showOrigin?, rest? }`; `relative` or `showOrigin` that
+is not a boolean is ignored, as is a `rest` that is not `"faint"`,
+`"visible"` or `"bright"`; a missing key keeps its value. Synchronous (no ranking is redone, nothing is
 superseded, no callback is called, no request is made). The settings are kept
 in every mode and with no search; in Tumble they are passed on with
 `inst.setRelative(settings, clock)` and, when the mode is entered later, right
-after it is entered (with `searchChanged` as for Focus). `onSearchChange` fires
-when either value changes, and when the relative view appears or goes, its
+after it is entered (with `searchChanged` as for Focus); `rest` is the
+viewer's own and changes only the lit values while the relative view is shown.
+`onSearchChange` fires when any value changes, and when the relative view appears or goes, its
 pinned or dropped letters change, or a turn ends (`settled` flips). After `destroy` it returns the last settings and
 does nothing.
 
-#### `handle.relativeSettings() -> { relative, showOrigin }`
+#### `handle.relativeSettings() -> { relative, showOrigin, rest }`
 
 A copy of the settings.
 
@@ -772,7 +857,7 @@ A copy of the settings.
 
 ```js
 relative: {
-  relative, showOrigin,      // the settings
+  relative, showOrigin, rest, // the settings (rest: "faint" | "visible" | "bright", t19)
   offered,                   // the current mode is Tumble (the controls are offered)
   active,                    // offered and the mode's state.relative.active
   settled,                   // active and state.relative.settled
@@ -803,7 +888,8 @@ the vertical axis. `info().search.searches` stays in letter order; pairs,
 given by position as today, so nothing changes with relative off (o9). Reason:
 the spec requires that every search keeps its letter in the relative view
 (o14), and limiting it to the setting keeps every existing test and frame as
-it is; whether to keep letters in every view is a follow-up for the owner.
+it is. Keeping letters in every view is a follow-up: the owner accepted this as
+built on 2026-11-17 (deviation d5).
 
 ### The brightness gradient for points that are not results
 
@@ -813,22 +899,32 @@ sends the renderer lit values in which:
 - every point whose lit value from `ET.searchSets.litValues` is above 0 keeps
   it exactly (results and points inside the result radius follow the Lit
   setting as today, owner's decision);
-- every other point gets `RELATIVE_GRADIENT * g^2`, where `RELATIVE_GRADIENT =
-  0.2` and `g` is the largest over the shown searches of `clamp((c_i - mid) /
+- every other point gets `base + scale * g^2` at the level of the rest
+  setting (`RELATIVE_REST`, below), where `g` is the largest over the shown searches of `clamp((c_i - mid) /
   (hi - mid), 0, 1)`, `c_i = 1 - plainDistance_i` (the plain cosine, never the
   point-of-view scaled one), `mid` the median `c` over all points (index
   `N >> 1` of the ascending sort, the reference's `q.mid`) and `hi` the largest
   `c` over all points other than the search's own point (the reference's
-  `q.hi`). Worked out once per change of the searches or the data, not per
-  frame.
+  `q.hi`). Worked out once per change of the searches, the data or the rest,
+  not per frame.
 
-At `filter` 1 a gradient value `l` draws at brightness `unlitGain + (2.2 -
-unlitGain) l`, so the brightest non-result reaches `0.07 + 2.13 x 0.2 = 0.50`
-against 2.2 for a full result: faint. Decided here: 0.2 keeps the cloud
-readable by similarity (the reference brightens every point by similarity) while
-results stay plainly brighter; t15 shows it to the owner. With the relative view
-not shown the lit values are exactly today's. `litCount` and `sharedCount`
-count only the lit values from `litValues`.
+**The rest (t19, deviation d6).** Three levels, as `base + scale * g^2`:
+
+| `rest` | `base` | `scale` | Lit value from g = 0 to g = 1 |
+|--------|--------|---------|-------------------------------|
+| `"faint"` | 0 | 0.2 | 0 to 0.2 (what was built first) |
+| `"visible"` | 0.08 | 0.45 | 0.08 to 0.53 |
+| `"bright"` | 0.2 | 0.6 | 0.2 to 0.8 (the default) |
+
+At `filter` 1 a lit value `l` draws at brightness `unlitGain + (2.2 -
+unlitGain) l` against 2.2 for a full result, so the brightest non-result
+reaches `0.07 + 2.13 x 0.2 = 0.50` at "faint", `1.20` at "visible" and `1.77`
+at "bright", and every non-result starts at `0.07`, `0.24` and `0.50`. The
+owner was shown the three live and chose "bright" as the default with a control
+(2026-11-17). With the relative view not shown the lit values are exactly
+today's and no rest value is uploaded, whatever the setting. `litCount` and
+`sharedCount` count only the lit values from `litValues`. With Lit set to "by
+closeness" every point is usually lit already, so the rest changes nothing.
 
 ### Status line additions (t9)
 
@@ -890,6 +986,7 @@ With {letter}'s point of view on, its results are ranked in the scaled measure a
 |-----------|----------|---------|
 | `relative` | `relative` (boolean) | The Relative setting. A boolean attribute: present (any value but `"false"`) is on, absent or `"false"` is off. |
 | `show-origin` | `showOrigin` (boolean) | The Show the origin setting, the same way. |
+| `relative-rest` | `relativeRest` (string) | The rest (t19, d6): `faint`, `visible` or `bright`; absent or any other value reads as `bright`. Setting the property to another value is ignored. |
 
 Setting either before the viewer is mounted passes it as a mount option;
 afterwards the shell calls `handle.setRelative`. A property set reflects to its
@@ -903,23 +1000,36 @@ showOrigin
 setRelative
 ```
 
+<!-- interface-text file="js/shells/web-component.js" task="t19" landed="yes" -->
+```text
+"relative-rest"
+relativeRest
+```
+
 ## Standalone page (t12)
 
 | Address parameter | Meaning |
 |-------------------|---------|
 | `relative=1` | Mount with the Relative setting on (`0` or absent: off). |
 | `origin=1` | Mount with Show the origin on (`0` or absent: off). |
+| `rest=faint`, `rest=visible` | Mount with that rest (t19, d6); `bright`, absent or another value: the default, bright. |
 
 The controls are the panel's (in the viewer the page mounts); the page reads
-the two parameters, passes them as mount options, and keeps them in the address
-with `history.replaceState` when `onSearchChange` reports a change of either
-setting, so a view can be reopened. The other parameters (`mode`, `seed`,
+the parameters, passes them as mount options, and keeps them in the address
+with `history.replaceState` when `onSearchChange` reports a change of a
+setting, so a view can be reopened; `rest` is written only when it is not the
+default. The other parameters (`mode`, `seed`,
 `data`, `sample`) are kept as they are.
 
 <!-- interface-text file="js/page/page.js" task="t12" landed="yes" -->
 ```text
 "relative"
 "origin"
+```
+
+<!-- interface-text file="js/page/page.js" task="t19" landed="yes" -->
+```text
+"rest"
 ```
 
 ## Searches that give no axis

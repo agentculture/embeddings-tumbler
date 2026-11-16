@@ -127,6 +127,7 @@
       face: face,
       searchChanged: searchChanged,
       setRelative: setRelative,
+      setStill: setStill,
       leave: leave,
     };
 
@@ -169,6 +170,9 @@
     var relPending = null; // a relative fit started and not yet switched in: { list, set, fit }
     var relFits = []; // finished fits kept for reuse on the same set: { set, list, fit }
     var relGen = 0; // a fit of an earlier call that is pumped later does nothing
+    // The viewer's clock is not advancing (paused, or reduced motion): a switch or a framing
+    // change fixed now has no turn (duration 0, recorded in the event). Kept across enter().
+    var still = false;
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Tumble");
@@ -523,6 +527,11 @@
       return d > 0 && Number.isFinite(d) ? d : DEFAULTS.relativeTransition;
     }
 
+    // The length of a turn or a framing glide fixed now: none while the clock is still.
+    function eventDuration() {
+      return still ? 0 : relDuration();
+    }
+
     // The frame with the relative events applied (no swing): the plain frame, or
     // the target of the turn in force (the relative tour or the plain frame),
     // turned onto from the frame shown at the turn's start.
@@ -606,15 +615,16 @@
         : null;
       var start = tour ? tour.frameAt(T) : frameAt(T, new Float32Array(3 * D));
       // Already on the new frame (a search that adds no axis): nothing turns.
-      var still = sameBits(shown.frame, start);
+      // With the clock still the new view is shown at once: no turn and no glide.
+      var level = sameBits(shown.frame, start);
       var turn = {
         t0: T,
         tour: tour,
         fit: fit,
         list: list,
         set: set,
-        blend: still ? null : makeRefitBlend(shown.frame, start, D),
-        duration: still ? 0 : relDuration(),
+        blend: level || still ? null : makeRefitBlend(shown.frame, start, D),
+        duration: level ? 0 : eventDuration(),
         mixFrom: shown.mix,
         mixTo: tour ? 1 : 0,
       };
@@ -622,7 +632,8 @@
         t0: T,
         afterSwings: swings.list.length,
         turn: turn,
-        framing: { t0: T, duration: relDuration(), centre: shown.centre, zoom: shown.zoom, target: tour ? framingTarget(fit) : null },
+        framing: { t0: T, duration: eventDuration(), centre: shown.centre, zoom: shown.zoom, target: tour ? framingTarget(fit) : null },
+        instant: still,
         info: null,
       });
     }
@@ -637,7 +648,8 @@
         t0: T,
         afterSwings: swings.list.length,
         turn: turn,
-        framing: { t0: T, duration: relDuration(), centre: shown.centre, zoom: shown.zoom, target: framingTarget(turn.fit) },
+        framing: { t0: T, duration: eventDuration(), centre: shown.centre, zoom: shown.zoom, target: framingTarget(turn.fit) },
+        instant: still,
         info: null,
       });
     }
@@ -799,6 +811,13 @@
       var h = heading();
       if (showOrigin !== wasOrigin && relEvents.length === before && h?.fit) addFraming(t);
       return work;
+    }
+
+    // inst.setStill(still): the viewer's clock is (true) or is not (false) standing still.
+    // It changes nothing shown; it decides only whether a switch or a framing change fixed
+    // from now on turns (docs/relative-interface.md, "Motion stopped (t19)").
+    function setStill(value) {
+      still = value === true;
     }
 
     // state.relative at t (docs/relative-interface.md): null in the plain view
@@ -1010,9 +1029,11 @@
     // describe().relative (docs/relative-interface.md).
     function describeRelative() {
       var switchAt = relEvents.length ? relEvents.at(-1).t0 : null;
+      var instant = relEvents.length ? relEvents.at(-1).instant : false;
       var info = relInfo(self.time);
       if (!info) return { relative: false, showOrigin: showOrigin, active: false, switchAt: switchAt, pending: false };
       info.switchAt = switchAt;
+      info.instant = instant;
       info.pending = relPending !== null;
       info.transition = relDuration();
       return info;

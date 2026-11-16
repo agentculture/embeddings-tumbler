@@ -165,7 +165,7 @@ test.after(() => {
 test("relative through the mount option pins the frame once a search exists", async () => {
   const t = setup({ relative: true });
   await ready(t);
-  assert.deepStrictEqual(t.h.relativeSettings(), { relative: true, showOrigin: false });
+  assert.deepStrictEqual(t.h.relativeSettings(), { relative: true, showOrigin: false, rest: "bright" });
   const rel0 = t.h.info().search.relative;
   assert.strictEqual(rel0.relative, true);
   assert.strictEqual(rel0.offered, true);
@@ -190,15 +190,26 @@ test("relative through the mount option pins the frame once a search exists", as
 test("relative through the handle: on, kept across views and with no search; junk is ignored", async () => {
   const t = setup({});
   await ready(t);
-  assert.deepStrictEqual(t.h.relativeSettings(), { relative: false, showOrigin: false });
+  assert.deepStrictEqual(t.h.relativeSettings(), { relative: false, showOrigin: false, rest: "bright" });
   const before = t.changes.length;
-  assert.deepStrictEqual(t.h.setRelative({ relative: true }), { relative: true, showOrigin: false });
+  assert.deepStrictEqual(t.h.setRelative({ relative: true }), { relative: true, showOrigin: false, rest: "bright" });
   assert.strictEqual(t.changes.length, before + 1, "onSearchChange fires on a change");
   assert.strictEqual(t.changes.at(-1).relative.relative, true);
-  assert.deepStrictEqual(t.h.setRelative({ relative: true }), { relative: true, showOrigin: false });
+  assert.deepStrictEqual(t.h.setRelative({ relative: true }), { relative: true, showOrigin: false, rest: "bright" });
   assert.strictEqual(t.changes.length, before + 1, "no change, no call");
-  assert.deepStrictEqual(t.h.setRelative({ relative: "yes", showOrigin: 1 }), { relative: true, showOrigin: false });
-  assert.deepStrictEqual(t.h.setRelative(null), { relative: true, showOrigin: false });
+  assert.deepStrictEqual(t.h.setRelative({ relative: "yes", showOrigin: 1 }), { relative: true, showOrigin: false, rest: "bright" });
+  assert.deepStrictEqual(t.h.setRelative(null), { relative: true, showOrigin: false, rest: "bright" });
+  // t19 (d6): the rest is a setting of the same call; an unknown value is ignored, a change
+  // is told to the host.
+  const n0 = t.changes.length;
+  assert.deepStrictEqual(t.h.setRelative({ rest: "dazzling" }), { relative: true, showOrigin: false, rest: "bright" });
+  assert.deepStrictEqual(t.h.setRelative({ rest: 1 }), { relative: true, showOrigin: false, rest: "bright" });
+  assert.strictEqual(t.changes.length, n0, "an unknown value changes nothing");
+  assert.deepStrictEqual(t.h.setRelative({ rest: "faint" }), { relative: true, showOrigin: false, rest: "faint" });
+  assert.strictEqual(t.changes.length, n0 + 1, "onSearchChange fires on a change of the rest");
+  assert.strictEqual(t.changes.at(-1).relative.rest, "faint");
+  assert.strictEqual(t.h.info().search.relative.rest, "faint");
+  assert.deepStrictEqual(t.h.setRelative({ rest: "bright" }), { relative: true, showOrigin: false, rest: "bright" });
   // A setting is not a ranking: nothing is waiting, nothing superseded.
   assert.strictEqual(t.h.info().search.waiting, false);
   await searchAndSettle(t, [{ point: idOf(t.data, "Rice") }]);
@@ -221,10 +232,10 @@ test("relative through the handle: on, kept across views and with no search; jun
   rel = t.h.info().search.relative;
   assert.deepStrictEqual([rel.relative, rel.active], [false, false]);
   t.h.setRelative({ showOrigin: true });
-  assert.deepStrictEqual(t.h.relativeSettings(), { relative: false, showOrigin: true });
+  assert.deepStrictEqual(t.h.relativeSettings(), { relative: false, showOrigin: true, rest: "bright" });
   t.h.destroy();
-  assert.deepStrictEqual(t.h.setRelative({ relative: true }), { relative: false, showOrigin: true }, "after destroy: the last settings");
-  assert.deepStrictEqual(t.h.relativeSettings(), { relative: false, showOrigin: true });
+  assert.deepStrictEqual(t.h.setRelative({ relative: true }), { relative: false, showOrigin: true, rest: "bright" }, "after destroy: the last settings");
+  assert.deepStrictEqual(t.h.relativeSettings(), { relative: false, showOrigin: true, rest: "bright" });
 });
 
 test("with no search the setting is reported on and every frame equals plain Tumble's", async () => {
@@ -579,8 +590,12 @@ test("a reranker that answers: ranks reach the overlay and the cut-off is the lo
 
 // ---------- criterion 5: lit values ----------
 
-// The gradient by the documented rule, worked out here independently.
-function expectedGradient(set, queries, own) {
+// The rest's three levels (deviation d6): a point that is not a result gets base + scale * g^2.
+const REST = { faint: [0, 0.2], visible: [0.08, 0.45], bright: [0.2, 0.6] };
+
+// The gradient by the documented rule, worked out here independently, at a level of the rest.
+function expectedGradient(set, queries, own, level = "faint") {
+  const [base, scale] = REST[level];
   const N = set.count;
   const g = new Float64Array(N);
   queries.forEach((query, j) => {
@@ -596,18 +611,26 @@ function expectedGradient(set, queries, own) {
       if (y > g[i]) g[i] = y;
     });
   });
-  return Float32Array.from(g, (x) => 0.2 * x * x);
+  return Float32Array.from(g, (x) => base + scale * x * x);
 }
 
-for (const litSetting of ["even", "close", "named"]) {
-  test(`Lit ${litSetting}: results keep their lit values, every other point gets the gradient`, async () => {
+// t19 (deviation d6): every level of the rest, at every Lit setting. "faint" is the 0.2 g^2
+// these tests checked before; "bright" is the default, reached here with no option.
+for (const litSetting of ["even", "close", "named"]) for (const level of ["bright", "faint", "visible"]) {
+  test(`Lit ${litSetting}, the rest ${level}: results keep their lit values, every other point gets the gradient`, async () => {
     const t = setup({ relative: true, searchLit: litSetting });
     await ready(t);
+    assert.strictEqual(t.h.relativeSettings().rest, "bright", "the default");
     const names = ["Rice", "Wheat"];
     await searchAndSettle(
       t,
       names.map((n) => ({ point: idOf(t.data, n) })),
     );
+    if (level !== "bright") {
+      assert.strictEqual(t.h.setRelative({ rest: level }).rest, level);
+      t.dom.frames(2);
+    }
+    assert.strictEqual(t.h.info().search.relative.rest, level);
     const plainLit = t.v.search.lit.lit; // ET.searchSets.litValues: what relative off uploads
     const withGradient = t.lit.at(-1);
     assert.strictEqual(t.v.search.litRelative, true);
@@ -616,15 +639,17 @@ for (const litSetting of ["even", "close", "named"]) {
       t.v.set,
       own.map((i) => rowOf(t.v.set, i)),
       own,
+      level,
     );
+    const [base, scale] = REST[level];
     let graded = 0;
     for (let i = 0; i < plainLit.length; i++) {
       if (plainLit[i] > 0) {
         if (!Object.is(withGradient[i], plainLit[i])) assert.fail(`result ${i}: ${withGradient[i]} vs ${plainLit[i]}`);
       } else {
         if (Math.abs(withGradient[i] - expected[i]) > 1e-6) assert.fail(`point ${i}: ${withGradient[i]} vs ${expected[i]}`);
-        if (withGradient[i] > 0) graded++;
-        assert.ok(withGradient[i] <= 0.2);
+        if (withGradient[i] > base) graded++;
+        assert.ok(withGradient[i] >= base - 1e-7 && withGradient[i] <= base + scale + 1e-7);
       }
     }
     if (litSetting === "close") {
@@ -651,4 +676,22 @@ test("relative off: the lit values uploaded are exactly litValues, with no gradi
   sameBits(t.lit.at(-1), t.v.search.lit.lit, "lit");
   assert.strictEqual(t.h.info().search.relative.active, false);
   t.h.destroy();
+});
+
+test("t19 (d6): the rest through the mount option; junk gives the default; with Relative off no such values are uploaded", async () => {
+  for (const [given, want] of [["visible", "visible"], ["faint", "faint"], ["glaring", "bright"], [undefined, "bright"]]) {
+    const t = setup({ relative: false, relativeRest: given });
+    await ready(t);
+    assert.strictEqual(t.h.relativeSettings().rest, want, String(given));
+    assert.strictEqual(t.h.info().search.relative.rest, want);
+    await settle(t.dom, t.h.setSearches([{ point: idOf(t.data, "Rice") }]));
+    t.dom.frames(4);
+    sameBits(t.lit.at(-1), t.v.search.lit.lit, "lit with relative off, rest " + want);
+    // a change of the rest with Relative off uploads nothing
+    const uploads = t.lit.length;
+    t.h.setRelative({ rest: want === "faint" ? "visible" : "faint" });
+    t.dom.frames(2);
+    assert.strictEqual(t.lit.length, uploads, "nothing uploaded");
+    t.h.destroy();
+  }
 });
