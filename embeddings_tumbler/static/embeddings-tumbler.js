@@ -3528,6 +3528,9 @@ ET.searchSets = (function () {
 //   * Search: setLit() gives per-point lit values and a shared mark, drawn by a second
 //     point program (and, for the wires, a second wire program) only when they apply;
 //     without them the frame is drawn as before.
+//   * Perspective: the draw key perspective (P in s = P / max(0.6, P + z2)) is 3 by default,
+//     drawn by the programs above, unchanged. Any other value is drawn by variant programs
+//     that read it as the uniform uPersp, compiled the first time such a value is drawn.
 //
 // The API is documented in js/api/30-renderer.md.
 // ---------------------------------------------------------------------------
@@ -3568,7 +3571,12 @@ ET.renderer = (function () {
     // 0 = off. Above 0: the most wire light per pixel, measured where the wires' light lands,
     // that the wires may pile up to; above it the wires' brightness is scaled down (wireDensity).
     wireLoad: 0,
+    // the perspective constant P in s = P / max(0.6, P + z2); larger is flatter. 3 (the default)
+    // draws with the original programs; the relative view uses RELATIVE_PERSPECTIVE.
+    perspective: 3,
   });
+
+  var RELATIVE_PERSPECTIVE = 60; // the settled relative view: nearly flat, so heights read true
 
   var WIRE_SAMPLE = 192; // wires sampled (at an even stride) to measure how they pile up
   var WIRE_CELLS = 64; // grid cells across the stage's shorter side for that measure
@@ -3576,6 +3584,7 @@ ET.renderer = (function () {
   // The point program's uniforms (the lit programs add uFilter and uUnlit).
   var POINT_UNIFORMS = ["uPx", "uMinPx", "uFog", "uTime", "uGain", "uDim", "uTwinkle", "uDof", "uFogNear", "uFogWidth"];
   var VIEW_UNIFORMS = ["uX", "uF", "uRot", "uView", "uZoom", "uFocus"];
+  var FLAT_VIEW_UNIFORMS = VIEW_UNIFORMS.concat(["uPersp"]); // the variant programs add uPersp
 
   var MAX_ROW_WIDTH = 4096; // preferred texture row width (texels) before widening
   var INT32_MAX = 2147483647;
@@ -3604,6 +3613,11 @@ ET.renderer = (function () {
       pointLit: null, // the point program that reads lit values, compiled on first setLit
       line: null,
       lineLit: null, // the wire program that reads each wire's lit value, compiled with pointLit
+      // the same four programs reading the perspective as uPersp, compiled when first needed
+      pointFlat: null,
+      lineFlat: null,
+      pointLitFlat: null,
+      lineLitFlat: null,
       progLayout: null,
       quadVao: null,
       texX: null,
@@ -3749,7 +3763,10 @@ ET.renderer = (function () {
       .join("\n");
   }
 
-  function shaderSources(lay) {
+  // opts.perspective true: the variant sources whose place() reads the perspective from the
+  // uniform uPersp. Without it the sources are the original ones, with the constant 3.
+  function shaderSources(lay, opts) {
+    var flat = !!opts?.perspective;
     var T = lay.texelsPerPoint;
     var P = lay.pointsPerRow;
     var wireScale = Math.sqrt(lay.dimension / 3).toFixed(4);
@@ -3772,14 +3789,14 @@ ET.renderer = (function () {
       "  dist = sqrt(dd);",
       "  return p;",
       "}",
-      "uniform vec4 uRot; uniform vec2 uView; uniform float uZoom; uniform float uFocus;",
+      "uniform vec4 uRot; uniform vec2 uView; uniform float uZoom; uniform float uFocus;" + (flat ? " uniform float uPersp;" : ""),
       // place(): turn by yaw and pitch, then a gentle perspective. zf is the depth
       // relative to the focus plane, used for depth of field.
       "vec4 place(vec3 p, out float zf) {",
       "  p *= uZoom;",
       "  float x1 = p.x * uRot.x + p.z * uRot.y, z1 = -p.x * uRot.y + p.z * uRot.x;",
       "  float y2 = p.y * uRot.z - z1 * uRot.w; float z2 = p.y * uRot.w + z1 * uRot.z;",
-      "  float s = 3.0 / max(0.6, 3.0 + z2);",
+      flat ? "  float s = uPersp / max(0.6, uPersp + z2);" : "  float s = 3.0 / max(0.6, 3.0 + z2);",
       "  zf = z2 - uFocus;",
       "  return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);",
       "}",
@@ -3918,6 +3935,13 @@ ET.renderer = (function () {
 
   // ---------- the screen mapping, in JavaScript (mirrors place() in the shader) ----------
 
+  // The perspective a merged draw state asks for: draw.perspective when it is a positive finite
+  // number, else the default 3. place(), placer() and draw() all read it here, so they agree.
+  function perspectiveOf(s) {
+    var p = s.perspective;
+    return typeof p === "number" && p > 0 && Number.isFinite(p) ? p : DEFAULTS.perspective;
+  }
+
   // p: [x, y, z] coordinates along the frame (already centred). Returns canvas pixels
   // (y grows downward), the perspective scale and the depth relative to the focus plane.
   function place(p, state, width, height) {
@@ -3927,6 +3951,7 @@ ET.renderer = (function () {
       cp = Math.cos(s.pitch),
       sp = Math.sin(s.pitch);
     var R = Math.min(width, height) * s.radius;
+    var P = perspectiveOf(s);
     var x = p[0] * s.zoom,
       y = p[1] * s.zoom,
       z = p[2] * s.zoom;
@@ -3934,7 +3959,7 @@ ET.renderer = (function () {
       z1 = -x * sy + z * cy;
     var y2 = y * cp - z1 * sp,
       z2 = y * sp + z1 * cp;
-    var k = 3 / Math.max(0.6, 3 + z2);
+    var k = P / Math.max(0.6, P + z2);
     return { x: width / 2 + x1 * k * R, y: height / 2 - y2 * k * R, scale: k, depth: z2 - s.focus };
   }
 
@@ -3949,6 +3974,7 @@ ET.renderer = (function () {
       sp = Math.sin(s.pitch);
     var R = Math.min(width, height) * s.radius;
     var zoom = s.zoom;
+    var P = perspectiveOf(s);
     return function (p0, p1, p2, out) {
       var x = p0 * zoom,
         y = p1 * zoom,
@@ -3957,7 +3983,7 @@ ET.renderer = (function () {
         z1 = -x * sy + z * cy;
       var y2 = y * cp - z1 * sp,
         z2 = y * sp + z1 * cp;
-      var k = 3 / Math.max(0.6, 3 + z2);
+      var k = P / Math.max(0.6, P + z2);
       out.x = width / 2 + x1 * k * R;
       out.y = height / 2 - y2 * k * R;
       return out;
@@ -4226,7 +4252,7 @@ ET.renderer = (function () {
       if (gpu.progLayout?.texelsPerPoint === lay.texelsPerPoint && gpu.progLayout.pointsPerRow === lay.pointsPerRow) {
         return;
       }
-      for (var key of ["point", "pointLit", "line", "lineLit"]) {
+      for (var key of ["point", "pointLit", "line", "lineLit", "pointFlat", "lineFlat", "pointLitFlat", "lineLitFlat"]) {
         if (gpu[key]) release(gpu[key].program);
         gpu[key] = null;
       }
@@ -4239,6 +4265,30 @@ ET.renderer = (function () {
       gpu.fWidth = lay.texelsPerPoint;
       gpu.fStage = new Float32Array(gpu.fWidth * 4 * 4);
       gpu.texF = floatTexture(gpu.fWidth, 4, gpu.fStage);
+    }
+
+    // The variant programs for a perspective other than 3: the point and wire ones, and with
+    // lit true the lit ones too. Each is compiled once per layout, the first time it is needed.
+    function ensureFlat(lit) {
+      var src = null;
+      if (!gpu.pointFlat) {
+        src = shaderSources(gpu.progLayout, { perspective: true });
+        gpu.pointFlat = compile(src.pointVertex, src.pointFragment, FLAT_VIEW_UNIFORMS.concat(POINT_UNIFORMS));
+        gpu.lineFlat = compile(src.lineVertex, src.lineFragment, FLAT_VIEW_UNIFORMS.concat(["uGain", "uWireDof"]));
+      }
+      if (lit && !gpu.pointLitFlat) {
+        src = src || shaderSources(gpu.progLayout, { perspective: true });
+        gpu.pointLitFlat = compile(
+          src.pointVertexLit,
+          src.pointFragment,
+          FLAT_VIEW_UNIFORMS.concat(POINT_UNIFORMS, ["uFilter", "uUnlit"])
+        );
+        gpu.lineLitFlat = compile(
+          src.lineVertexLit,
+          src.lineFragment,
+          FLAT_VIEW_UNIFORMS.concat(["uGain", "uWireDof", "uFilter", "uUnlit"])
+        );
+      }
     }
 
     // Upload the whole point store (texture and colour buffer) at its capacity.
@@ -4521,6 +4571,7 @@ ET.renderer = (function () {
       gl.uniform2f(p.u.uView, (2 * R) / W, (2 * R) / H);
       gl.uniform1f(p.u.uZoom, s.zoom);
       gl.uniform1f(p.u.uFocus, s.focus);
+      if (p.u.uPersp) gl.uniform1f(p.u.uPersp, perspectiveOf(s)); // the variant programs only
     }
 
     // True when this frame draws with the lit values: some are set and filter is above 0.
@@ -4533,8 +4584,10 @@ ET.renderer = (function () {
     function drawScene(s, gain, W, H) {
       var R = Math.min(W, H) * s.radius;
       var lit = litApplies(s);
-      if (wires.count && s.wires > 0.02 && gpu.vaoLine) drawWires(s, gain, W, H, R, lit && gpu.vaoLineLit !== null);
+      var flat = perspectiveOf(s) !== DEFAULTS.perspective;
+      if (wires.count && s.wires > 0.02 && gpu.vaoLine) drawWires(s, gain, W, H, R, lit && gpu.vaoLineLit !== null, flat);
       var prog = lit ? gpu.pointLit : gpu.point;
+      if (flat) prog = lit ? gpu.pointLitFlat : gpu.pointFlat;
       var pu = prog.u;
       setView(prog, s, W, H, R);
       gl.uniform1f(pu.uPx, s.pointSize);
@@ -4555,9 +4608,11 @@ ET.renderer = (function () {
       gl.drawArrays(gl.POINTS, 0, store.count);
     }
 
-    // The wires. litWires false: the program and calls used before search existed.
-    function drawWires(s, gain, W, H, R, litWires) {
+    // The wires. litWires false: the program and calls used before search existed. flat: the
+    // variant programs that read the perspective.
+    function drawWires(s, gain, W, H, R, litWires, flat) {
       var prog = litWires ? gpu.lineLit : gpu.line;
+      if (flat) prog = litWires ? gpu.lineLitFlat : gpu.lineFlat;
       setView(prog, s, W, H, R);
       wireScale = s.wireLoad > 0 ? wireCrowding(s, W, H) : 1;
       gl.uniform1f(prog.u.uGain, wireScale === 1 ? gain * s.wires * s.wireGain : gain * s.wires * s.wireGain * wireScale);
@@ -4808,6 +4863,14 @@ ET.renderer = (function () {
         if (!usable()) return false;
         var s = merge(state);
         var hasData = store.count > 0 && gpu.point;
+        if (hasData && perspectiveOf(s) !== DEFAULTS.perspective) {
+          try {
+            ensureFlat(litApplies(s));
+          } catch (e) {
+            failGpu(e);
+            return false;
+          }
+        }
         if (hasData) uploadFrame(s, store.dimension);
         // the target became unusable at this size; fall back for good
         if (hdr && !sizeHdr()) dropHdr();
@@ -4901,6 +4964,7 @@ ET.renderer = (function () {
 
   return {
     DEFAULTS: DEFAULTS,
+    RELATIVE_PERSPECTIVE: RELATIVE_PERSPECTIVE,
     layout: layout,
     shaderSources: shaderSources,
     wireDensity: wireDensity,
