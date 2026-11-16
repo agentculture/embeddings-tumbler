@@ -1,0 +1,911 @@
+<title>Tumbler Relative Search</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+  /* Layout: a full-bleed night sky carries the page; the title floats on it, and the
+     instrument panel (search, view switch, dimension readout, controls, results, notes)
+     sits beneath. Single dark look by choice, as in the other reference pages. */
+  :root {
+    --bg: #04060b;
+    --sky: #0b1430;
+    --fg: #e9eef6;
+    --soft: #c5cddb;
+    --muted: #8a96ab;
+    --line: #1b2436;
+    --well: #080c16;
+    --accent: #ffc56b;
+    --second: #7fd4ff;
+    --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+    --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: dark;
+  }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+
+  .stage {
+    position: relative;
+    height: clamp(460px, 78vh, 920px);
+    background: radial-gradient(ellipse 75% 70% at 50% 46%, var(--sky) 0%, #070b18 48%, var(--bg) 82%);
+    overflow: hidden;
+    touch-action: pan-y;
+    cursor: grab;
+  }
+  .stage.dragging { cursor: grabbing; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #sky { mix-blend-mode: screen; }
+  .stage::after {
+    content: ""; position: absolute; inset: auto 0 0 0; height: 90px; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--bg));
+  }
+  .mast {
+    position: absolute; top: 22px; pointer-events: none; z-index: 2;
+    left: max(20px, env(safe-area-inset-left, 0px)); right: max(20px, env(safe-area-inset-right, 0px));
+  }
+  .mast h1 {
+    font-family: var(--font-display); font-weight: 400; font-style: italic;
+    font-size: clamp(30px, 5vw, 56px); line-height: 0.95; letter-spacing: -0.01em;
+    margin: 0 0 8px; text-wrap: balance; text-shadow: 0 0 28px rgba(4, 6, 11, 0.9);
+  }
+  .mast p { margin: 0; font-family: var(--font-data); font-size: 12px; letter-spacing: 0.06em; color: var(--muted); text-shadow: 0 0 12px var(--bg); }
+  .hud {
+    position: absolute; bottom: 16px; z-index: 2; margin: 0;
+    left: max(20px, env(safe-area-inset-left, 0px)); right: max(20px, env(safe-area-inset-right, 0px));
+    font-family: var(--font-data); font-size: 12px; color: var(--accent);
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  .fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); z-index: 3; margin: 0; }
+
+  .page {
+    max-width: 1120px; margin: 0 auto;
+    padding-block: 8px 56px;
+    padding-left: max(20px, env(safe-area-inset-left, 0px));
+    padding-right: max(20px, env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column; gap: 20px;
+  }
+
+  .find { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .find label[for="in-query"] { font-family: var(--font-data); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .findrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .findrow input[type="text"] {
+    flex: 1 1 260px; min-width: 0; padding: 10px 12px; color: var(--fg); background: var(--well);
+    border: 1px solid var(--line); font-family: var(--font-body); font-size: 16px; box-sizing: border-box;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 30px; align-items: center; }
+  .chip {
+    display: inline-flex; align-items: baseline; gap: 8px; font-family: var(--font-data); font-size: 12px;
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 6px 4px 12px; color: var(--soft); min-width: 0;
+  }
+  .chip b { font-weight: 500; }
+  .chip .nm { font-family: var(--font-display); font-size: 19px; line-height: 1; color: var(--fg); overflow-wrap: anywhere; }
+  .chip button { font: inherit; color: var(--muted); background: transparent; border: 0; cursor: pointer; padding: 2px 8px; border-radius: 999px; }
+  .chip button:hover { color: var(--fg); }
+  .empty { font-family: var(--font-data); font-size: 12px; color: var(--muted); }
+
+  .modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--line); }
+  .mode {
+    font: inherit; color: var(--muted); text-align: left; background: transparent;
+    border: 0; border-top: 2px solid transparent; margin-top: -1px;
+    padding: 12px 16px 10px 0; cursor: pointer;
+    display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  }
+  .mode b { font-family: var(--font-display); font-weight: 400; font-size: 28px; line-height: 1.1; color: var(--fg); opacity: 0.55; }
+  .mode span { font-size: 13px; line-height: 1.35; }
+  .mode:hover b { opacity: 0.85; }
+  .mode[aria-pressed="true"] { border-top-color: var(--accent); }
+  .mode[aria-pressed="true"] b { opacity: 1; font-style: italic; color: var(--accent); }
+  .mode:disabled { cursor: default; }
+  .mode:disabled b { opacity: 0.3; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-width: 600px) { .mode b { font-size: 24px; } }
+
+  .readout { display: flex; flex-direction: column; gap: 6px; }
+  .readout canvas { width: 100%; height: 22px; display: block; image-rendering: pixelated; border-block: 1px solid var(--line); }
+  .readout p, .ctl label, .ctl span, .note, .legend { margin: 0; font-family: var(--font-data); font-size: 12px; color: var(--muted); }
+  .readout b { font-weight: 400; } .axh { color: rgb(255, 150, 60); } .axv { color: rgb(80, 220, 160); } .axd { color: rgb(130, 140, 255); }
+  .readout p { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+  .ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; }
+  .ctl label { display: inline-flex; align-items: center; gap: 8px; }
+  .ctl input[type="range"] { width: 120px; accent-color: var(--accent); }
+  .ctl input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+  .btn {
+    font-family: var(--font-data); font-size: 12px; color: var(--fg); background: transparent;
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 16px; min-width: 76px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--muted); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  .results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 40px; }
+  @media (max-width: 720px) { .results { grid-template-columns: minmax(0, 1fr); } }
+  .results h3 { margin: 0 0 6px; font-family: var(--font-data); font-weight: 500; font-size: 12px; letter-spacing: 0.06em; }
+  .hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+  .hits li { display: flex; gap: 10px; align-items: baseline; min-width: 0; border-bottom: 1px solid var(--line); padding-bottom: 5px; }
+  .hits .r { font-family: var(--font-data); font-size: 12px; min-width: 18px; color: var(--muted); }
+  .hits .w { font-family: var(--font-display); font-size: 21px; line-height: 1.1; overflow-wrap: anywhere; min-width: 0; }
+  .hits .m { margin-left: auto; font-family: var(--font-data); font-size: 11px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .explain { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 40px; max-width: 980px; }
+  .explain h2 { grid-column: 1 / -1; font-family: var(--font-display); font-weight: 400; font-style: italic; font-size: 30px; line-height: 1.1; margin: 4px 0 0; }
+  .explain h3 { font-family: var(--font-data); font-weight: 500; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin: 0 0 4px; }
+  .explain p { margin: 0; max-width: 62ch; color: var(--soft); }
+  .explain div { min-width: 0; }
+  @media (max-width: 720px) { .explain { grid-template-columns: minmax(0, 1fr); } }
+  .facts { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 28px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .facts li { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .facts b { font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .facts span { font-family: var(--font-data); font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .note { border-top: 1px solid var(--line); padding-top: 14px; max-width: 92ch; line-height: 1.65; }
+  .note a { color: var(--soft); }
+</style>
+
+<div class="stage" id="stage">
+  <canvas id="sky" aria-label="Animated 3-D projection of the embedding vectors of 999 Wikipedia articles"></canvas>
+  <canvas id="ov" aria-hidden="true"></canvas>
+  <header class="mast">
+    <h1>Relative Search</h1>
+    <p id="mast-sub">LOADING THE WIKIPEDIA SET …</p>
+  </header>
+  <p class="hud" id="hud"></p>
+  <p class="fallback" id="fallback" hidden></p>
+</div>
+
+<div class="page">
+  <section class="find">
+    <label for="in-query">Measure the space from an article, or from the words in several titles</label>
+    <div class="findrow">
+      <input type="text" id="in-query" list="titles" autocomplete="off" spellcheck="false" placeholder="Rice, Jazz, Volcano, war …">
+      <datalist id="titles"></datalist>
+      <button type="button" class="btn" id="btn-add">Measure from it</button>
+      <button type="button" class="btn" id="btn-clear">Clear</button>
+    </div>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <nav class="modes" aria-label="View">
+    <button class="mode" type="button" id="mode-relative" data-mode="relative" aria-pressed="true"><b>Relative</b><span>One axis is the search itself. Height is similarity to it. The other two axes tumble through what is left.</span></button>
+    <button class="mode" type="button" id="mode-plain" data-mode="plain" aria-pressed="false"><b>Plain</b><span>Today's Tumble: centred on the average vector, the search only lights its results.</span></button>
+  </nav>
+
+  <div class="readout">
+    <canvas id="strip" width="8" height="1" aria-hidden="true"></canvas>
+    <p><span>dimension 1</span><span>how much each dimension feeds the view right now · colour: <b class="axh">horizontal</b> <b class="axv">vertical</b> <b class="axd">depth</b></span><span id="strip-last">dimension</span></p>
+  </div>
+
+  <div class="ctl">
+    <button type="button" class="btn" id="btn-run">Pause</button>
+    <label for="in-speed">Speed <input type="range" id="in-speed" min="0.2" max="3" step="0.1" value="1"></label>
+    <label for="in-k">Results <input type="range" id="in-k" min="3" max="16" step="1" value="8"></label>
+    <label for="in-rerank" id="lb-rerank" hidden><input type="checkbox" id="in-rerank"> Reranker</label>
+    <label for="in-origin"><input type="checkbox" id="in-origin"> Show the origin</label>
+    <label for="in-labels"><input type="checkbox" id="in-labels" checked> Labels</label>
+    <span>Drag to turn. Hover a point to name it. Click one to measure from it; shift-click adds a second.</span>
+  </div>
+
+  <div class="legend" id="legend" aria-label="Colour by Wikipedia topic"></div>
+
+  <div class="results" id="results"></div>
+
+  <ul class="facts" id="facts"></ul>
+
+  <section class="explain" data-for="relative">
+    <h2>Relative</h2>
+    <div><h3>What is happening</h3>
+      <p>The search vector becomes one of the three axes on screen, the vertical one. A point's height is its vector measured along the search direction. These vectors all have length one, so height is exactly the cosine similarity, and the scale on the axis can be read like a ruler. The other two axes are not chosen by the search. They tour the strongest directions of whatever remains after the search direction is removed, so the view still tumbles.</p></div>
+    <div><h3>What to watch for</h3>
+      <p>The search sits at the top of its own axis and everything else hangs below it. While the view turns, points swing sideways and never change height. A stem joins each result to the height it is read at. With a second search, its direction is drawn as a second ruler from the origin: the plane holding both is shown exactly, and only the depth still tumbles.</p></div>
+    <div><h3>The origin</h3>
+      <p>Centring on the search and centring on the true origin (the all-zero vector) give the same picture, moved up or down. Tick <em>Show the origin</em> to zoom out and see it: the origin at the foot of the axis, the search one unit above, and the whole set crowded into a narrow band between 0.5 and 0.85.</p></div>
+    <div><h3>With the reranker</h3>
+      <p>A reranker is a second model that reads the search text against each candidate's text and scores the pair. It does not move anything: height stays the embedding's cosine. It changes which points are named and in what order, so its picks are numbered. A numbered point that sits below un-named ones is a place where the two models disagree, and the dashed line marks how far down the candidates reached.</p></div>
+    <div><h3>What it cannot show</h3>
+      <p>Sideways position is still a shadow. Two points at the same height and side by side on screen can be far apart in directions the view does not hold. The figure in the status line says how much of the remaining spread the tumbling axes can show at all.</p></div>
+  </section>
+
+  <section class="explain" data-for="plain" hidden>
+    <h2>Plain</h2>
+    <div><h3>What is happening</h3>
+      <p>This is Tumble as it ships. The middle of the screen is the average of all the vectors, and the three axes tour the eight directions along which the set spreads most. A search lights its results and marks the query, and nothing is measured from it.</p></div>
+    <div><h3>What to watch for</h3>
+      <p>Tick <em>Show the origin</em>. The origin lands near the middle of the cloud, yet it is far from every point: the average vector is most of a unit away from it, in a direction the tour never shows. Distances from the middle of this view are distances from the average, not similarities.</p></div>
+  </section>
+
+  <p class="note" id="note"></p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const TAU = Math.PI * 2, SEED = 7, SUB = 8, TOUR_RATE = 0.42;
+  const el = id => document.getElementById(id);
+  const stage = el('stage'), hud = el('hud'), fallback = el('fallback');
+  const fail = msg => { fallback.textContent = msg; fallback.hidden = false; el('mast-sub').textContent = 'NOT LOADED'; };
+
+  /* ---------- the data: the shipped Wikipedia demo pair, fetched unmodified ---------- */
+  const BASES = ['', '../../../embeddings_tumbler/static/'];
+  // The float32 block as shipped. Where a host cannot serve a binary file (a published Artifact),
+  // the same bytes are read from a base64 text copy beside it and decoded: nothing is changed.
+  async function vectorBlock(url) {
+    const r = await fetch(url).catch(() => null);
+    if (r && r.ok) return r.arrayBuffer();
+    const t = await fetch(url + '.b64.txt');
+    if (!t.ok) throw new Error('HTTP ' + t.status);
+    const bin = atob((await t.text()).trim()), out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  }
+  async function loadSet() {
+    let lastErr = null;
+    for (const base of BASES) {
+      try {
+        const r = await fetch(base + 'demo-wikipedia.json');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const meta = await r.json();
+        const buf = await vectorBlock(base + meta.vectors.file);
+        if (buf.byteLength !== meta.count * meta.dimension * 4) throw new Error('vector block has the wrong length');
+        // real reranker scores made ahead of time (scripts/build_reference_rerank.py); the page works without them
+        const rr = await fetch('demo-wikipedia-rerank.json').then(x => x.ok ? x.json() : null).catch(() => null);
+        return { meta, X: new Float32Array(buf), rr: rr && rr.count === meta.count && Array.isArray(rr.scores) ? rr : null };
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr;
+  }
+
+  /* ---------- seeded randomness ---------- */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function gaussFrom(rnd) { return () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(TAU * rnd()); }
+
+  /* rows of M (r x n) made orthonormal in order; a row that vanishes is left as zeros */
+  function orthonormalize(M, r, n) {
+    for (let a = 0; a < r; a++) {
+      const oa = a * n;
+      for (let pass = 0; pass < 2; pass++) {
+        for (let c = 0; c < a; c++) {
+          const oc = c * n; let t = 0;
+          for (let k = 0; k < n; k++) t += M[oa + k] * M[oc + k];
+          for (let k = 0; k < n; k++) M[oa + k] -= t * M[oc + k];
+        }
+      }
+      let s = 0;
+      for (let k = 0; k < n; k++) s += M[oa + k] * M[oa + k];
+      s = Math.sqrt(s);
+      if (s > 1e-12) for (let k = 0; k < n; k++) M[oa + k] /= s;
+    }
+    return M;
+  }
+
+  el('btn-run').disabled = true;
+  loadSet().then(start, e => fail('The Wikipedia set could not be loaded (' + (e && e.message ? e.message : 'unknown error') + '). This page reads demo-wikipedia.json and demo-wikipedia.f32 from beside it, so it must be opened from a web server.'));
+
+  function start({ meta, X, rr: RR }) {
+    const N = meta.count, D = meta.dimension;
+    const labels = meta.points.map(p => String(p.label));
+    const lower = labels.map(s => s.toLowerCase());
+    const groupNames = [];
+    const groupOf = new Uint8Array(N);
+    meta.points.forEach((p, i) => {
+      const g = String(p.group || 'Other');
+      let k = groupNames.indexOf(g);
+      if (k < 0) { k = groupNames.length; groupNames.push(g); }
+      groupOf[i] = k;
+    });
+    const G = groupNames.length;
+    const HUES = groupNames.map((_, k) => (28 + k * 360 / G * 1) % 360);
+    const css = (k, l) => 'hsl(' + HUES[k].toFixed(0) + ' 85% ' + (l || 68) + '%)';
+
+    /* ---------- what the set is, measured ---------- */
+    const mean = new Float64Array(D);
+    let minLen = Infinity, maxLen = 0;
+    for (let i = 0; i < N; i++) {
+      let s = 0; const o = i * D;
+      for (let d = 0; d < D; d++) { const v = X[o + d]; s += v * v; mean[d] += v / N; }
+      s = Math.sqrt(s); if (s < minLen) minLen = s; if (s > maxLen) maxLen = s;
+    }
+    const unit = Math.abs(minLen - 1) < 1e-3 && Math.abs(maxLen - 1) < 1e-3;   // then length along a unit direction is cosine similarity
+    const meanLen = Math.sqrt(mean.reduce((a, v) => a + v * v, 0));
+    const MEASURE = unit ? 'cosine' : 'length along the search';
+
+    /* ---------- strongest directions of the set after `remove` (orthonormal rows) is taken out ---------- */
+    // Subspace iteration on the centred remainder. Returns { basis (SUB x D), share, centre (D) }.
+    function strongest(remove, nRemove, seed) {
+      const Y = new Float32Array(N * D), c = new Float64Array(D), t = new Float64Array(Math.max(1, nRemove));
+      for (let i = 0; i < N; i++) {
+        const o = i * D;
+        for (let a = 0; a < nRemove; a++) { let s = 0; const oa = a * D; for (let d = 0; d < D; d++) s += X[o + d] * remove[oa + d]; t[a] = s; }
+        for (let d = 0; d < D; d++) {
+          let v = X[o + d];
+          for (let a = 0; a < nRemove; a++) v -= t[a] * remove[a * D + d];
+          Y[o + d] = v; c[d] += v / N;
+        }
+      }
+      let total = 0;
+      for (let i = 0; i < N; i++) { const o = i * D; for (let d = 0; d < D; d++) { const v = (Y[o + d] -= c[d]); total += v * v; } }
+      const p = SUB + 4, g = gaussFrom(mulberry32(seed));
+      let Q = new Float64Array(p * D);
+      for (let i = 0; i < p * D; i++) Q[i] = g();
+      orthonormalize(Q, p, D);
+      const w = new Float64Array(p);
+      for (let it = 0; it < 12; it++) {
+        const Z = new Float64Array(p * D);
+        for (let i = 0; i < N; i++) {
+          const o = i * D;
+          for (let a = 0; a < p; a++) { let s = 0; const oa = a * D; for (let d = 0; d < D; d++) s += Y[o + d] * Q[oa + d]; w[a] = s; }
+          for (let a = 0; a < p; a++) { const s = w[a], oa = a * D; for (let d = 0; d < D; d++) Z[oa + d] += s * Y[o + d]; }
+        }
+        Q = orthonormalize(Z, p, D);
+      }
+      const vr = new Float64Array(p);
+      for (let i = 0; i < N; i++) {
+        const o = i * D;
+        for (let a = 0; a < p; a++) { let s = 0; const oa = a * D; for (let d = 0; d < D; d++) s += Y[o + d] * Q[oa + d]; vr[a] += s * s; }
+      }
+      const order = Array.from({ length: p }, (_, a) => a).sort((a, b) => vr[b] - vr[a]).slice(0, SUB);
+      const basis = new Float32Array(SUB * D);
+      let held = 0;
+      order.forEach((a, j) => { held += vr[a]; for (let d = 0; d < D; d++) basis[j * D + d] = Q[a * D + d]; });
+      return { basis, share: total > 0 ? held / total : 0, centre: c };
+    }
+
+    /* ---------- a tour: k frame rows turning inside a basis of SUB directions ---------- */
+    // Closed form in t: rows(t) = E L(t) P basis. P is a seeded rotation, L turns SUB/2 planes at
+    // seeded rates, E makes rows(0) the first k basis rows. Same data, seed and t: same rows.
+    function makeTour(basis, k, seed) {
+      const m = SUB, rnd = mulberry32(seed), g = gaussFrom(rnd);
+      const P = new Float64Array(m * m);
+      for (let i = 0; i < m * m; i++) P[i] = g();
+      orthonormalize(P, m, m);
+      const planes = m >> 1, freq = new Float64Array(planes);
+      for (let h = 0; h < planes; h++) { const mag = TOUR_RATE * (0.55 + 0.9 * rnd()); freq[h] = rnd() < 0.5 ? -mag : mag; }
+      const e = new Float64Array(m), co = new Float64Array(m);
+      return function (t, out, rows) {
+        for (let r = 0; r < k; r++) {
+          for (let c = 0; c < m; c++) e[c] = P[c * m + r];
+          for (let h = 0; h < planes; h++) {
+            const ang = freq[h] * t, cs = Math.cos(ang), sn = Math.sin(ang), x = e[2 * h], y = e[2 * h + 1];
+            e[2 * h] = cs * x - sn * y; e[2 * h + 1] = sn * x + cs * y;
+          }
+          for (let c2 = 0; c2 < m; c2++) { let s = 0; for (let q = 0; q < m; q++) s += e[q] * P[q * m + c2]; co[c2] = s; }
+          const oo = rows[r] * D;
+          for (let d = 0; d < D; d++) { let s = 0; for (let j = 0; j < m; j++) s += co[j] * basis[j * D + d]; out[oo + d] = s; }
+        }
+      };
+    }
+
+    /* ---------- the two views ---------- */
+    const plainFit = strongest(null, 0, SEED);
+    const plain = { share: plainFit.share, tour: makeTour(plainFit.basis, 3, SEED) };
+    let rel = null;          // { pinned (rows), nPinned, share, tour } fitted to the current searches
+    const queries = [];      // { tag, color, name, vec, len, dir (unit), sims, members (Set), hits }
+    const TAGS = ['A', 'B'], QCOL = ['#ffc56b', '#7fd4ff'];
+    let mode = 'relative', K = 8, rerankOn = false;
+
+    function makeQuery(text) {
+      const s = text.trim().toLowerCase();
+      if (!s) return null;
+      let members = [], name = '';
+      const exact = lower.indexOf(s);
+      if (exact >= 0) { members = [exact]; name = labels[exact]; }
+      else {
+        const words = s.split(/\s+/);
+        for (let i = 0; i < N; i++) if (words.some(w => lower[i].includes(w))) members.push(i);
+        if (!members.length) return null;
+        name = members.length === 1 ? labels[members[0]] : '“' + text.trim() + '” (average of ' + members.length + ' titles)';
+      }
+      return queryFrom(members, name);
+    }
+    function queryFrom(members, name) {
+      const vec = new Float64Array(D);
+      for (const i of members) { const o = i * D; for (let d = 0; d < D; d++) vec[d] += X[o + d] / members.length; }
+      const len = Math.sqrt(vec.reduce((a, v) => a + v * v, 0));
+      if (!(len > 1e-9)) return null;
+      const dir = new Float32Array(D);
+      for (let d = 0; d < D; d++) dir[d] = vec[d] / len;
+      const sims = new Float32Array(N);
+      for (let i = 0; i < N; i++) { let t = 0; const o = i * D; for (let d = 0; d < D; d++) t += X[o + d] * dir[d]; sims[i] = t; }
+      return { name, len, dir, sims, members: new Set(members), point: members.length === 1 ? members[0] : -1, hits: [], rr: null, note: '' };
+    }
+    function rank(q) {
+      const idx = [];
+      for (let i = 0; i < N; i++) if (!q.members.has(i)) idx.push(i);
+      idx.sort((a, b) => q.sims[b] - q.sims[a]);
+      q.hits = idx.slice(0, K);
+      q.rr = null; q.note = '';
+      if (rerankOn && RR) {
+        if (q.point < 0) q.note = 'This search is an average of several titles. The page holds reranker scores only for single articles, so it stays in embedding order.';
+        else {
+          // the candidates are the nearest others by the embedding; the reranker's scores reorder them and the best are kept
+          const pool = RR.pool[q.point], sc = RR.scores[q.point];
+          const order = pool.map((_, r) => r).sort((a, b) => sc[b] - sc[a] || a - b).slice(0, K);
+          q.hits = order.map(r => pool[r]);
+          q.rr = new Map(order.map((r, n) => [pool[r], { rank: n + 1, was: r + 1, moved: r - n, score: sc[r] }]));
+          q.cut = q.sims[pool[pool.length - 1]];
+          q.kept = order.filter(r => r < K).length;
+        }
+      }
+      const sorted = Float32Array.from(q.sims).sort();
+      q.lo = sorted[0]; q.mid = sorted[N >> 1]; q.hi = sorted[N - 1 - q.members.size] || sorted[N - 1];
+    }
+
+    function refit() {
+      queries.forEach((q, j) => { q.tag = TAGS[j]; q.color = QCOL[j]; rank(q); });
+      litFill();
+      if (!queries.length) { rel = null; }
+      else {
+        const n = queries.length, pinned = new Float32Array(n * D);
+        for (let j = 0; j < n; j++) pinned.set(queries[j].dir, j * D);
+        orthonormalize(pinned, n, D);
+        let ok = n;
+        if (n === 2) { let s = 0; for (let d = 0; d < D; d++) s += pinned[D + d] * pinned[D + d]; if (s < 0.5) ok = 1; }   // B points the same way as A
+        const fit = strongest(pinned, ok, SEED + 11 * ok);
+        rel = { pinned, nPinned: ok, share: fit.share, tour: makeTour(fit.basis, 3 - ok, SEED + 101) };
+      }
+      startBlend();
+      userTilt = false;
+      drawChips(); drawResults(); drawFacts(); syncModes();
+    }
+    function setQuery(q, add) {
+      if (!q) return false;
+      if (add && queries.length === 1) queries.push(q);
+      else if (add && queries.length === 2) queries[1] = q;
+      else { queries.length = 0; queries.push(q); }
+      mode = 'relative';
+      refit();
+      return true;
+    }
+
+    // how strongly each point is lit: 0 unlit, up to 1 for the nearest results
+    const lit = new Float32Array(N), isHit = new Uint8Array(N);
+    function litFill() {
+      lit.fill(0); isHit.fill(0);
+      for (const q of queries) {
+        const span = Math.max(1e-6, q.hi - q.mid);
+        for (let i = 0; i < N; i++) { const t = Math.min(1, Math.max(0, (q.sims[i] - q.mid) / span)); if (t * t > lit[i]) lit[i] = t * t; }
+        for (const i of q.hits) isHit[i] = 1;
+        for (const i of q.members) isHit[i] = 1;
+      }
+    }
+
+    /* ---------- the frame shown: the view's target, blended in after a change ---------- */
+    const F = new Float32Array(3 * D), Ft = new Float32Array(3 * D), Ffrom = new Float32Array(3 * D);
+    const C = new Float64Array(D), Ct = new Float64Array(D);
+    let blendU = 1, tourT = 0;
+    const relOn = () => mode === 'relative' && rel !== null;
+    function targetFrame(t) {
+      if (!relOn()) { plain.tour(t, Ft, [0, 1, 2]); return; }
+      // row 1 (vertical) is search A; with two searches row 0 (horizontal) is what B adds beyond A
+      for (let d = 0; d < D; d++) Ft[D + d] = rel.pinned[d];
+      if (rel.nPinned === 2) { for (let d = 0; d < D; d++) Ft[d] = rel.pinned[D + d]; rel.tour(t, Ft, [2]); }
+      else rel.tour(t, Ft, [0, 2]);
+    }
+    function startBlend() { Ffrom.set(F); blendU = 0; }
+
+    /* ---------- drawing ---------- */
+    const sky = el('sky'), sctx2 = sky.getContext('2d'), ov = el('ov'), octx = ov.getContext('2d');
+    const strip = el('strip'); strip.width = D;
+    const stctx = strip.getContext('2d'), stripImg = stctx.createImageData(D, 1);
+    const AXIS_RGB = [[255, 150, 60], [80, 220, 160], [130, 140, 255]];
+    function sprite(h) {
+      const c = document.createElement('canvas'); c.width = c.height = 64;
+      const x = c.getContext('2d'), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gr.addColorStop(0, 'hsla(' + h + ',90%,92%,1)');
+      gr.addColorStop(0.12, 'hsla(' + h + ',90%,72%,0.85)');
+      gr.addColorStop(0.4, 'hsla(' + h + ',85%,58%,0.22)');
+      gr.addColorStop(1, 'hsla(' + h + ',85%,50%,0)');
+      x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+      return c;
+    }
+    const sprites = HUES.map(h => sprite(h.toFixed(0)));
+
+    let W = 1, H = 1, dpr = 1;
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      W = Math.max(2, Math.round(r.width * dpr)); H = Math.max(2, Math.round(r.height * dpr));
+      for (const c of [sky, ov]) { c.width = W; c.height = H; }
+    }
+    new ResizeObserver(resize).observe(stage); resize();
+
+    let running = !window.matchMedia('(prefers-reduced-motion: reduce)').matches, speed = 1, showLabels = true, showOrigin = false;
+    let yaw = 0.4, pitch = 0.16, zoom = 1, relMix = 0, userTilt = false, clock = 0;
+    let dragging = false, moved = 0, lastPX = 0, lastPY = 0, mouseX = -1, mouseY = -1, hover = -1;
+    const px = new Float32Array(N), py = new Float32Array(N), pz = new Float32Array(N);
+    const cF = new Float64Array(3);
+    let cyw = 1, syw = 0, cpt = 1, spt = 0, R = 1, persp = 3, midY = 0;
+
+    // frame coordinates (a horizontal, b vertical, c depth, already centred) to canvas pixels
+    function place(a, b, c, out) {
+      const x = a * zoom, y = b * zoom, z = c * zoom;
+      const x1 = x * cyw + z * syw, z1 = -x * syw + z * cyw;
+      const y2 = y * cpt - z1 * spt, z2 = y * spt + z1 * cpt;
+      const s = persp / Math.max(0.6, persp + z2);
+      out[0] = W / 2 + x1 * s * R; out[1] = midY - y2 * s * R; out[2] = z2;
+      return out;
+    }
+    // the point k along a search's direction, through the frame shown (q.f is that direction's shadow, set each frame)
+    const tmp3 = [0, 0, 0];
+    function placeVec(q, k, out) { return place(k * q.f[0] - cF[0], k * q.f[1] - cF[1], k * q.f[2] - cF[2], out); }
+    function text(str, x, y, alpha, color, align) {
+      octx.globalAlpha = alpha; octx.textAlign = align || 'left';
+      octx.lineWidth = 4 * dpr; octx.strokeStyle = 'rgba(4,6,11,0.85)';
+      octx.strokeText(str, x, y); octx.fillStyle = color; octx.fillText(str, x, y);
+    }
+    const MONO = p => p * dpr + 'px "IBM Plex Mono", ui-monospace, monospace';
+    const SERIF = p => 'italic ' + p * dpr + 'px "Instrument Serif", Georgia, serif';
+    function seg(p, q, alpha, color, width) {
+      octx.globalAlpha = alpha; octx.strokeStyle = color; octx.lineWidth = (width || 1) * dpr;
+      octx.beginPath(); octx.moveTo(p[0], p[1]); octx.lineTo(q[0], q[1]); octx.stroke();
+    }
+
+    // the height window the relative view frames: from just under the least similar point to just over the search
+    function relWindow() {
+      const q = queries[0];
+      const top = Math.max(1, q.len) + 0.04;
+      const bottom = showOrigin ? -0.06 : Math.min(q.lo, queries[1] ? queries[1].lo : 1) - 0.04;
+      return { top, bottom };
+    }
+
+    function render(dt) {
+      const ease = t => 1 - Math.exp(-dt / t);
+      clock += dt;
+      if (running) tourT += dt * speed;
+      const on = relOn();
+      relMix += ((on ? 1 : 0) - relMix) * ease(0.45);
+
+      targetFrame(tourT);
+      if (blendU < 1) {
+        blendU = Math.min(1, blendU + dt / 1.6);
+        const e = blendU * blendU * (3 - 2 * blendU);
+        for (let i = 0; i < 3 * D; i++) F[i] = Ffrom[i] + (Ft[i] - Ffrom[i]) * e;
+        orthonormalize(F, 3, D);
+      } else F.set(Ft);
+
+      // centre and zoom for the view
+      R = Math.min(W, H) * 0.46;
+      let zoomT;
+      if (on) {
+        const w = relWindow(), h = (w.top + w.bottom) / 2, q = queries[0];
+        for (let d = 0; d < D; d++) Ct[d] = h * q.dir[d];
+        zoomT = Math.min(0.78 * H / ((w.top - w.bottom) * R), 0.5 * W / (0.42 * R));
+      } else {
+        for (let d = 0; d < D; d++) Ct[d] = mean[d];
+        zoomT = 0;   // set from the cloud's size below
+      }
+      const kc = ease(0.5);
+      for (let d = 0; d < D; d++) C[d] += (Ct[d] - C[d]) * kc;
+      for (let r = 0; r < 3; r++) { let s = 0; const o = r * D; for (let d = 0; d < D; d++) s += C[d] * F[o + d]; cF[r] = s; }
+
+      if (!dragging && running) yaw += dt * 0.06 * speed;
+      if (!dragging && !userTilt) pitch += ((on ? 0 : 0.16) - pitch) * ease(0.6);
+      cyw = Math.cos(yaw); syw = Math.sin(yaw); cpt = Math.cos(pitch); spt = Math.sin(pitch);
+      persp = 3 + 57 * relMix;                       // the relative view is drawn almost flat so heights read true
+      midY = H * (0.5 + 0.035 * relMix);
+
+      // every point, projected from the full dimension
+      let sq = 0;
+      const p3 = tmp3;
+      for (let i = 0; i < N; i++) {
+        const o = i * D;
+        let a = 0, b = 0, c = 0;
+        for (let d = 0; d < D; d++) { const v = X[o + d]; a += v * F[d]; b += v * F[D + d]; c += v * F[2 * D + d]; }
+        a -= cF[0]; b -= cF[1]; c -= cF[2];
+        sq += a * a + b * b + c * c;
+        place(a, b, c, p3);
+        px[i] = p3[0]; py[i] = p3[1]; pz[i] = p3[2];
+      }
+      if (!on) zoomT = 0.78 / (Math.sqrt(sq / N) || 1);
+      zoom += (zoomT - zoom) * ease(0.6);
+
+      // the sky: light is added, and what was there fades instead of being wiped
+      sctx2.globalCompositeOperation = 'destination-out';
+      sctx2.globalAlpha = 1;
+      sctx2.fillStyle = 'rgba(0,0,0,' + (running ? 0.42 : 1) + ')';
+      sctx2.fillRect(0, 0, W, H);
+      sctx2.globalCompositeOperation = 'lighter';
+      const searching = queries.length > 0;
+      const crowd = Math.min(1, Math.max(0.45, Math.sqrt(zoom / 3)));   // zoomed out, the points pile up: draw them smaller and fainter
+      for (let i = 0; i < N; i++) {
+        const depth = 1 / (1 + 0.35 * pz[i] * pz[i] / (1 + 3 * relMix));
+        let r = 5.5 * dpr * crowd, a = 0.5 * crowd;
+        if (searching) { a = (0.3 + 0.7 * lit[i]) * (isHit[i] ? 1 : crowd); r *= 0.9 + 0.8 * lit[i] + (isHit[i] ? 0.9 : 0); }
+        a *= depth;
+        if (a < 0.02) continue;
+        sctx2.globalAlpha = Math.min(1, a);
+        sctx2.drawImage(sprites[groupOf[i]], px[i] - r, py[i] - r, 2 * r, 2 * r);
+      }
+
+      /* overlay: rulers, stems, labels, hover */
+      octx.clearRect(0, 0, W, H);
+      octx.lineJoin = 'round'; octx.font = MONO(11);
+      for (const q of queries) {
+        q.f = [0, 0, 0];
+        for (let r = 0; r < 3; r++) { let t = 0; const o = r * D; for (let d = 0; d < D; d++) t += q.dir[d] * F[o + d]; q.f[r] = t; }
+      }
+      const A = [0, 0, 0], B = [0, 0, 0];
+      // every result of any search, once, leaving out the points a search is made of
+      const named = [];
+      for (const q of queries) for (const i of q.hits) if (!named.includes(i) && !queries.some(o => o.members.has(i))) named.push(i);
+
+      if (queries.length && relMix > 0.03) {
+        const m = relMix, q0 = queries[0];
+        // ruler A: from the origin, through the search, ticked every 0.1
+        const w = relWindow();
+        const from = Math.max(w.bottom - 0.2, showOrigin ? 0 : w.bottom - 0.2);
+        placeVec(q0, Math.max(0, from), A); placeVec(q0, w.top, B);
+        seg(A, B, 0.55 * m, q0.color, 1);
+        for (let s = Math.ceil(Math.max(0, from) * 10) / 10; s <= w.top + 1e-6; s += 0.1) {
+          placeVec(q0, s, A);
+          // a level ring: every point at this height, whatever its side
+          octx.globalAlpha = 0.16 * m; octx.strokeStyle = q0.color; octx.lineWidth = dpr;
+          octx.beginPath();
+          for (let k = 0; k <= 48; k++) {
+            const th = k / 48 * TAU, rr = 0.34;
+            place(s * q0.f[0] - cF[0] + rr * Math.cos(th), s * q0.f[1] - cF[1], s * q0.f[2] - cF[2] + rr * Math.sin(th), B);
+            if (k === 0) octx.moveTo(B[0], B[1]); else octx.lineTo(B[0], B[1]);
+          }
+          octx.stroke();
+          text(s.toFixed(1), A[0] - 9 * dpr, A[1] + 4 * dpr, 0.75 * m, q0.color, 'right');
+        }
+        if (q0.rr) {   // the reranker saw only the candidates: everything above this mark
+          placeVec(q0, q0.cut, A);
+          octx.globalAlpha = 0.9 * m; octx.strokeStyle = '#ffffff'; octx.lineWidth = dpr; octx.setLineDash([4 * dpr, 4 * dpr]);
+          octx.beginPath(); octx.moveTo(A[0] - 150 * dpr, A[1]); octx.lineTo(A[0] + 150 * dpr, A[1]); octx.stroke(); octx.setLineDash([]);
+          text(RR.candidates + ' candidates above this line went to the reranker', A[0] + 156 * dpr, A[1] + 4 * dpr, 0.85 * m, '#ffffff');
+        }
+        placeVec(q0, w.top, A);
+        text(MEASURE + ' to A', A[0] - 9 * dpr, A[1] + 4 * dpr, 0.8 * m, q0.color, 'right');
+        if (showOrigin) {
+          placeVec(q0, 0, A);
+          octx.globalAlpha = m; octx.strokeStyle = '#ffffff'; octx.lineWidth = 1.5 * dpr;
+          octx.beginPath(); octx.moveTo(A[0] - 7 * dpr, A[1]); octx.lineTo(A[0] + 7 * dpr, A[1]); octx.moveTo(A[0], A[1] - 7 * dpr); octx.lineTo(A[0], A[1] + 7 * dpr); octx.stroke();
+          text('origin (0, 0, … , 0)', A[0] + 12 * dpr, A[1] + 4 * dpr, m, '#ffffff');
+          if (unit) {   // every vector has length one, so none can fall outside this circle
+            octx.globalAlpha = 0.22 * m; octx.strokeStyle = '#ffffff'; octx.lineWidth = dpr; octx.setLineDash([3 * dpr, 6 * dpr]);
+            octx.beginPath(); octx.arc(A[0], A[1], zoom * R, 0, TAU); octx.stroke(); octx.setLineDash([]);
+          }
+        }
+        // ruler B, in the plane it shares with A
+        if (queries[1] && rel && rel.nPinned === 2) {
+          const q1 = queries[1];
+          placeVec(q1, showOrigin ? 0 : Math.max(0, w.bottom - 0.2), A); placeVec(q1, Math.max(1, q1.len) + 0.04, B);
+          seg(A, B, 0.55 * m, q1.color, 1);
+          for (let s = 0.1; s <= 0.9001; s += 0.1) {
+            placeVec(q1, s, A);
+            if (A[1] < -20 || A[1] > H + 20) continue;
+            octx.globalAlpha = 0.8 * m; octx.fillStyle = q1.color; octx.beginPath(); octx.arc(A[0], A[1], 1.8 * dpr, 0, TAU); octx.fill();
+            text(s.toFixed(1), A[0] + 8 * dpr, A[1] + 12 * dpr, 0.6 * m, q1.color);
+          }
+        }
+        // stems: each result joined to the place on the ruler where it is read
+        for (const i of named) {
+          placeVec(q0, q0.sims[i], A);
+          B[0] = px[i]; B[1] = py[i];
+          seg(A, B, 0.42 * m, q0.color, 1);
+        }
+      }
+
+      // the searches themselves, and their results' names
+      for (const q of queries) {
+        placeVec(q, q.len, A);
+        octx.globalAlpha = 1; octx.lineWidth = 1.5 * dpr; octx.strokeStyle = q.color;
+        octx.beginPath(); octx.arc(A[0], A[1], 10 * dpr, 0, TAU); octx.stroke();
+        octx.font = SERIF(24);
+        text(q.tag + ' · ' + q.name, A[0] + 16 * dpr, A[1] - 10 * dpr, 1, q.color);
+        octx.font = MONO(11);
+      }
+      if (showLabels) for (const i of named) {
+        const right = px[i] > W * 0.78;
+        const ranks = queries.filter(q => q.rr && q.rr.has(i)).map(q => (queries.length > 1 ? q.tag : '') + q.rr.get(i).rank + '.').join(' ');
+        text((ranks ? ranks + ' ' : '') + labels[i] + '  ' + queries.map(q => q.sims[i].toFixed(2)).join(' · '), px[i] + (right ? -9 : 9) * dpr, py[i] + 4 * dpr, 0.95, '#ffffff', right ? 'right' : 'left');
+      }
+
+      // the origin in the plain view: where the all-zero vector falls, and how far it really is
+      if (showOrigin && relMix < 0.97) {
+        const m = 1 - relMix;
+        place(-cF[0], -cF[1], -cF[2], A);
+        const seen = Math.sqrt(cF[0] * cF[0] + cF[1] * cF[1] + cF[2] * cF[2]);
+        let far = 0; for (let d = 0; d < D; d++) far += C[d] * C[d]; far = Math.sqrt(far);
+        octx.globalAlpha = m; octx.strokeStyle = '#ffffff'; octx.lineWidth = 1.5 * dpr;
+        octx.beginPath(); octx.moveTo(A[0] - 7 * dpr, A[1]); octx.lineTo(A[0] + 7 * dpr, A[1]); octx.moveTo(A[0], A[1] - 7 * dpr); octx.lineTo(A[0], A[1] + 7 * dpr); octx.stroke();
+        text('origin · truly ' + far.toFixed(2) + ' from the centre, ' + seen.toFixed(2) + ' of it visible', A[0] + 12 * dpr, A[1] + 4 * dpr, m, '#ffffff');
+      }
+
+      // hover
+      hover = -1;
+      if (mouseX >= 0 && !dragging) {
+        let bd = (18 * dpr) * (18 * dpr);
+        for (let i = 0; i < N; i++) { const dx = px[i] - mouseX, dy = py[i] - mouseY, d2 = dx * dx + dy * dy; if (d2 < bd) { bd = d2; hover = i; } }
+        if (hover >= 0) {
+          octx.globalAlpha = 1; octx.lineWidth = 1.5 * dpr; octx.strokeStyle = '#ffffff';
+          octx.beginPath(); octx.arc(px[hover], py[hover], 8 * dpr, 0, TAU); octx.stroke();
+          const right = px[hover] > W * 0.7;
+          let s = labels[hover] + ' · ' + groupNames[groupOf[hover]];
+          for (const q of queries) s += ' · ' + q.tag + ' ' + q.sims[hover].toFixed(3);
+          octx.font = MONO(12);
+          text(s, px[hover] + (right ? -14 : 14) * dpr, py[hover] - 12 * dpr, 1, '#ffffff', right ? 'right' : 'left');
+        }
+      }
+      octx.globalAlpha = 1;
+
+      // the dimension readout
+      const p8 = stripImg.data;
+      for (let d = 0; d < D; d++) {
+        const ax = F[d] * F[d], ay = F[D + d] * F[D + d], az = F[2 * D + d] * F[2 * D + d], sum = ax + ay + az || 1;
+        p8[d * 4] = (AXIS_RGB[0][0] * ax + AXIS_RGB[1][0] * ay + AXIS_RGB[2][0] * az) / sum;
+        p8[d * 4 + 1] = (AXIS_RGB[0][1] * ax + AXIS_RGB[1][1] * ay + AXIS_RGB[2][1] * az) / sum;
+        p8[d * 4 + 2] = (AXIS_RGB[0][2] * ax + AXIS_RGB[1][2] * ay + AXIS_RGB[2][2] * az) / sum;
+        p8[d * 4 + 3] = Math.min(255, (ax + ay + az) * D / 3 * 80);
+      }
+      stctx.putImageData(stripImg, 0, 0);
+    }
+
+    /* ---------- the page around the sky ---------- */
+    const pct = v => (v * 100).toFixed(0) + '%';
+    let hudClock = 1;
+    function updateHud(dt) {
+      hudClock += dt;
+      if (hudClock < 0.2) return;
+      hudClock = 0;
+      let s;
+      if (relOn()) {
+        const free = 3 - rel.nPinned;
+        s = 'relative to ' + queries.map(q => q.tag).join(' and ') + ' · vertical = ' + MEASURE + ' to A, exact'
+          + (queries.some(q => q.rr) ? ' · named results chosen and numbered by the reranker' : '')
+          + (rel.nPinned === 2 ? ' · the plane of A and B is shown exactly' : '')
+          + ' · ' + (free === 1 ? 'depth tumbles' : 'the other two axes tumble') + ' through ' + SUB + ' directions holding ' + pct(rel.share) + ' of the remaining spread';
+      } else {
+        s = 'plain tumble · centred on the average vector, ' + meanLen.toFixed(2) + ' from the origin · ' + SUB + ' strongest directions hold ' + pct(plain.share) + ' of the spread';
+      }
+      hud.textContent = s + ' · seed ' + SEED + (running ? '' : ' · paused');
+    }
+
+    function drawChips() {
+      const box = el('chips'); box.textContent = '';
+      if (!queries.length) { const e = document.createElement('span'); e.className = 'empty'; e.textContent = 'No search. The view is the plain tumble.'; box.append(e); return; }
+      queries.forEach((q, j) => {
+        const chip = document.createElement('span'); chip.className = 'chip';
+        const tag = document.createElement('b'); tag.textContent = q.tag; tag.style.color = q.color;
+        const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = q.name;
+        const x = document.createElement('button'); x.type = 'button'; x.textContent = 'remove'; x.setAttribute('aria-label', 'Remove search ' + q.tag);
+        x.addEventListener('click', () => { queries.splice(j, 1); refit(); });
+        chip.append(tag, nm, x); box.append(chip);
+      });
+    }
+    function drawResults() {
+      const box = el('results'); box.textContent = '';
+      for (const q of queries) {
+        const sec = document.createElement('section'), h = document.createElement('h3'), ol = document.createElement('ol');
+        h.textContent = q.tag + ' · nearest to ' + q.name + (q.rr ? ', reranked by ' + RR.reranker : ''); h.style.color = q.color; ol.className = 'hits';
+        q.hits.forEach((i, r) => {
+          const li = document.createElement('li');
+          const a = document.createElement('span'); a.className = 'r'; a.textContent = String(r + 1);
+          const b = document.createElement('span'); b.className = 'w'; b.textContent = labels[i];
+          const c = document.createElement('span'); c.className = 'm';
+          const mv = q.rr ? q.rr.get(i) : null;
+          c.textContent = mv
+            ? MEASURE + ' ' + q.sims[i].toFixed(3) + ' · was ' + mv.was + (mv.moved > 0 ? ' ▲' + mv.moved : mv.moved < 0 ? ' ▼' + (-mv.moved) : ' =') + ' · score ' + mv.score.toPrecision(2)
+            : groupNames[groupOf[i]] + ' · ' + q.sims[i].toFixed(3);
+          li.append(a, b, c); ol.append(li);
+        });
+        sec.append(h, ol);
+        if (q.note) { const n = document.createElement('p'); n.className = 'empty'; n.textContent = q.note; sec.append(n); }
+        box.append(sec);
+      }
+    }
+    function fact(big, small) {
+      const li = document.createElement('li'), b = document.createElement('b'), s = document.createElement('span');
+      b.textContent = big; s.textContent = small; li.append(b, s); return li;
+    }
+    function drawFacts() {
+      const box = el('facts'); box.textContent = '';
+      box.append(fact(meanLen.toFixed(2), 'length of the average vector. The whole set leans one way, far from the origin.'));
+      box.append(fact(pct(plain.share), 'of the set\'s spread lies in the ' + SUB + ' directions the plain tumble tours.'));
+      if (queries.length) {
+        const q = queries[0];
+        box.append(fact(q.lo.toFixed(2) + ' to ' + q.hi.toFixed(2), 'range of ' + MEASURE + ' to A over all ' + N + ' points. Nothing is unrelated; nothing is identical.'));
+        if (rel) box.append(fact(pct(rel.share), 'of what is left after removing the search direction' + (rel.nPinned === 2 ? 's' : '') + ' lies in the ' + SUB + ' directions the free ax' + (rel.nPinned === 2 ? 'is' : 'es') + ' tour.'));
+        if (q.rr) box.append(fact(q.kept + ' of ' + q.hits.length, 'of the reranker\'s picks for A are also the ' + q.hits.length + ' highest on the ruler. The rest it lifted from lower down among the ' + RR.candidates + ' candidates.'));
+        if (q.members.size > 1) box.append(fact(q.len.toFixed(2), 'length of search A. It is an average of ' + q.members.size + ' vectors, so it is shorter than one and sits below the top of its ruler.'));
+      }
+    }
+    function syncModes() {
+      const on = relOn();
+      el('mode-relative').disabled = !queries.length;
+      el('mode-relative').setAttribute('aria-pressed', String(on));
+      el('mode-plain').setAttribute('aria-pressed', String(!on));
+      for (const s of document.querySelectorAll('.explain')) s.hidden = s.dataset.for !== (on ? 'relative' : 'plain');
+    }
+
+    // static page text, from the data file
+    el('mast-sub').textContent = N.toLocaleString('en') + ' WIKIPEDIA ARTICLES · ' + D + ' DIMENSIONS · MEASURED FROM A SEARCH';
+    el('strip-last').textContent = 'dimension ' + D;
+    sky.setAttribute('aria-label', 'Animated 3-D projection of the ' + D + '-dimensional embedding vectors of ' + N + ' Wikipedia articles');
+    const dl = el('titles');
+    for (const s of labels) { const o = document.createElement('option'); o.value = s; dl.append(o); }
+    const lg = el('legend');
+    groupNames.forEach((g, k) => { const s = document.createElement('span'), i = document.createElement('i'); i.style.background = css(k); s.append(i, document.createTextNode(g)); lg.append(s); });
+    el('note').textContent = 'Real data, not made in the page: ' + N + ' vectors of ' + D + ' dimensions from ' + meta.model + ', one per article. ' + String(meta.provenance && meta.provenance.source || '')
+      + '. Every view here is a linear projection, a shadow of the space: three directions out of ' + D + ', and the same data, seed (' + SEED + ') and elapsed time give the same frame. '
+      + (unit ? 'Every vector has length one, measured on load, which is why length along the search direction is cosine similarity. For vectors of other lengths the vertical axis would still be exact, and would read as length along the search, not cosine. ' : 'The vectors are not all of length one, so the vertical axis reads as length along the search direction, not cosine similarity. ')
+      + 'There is no embedding model in this page, so a search is an article already in the set, or the average of the articles whose titles contain the typed words. ' + (RR ? 'The reranker is real too: ' + RR.reranker + ' scored, on ' + RR.made + ', each article\'s text against the texts of its ' + RR.candidates + ' nearest other articles, and the page reads those scores from a file because it cannot call a model. A search made of several averaged titles has no such scores and is not reranked. ' : 'No reranker scores were found beside this page, so the Reranker control is not offered. ')
+      + 'Colour is the Wikipedia topic. Brightness is similarity to the nearest search. Article titles and text are by Wikipedia contributors, CC BY-SA 4.0.';
+
+    /* ---------- controls ---------- */
+    function addFromInput(add) {
+      const inp = el('in-query');
+      if (setQuery(makeQuery(inp.value), add)) inp.value = '';
+      else if (inp.value.trim()) hud.textContent = 'no article title contains “' + inp.value.trim() + '”';
+    }
+    el('btn-add').addEventListener('click', () => addFromInput(queries.length > 0));
+    el('in-query').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addFromInput(queries.length > 0); } });
+    el('btn-clear').addEventListener('click', () => { queries.length = 0; refit(); });
+    for (const b of document.querySelectorAll('.mode')) b.addEventListener('click', () => {
+      const want = b.dataset.mode;
+      if (want === mode || (want === 'relative' && !queries.length)) return;
+      mode = want; userTilt = false; startBlend(); syncModes(); hudClock = 1;
+    });
+    el('btn-run').disabled = false;
+    el('btn-run').textContent = running ? 'Pause' : 'Play';
+    el('btn-run').addEventListener('click', () => { running = !running; el('btn-run').textContent = running ? 'Pause' : 'Play'; hudClock = 1; });
+    el('in-speed').addEventListener('input', e => { speed = +e.target.value; });
+    el('in-k').addEventListener('input', e => { K = +e.target.value; queries.forEach(rank); litFill(); drawResults(); drawFacts(); });
+    if (RR) {
+      el('lb-rerank').hidden = false;
+      el('in-rerank').addEventListener('change', e => { rerankOn = e.target.checked; queries.forEach(rank); litFill(); drawResults(); drawFacts(); hudClock = 1; });
+    }
+    el('in-origin').addEventListener('change', e => { showOrigin = e.target.checked; });
+    el('in-labels').addEventListener('change', e => { showLabels = e.target.checked; });
+
+    const toCanvas = e => { const r = stage.getBoundingClientRect(); return [(e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr]; };
+    stage.addEventListener('pointerdown', e => { dragging = true; moved = 0; lastPX = e.clientX; lastPY = e.clientY; stage.classList.add('dragging'); stage.setPointerCapture(e.pointerId); });
+    stage.addEventListener('pointermove', e => {
+      [mouseX, mouseY] = toCanvas(e);
+      if (!dragging) return;
+      const dx = e.clientX - lastPX, dy = e.clientY - lastPY;
+      moved += Math.abs(dx) + Math.abs(dy);
+      yaw += dx * 0.006; pitch = Math.max(-1.2, Math.min(1.2, pitch + dy * 0.005));
+      if (Math.abs(dy) > 0) userTilt = true;
+      lastPX = e.clientX; lastPY = e.clientY;
+    });
+    const endDrag = e => {
+      if (!dragging) return;
+      dragging = false; stage.classList.remove('dragging');
+      if (moved < 5 && e.type === 'pointerup') {
+        [mouseX, mouseY] = toCanvas(e);
+        let best = -1, bd = (18 * dpr) * (18 * dpr);
+        for (let i = 0; i < N; i++) { const dx = px[i] - mouseX, dy = py[i] - mouseY, d2 = dx * dx + dy * dy; if (d2 < bd) { bd = d2; best = i; } }
+        if (best >= 0) setQuery(queryFrom([best], labels[best]), e.shiftKey && queries.length > 0);
+      }
+    };
+    stage.addEventListener('pointerup', endDrag);
+    stage.addEventListener('pointercancel', endDrag);
+    stage.addEventListener('pointerleave', () => { mouseX = mouseY = -1; });
+
+    /* ---------- go: open measured from one article ---------- */
+    plain.tour(0, F, [0, 1, 2]);
+    C.set(mean);
+    const first = makeQuery('Rice') || queryFrom([0], labels[0]);
+    queries.push(first);
+    refit();
+    blendU = 1; targetFrame(0); F.set(Ft);
+    for (let d = 0; d < D; d++) C[d] = 0.76 * first.dir[d];
+    zoom = 3; pitch = 0; relMix = 1;
+
+    let last = performance.now();
+    function tick(now) {
+      const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      render(dt); updateHud(dt);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+})();
+</script>

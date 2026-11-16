@@ -248,3 +248,5 @@ js-coverage*.lcov
 
 # Agent worktrees made by Claude Code: never part of the repository or of a source distribution.
 .claude/worktrees/
+
+.devague/questions/
