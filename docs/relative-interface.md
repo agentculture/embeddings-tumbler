@@ -206,14 +206,14 @@ makeRelativeFit
 ```text
 RELATIVE_UNIT_TOLERANCE
 RELATIVE_ZERO_LENGTH
-RELATIVE_NEW_SHARE
+RELATIVE_SAME_DIRECTION
 ```
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
 | `ET.math.RELATIVE_UNIT_TOLERANCE` | `1e-3` | A set is unit-length when its shortest and longest vectors are both within this of 1 (the reference's test, `Math.abs(minLen - 1) < 1e-3 && Math.abs(maxLen - 1) < 1e-3`). |
 | `ET.math.RELATIVE_ZERO_LENGTH` | `1e-9` | A query no longer than this has no direction (the reference's `len > 1e-9`). |
-| `ET.math.RELATIVE_NEW_SHARE` | `0.5` | A later search gives an axis only when the squared length of the part of its unit direction that the earlier pinned directions do not contain is at least this (the reference's `if (s < 0.5) ok = 1`). |
+| `ET.math.RELATIVE_SAME_DIRECTION` | `1e-6` | A later search adds no axis when the part of its unit direction that the earlier pinned directions do not contain has squared length below this: it points the same way as an earlier search. Any other later search adds an axis, however close it is. The value: the query vectors are float32, so a repeated search (the same vector again) leaves a new part of squared length near 1e-14 and falls below it, while two different articles leave far more (an angle under 0.06 degrees would be needed to fall below it). The reference does the same thing in another form: it orthonormalises the rows first (a row whose remainder has norm at most 1e-12 is left as it is) and then `if (s < 0.5) ok = 1`, where `s` is 1 for any new direction and about 0 only for one pointing exactly the same way. |
 
 ### `ET.math.relativeDirections(queries, D) -> { directions, count, pinned, dropped }`
 
@@ -223,8 +223,12 @@ RELATIVE_NEW_SHARE
   dropped with reason `"zero-length"`. Once three are pinned, every later one is
   dropped with `"no-axis-left"`. Otherwise its unit direction `u` has the
   pinned directions removed (twice, in double precision); if the squared length
-  left is below `RELATIVE_NEW_SHARE` it is dropped with `"same-direction"`,
-  otherwise what is left, made unit length, is pinned.
+  left is below `RELATIVE_SAME_DIRECTION` it is dropped with
+  `"same-direction"`, otherwise what is left, made unit length, is pinned. The
+  same rule applies to the third search against the first two.
+- For Rice and Wheat on the Wikipedia fixture (cosine about 0.82) two axes are
+  pinned, as on the reference page the owner approved; t2 must test that, and
+  that the same query given twice pins one axis with `"same-direction"`.
 - Returns `directions: Float32Array(count * D)` (orthonormal rows in pin order:
   `frameError < 1e-6`), `count` (0 to 3), `pinned: [{ index, length }]` (index
   into `queries`, the query's length), `dropped: [{ index, reason, against }]`
@@ -678,7 +682,7 @@ not shown or nothing is to be said. `noteText` includes it.
 Show the origin
 Relative
 Search {letter} has no direction (its vector has length zero), so it pins no axis.
-Search {letter} lies too close to {against}: less than half of its direction is new, so it pins no axis. It is still lit.
+Search {letter} points the same way as {against}, so it adds no axis. It is still lit.
 Search {letter} is lit but has no axis: the first three searches pin all three.
 This set is too small for the free axes to follow its spread: {fixed} of {free} are fixed directions, not fitted ones.
 length along the search {h} · cosine {c}
@@ -883,7 +887,7 @@ setting, so a view can be reopened. The other parameters (`mode`, `seed`,
 | Case | Reason code (t2) | Status (t6) | Panel note (t8) |
 |------|------------------|-------------|-----------------|
 | A query of length zero (a point search on an all-zero row, words whose mean cancels) | `zero-length` | `{letter} pins no axis` | `Search {letter} has no direction (its vector has length zero), so it pins no axis.` |
-| A later search too close to the earlier pinned ones (less than half its squared direction is new) | `same-direction` | `{letter} pins no axis` | `Search {letter} lies too close to {against}: less than half of its direction is new, so it pins no axis. It is still lit.` |
+| A later search pointing the same way as an earlier pinned one (squared new part below `RELATIVE_SAME_DIRECTION`) | `same-direction` | `{letter} pins no axis` | `Search {letter} points the same way as {against}, so it adds no axis. It is still lit.` |
 | A fourth search (or any search after three pinned) | `no-axis-left` | `{letter} pins no axis` | `Search {letter} is lit but has no axis: the first three searches pin all three.` |
 | A set too small for the free axes (fewer directions of spread than free rows) | (`fixed > 0`) | (none) | `This set is too small for the free axes to follow its spread: {fixed} of {free} are fixed directions, not fitted ones.` |
 
@@ -952,6 +956,11 @@ the page's 2-D canvas look):
    reference shows two at most. Status strings for three searches are new.
 9. The hover name keeps the viewer's format; the reference adds each search's
    height to it.
+10. A search pointing the same way as an earlier one is found by the squared
+    length of its new part (below 1e-6); the reference leaves a row whose
+    remainder has norm at most 1e-12 unnormalised and then tests `s < 0.5`.
+    The two agree for a repeated search and for any two different articles;
+    they differ only for directions closer than about 0.06 degrees.
 
 ## Decisions made here
 
@@ -961,12 +970,13 @@ the page's 2-D canvas look):
    ranking unchanged.
 2. The unit-length tolerance is 0.001 on the shortest and longest lengths (the
    reference's). Reason: the reference is part of the spec.
-3. A later search gives an axis only when at least half of its squared unit
-   direction is new (0.5, the reference's). Reason: the build must pin the same
-   axes as the reference (o11). On the Wikipedia set two articles with cosine
-   above about 0.71 give one axis; the message says so in plain words rather
-   than "the same way". The owner may want a smaller value; changing it changes
-   which axes are pinned against the reference.
+3. A later search adds an axis unless it points the same way as an earlier
+   pinned one: the squared length of its new part is below
+   `RELATIVE_SAME_DIRECTION = 1e-6`. Reason: this is what the reference does
+   (its 0.5 test runs after its rows are made unit length, so it separates a
+   new direction, `s` = 1, from a repeated one, `s` about 0), and the owner
+   approved Rice and Wheat (cosine 0.82) pinning two axes there (o11). 1e-6
+   separates a repeated float32 query from any two different articles.
 4. The gradient reaches the renderer in the lit values (no new buffer, no new
    key); non-results get `0.2 x g^2` by plain cosine. Reason: the lit channel
    already does exactly this and is already proven unchanged at filter 0.
