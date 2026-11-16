@@ -2,7 +2,7 @@
   "plan_slug": "relative-search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-16T22:05:02Z",
-  "updated": "2026-11-16T22:05:02Z",
+  "updated": "2026-11-16T22:21:05Z",
   "deviations": [
     {
       "id": "d1",
@@ -51,6 +51,22 @@
       "status": "proposed",
       "classification": "acceptable",
       "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "The free axes of the relative view reuse the plain fit: they tour the set's strongest directions with the search directions removed, where requirement c10 and obligation o2 say the strongest directions of the set after those directions are removed (a second full fit). The height axis stays exact, the reported share stays the true share of the axes shown, and the full fit remains only as a fallback for sets too small to reuse. Added as task t18.",
+      "task_ref": "t6",
+      "reason": "On the owner's iPhone, ticking Relative took 30+ seconds with nothing shown ('The new search is very heavy on iphone. I don't see it working there... After 30+ seconds it returned to move fast'). Measured: the switch waits for a second fit as long as the page's first (10.8 s on a CPU slowed 8 times). Reusing the plain directions holds 99.9 to 100 percent of the best share on both real models for 20 to 70 times less work. Shown these figures and the changed sentence, the owner answered 'change approved' on 2026-11-17.",
+      "affects": [
+        "t2",
+        "t14",
+        "c10",
+        "h8"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 4
     }
   ],
   "evidence": [],
