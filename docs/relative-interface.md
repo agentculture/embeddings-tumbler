@@ -859,7 +859,7 @@ afterwards the shell calls `handle.setRelative`. A property set reflects to its
 attribute and the reverse. The shell holds no projection logic (the existing
 no-logic check is extended to the relative names of t2, t3, t6 and t7).
 
-<!-- interface-text file="js/shells/web-component.js" task="t11" landed="auto" -->
+<!-- interface-text file="js/shells/web-component.js" task="t11" landed="yes" -->
 ```text
 "show-origin"
 showOrigin
