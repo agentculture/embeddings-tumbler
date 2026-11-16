@@ -63,6 +63,22 @@ test("a host theme change seen by update still clears the trails and re-styles",
   h.destroy();
 });
 
+test("a resize of the root with the stage unchanged keeps the trails (no flicker when the search panel opens)", () => {
+  const { dom, el, h, v } = setup();
+  h.update(makeSet({ n: 60, d: 8 }));
+  dom.frames(10);
+  assert.strictEqual(v.needClear, false);
+  // the root grew (the panel opened below the stage); the stage is the size it was
+  dom.ro[0].trigger();
+  assert.strictEqual(v.needClear, false, "an unchanged stage asks for no clear");
+  dom.frames(2);
+  // the stage itself changes size: the picture is wiped as before
+  el.rect = { ...el.rect, width: 480, height: 480 };
+  dom.ro[0].trigger();
+  assert.strictEqual(v.needClear, true, "a changed stage still clears");
+  h.destroy();
+});
+
 // ---------- brightness agrees with the uploaded weights ----------
 
 function gainOf(v) {

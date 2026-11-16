@@ -13678,11 +13678,14 @@ ET.viewer = (function () {
     h = h > 0 ? h : v.stage.clientHeight || 150;
     var dpr = Math.min(Number(v.options.maxPixelRatio) || 2, v.win?.devicePixelRatio || 1);
     if (v.dprCap !== null) dpr = Math.max(1, Math.min(dpr, v.dprCap));
+    var W = Math.max(2, Math.round(w * dpr));
+    var H = Math.max(2, Math.round(h * dpr));
+    // The picture is wiped only when the stage really changed. The root also resizes when the
+    // search panel opens or closes below an unchanged stage; wiping then showed as a flicker.
+    var sameStage = v.W === W && v.H === H && v.dpr === dpr;
     v.dpr = dpr;
     v.cssW = w;
     v.cssH = h;
-    var W = Math.max(2, Math.round(w * dpr));
-    var H = Math.max(2, Math.round(h * dpr));
     v.W = W;
     v.H = H;
     if (v.renderer) v.renderer.resize(W, H);
@@ -13696,7 +13699,7 @@ ET.viewer = (function () {
       rootW = w;
     }
     layoutForWidth(v, rootW || w);
-    v.needClear = true;
+    if (!sameStage) v.needClear = true;
     invalidate(v);
   }
 
