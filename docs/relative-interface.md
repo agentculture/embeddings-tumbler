@@ -522,7 +522,7 @@ A new module, `js/src/46-relative-overlay.js`. Pure numbers in, a draw list
 out; then the canvas part and the text part are painted separately, because
 the viewer draws no text on a canvas.
 
-<!-- interface-names module="46-relative-overlay.js" object="ET.relativeOverlay" match="present" task="t7" prefix="ET.relativeOverlay." landed="auto" -->
+<!-- interface-names module="46-relative-overlay.js" object="ET.relativeOverlay" match="present" task="t7" prefix="ET.relativeOverlay." landed="yes" -->
 ```text
 build
 paint
@@ -605,7 +605,7 @@ result).
 
 ### Overlay strings (t7)
 
-<!-- interface-strings module="46-relative-overlay.js" task="t7" landed="auto" -->
+<!-- interface-strings module="46-relative-overlay.js" task="t7" landed="yes" -->
 ```text
 {measure} to {letter}
 {sent} candidates above this line went to the reranker
