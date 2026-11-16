@@ -250,3 +250,6 @@ js-coverage*.lcov
 .claude/worktrees/
 
 .devague/questions/
+
+# Regenerable local evidence data (second-model embeddings and the like); never committed.
+.local/
