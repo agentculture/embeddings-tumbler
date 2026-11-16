@@ -12022,6 +12022,9 @@ ET.viewer = (function () {
     searchTop: 20, // reranked candidates kept (3 to searchCandidates)
     searchLit: "even",
     onSearchChange: null,
+    // Tumble's relative settings at mount (docs/relative-interface.md, "Viewer (t9, t10)").
+    relative: false,
+    showOrigin: false,
   };
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
@@ -13073,6 +13076,7 @@ ET.viewer = (function () {
     var list = v.provList;
     list.replaceChildren();
     v.provView = null;
+    v.provRel = null; // the Relative row goes with the rows; syncRelativeProvenance adds it again
     var set = v.set;
     if (!set) {
       provRow(v, "Data", "none yet");
@@ -13122,6 +13126,7 @@ ET.viewer = (function () {
       (p.synthetic ? " · synthetic" : "") +
       " · a projection is a shadow of the space";
     v.provViewText = v.provView.textContent;
+    syncRelativeProvenance(v);
   }
 
   function refreshViewRow(v) {
@@ -13242,10 +13247,27 @@ ET.viewer = (function () {
       curNeighbours: null,
     };
     v.modeId = id;
+    passRelative(v, v.mode); // right after it is entered (Tumble keeps the settings)
     paintModeButtons(v);
     refreshViewRow(v);
     v.statusClock = STATUS_EVERY;
     return true;
+  }
+
+  // Hand the viewer's relative settings to a mode that takes them (Tumble's setRelative):
+  // right after it is entered and on every change. A stepper it hands back is pumped with
+  // the mode's own preparation. With both settings off the call changes nothing in Tumble.
+  function passRelative(v, m) {
+    if (!m || typeof m.inst.setRelative !== "function") return;
+    var r;
+    try {
+      r = m.inst.setRelative({ relative: v.rel.relative, showOrigin: v.rel.showOrigin }, m.clock);
+    } catch (err) {
+      // A mode whose setRelative throws keeps its current view.
+      return;
+    }
+    var work = typeof r?.step === "function" ? r : r?.work;
+    if (typeof work?.step === "function") m.jobs.push(work);
   }
 
   function leaveSafely(inst) {
@@ -13885,6 +13907,7 @@ ET.viewer = (function () {
     if (!v.reducedMotion || v.running) v.drawTime += dt;
     easeFilter(v, dt);
     v.search.hideUnlit = hidesUnlit(v);
+    syncRelativeLit(v, s);
     var ds = drawState(v, s, dt);
     v.drawSpent = 0;
     if (r && v.rendering) {
@@ -13895,6 +13918,7 @@ ET.viewer = (function () {
     v.needClear = false;
     v.last = s;
     v.lastDraw = ds;
+    noteRelativeChange(v, s);
     drawLabels(v, s, ds);
     drawSearchOverlay(v, s, ds);
     drawStrip(v, s.frame);
@@ -13976,6 +14000,7 @@ ET.viewer = (function () {
   function updateStatus(v, m, s, ready) {
     v.statusClock = 0;
     var line = s.status;
+    if (relativeShown(v, s)) line += relativeStatusTail(v, s.relative);
     if (v.userZoom !== 1) line += " · zoom " + v.userZoom.toFixed(1) + "×";
     if (!v.running) line += " · paused";
     if (line !== v.statusText) {
@@ -13983,6 +14008,7 @@ ET.viewer = (function () {
       v.statusText = line;
     }
     refreshViewRow(v);
+    syncRelativeProvenance(v);
     v.root.setAttribute("aria-busy", ready && !m.jobs.length ? "false" : "true");
   }
 
@@ -14942,6 +14968,13 @@ ET.viewer = (function () {
       litUploaded: false,
       hideUnlit: false, // Focus's Only results hides unlit points this frame
       panel: null,
+      // The relative view (docs/relative-interface.md, "Viewer (t9, t10)").
+      relActive: false, // the relative view is shown this frame
+      litRelative: false, // the lit values uploaded hold the gradient
+      relKey: "", // what onSearchChange last saw of the relative view
+      gradient: null, // { shown, values } the gradient for the searches shown
+      heights: null, // { shown, list } heights and cosines of the results shown
+      unit: null, // { set, unit } ET.math.unitLength of the set shown
     };
   }
 
@@ -15254,20 +15287,20 @@ ET.viewer = (function () {
       return;
     }
     var st = v.search.settings;
-    var pov = ET.searchSets.LETTERS.indexOf(st.pointOfView);
+    kept = giveLetters(v, kept);
     run.searches = kept;
     run.set = v.set;
     run.used = {
       k: st.k,
       candidates: st.candidates,
       top: st.top,
-      pointOfView: pov >= 0 && pov < kept.length ? st.pointOfView : null,
+      // With letters by position this is "the letter's position is among the kept".
+      pointOfView: hasLetter(kept, st.pointOfView) ? st.pointOfView : null,
       rerank: st.rerank,
     };
     var counts = { k: st.k, candidates: st.candidates, top: st.top };
     run.left = kept.length;
-    kept.forEach(function (q, j) {
-      q.letter = ET.searchSets.letter(j);
+    kept.forEach(function (q) {
       q.scale = run.used.pointOfView === q.letter ? ET.searchSets.scaleFor(q.query) : null;
       q.reranker = null;
       q.sent = 0;
@@ -15279,6 +15312,89 @@ ET.viewer = (function () {
         if (run.left === 0) startRerank(v, run);
       });
     });
+  }
+
+  // ----- letters (docs/relative-interface.md, "Letters are kept") -----
+
+  function hasLetter(list, letter) {
+    return (
+      letter !== null &&
+      list.some(function (q) {
+        return q.letter === letter;
+      })
+    );
+  }
+
+  // Letters for the kept searches, which come back in letter order. With the Relative
+  // setting off they go by position, as they always have. With it on, an entry that is the
+  // same search as one shown keeps that search's letter, and the others take the lowest
+  // free letters in list order.
+  function giveLetters(v, kept) {
+    var L = ET.searchSets.LETTERS;
+    if (!v.rel.relative) {
+      kept.forEach(function (q, j) {
+        q.letter = ET.searchSets.letter(j);
+      });
+      return kept;
+    }
+    var shown = v.search.shown;
+    var taken = [];
+    kept.forEach(function (q) {
+      var old = shown.find(function (o) {
+        return !taken.includes(o.letter) && sameSearch(o, q);
+      });
+      q.letter = old ? old.letter : null;
+      if (old) taken.push(old.letter);
+    });
+    kept.forEach(function (q) {
+      if (q.letter !== null) return;
+      q.letter = L.find(function (x) {
+        return !taken.includes(x);
+      });
+      taken.push(q.letter);
+    });
+    return kept.slice().sort(function (a, b) {
+      return L.indexOf(a.letter) - L.indexOf(b.letter);
+    });
+  }
+
+  // The same search: same kind, and the same text (a typed search, embedded or matched
+  // among the points), the same point id, or the same vector bytes and model.
+  function sameSearch(a, b) {
+    if (a.kind !== b.kind) return false;
+    if (a.kind === "point") return a.point === b.point;
+    if (a.kind === "vector") return a.model === b.model && sameValues(a.query, b.query);
+    return a.text === b.text;
+  }
+
+  function sameValues(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (var d = 0; d < a.length; d++) if (a[d] !== b[d]) return false;
+    return true;
+  }
+
+  // Letters by position again (the Relative setting is off): the point of view follows
+  // its search. Returns true when a letter changed.
+  function letterByPosition(v) {
+    var s = v.search;
+    var map = {};
+    var changed = false;
+    s.shown.forEach(function (q, j) {
+      var to = ET.searchSets.letter(j);
+      map[q.letter] = to;
+      if (q.letter !== to) changed = true;
+    });
+    if (!changed) return false;
+    s.shown.forEach(function (q, j) {
+      q.letter = ET.searchSets.letter(j);
+    });
+    var pov = s.settings.pointOfView;
+    if (pov !== null) s.settings.pointOfView = Object.hasOwn(map, pov) ? map[pov] : null;
+    if (s.shownUsed && s.shownUsed.pointOfView !== null) {
+      var used = s.shownUsed.pointOfView;
+      s.shownUsed.pointOfView = Object.hasOwn(map, used) ? map[used] : null;
+    }
+    return true;
   }
 
   function rerankOn(v, run) {
@@ -15387,6 +15503,9 @@ ET.viewer = (function () {
     s.code = null;
     s.message = null;
     if (run.kind === "set" && run.used.pointOfView === null) s.settings.pointOfView = null;
+    // Relative turned off while this run worked: its kept letters go back to positions
+    // (with the setting off from the start the letters are positional already).
+    if (!v.rel.relative) letterByPosition(v);
     relight(v);
     s.pairs = run.pairs || [];
     startFacing(v, run.swing);
@@ -15448,6 +15567,14 @@ ET.viewer = (function () {
     var shared = new Uint8Array(n);
     lit.set(s.lit.lit.subarray(0, Math.min(n, s.lit.lit.length)));
     shared.set(s.lit.shared.subarray(0, Math.min(n, s.lit.shared.length)));
+    // In the relative view, points the searches do not light get the faint gradient; the
+    // lit values above 0 are kept exactly (results follow the Lit setting as without it).
+    s.litRelative = s.relActive;
+    var grad = s.relActive ? relativeGradient(v) : null;
+    if (grad) {
+      var m = Math.min(n, grad.length);
+      for (var i = 0; i < m; i++) if (!(lit[i] > 0)) lit[i] = grad[i];
+    }
     try {
       r.setLit(lit, shared);
       s.litUploaded = true;
@@ -15726,10 +15853,10 @@ ET.viewer = (function () {
     st.top = ET.search.clampTop(top === null ? st.top : top, st.candidates);
   }
 
+  // A letter of a search shown (with letters by position: one of the first n letters).
   function validPointOfView(v, value) {
     if (value === null) return true;
-    var j = ET.searchSets.LETTERS.indexOf(value);
-    return j >= 0 && j < v.search.shown.length;
+    return ET.searchSets.LETTERS.includes(value) && hasLetter(v.search.shown, value);
   }
 
   function rerankOffered(v) {
@@ -15815,6 +15942,7 @@ ET.viewer = (function () {
       pairs: s.pairs.map(function (p) {
         return pairInfo(v, p);
       }),
+      relative: relativeInfo(v),
     };
   }
 
@@ -15888,7 +16016,11 @@ ET.viewer = (function () {
 
   function pairInfo(v, p) {
     var ids = (v.set || v.search.shownSet).ids;
-    var L = ET.searchSets.letter;
+    // p.a and p.b are positions among the searches shown; each search's own letter names it.
+    var shown = v.search.shown;
+    var L = function (j) {
+      return shown[j] ? shown[j].letter : ET.searchSets.letter(j);
+    };
     return {
       a: L(p.a),
       b: L(p.b),
@@ -16051,6 +16183,396 @@ ET.viewer = (function () {
     return ET.renderer.place([a, b, c], ds, v.W, v.H);
   }
 
+  // ----- the relative view (docs/relative-interface.md, "Viewer (t9, t10)") -----
+
+  var RELATIVE_GRADIENT = 0.2; // the brightest point that is not a result, as a lit value
+  var OWN_POINT_DISTANCE = 1e-7; // a point this close to its search, at its length, is its own
+  var OWN_POINT_LENGTH = 1e-6;
+
+  // The relative view is shown: Tumble's state has at least one axis pinned.
+  function relativeShown(v, st) {
+    return v.modeId === "tumble" && !!st?.relative?.active;
+  }
+
+  // "A", "A and B", "A, B and C".
+  function relLetters(letters) {
+    if (letters.length < 2) return letters.join("");
+    return letters.slice(0, -1).join(", ") + " and " + letters.at(-1);
+  }
+
+  function rowDot(X, o, u, D) {
+    var s = 0;
+    for (var d = 0; d < D; d++) s += X[o + d] * u[d];
+    return s;
+  }
+
+  // A search's unit direction in double precision, or null when its query has no length.
+  function searchDirection(q) {
+    var D = q.query.length;
+    var len = Math.sqrt(rowDot(q.query, 0, q.query, D));
+    if (!(len > ET.math.RELATIVE_ZERO_LENGTH)) return null;
+    var u = new Float64Array(D);
+    for (var d = 0; d < D; d++) u[d] = q.query[d] / len;
+    return { u: u, length: len };
+  }
+
+  // The search's own point: at plain cosine distance below OWN_POINT_DISTANCE and of the
+  // search's length (the rule the overlay draws by).
+  function isOwnPoint(set, i, distance, length) {
+    if (!(distance < OWN_POINT_DISTANCE)) return false;
+    var D = set.dimension;
+    var o = i * D;
+    return Math.abs(Math.sqrt(rowDot(set.vectors, o, set.vectors.subarray(o, o + D), D)) - length) < OWN_POINT_LENGTH;
+  }
+
+  // The gradient for the searches shown, worked out once per change of the searches or the
+  // data: RELATIVE_GRADIENT * g^2, g the largest over the searches of
+  // clamp((c - mid) / (hi - mid), 0, 1) by plain cosine c, mid the median c (index N >> 1
+  // of the ascending sort) and hi the largest c of a point other than the search's own.
+  function relativeGradient(v) {
+    var s = v.search;
+    var set = s.shownSet;
+    if (!s.shown.length || !set) return null;
+    if (s.gradient?.shown === s.shown && s.gradient.set === set) return s.gradient.values;
+    var N = set.count;
+    var g = new Float64Array(N);
+    var c = new Float64Array(N);
+    for (const q of s.shown) {
+      var r = q.ranking;
+      var dist = r.plainDistances || r.distances;
+      var dir = searchDirection(q);
+      var hi = -Infinity;
+      for (var i = 0; i < N; i++) {
+        c[i] = 1 - dist[i];
+        if (c[i] > hi && !(dir && isOwnPoint(set, i, dist[i], dir.length))) hi = c[i];
+      }
+      var mid = Float64Array.from(c).sort()[N >> 1];
+      if (!(hi > mid)) continue;
+      for (var j = 0; j < N; j++) {
+        var x = clamp((c[j] - mid) / (hi - mid), 0, 1);
+        if (x > g[j]) g[j] = x;
+      }
+    }
+    var values = new Float32Array(N);
+    for (var k = 0; k < N; k++) values[k] = RELATIVE_GRADIENT * g[k] * g[k];
+    s.gradient = { shown: s.shown, set: set, values: values };
+    return values;
+  }
+
+  // ET.math.unitLength of the set shown, once per set.
+  function unitOf(v) {
+    var s = v.search;
+    var set = v.set;
+    if (!set) return null;
+    if (s.unit?.set !== set) s.unit = { set: set, unit: ET.math.unitLength(set.vectors, set.count, set.dimension) };
+    return s.unit.unit;
+  }
+
+  // In the plain view with the setting on, the searches that give no axis (letters), so the
+  // panel can say why nothing is pinned. The same rule Tumble applies to the same list.
+  function plainDropped(v) {
+    var s = v.search;
+    var set = v.set;
+    if (!v.rel.relative || v.modeId !== "tumble" || !s.shown.length || !set || set.dimension < 3) return [];
+    var dirs = ET.math.relativeDirections(
+      s.shown.map(function (q) {
+        return q.query;
+      }),
+      set.dimension
+    );
+    var letterOf = function (j) {
+      return s.shown[j].letter;
+    };
+    return dirs.dropped.map(function (d) {
+      return { letter: letterOf(d.index), reason: d.reason, against: d.against.map(letterOf) };
+    });
+  }
+
+  // Each search's results with their height along it (x . u) and plain cosine, aligned with
+  // info().search.searches[j].results; worked out once per commit.
+  function relativeResults(v) {
+    var s = v.search;
+    var set = s.shownSet;
+    if (!set) return [];
+    if (s.heights?.shown !== s.shown) {
+      var D = set.dimension;
+      s.heights = {
+        shown: s.shown,
+        list: s.shown.map(function (q) {
+          var dir = searchDirection(q);
+          return {
+            letter: q.letter,
+            results: q.view.hits.map(function (hit) {
+              return {
+                index: hit.index,
+                id: hit.id,
+                height: dir ? rowDot(set.vectors, hit.index * D, dir.u, D) : null,
+                cosine: 1 - hit.plainDistance,
+              };
+            }),
+          };
+        }),
+      };
+    }
+    return s.heights.list.map(function (e) {
+      return {
+        letter: e.letter,
+        results: e.results.map(function (r) {
+          return { ...r };
+        }),
+      };
+    });
+  }
+
+  // info().search.relative. The mode's state is the one last drawn. In the plain view the
+  // measure and unit come from the viewer's own check of the set (Tumble reports them only
+  // once an axis is pinned), and dropped names the searches that give no axis.
+  function relativeInfo(v) {
+    var offered = v.modeId === "tumble";
+    var st = offered && v.mode && v.last ? v.last.relative || null : null;
+    var active = !!st?.active;
+    var unit = active ? st.unit : unitOf(v);
+    var measure = null;
+    if (active) measure = st.measure;
+    else if (unit) measure = unit.unit ? "cosine" : "length along the search";
+    return {
+      relative: v.rel.relative,
+      showOrigin: v.rel.showOrigin,
+      offered: offered,
+      active: active,
+      settled: active && st.settled === true,
+      measure: measure,
+      unit: unit ? { unit: unit.unit, min: unit.min, max: unit.max, tolerance: unit.tolerance } : null,
+      pinned: active
+        ? st.pinned.map(function (p) {
+            return { letter: p.letter, axis: p.axis, length: p.length };
+          })
+        : [],
+      dropped: active
+        ? st.dropped.map(function (d) {
+            return { letter: d.letter, reason: d.reason, against: d.against.slice() };
+          })
+        : plainDropped(v),
+      free: active ? st.free : 3,
+      fixed: active ? st.fixed : 0,
+      window: active && st.window ? { ...st.window } : null,
+      share: active ? st.share : null,
+      subspace: active ? st.subspace : null,
+      searches: active ? relativeResults(v) : [],
+    };
+  }
+
+  // The viewer's pieces after the mode's relative status, before its own zoom and paused.
+  function relativeStatusTail(v, rel) {
+    var shown = v.search.shown;
+    var out = "";
+    if (
+      shown.some(function (q) {
+        return !!q.reranker;
+      })
+    ) {
+      out += " · named results chosen and numbered by the reranker";
+    }
+    var pov = shown.find(function (q) {
+      return q.scale;
+    });
+    if (pov) out += " · with " + pov.letter + "'s point of view, rank and height use different measures";
+    if (rel.measure !== "cosine") out += " · ranked by cosine, so rank and height can disagree";
+    return out;
+  }
+
+  function fixed3(x) {
+    return typeof x === "number" && Number.isFinite(x) ? x.toFixed(3) : "?";
+  }
+
+  // The provenance's Relative row: the sentences that apply, in the documented order.
+  function relativeProvenanceText(v, rel) {
+    var L = rel.pinned.map(function (p) {
+      return p.letter;
+    });
+    var parts = ["The vertical axis is exact: height is " + rel.measure + " to " + L[0] + "."];
+    if (L.length >= 2) {
+      parts.push(
+        "The horizontal axis is exact too: it is the part of " +
+          L[1] +
+          " that " +
+          L[0] +
+          " does not contain, so the plane of " +
+          L[0] +
+          " and " +
+          L[1] +
+          " is shown exactly."
+      );
+    }
+    if (L.length >= 3) {
+      parts.push("The depth axis is exact too: all three axes are pinned, so the space of " + relLetters(L) + " is shown exactly and nothing tumbles.");
+    }
+    if (L.length < 3 && rel.subspace > 0) {
+      var axes = L.length === 1 ? "The other two axes" : "The depth axis";
+      var tour = L.length === 1 ? "tour" : "tours";
+      var share = Math.round((rel.share || 0) * 100) + "%";
+      parts.push(
+        axes +
+          " " +
+          tour +
+          " " +
+          rel.subspace +
+          " directions holding " +
+          share +
+          " of the spread the pinned axes leave: sideways position is still a shadow, and points side by side on screen can be far apart."
+      );
+    }
+    var u = rel.unit;
+    if (u?.unit) parts.push("Every vector has length one (within " + u.tolerance + "), which is why height is cosine similarity.");
+    else {
+      parts.push(
+        "The vectors are not all of length one (lengths " +
+          fixed3(u?.min) +
+          " to " +
+          fixed3(u?.max) +
+          "), so height is length along the search, not cosine; results are still ranked by cosine, so rank and height can disagree."
+      );
+    }
+    var pov = v.search.shown.find(function (q) {
+      return q.scale;
+    });
+    if (pov) {
+      parts.push("With " + pov.letter + "'s point of view on, its results are ranked in the scaled measure and height is not: rank and height use different measures.");
+    }
+    return { text: parts.join(" "), letters: relLetters(L) };
+  }
+
+  // The Relative row (after View) and the summary's "relative to" while the relative view
+  // is shown; both are removed otherwise. Called with the status line and after the
+  // provenance is drawn afresh (which removes them).
+  function syncRelativeProvenance(v) {
+    var rel = v.set && relativeShown(v, v.last) ? v.last.relative : null;
+    var want = rel ? relativeProvenanceText(v, rel) : null;
+    var key = want ? want.letters + "\n" + want.text : "";
+    var cur = v.provRel;
+    if (cur?.key === key) return;
+    if (cur) {
+      cur.dt.remove();
+      cur.dd.remove();
+      cur.clause.remove();
+    }
+    v.provRel = null;
+    if (!want || !v.provView) return;
+    var dt = text(v, "dt", "tumbler-provenance-term tumbler-relative-provenance-term", "Relative", {
+      margin: "0",
+      color: cssRgb(v.theme.muted),
+    });
+    var dd = text(v, "dd", "tumbler-provenance-value tumbler-relative-provenance-value", want.text, {
+      margin: "0",
+      color: cssRgb(v.theme.foreground),
+      minWidth: "0",
+    });
+    var clause = text(v, "span", "tumbler-relative-provenance-clause", " · relative to " + want.letters);
+    v.provView.after(dt, dd);
+    v.provSummary.appendChild(clause);
+    v.provRel = { key: key, dt: dt, dd: dd, clause: clause };
+  }
+
+  // Once a frame, before drawing: whether the relative view is shown. When that changes
+  // the lit values go up again, with or without the gradient.
+  function syncRelativeLit(v, st) {
+    var s = v.search;
+    var active = relativeShown(v, st);
+    s.relActive = active;
+    if (s.lit && s.litUploaded && active !== s.litRelative) uploadLit(v);
+  }
+
+  // Once a frame, after the state is kept: the panel and host hear of a change in what
+  // info().search.relative reports (shown, the pinned and the dropped letters).
+  function noteRelativeChange(v, st) {
+    var s = v.search;
+    var active = relativeShown(v, st);
+    var rel = v.modeId === "tumble" ? st?.relative : null;
+    var key = "";
+    if (rel) {
+      key =
+        (active ? "on:" : "off:") +
+        rel.pinned
+          .map(function (p) {
+            return p.letter;
+          })
+          .join("") +
+        ":" +
+        rel.dropped
+          .map(function (d) {
+            return d.letter;
+          })
+          .join("");
+    }
+    if (key !== s.relKey) {
+      s.relKey = key;
+      searchChanged(v);
+    }
+  }
+
+  // handle.setRelative(patch): synchronous; no ranking is redone, nothing is superseded,
+  // no request is made. onSearchChange fires when a value changes.
+  function setRelative(v, patch) {
+    var cur = v.rel;
+    var next = { relative: cur.relative, showOrigin: cur.showOrigin };
+    if (v.destroyed || !isObj(patch)) return next;
+    try {
+      if (typeof patch.relative === "boolean") next.relative = patch.relative;
+      if (typeof patch.showOrigin === "boolean") next.showOrigin = patch.showOrigin;
+    } catch {
+      // A getter on the host's patch threw: the patch is ignored.
+      return { relative: cur.relative, showOrigin: cur.showOrigin };
+    }
+    if (next.relative === cur.relative && next.showOrigin === cur.showOrigin) return next;
+    v.rel = next;
+    var relettered = !next.relative && letterByPosition(v);
+    passRelative(v, v.mode);
+    if (relettered) notifyModeSearch(v);
+    searchChanged(v);
+    invalidate(v);
+    return { relative: next.relative, showOrigin: next.showOrigin };
+  }
+
+  // What the relative overlay is told about the results (docs/relative-interface.md,
+  // "Drawing (t10)"): `named`, every shown search's results each once, with reranker ranks
+  // only from searches whose reranker answered (none after a failure, a timeout or a search
+  // with no text), and `cut`, the vertical search's cut-off when it was reranked.
+  function relativeOverlayData(v) {
+    var s = v.search;
+    var set = s.shownSet;
+    var named = [];
+    if (!set) return { named: named, cut: null };
+    var byIndex = new Map();
+    s.shown.forEach(function (q) {
+      q.view.hits.forEach(function (hit) {
+        var e = byIndex.get(hit.index);
+        if (!e) {
+          e = { index: hit.index, text: ET.search.pointText(set, hit.index), ranks: [] };
+          byIndex.set(hit.index, e);
+          named.push(e);
+        }
+        if (q.reranker) e.ranks.push({ letter: q.letter, rank: hit.rank });
+      });
+    });
+    var rel = relativeShown(v, v.last) ? v.last.relative : null;
+    var cut = null;
+    var vertical = rel?.pinned.length
+      ? s.shown.find(function (q) {
+          return q.letter === rel.pinned[0].letter;
+        })
+      : null;
+    var dir = vertical?.reranker && vertical.sent > 0 ? searchDirection(vertical) : null;
+    if (dir) {
+      var D = set.dimension;
+      var low = Infinity;
+      vertical.ranking.pool.slice(0, vertical.sent).forEach(function (hit) {
+        low = Math.min(low, rowDot(set.vectors, hit.index * D, dir.u, D));
+      });
+      cut = { height: low, sent: vertical.sent };
+    }
+    return { named: named, cut: cut };
+  }
+
   // ----- Focus: a click on a point searches from it -----
 
   function focusClick(v, e, pt, at) {
@@ -16197,6 +16719,9 @@ ET.viewer = (function () {
       lostTime: false,
       paintKey: null,
       themeKey: null,
+      // Tumble's relative settings, kept in every view and with no search.
+      rel: { relative: opts.relative === true, showOrigin: opts.showOrigin === true },
+      provRel: null, // the provenance's Relative row while the relative view is shown
       search: newSearchState(opts),
     };
     v.timing.mountAt = now(v);
@@ -16390,6 +16915,13 @@ ET.viewer = (function () {
       setSearchCallbacks: function (cbs) {
         return setSearchCallbacks(v, cbs);
       },
+      // Relative (docs/relative-interface.md, "Viewer (t9, t10)").
+      setRelative: function (patch) {
+        return setRelative(v, patch);
+      },
+      relativeSettings: function () {
+        return { relative: v.rel.relative, showOrigin: v.rel.showOrigin };
+      },
     };
     Object.defineProperty(h, "_viewer", { value: v, enumerable: false });
     return h;
@@ -16420,6 +16952,11 @@ ET.viewer = (function () {
     safeCssValue: safeCssValue,
     makeProjector: makeProjector,
     SHADOW: SHADOW,
+    // The relative overlay's results and cut-off for a mounted handle (t10 draws them).
+    relativeOverlayData: function (handle) {
+      var v = handle?._viewer;
+      return v && !v.destroyed ? relativeOverlayData(v) : null;
+    },
   };
 })();
 
