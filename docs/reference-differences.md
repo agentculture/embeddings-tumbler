@@ -958,3 +958,521 @@ What the sign-off was given on, so that it is not read as more than it is:
 - After the comparison was written the owner chose a different embedding model
   for the demo set (`google/embeddinggemma-2`); the comparison itself is on the
   generated set and on the Focus reference's own vectors, so it is unaffected.
+
+## Relative search: the reference and how it was compared
+
+Everything from here on is a third comparison, made for relative search. It
+leaves the two comparisons above, and their sign-offs, as they are.
+
+Relative search has one reference page,
+`docs/specs/reference/tumbler-relative-search.html` (the relative reference). It
+is part of the spec: where the spec's words and the page differ and the
+difference is not listed here as intended, the page is what was agreed. It shows
+the shipped Wikipedia pair (`embeddings_tumbler/static/demo-wikipedia.json` and
+`demo-wikipedia.f32`: 999 articles, 768 dimensions, `google/embeddinggemma-2`)
+measured from a search: search A on the vertical axis with a ruler from the
+origin, stems from the named results to the height they are read at, a second
+search B as a second ruler, a Show the origin control, a Plain view for
+comparison, and a Reranker that reads real scores made ahead of time
+(`docs/specs/reference/demo-wikipedia-rerank.json`, made by
+`scripts/build_reference_rerank.py` with `Qwen/Qwen3-Reranker-0.6B`: each
+article's text scored against the texts of its 50 nearest other articles).
+
+What was built is the Relative setting of Tumble in the core file (the frame,
+the overlay, the panel's controls, the viewer's settings and reports) and its
+place in the web component and the standalone page;
+`docs/relative-interface.md` is its written interface, including the
+differences from the reference that were decided while building.
+
+How to read this part:
+
+- Each difference has five lines, as in the search part: what the reference
+  does, what the build does, why, whether it can be seen **on comparable data**,
+  and who decided it.
+- **Comparable data** here is the shipped Wikipedia pair on both sides with the
+  search Rice, the reference's own starting search. The reference makes a
+  search from the article Rice; the build, served without an embedder, matches
+  the line `Rice` to the one article with that whole title, so both use the
+  same vector. On the build no reranker is connected unless the page is served
+  with a reranking model; the reranked order is compared by a script instead
+  (see "Relative search: compared by numbers").
+- **Decided by** is one of four words. `owner`: the owner decided it, recorded
+  with the owner's approval under "Decisions" in
+  `docs/specs/2026-11-16-relative-search-in-the-embedding-viewer.md` (or in the
+  search part above, where that is said). `spec`: the confirmed spec requires
+  it. `build`: chosen while building and recorded in
+  `docs/relative-interface.md`, or read from the code where that is said; the
+  owner has not been asked about it one by one, and the sign-off at the end is
+  where it is accepted or not. `open`: put to the owner and not decided.
+- **No picture was compared for this part.** Statements about the build come
+  from reading its code and from running the assembled core file in node;
+  statements about the reference come from reading its script. Statements
+  about how something looks are therefore *(read from the code)* unless they
+  are numbers from the script. The side-by-side page is ready for the owner's
+  look (below); nobody has looked at the two pages side by side for this
+  document.
+- The side-by-side page `js/dev/side-by-side/` shows the relative reference
+  next to the build: choose "Relative search", or open
+  `/js/dev/side-by-side/?pair=relative`. Serve the repository root with
+  `uv run embeddings-tumbler viewer serve . --port 8791` and open
+  <http://127.0.0.1:8791/js/dev/side-by-side/?pair=relative>. The left frame is
+  `/docs/specs/reference/tumbler-relative-search.html`, the right frame
+  `/embeddings_tumbler/static/index.html?relative=1`; "Search both" starts with
+  `Rice` and takes up to two lines.
+
+What was checked about the reference page itself, on 2026-11-17:
+
+- **It opens from a plain local web server started in the repository.**
+  `python3 -m http.server` was started at the repository root on a free
+  loopback port, and the page and its data were fetched with Python's standard
+  library: the page (`docs/specs/reference/tumbler-relative-search.html`,
+  53,529 bytes), `demo-wikipedia.json` (377,772 bytes) and
+  `demo-wikipedia.f32` (3,068,928 bytes) from `embeddings_tumbler/static/`,
+  which is where the page looks when they are not beside it (beside it there is
+  none: that address answered 404, as the page expects), and
+  `docs/specs/reference/demo-wikipedia-rerank.json` (779,715 bytes). Each
+  answered 200 with the same bytes as the committed file, and the server was
+  stopped. The only request the page makes elsewhere is for Google Fonts; it
+  was not fetched and the page does not need it. The page's script was not run
+  in a browser for this check.
+- **The published copy is the committed file.** The page was published as
+  <https://claude.ai/artifact/JtQQjRJ64tUmvTrktBhZu7> from this path by the
+  person who coordinates the build, who states that it has not been edited
+  since; the page and the reranker file have one commit each in the
+  repository's history. That address is private, so nothing was compared
+  against it for this document: this is that person's statement, not a check.
+
+## Relative search: the setting and its controls
+
+### Relative is a setting of Tumble, not a Relative and Plain switch
+
+- **Reference:** two large buttons above the controls, Relative and Plain. Any new search switches the page to Relative; Relative cannot be chosen with no search.
+- **Build:** a Relative checkbox in the search panel's controls row, first in the row, shown only in Tumble. It is off at the start, is kept in every view and with no search, and has an effect only in Tumble with a search that gives an axis. Hosts set it with the mount option `relative`, `handle.setRelative`, the web component's `relative` attribute or the page's `relative=1`. With it off a search swings the view as plain Tumble does.
+- **Why:** the owner approved relative as a setting inside Tumble, the same tour with axes pinned, not a fifth view.
+- **Visible on comparable data:** yes.
+- **Decided by:** owner (2026-11-16, the spec's first decision).
+
+### The reference is a page of its own; the build is the viewer
+
+- **Reference:** a page titled for relative search, with its own search box and chips, the two mode buttons, Pause, Speed, Results, Reranker, Show the origin and Labels, a legend of topic colours, a results list, a list of measured facts (the average vector's length, the range of cosine to A, the shares of the spread, how many of the reranker's picks are also highest on the ruler) and notes.
+- **Build:** the viewer with Tumble chosen: its masthead, view buttons, controls, readout strip and provenance block, and the search panel under the stage with Relative and Show the origin among its controls. There is no legend and no facts list; the shares and which axes are exact are in the status line, the provenance block's Relative row and the panel's note *(read from the code)*.
+- **Why:** follows from the decision above: relative is a way of viewing searches in the one viewer.
+- **Visible on comparable data:** yes.
+- **Decided by:** owner (follows from the spec's first decision).
+
+### The Face the searches control is hidden while Relative is on
+
+- **Reference:** has no Face the searches control.
+- **Build:** the panel's Face the searches button is hidden while Relative is checked in Tumble, with or without a search, and shown again when it is unchecked.
+- **Why:** the owner decided it: with relative on there is no swing to start.
+- **Visible on comparable data:** no: neither page shows the control while Relative is on.
+- **Decided by:** owner (2026-11-16).
+
+### The controls' wording does not say similarity
+
+- **Reference:** the Relative button reads "One axis is the search itself. Height is similarity to it. The other two axes tumble through what is left."
+- **Build:** the Relative checkbox's title reads "One axis is the search itself; height is measured along it. The other axes tumble through what is left." Show the origin's title reads "Zoom out to the all-zero vector, or, in the plain view, mark where it falls."
+- **Why:** "similarity" is wrong for a set whose vectors are not of length one.
+- **Visible on comparable data:** slightly: the build's words are a tooltip.
+- **Decided by:** build.
+
+### The view opens with no search and Relative off
+
+- **Reference:** opens already measured from Rice, settled on the pinned frame.
+- **Build:** the standalone page opens with an empty search box and Relative off unless the address says `relative=1`; the side-by-side gives it `relative=1` and types `Rice`.
+- **Why:** the search panel starts empty (search part, "The panel starts empty"), and the setting is off by default so that nothing changes for a host that does not ask for it.
+- **Visible on comparable data:** yes on opening the page.
+- **Decided by:** build.
+
+## Relative search: searches, ranking and the reranker
+
+### Up to three pinned axes, and a fourth search with none
+
+- **Reference:** one or two searches; a further search typed replaces B. With two, the plane of A and B is shown exactly and only depth tours.
+- **Build:** up to four searches, as in the rest of search. The first pins the vertical axis, the second the horizontal, the third the depth axis, so all three are pinned and nothing tours ("all three axes are pinned: the space of A, B and C is shown exactly · nothing tumbles"); a fourth is lit and listed and has no axis ("D pins no axis"). The status strings for three and four searches are new.
+- **Why:** the owner approved it. The reference has no picture of three searches to compare against (the spec's open park).
+- **Visible on comparable data:** no with Rice alone; yes with three or four searches, which the reference cannot show.
+- **Decided by:** owner (2026-11-16).
+
+### The searched article is named as its own first result
+
+- **Reference:** a search from an article leaves that article out of its results; Rice's eight results are Cereal, Wheat, Maize, Bean, Bread, Vegetable, Cattle and Potato.
+- **Build:** a search from a named point names that point first (rank 1, distance 0), lights it and lists it in the panel, as plain search does today. The overlay draws it as the search, not as a result: no stem and no label. With the reranker it keeps rank 1, so the ranks shown on the stage start at 2. To show the reference's eight others the build needs Results at 9.
+- **Why:** the ranking is shared by every view, the lit values, the lists and `info().search`, and the spec's boundary says relative search changes only the frame, the centre, the zoom and what is drawn over the picture.
+- **Visible on comparable data:** yes: Rice heads the build's list, and with Results at 8 the build lists seven of the reference's eight. Measured by the script: with the reference file's scores the build's ranks on the stage run from 2 to 9 for the reference's 1 to 8.
+- **Decided by:** build (`docs/relative-interface.md`, decision 1).
+
+### Reranking: the host's reranker, for any search with text, with Candidates and Keep top
+
+- **Reference:** reranks only a search from one article, from scores made ahead of time; a search that averages several titles stays in embedding order with a note. The candidates are always the 50 nearest, and the Results slider (3 to 16) is how many are kept.
+- **Build:** the host's `rerank` callback, as in the rest of search, for any search with text: typed words, text embedded by the host, a point picked or searched by id (its own text is sent) and a vector search with a label. Candidates (50 at the start) and Keep top (20 at the start) set how many are sent and kept, and Results is switched off while reranking. Without a callback there is no Reranker control.
+- **Why:** the spec requires the relative view to work with the reranker the build already has; Candidates and Keep top were the owner's choice for search (search part, "Candidates and Keep top, and up to 100 results").
+- **Visible on comparable data:** yes: the side-by-side's build has no reranker connected, so no Reranker control; served with a reranking model it would offer Candidates and Keep top and keep 20.
+- **Decided by:** owner (2026-11-14 for Candidates and Keep top; 2026-11-16 for reranking in the relative view).
+
+### A typed search is matched or embedded, not averaged from titles
+
+- **Reference:** a typed line is an article whose title it equals, or else the mean of every article whose title contains any of its words (as a substring), named for example "“typed words” (average of 5 titles)". A click on a point searches from it, and a click with Shift adds it as B.
+- **Build:** a typed line goes to the host's embedder, or is matched among the labels and texts of the loaded points by the search part's rules ("Which words a word search understands"); a line that equals a whole title is that article. A click on a point searches from it only in Focus.
+- **Why:** the reference has no model and no other way to place a query; the build keeps search as it was built and adds no new way of searching (the spec's boundary).
+- **Visible on comparable data:** no for `Rice`, which is the same article on both sides; yes for other words and for clicks *(read from the code; no other word was compared)*.
+- **Decided by:** spec.
+
+### Result lists in the relative view
+
+- **Reference:** a result row is its rank, its title and either its topic and cosine (three decimals) or, reranked, "cosine 0.839 · was 2 ▲1 · score 0.70".
+- **Build:** the panel's existing result row, which shows the text and, when asked, the distance and how the reranker moved it, with "cosine 0.839" added while the relative view is shown, or "length along the search … · cosine …" on a set whose vectors are not of length one *(read from the code)*.
+- **Why:** the panel keeps one row format in every view and adds what the ruler measures.
+- **Visible on comparable data:** yes.
+- **Decided by:** build.
+
+## Relative search: brightness
+
+### Results follow the Lit setting; other points get a faint gradient
+
+- **Reference:** every point is brightened and enlarged by its similarity to the nearest search, squared, from the median similarity (none) to the highest other article (full); results are drawn larger again.
+- **Build:** points the Lit setting lights (the results, and with "by closeness" every point as near as its reach) keep exactly their lit values. Every other point gets 0.2 times the reference's squared measure, by plain cosine, so at most 0.2 of a full result's lit value. Measured in node on the shipped pair with Rice: with Lit "the results, evenly" (the default), 8 points are lit by the setting and 491 others get some gradient, the largest 0.034; with Rice and Wheat, 9 and 611, the largest 0.049; with Lit "by closeness" all 999 points are lit by the setting, so the gradient brightens none.
+- **Why:** the owner decided that results follow the Lit setting exactly and that every other point gets a faint gradient. The strength 0.2 was chosen while building and is listed as open below.
+- **Visible on comparable data:** yes *(read from the code and measured as values, not seen)*.
+- **Decided by:** owner (2026-11-16, the gradient; its strength is the open question "How strong the gradient is").
+
+## Relative search: the ruler, the stems and the labels
+
+### Short tick marks on ruler A
+
+- **Reference:** a number every 0.1 beside the ruler and a level ring at each, but no mark on the ruler's line.
+- **Build:** the same numbers and rings, and a short tick mark (8 px across) on the line at each 0.1.
+- **Why:** chosen while building; the spec's words ask for "a ruler with ticks".
+- **Visible on comparable data:** yes *(read from the code)*.
+- **Decided by:** build.
+
+### While the view turns, only a faint ruler line, and the exactness sentences wait
+
+- **Reference:** fades the whole ruler, its numbers, rings, stems and the cut-off line in with the blend, and its status line says "exact" as soon as the search is made.
+- **Build:** while the view turns onto the pinned frame (1.5 seconds of the view's own time) only ruler A's line is drawn, faint: no ticks, rings, numbers, stems or cut-off line. The status line says "turning until vertical = cosine to A", and the provenance block's sentences saying an axis is exact are held back until the turn has ended.
+- **Why:** the spec: the view must not draw the ruler as exact until it is.
+- **Visible on comparable data:** yes, for the 1.5 seconds after a search *(read from the code)*.
+- **Decided by:** spec.
+
+### The status line names the plane of A and B as exact during the turn
+
+- **Reference:** with two searches the status line says "the plane of A and B is shown exactly" at once (it has no turning state).
+- **Build:** the same words, also during the turn, after "turning until vertical = …": the part about two pinned searches is chosen by how many are pinned, not by whether the turn has ended.
+- **Why:** chosen while building; noticed for this list. The line's first part already says the view is turning.
+- **Visible on comparable data:** no with Rice alone; yes for 1.5 seconds after adding B *(read from the code)*.
+- **Decided by:** build.
+
+### The unit circle is drawn as a polygon of 96 sides
+
+- **Reference:** with Show the origin, on a set of unit-length vectors, a dashed circle (`arc`) about the origin.
+- **Build:** the same dashed circle about the projected origin, drawn as a closed line of 96 segments.
+- **Why:** the overlay builds every shape as a list of points before painting it.
+- **Visible on comparable data:** no *(read from the code)*.
+- **Decided by:** build.
+
+### The origin is marked whenever zero is inside the window
+
+- **Reference:** marks the origin only with Show the origin on.
+- **Build:** marks it with Show the origin on, and also whenever height 0 lies inside the window shown, with Show the origin off.
+- **Why:** the spec's requirement that the origin is marked whenever zero is inside the window.
+- **Visible on comparable data:** no: on the Wikipedia set every height to Rice is above 0.52, so zero is inside the window only with Show the origin on.
+- **Decided by:** spec.
+
+### The plain view's origin marker does not cross-fade
+
+- **Reference:** with Show the origin on, the plain view's marker fades out as the relative look fades in, and the relative marker fades in.
+- **Build:** the plain view's marker is drawn at full strength while the plain view is shown and not at all once the relative view is shown; the relative marker fades in with the turn.
+- **Why:** chosen while building *(read from the code)*.
+- **Visible on comparable data:** slightly, at the moment Relative is turned on or off with Show the origin on.
+- **Decided by:** build.
+
+### Labels that would overlap are left out, in a fixed order
+
+- **Reference:** draws every result's title, its rank and heights, overlapping where results sit close (as they do near the top of the ruler for Rice).
+- **Build:** ruler texts first (the title, the tick numbers, the cut-off text, the origin text), then results from the top of the ruler down; a label that would overlap one already placed is left out. The panel's list carries every result.
+- **Why:** the spec leaves the rule for label collisions open; this rule was chosen while building.
+- **Visible on comparable data:** yes *(read from the code; how many labels are placed for Rice was not counted for this document)*.
+- **Decided by:** build.
+
+### Marks and texts take their colour from the theme
+
+- **Reference:** white marks and texts with a near-black outline, on its dark page only.
+- **Build:** the stage's foreground colour for the cut-off line, the origin, the unit circle and the result labels, and the stage's background for the text outline; the rulers keep their search's colour.
+- **Why:** hosts with a light background get the viewer's light treatment.
+- **Visible on comparable data:** unknown: not compared in a picture on the dark stage; on a light stage, yes *(read from the code)*.
+- **Decided by:** build.
+
+### Ruler texts and labels are page text in the viewer's type
+
+- **Reference:** draws its texts on the canvas in IBM Plex Mono and, for the search, Instrument Serif, loaded from Google Fonts.
+- **Build:** span elements over the stage in the viewer's own type, inserted as text.
+- **Why:** the viewer draws no text on a canvas, loads nothing from another origin and inserts untrusted text as text.
+- **Visible on comparable data:** yes.
+- **Decided by:** spec.
+
+### Plain Tumble's topic names stay over the cloud
+
+- **Reference:** no names on the stage; topics are told apart by colour and a legend under the stage.
+- **Build:** Tumble's group names, drawn over the cloud with Labels on, stay in the relative view.
+- **Why:** the relative view is Tumble with axes pinned; nothing else of Tumble's labels was changed *(read from the code)*.
+- **Visible on comparable data:** yes *(read from the code)*.
+- **Decided by:** build.
+
+### Hovering a point
+
+- **Reference:** the hover text adds the point's topic and its height along each search, to three decimals.
+- **Build:** the viewer's usual hover name.
+- **Why:** not built; the spec does not ask for it.
+- **Visible on comparable data:** yes, when hovering.
+- **Decided by:** build.
+
+## Relative search: the frame, the turn and the framing
+
+### The window's top is the higher of the search's length and the highest point
+
+- **Reference:** the window's top is `max(1, search length) + 0.04`.
+- **Build:** `max(search length, highest point) + 0.04`, the spec's words.
+- **Why:** the spec; the two agree for a search from one article on a unit-length set and differ for an averaged search, whose length is below 1.
+- **Visible on comparable data:** no for Rice (1.04 on both).
+- **Decided by:** spec.
+
+### The window follows the vertical search only
+
+- **Reference:** with B shown, lowers the window's bottom to B's lowest height along B as well.
+- **Build:** the window is measured along the vertical search only.
+- **Why:** chosen while building.
+- **Visible on comparable data:** slightly with Rice and Wheat: the reference's bottom is 0.48 (Wheat's lowest, 0.522, less 0.04), the build's 0.49 (Rice's lowest, 0.530, less 0.04), about 1.4 percent of the window; none with Rice alone.
+- **Decided by:** build.
+
+### The zoom is capped the same on every stage
+
+- **Reference:** caps the zoom by the stage's width, so a wide stage can be zoomed in further.
+- **Build:** caps it at `0.5 / (0.42 × 0.46)` on every stage, the reference's cap for a narrow stage.
+- **Why:** the view's mode does not know the stage's shape.
+- **Visible on comparable data:** slightly, on a wide stage *(read from the code)*.
+- **Decided by:** build.
+
+### The stage's middle is not moved down
+
+- **Reference:** moves the stage's middle 3.5 percent down in the relative view.
+- **Build:** does not.
+- **Why:** chosen while building.
+- **Visible on comparable data:** slightly *(read from the code)*.
+- **Decided by:** build.
+
+### The turn onto the pinned frame
+
+- **Reference:** blends the frame with a smoothstep over 1.6 seconds of wall time and makes it orthonormal again each frame.
+- **Build:** the refit turn over 1.5 seconds of the view's own time, which keeps the frame orthonormal at every moment, so the same data, seed, searches and time give the same frame.
+- **Why:** the spec asks for a turn within the existing transition time and for reproducible views.
+- **Visible on comparable data:** slightly, as how a change of search feels *(read from the code)*.
+- **Decided by:** build.
+
+### When a search adds no axis
+
+- **Reference:** leaves a second row whose remainder has length at most 1e-12 unnormalised and treats B as adding no axis when that row's squared length is below 0.5.
+- **Build:** a later search adds no axis when the squared length of its new part is below 1e-6, and says so in the status line and the panel's note.
+- **Why:** both separate a repeated search from a new one; they differ only for directions closer than about 0.06 degrees.
+- **Visible on comparable data:** no.
+- **Decided by:** build.
+
+### The 2-D canvas look
+
+- **Reference:** a 2-D canvas: each article a soft sprite in its topic's colour, added light, a fading trail; no bloom or depth of field.
+- **Build:** the viewer's WebGL renderer, as in every view, with its bloom, trails and colours; nearly flat in the relative view (the reference's perspective, 60) and level until the person tilts it.
+- **Why:** relative is a setting of the one viewer, not a second renderer.
+- **Visible on comparable data:** yes *(read from the code)*.
+- **Decided by:** owner (follows from the spec's first decision).
+
+## Relative search: behaviour the reference does not have
+
+### Letters are kept while Relative is on
+
+- **Reference:** letters follow position: removing A of two turns B into A.
+- **Build:** while the Relative setting is on, a search keeps its letter, so B stays B when A is removed and becomes the vertical axis; with the setting off letters follow position, as before.
+- **Why:** the spec requires every search to keep its letter in the relative view; limiting it to the setting keeps every view with Relative off as it was. Whether to keep letters in every view is open below.
+- **Visible on comparable data:** yes, when the first of two searches is removed.
+- **Decided by:** spec.
+
+### Turning Relative on replaces a swing in progress
+
+- **Reference:** has no swing.
+- **Build:** a swing toward the searches that is in progress when Relative is turned on gives way to the turn onto the pinned frame, and does not come back when the turn ends.
+- **Why:** with relative on there is no swing (the owner's decision on Face the searches) *(read from the code)*.
+- **Visible on comparable data:** yes, when Relative is turned on within six seconds of a search.
+- **Decided by:** build.
+
+### With reduced motion the view does not turn until Play
+
+- **Reference:** with reduced motion the tour is paused but the blend onto the pinned frame still runs on wall time, and the page opens already settled.
+- **Build:** with reduced motion the viewer starts paused, and since the turn runs on the view's own time, the view does not turn onto the pinned frame (and the ruler stays faint) until Play is pressed.
+- **Why:** pause and reduced motion stop everything in Tumble. Whether reduced motion should show the settled view at once is open below.
+- **Visible on comparable data:** yes, with reduced motion set.
+- **Decided by:** build.
+
+### The panel's checkbox is not written back to the web component's attribute
+
+- **Reference:** not a web component.
+- **Build:** the `relative` and `show-origin` attributes and properties set the viewer's settings; a change made with the panel's own checkboxes is not reflected back to the attribute.
+- **Why:** the shell only forwards; it holds no state of its own *(read from the code)*.
+- **Visible on comparable data:** no: only a host reading the attribute sees it.
+- **Decided by:** build.
+
+### Hosts are told when a turn ends
+
+- **Reference:** has no host.
+- **Build:** `onSearchChange` is also called when the turn onto the pinned frame ends, as `info().search.relative.settled` becomes true.
+- **Why:** settled is part of what a host reads.
+- **Visible on comparable data:** no.
+- **Decided by:** build.
+
+### On vectors not of length one, every label shows its cosine as well
+
+- **Reference:** names the measure "length along the search" when the vectors are not all of length one, and shows only that height.
+- **Build:** the same name, and every named result's label and list row also show its cosine; the status line adds "ranked by cosine, so rank and height can disagree".
+- **Why:** the spec: results are ranked by cosine whatever the lengths, so the view must say so and show both numbers.
+- **Visible on comparable data:** no: every Wikipedia vector has length one. The wording can be read on the build at `/embeddings_tumbler/static/index.html?data=/tests/fixtures/relative/mixed-length.json&relative=1` (the test fixture of 173 articles with lengths spread by their texts' lengths); it was not opened for this document.
+- **Decided by:** spec.
+
+## Relative search: open questions
+
+These were put to the owner, or noticed while building, and are not decided.
+Each is listed so that it is checked off like the rest.
+
+### Titles or text on the ruler's labels
+
+- **Reference:** a result's label on the stage is its title ("Cereal  0.84").
+- **Build:** the start of the point's text, cut at 28 characters, as plain search labels it ("A cereal is a grass (family…  0.84").
+- **Why:** the overlay labels a point the way the rest of the viewer does; titles would need a rule for data whose labels are not titles.
+- **Visible on comparable data:** yes.
+- **Decided by:** open: not decided.
+
+### How strong the gradient is
+
+- **Reference:** every point is brightened by similarity at full strength.
+- **Build:** 0.2 of the reference's measure for points the Lit setting leaves unlit (see "Results follow the Lit setting; other points get a faint gradient").
+- **Why:** 0.2 keeps the cloud readable by similarity while results stay plainly brighter; chosen while building, to be shown to the owner.
+- **Visible on comparable data:** yes.
+- **Decided by:** open: not decided.
+
+### Whether letters should be kept in every view
+
+- **Reference:** letters follow position.
+- **Build:** letters are kept only while the Relative setting is on (see "Letters are kept while Relative is on").
+- **Why:** keeping them everywhere would change the views with Relative off; left to the owner.
+- **Visible on comparable data:** yes, when the first of two searches is removed.
+- **Decided by:** open: not decided.
+
+### Whether the search marker carries the search's name
+
+- **Reference:** the search's marker is labelled with its letter and name in large italic type ("A · Rice").
+- **Build:** the marker carries only its letter; the name is in the panel.
+- **Why:** the build's marker comes from the search panel, which labels a query with its letter in every view.
+- **Visible on comparable data:** yes.
+- **Decided by:** open: not decided.
+
+### Whether reduced motion shows the settled relative view at once
+
+- **Reference:** opens settled, and still turns under reduced motion.
+- **Build:** does not turn until Play is pressed (see "With reduced motion the view does not turn until Play").
+- **Why:** the build keeps reduced motion's rule that nothing moves; showing the settled frame at once would be a jump, which reduced motion also asks to avoid. Left to the owner.
+- **Visible on comparable data:** yes, with reduced motion set.
+- **Decided by:** open: not decided.
+
+## Relative search: compared by numbers
+
+`scripts/compare_relative_reference.py` compares, for the search Rice on the
+shipped pair, what the reference page shows (worked out in Python from its own
+rules and data: `queryFrom`, `rank` and its float32 rounding, the reranker file)
+with what the built viewer shows (the assembled core file run in node with
+Relative on, read from `info().search.relative` once the turn has ended). It is
+run by `tests/test_relative_reference_compare.py`.
+
+What the build's reranker is given: the build names Rice as its own first
+result, so it is run with Results 9, Candidates 51 and Keep top 9 for the
+reference's 8 results, 50 candidates and 8 kept. Its rerank callback answers
+with the reference file's real scores for the 50 other candidates, matched by
+their text, and a score above all of them (the highest plus 1) for Rice itself;
+Rice is then dropped from the build's results before comparing.
+
+The result on 2026-11-17 (heights to two decimal places; "rank" is the build's
+rank, shown on the stage):
+
+| | Reference | Height | Build | Height | Rank |
+|---|-----------|--------|-------|--------|------|
+| 1 | Cereal | 0.84 | Cereal | 0.84 | 2 |
+| 2 | Wheat | 0.82 | Wheat | 0.82 | 3 |
+| 3 | Maize | 0.76 | Maize | 0.76 | 4 |
+| 4 | Bean | 0.75 | Bean | 0.75 | 5 |
+| 5 | Bread | 0.74 | Bread | 0.74 | 6 |
+| 6 | Vegetable | 0.73 | Vegetable | 0.73 | 7 |
+| 7 | Cattle | 0.73 | Cattle | 0.73 | 8 |
+| 8 | Potato | 0.72 | Potato | 0.72 | 9 |
+
+Reranked by the reference file's scores:
+
+| | Reference | Height | Build | Height | Rank |
+|---|-----------|--------|-------|--------|------|
+| 1 | Cereal | 0.84 | Cereal | 0.84 | 2 |
+| 2 | Wheat | 0.82 | Wheat | 0.82 | 3 |
+| 3 | Maize | 0.76 | Maize | 0.76 | 4 |
+| 4 | Food | 0.71 | Food | 0.71 | 5 |
+| 5 | Seed | 0.71 | Seed | 0.71 | 6 |
+| 6 | Bread | 0.74 | Bread | 0.74 | 7 |
+| 7 | Agriculture | 0.72 | Agriculture | 0.72 | 8 |
+| 8 | Bean | 0.75 | Bean | 0.75 | 9 |
+
+Also agreed: the pinned axis (search A, Rice, on the vertical axis; the
+build's frame row 1 is Rice's unit direction to within 2e-9), the measure
+(cosine), and the cut-off line's height (0.68 on both). The heights are the
+spec's success signal (0.84, 0.82, 0.76, 0.75, 0.74, 0.73, 0.73, 0.72),
+recomputed from the shipped pair.
+
+Read the same in both pages' code *(read from the code)*:
+
+| What | Result |
+|------|--------|
+| The ruler's title, its tick numbers and the level rings | "cosine to A", one decimal, a ring of radius 0.34 in 48 segments every 0.1 |
+| Ruler A's foot | `max(0, bottom - 0.2)`, or the origin with Show the origin |
+| Ruler B | from `max(0, bottom - 0.2)`, or the origin with Show the origin, to `max(1, length) + 0.04`, with dots and numbers at 0.1 to 0.9 |
+| The cut-off line and its words | dashed, 300 px across, "50 candidates above this line went to the reranker" at the default 50 |
+| The origin's words | "origin (0, 0, … , 0)" and "origin · truly 0.79 from the centre, … of it visible" |
+| The status line's words | the reference's, with the build's turning state and three-search pieces added |
+| The window's margins and fill | 0.04 above and below, 0.06 below the origin, the window filling 78 percent of the stage's shorter side |
+| Flatness and pitch | perspective 60 and a level view in the relative look, eased in |
+| Fog | none in the relative view on either |
+
+## Relative search: not yet compared
+
+- **No picture.** Neither page was rendered for this document; nobody has
+  looked at them side by side. The side-by-side pair was added and its script
+  checked for syntax only.
+- **The reranker on a page.** The side-by-side's build has no reranker; the
+  reranked order was compared by the script only.
+- **Motion.** The turn, the tour after it and the reference's blend were not
+  compared frame by frame.
+- **Three and four searches.** The reference cannot show them.
+- **Label placement.** How many labels each page places for Rice was not
+  counted.
+- **Narrow screens, the light treatment and browsers other than Chromium.**
+  Not compared here.
+- **The mixed-length wording** has no counterpart on the reference (the
+  Wikipedia vectors are of length one); the address that shows it on the build
+  is given under "On vectors not of length one, every label shows its cosine as
+  well".
+- **The published copy** of the reference page was not compared with the
+  committed file; see the first section of this part.
+
+## Relative search: sign-off
+
+The owner's sign-off of this comparison is **not yet recorded**. It is asked
+for once this list is complete, after the owner has looked at the side-by-side
+page and has read the wording for vectors that are not of length one on a page.
+
+The agreed form is two lines, each starting at the left margin, the first
+naming the page where the owner read that wording:
+
+```text
+Mixed-length wording read by the owner on YYYY-MM-DD: <the page and the owner's words>
+Relative search signed off by the owner on YYYY-MM-DD: <the owner's words>
+```

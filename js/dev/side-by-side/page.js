@@ -1,11 +1,15 @@
 /* Dev-only: shows a reference page next to what was built, and drives both from one place.
  *
- * Three comparisons, chosen by the first row of buttons (their addresses are on the buttons):
- *   first  the first demo against the standalone page on the synthetic sample set;
- *   sky    the sky search reference against the same standalone page, same sample set, with the
- *          same searches typed into both;
- *   focus  the Focus reference against the built viewer in Focus on the reference's own data
- *          (focus-build.html reads it out of the reference page).
+ * Four comparisons, chosen by the first row of buttons (their addresses are on the buttons):
+ *   first     the first demo against the standalone page on the synthetic sample set;
+ *   sky       the sky search reference against the same standalone page, same sample set, with
+ *             the same searches typed into both;
+ *   focus     the Focus reference against the built viewer in Focus on the reference's own data
+ *             (focus-build.html reads it out of the reference page);
+ *   relative  the relative search reference against the standalone page with Relative on
+ *             (?relative=1), both on the shipped Wikipedia pair. The reference opens on Rice;
+ *             the build is given Rice. The reference takes a search by Enter in its box (a
+ *             second Enter adds B), so it is cleared and each line is entered in turn.
  *
  * The demo and the sky reference keep their mode in the URL fragment and listen for a change of
  * it, so this page sets the fragment inside the frame (same origin). The build reads ?mode= once
@@ -39,6 +43,16 @@
       buildBox: null, // focus-build.html takes searches through window.sideBySideBuild
       hint: "one text; the reference holds one search at a time",
       data: "the reference's own 124 texts",
+    },
+    relative: {
+      modes: false,
+      search: "Rice", // the reference's own starting search
+      refBox: "#in-query",
+      refEnter: true, // the reference searches on Enter, not on input
+      refClear: "#btn-clear",
+      buildBox: ".tumbler-search-input",
+      hint: "an article title per line, up to two; the reference holds two searches at most",
+      data: "the shipped Wikipedia pair",
     },
   };
 
@@ -150,6 +164,26 @@
     return true;
   }
 
+  // The relative reference: clear its searches, then enter each line in its box (Enter adds the
+  // second as B), as a person would.
+  function enterLines(frame, p, text) {
+    const doc = frame.contentDocument;
+    const box = doc?.querySelector(p.refBox);
+    const clear = doc?.querySelector(p.refClear);
+    if (!box || !clear) return false;
+    clear.click();
+    const lines = text
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 2);
+    for (const line of lines) {
+      box.value = line;
+      box.dispatchEvent(new frame.contentWindow.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    }
+    return true;
+  }
+
   function buildTook(text) {
     const p = PAIRS[pair];
     if (p.buildBox) return typeInto(buildFrame, p.buildBox, text);
@@ -186,7 +220,8 @@
     const text = queryBox.value;
     let refDone = false;
     try {
-      refDone = typeInto(refFrame, PAIRS[pair].refBox, text);
+      const p = PAIRS[pair];
+      refDone = p.refEnter ? enterLines(refFrame, p, text) : typeInto(refFrame, p.refBox, text);
     } catch {
       refDone = false; // the frame is on another origin
     }
@@ -222,7 +257,7 @@
   refFrame.addEventListener("load", onLoad, { once: true });
   buildFrame.addEventListener("load", onLoad, { once: true });
 
-  // ?pair=sky or ?pair=focus opens on that comparison.
+  // ?pair=sky, ?pair=focus or ?pair=relative opens on that comparison.
   const asked = new URLSearchParams(window.location.search).get("pair");
   if (asked && asked !== pair) setPair(asked);
 
@@ -288,8 +323,9 @@
       summary.appendChild(element("small", "", "(" + g.items.length + ")"));
       details.appendChild(summary);
       const list = element("ul");
-      // The search groups say whether a difference shows on comparable data, not the sample set.
-      const where = g.group.startsWith("Search") ? "on comparable data" : "on the sample set";
+      // The search and relative groups say whether a difference shows on comparable data.
+      const later = g.group.startsWith("Search") || g.group.startsWith("Relative search");
+      const where = later ? "on comparable data" : "on the sample set";
       for (const item of g.items) {
         total++;
         list.appendChild(itemRow(g.group + " / " + item.title, item, where));
@@ -298,7 +334,7 @@
       root.appendChild(details);
     }
     document.getElementById("check-note").textContent =
-      "Each line is a heading in docs/reference-differences.md, where the reference, the build, the reason and the evidence are written out. The groups whose names start with Search belong to the two search references.";
+      "Each line is a heading in docs/reference-differences.md, where the reference, the build, the reason and the evidence are written out. The groups whose names start with Search belong to the two search references, and those that start with Relative search to the relative search reference.";
     updateCount();
   }
 

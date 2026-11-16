@@ -447,6 +447,201 @@
      "visible": "yes"
     }
    ]
+  },
+  {
+   "group": "Relative search: the setting and its controls",
+   "items": [
+    {
+     "title": "Relative is a setting of Tumble, not a Relative and Plain switch",
+     "visible": "yes"
+    },
+    {
+     "title": "The reference is a page of its own; the build is the viewer",
+     "visible": "yes"
+    },
+    {
+     "title": "The Face the searches control is hidden while Relative is on",
+     "visible": "no"
+    },
+    {
+     "title": "The controls' wording does not say similarity",
+     "visible": "slightly"
+    },
+    {
+     "title": "The view opens with no search and Relative off",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: searches, ranking and the reranker",
+   "items": [
+    {
+     "title": "Up to three pinned axes, and a fourth search with none",
+     "visible": "no"
+    },
+    {
+     "title": "The searched article is named as its own first result",
+     "visible": "yes"
+    },
+    {
+     "title": "Reranking: the host's reranker, for any search with text, with Candidates and Keep top",
+     "visible": "yes"
+    },
+    {
+     "title": "A typed search is matched or embedded, not averaged from titles",
+     "visible": "no"
+    },
+    {
+     "title": "Result lists in the relative view",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: brightness",
+   "items": [
+    {
+     "title": "Results follow the Lit setting; other points get a faint gradient",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: the ruler, the stems and the labels",
+   "items": [
+    {
+     "title": "Short tick marks on ruler A",
+     "visible": "yes"
+    },
+    {
+     "title": "While the view turns, only a faint ruler line, and the exactness sentences wait",
+     "visible": "yes"
+    },
+    {
+     "title": "The status line names the plane of A and B as exact during the turn",
+     "visible": "no"
+    },
+    {
+     "title": "The unit circle is drawn as a polygon of 96 sides",
+     "visible": "no"
+    },
+    {
+     "title": "The origin is marked whenever zero is inside the window",
+     "visible": "no"
+    },
+    {
+     "title": "The plain view's origin marker does not cross-fade",
+     "visible": "slightly"
+    },
+    {
+     "title": "Labels that would overlap are left out, in a fixed order",
+     "visible": "yes"
+    },
+    {
+     "title": "Marks and texts take their colour from the theme",
+     "visible": "unknown"
+    },
+    {
+     "title": "Ruler texts and labels are page text in the viewer's type",
+     "visible": "yes"
+    },
+    {
+     "title": "Plain Tumble's topic names stay over the cloud",
+     "visible": "yes"
+    },
+    {
+     "title": "Hovering a point",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: the frame, the turn and the framing",
+   "items": [
+    {
+     "title": "The window's top is the higher of the search's length and the highest point",
+     "visible": "no"
+    },
+    {
+     "title": "The window follows the vertical search only",
+     "visible": "slightly"
+    },
+    {
+     "title": "The zoom is capped the same on every stage",
+     "visible": "slightly"
+    },
+    {
+     "title": "The stage's middle is not moved down",
+     "visible": "slightly"
+    },
+    {
+     "title": "The turn onto the pinned frame",
+     "visible": "slightly"
+    },
+    {
+     "title": "When a search adds no axis",
+     "visible": "no"
+    },
+    {
+     "title": "The 2-D canvas look",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: behaviour the reference does not have",
+   "items": [
+    {
+     "title": "Letters are kept while Relative is on",
+     "visible": "yes"
+    },
+    {
+     "title": "Turning Relative on replaces a swing in progress",
+     "visible": "yes"
+    },
+    {
+     "title": "With reduced motion the view does not turn until Play",
+     "visible": "yes"
+    },
+    {
+     "title": "The panel's checkbox is not written back to the web component's attribute",
+     "visible": "no"
+    },
+    {
+     "title": "Hosts are told when a turn ends",
+     "visible": "no"
+    },
+    {
+     "title": "On vectors not of length one, every label shows its cosine as well",
+     "visible": "no"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: open questions",
+   "items": [
+    {
+     "title": "Titles or text on the ruler's labels",
+     "visible": "yes"
+    },
+    {
+     "title": "How strong the gradient is",
+     "visible": "yes"
+    },
+    {
+     "title": "Whether letters should be kept in every view",
+     "visible": "yes"
+    },
+    {
+     "title": "Whether the search marker carries the search's name",
+     "visible": "yes"
+    },
+    {
+     "title": "Whether reduced motion shows the settled relative view at once",
+     "visible": "yes"
+    }
+   ]
   }
  ]
 }
