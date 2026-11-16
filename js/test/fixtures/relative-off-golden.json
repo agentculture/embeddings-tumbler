@@ -1,6 +1,86 @@
 {
  "made_from": "embeddings-tumbler 0.12.1 (commit 9fe3213), embeddings_tumbler/static/embeddings-tumbler.js",
  "cases": {
+  "tumble|seed=3|t=0.5|swing": {
+   "frame": "f3b33d6dc4bd53313aa74b00999e119539bd545bc67cedc8b1a6763d7621f392",
+   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+   "zoom": 0.9824368238992146,
+   "status": "tour of 8 strongest directions · 76.8% of variance",
+   "frameHead": [
+    0.05313953757286072,
+    -0.13646279275417328,
+    0.131145641207695
+   ],
+   "centreHead": [
+    -1.0858639543087634e-9,
+    6.581103439984304e-10,
+    -5.537003841538102e-11
+   ]
+  },
+  "tumble|seed=3|t=2.25|swing": {
+   "frame": "345da63f2be5bf7688770afbc5ca6a1b173873553bac9658e70afa32086bb905",
+   "centre": "e115d1f6d8c229eebf0301a9a699a8016459c24cce1b2169c4383a33ca3ea0cd",
+   "zoom": 0.6552446574782309,
+   "status": "swinging to face the search, then tumbling on",
+   "frameHead": [
+    -0.152208149433136,
+    0.07827848941087723,
+    0.12827152013778687
+   ],
+   "centreHead": [
+    0.07690724730491638,
+    -0.07483028620481491,
+    0.13129392266273499
+   ]
+  },
+  "tumble|seed=3|t=7|swing": {
+   "frame": "bde9ae6c0160d9a5fd26f1c4e23501cec41752f728b474acc0075025dd3f7af8",
+   "centre": "b112899be7728c6c20100b753180bd29f555ec8e8b48aa611daf17409a053d64",
+   "zoom": 0.6266635027173232,
+   "status": "tour of 8 strongest directions · 76.8% of variance",
+   "frameHead": [
+    -0.16391360759735107,
+    0.08438771218061447,
+    0.10917540639638901
+   ],
+   "centreHead": [
+    0.08378420025110245,
+    -0.08152152597904205,
+    0.14303407073020935
+   ]
+  },
+  "tumble|seed=3|t=10|swing": {
+   "frame": "42769ec61ebb0b22a35934163204d3011ac1efefabb74c46492b0841646b7851",
+   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+   "zoom": 1.2053728477683885,
+   "status": "tour of 8 strongest directions · 76.8% of variance",
+   "frameHead": [
+    -0.1275825947523117,
+    0.2510131299495697,
+    -0.07568347454071045
+   ],
+   "centreHead": [
+    -1.0858639543087634e-9,
+    6.581103439984304e-10,
+    -5.537003841538102e-11
+   ]
+  },
+  "tumble|seed=3|t=20|swing": {
+   "frame": "1a90eb20162673b6cd6b6322129db304635e188356a1e2eda4373517d5dab07f",
+   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+   "zoom": 1.1430065519749288,
+   "status": "tour of 8 strongest directions · 76.8% of variance",
+   "frameHead": [
+    -0.14122246205806732,
+    -0.3255132734775543,
+    -0.1498943269252777
+   ],
+   "centreHead": [
+    -1.0858639543087634e-9,
+    6.581103439984304e-10,
+    -5.537003841538102e-11
+   ]
+  },
   "tumble|seed=3|t=0|none": {
    "frame": "f7b82804711172c0a07539d998a0de66c7000abc9b999a09630a9712a05c93f4",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
@@ -81,15 +161,15 @@
     -5.537003841538102e-11
    ]
   },
-  "tumble|seed=3|t=0|search": {
-   "frame": "f7b82804711172c0a07539d998a0de66c7000abc9b999a09630a9712a05c93f4",
+  "tumble|seed=3|t=20|none": {
+   "frame": "627ca823cfbf4076881c79b0c0f643da734a1329fdc9836af073f1f75255bd1d",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.003284838512717,
+   "zoom": 1.1430065519749288,
    "status": "tour of 8 strongest directions · 76.8% of variance",
    "frameHead": [
-    0.0757918730378151,
-    -0.14363084733486176,
-    0.1355944126844406
+    -0.11960799247026443,
+    0.04991178214550018,
+    0.21078699827194214
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -97,15 +177,15 @@
     -5.537003841538102e-11
    ]
   },
-  "tumble|seed=3|t=0.5|search": {
-   "frame": "f3b33d6dc4bd53313aa74b00999e119539bd545bc67cedc8b1a6763d7621f392",
+  "tumble|seed=11|t=0.5|swing": {
+   "frame": "24b1872498989d3212556ef6394bd2416b14e50c3bc31829a9b6f4d20e2aef6b",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 0.9824368238992146,
+   "zoom": 1.0461706557656494,
    "status": "tour of 8 strongest directions · 76.8% of variance",
    "frameHead": [
-    0.05313953757286072,
-    -0.13646279275417328,
-    0.131145641207695
+    -0.09121733158826828,
+    0.19467011094093323,
+    -0.1221669390797615
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -113,15 +193,47 @@
     -5.537003841538102e-11
    ]
   },
-  "tumble|seed=3|t=2.25|search": {
-   "frame": "204c1e513a61dd28c9164f59abf69f3ebf065f8be551d73df7ac01460e45f40d",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.0259933120572702,
+  "tumble|seed=11|t=2.25|swing": {
+   "frame": "61151236b52ec2873c381411919041a1f071b8d7d90cf847406f7fd90af76011",
+   "centre": "e115d1f6d8c229eebf0301a9a699a8016459c24cce1b2169c4383a33ca3ea0cd",
+   "zoom": 0.6678367217569159,
+   "status": "swinging to face the search, then tumbling on",
+   "frameHead": [
+    0.14857365190982819,
+    -0.07842078804969788,
+    -0.12088882923126221
+   ],
+   "centreHead": [
+    0.07690724730491638,
+    -0.07483028620481491,
+    0.13129392266273499
+   ]
+  },
+  "tumble|seed=11|t=7|swing": {
+   "frame": "bfd6cb937eafb0fe13cd85ce7fc7b3acf9b27c5cddd122fe33b9aed6f6f92d47",
+   "centre": "b112899be7728c6c20100b753180bd29f555ec8e8b48aa611daf17409a053d64",
+   "zoom": 0.6266644452563765,
    "status": "tour of 8 strongest directions · 76.8% of variance",
    "frameHead": [
-    -0.037960972636938095,
-    -0.08946503698825836,
-    0.10052712261676788
+    0.16815152764320374,
+    -0.11259491741657257,
+    -0.12497058510780334
+   ],
+   "centreHead": [
+    0.08378420025110245,
+    -0.08152152597904205,
+    0.14303407073020935
+   ]
+  },
+  "tumble|seed=11|t=10|swing": {
+   "frame": "502b2a564cab3328c6ce9e5094764794bd7749f9cb82e14c82987630cf0ed1e1",
+   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+   "zoom": 1.2773321425944844,
+   "status": "tour of 8 strongest directions · 76.8% of variance",
+   "frameHead": [
+    -0.04722722992300987,
+    0.22140082716941833,
+    -0.07843077182769775
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -129,31 +241,15 @@
     -5.537003841538102e-11
    ]
   },
-  "tumble|seed=3|t=7|search": {
-   "frame": "14fe3a2738606e34710e4b1b0b771eeaf92cedf0337f507792ac5ac9696d8825",
+  "tumble|seed=11|t=20|swing": {
+   "frame": "d62da019dc345232b9d3be6f9e3d9786e3a3b63ee2ad3e3c5bfc36007610bf30",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.240468841903528,
+   "zoom": 1.2126054231062813,
    "status": "tour of 8 strongest directions · 76.8% of variance",
    "frameHead": [
-    -0.10965806990861893,
-    0.06320689618587494,
-    -0.10991962254047394
-   ],
-   "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
-   ]
-  },
-  "tumble|seed=3|t=10|search": {
-   "frame": "99197915dc6500872c0b583f9324f0fbf34204d1e132d8509f49d05b6ed36090",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.0487180172482804,
-   "status": "tour of 8 strongest directions · 76.8% of variance",
-   "frameHead": [
-    0.03769154101610184,
-    0.06219470128417015,
-    -0.2441851943731308
+    -0.05661935359239578,
+    -0.344683438539505,
+    -0.05274752900004387
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -241,15 +337,15 @@
     -5.537003841538102e-11
    ]
   },
-  "tumble|seed=11|t=0|search": {
-   "frame": "b6527f251f92abc6933272ab1645dbd5de5dcac7b0c8359bc2d09bc412aba9b1",
+  "tumble|seed=11|t=20|none": {
+   "frame": "5ec0db15d56dd76d3a694dc0fcff54c640ef9ef0e030ff6a7b085263e56c9412",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.0032850253818326,
+   "zoom": 1.2126054231062813,
    "status": "tour of 8 strongest directions · 76.8% of variance",
    "frameHead": [
-    -0.07579169422388077,
-    0.1436304897069931,
-    -0.13559381663799286
+    0.05661935359239578,
+    0.344683438539505,
+    0.05274752900004387
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -257,15 +353,15 @@
     -5.537003841538102e-11
    ]
   },
-  "tumble|seed=11|t=0.5|search": {
-   "frame": "24b1872498989d3212556ef6394bd2416b14e50c3bc31829a9b6f4d20e2aef6b",
+  "lattice|seed=3|t=0.5|swing": {
+   "frame": "0501270ec14cbcd89f4a38b36018dc719360a0c03f9de53698cffd42b6994238",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.0461706557656494,
-   "status": "tour of 8 strongest directions · 76.8% of variance",
+   "zoom": 2.267341754941123,
+   "status": "swap 1 · axis X trading for a hidden direction ·  15% · measuring 100%",
    "frameHead": [
-    -0.09121733158826828,
-    0.19467011094093323,
-    -0.1221669390797615
+    0.0035731077659875154,
+    0.0755305215716362,
+    -0.20373770594596863
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -273,15 +369,47 @@
     -5.537003841538102e-11
    ]
   },
-  "tumble|seed=11|t=2.25|search": {
-   "frame": "9c4219e5ff0fead90b8db4bca292d961b6cc855c656441abb80e322a6d6dd9b5",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.0679126536077452,
-   "status": "tour of 8 strongest directions · 76.8% of variance",
+  "lattice|seed=3|t=2.25|swing": {
+   "frame": "947c5d8e5476ed13c360b67ee7c12d8f33a97451f18f531dc196399dc6033007",
+   "centre": "e115d1f6d8c229eebf0301a9a699a8016459c24cce1b2169c4383a33ca3ea0cd",
+   "zoom": 0.7583435274553154,
+   "status": "swinging to face the search, then swapping axes on",
    "frameHead": [
-    -0.11987695842981339,
-    0.3066968619823456,
-    -0.04585617035627365
+    -0.1591017246246338,
+    0.09321877360343933,
+    0.10591977834701538
+   ],
+   "centreHead": [
+    0.07690724730491638,
+    -0.07483028620481491,
+    0.13129392266273499
+   ]
+  },
+  "lattice|seed=3|t=7|swing": {
+   "frame": "a2e41730d0649249143d90e49219b5b7321c44ed33089742865d61e65440edd5",
+   "centre": "b112899be7728c6c20100b753180bd29f555ec8e8b48aa611daf17409a053d64",
+   "zoom": 0.6266712198564003,
+   "status": "swap 1 · axis X trading for a hidden direction ·   0% · 769 wires",
+   "frameHead": [
+    -0.16391412913799286,
+    0.08438878506422043,
+    0.10917381197214127
+   ],
+   "centreHead": [
+    0.08378420025110245,
+    -0.08152152597904205,
+    0.14303407073020935
+   ]
+  },
+  "lattice|seed=3|t=10|swing": {
+   "frame": "7ec5fc583e29bcab8bcf18389ca1e37afaeb750e76c1302eb0d5c83f9df47e0c",
+   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+   "zoom": 1.4935330241327198,
+   "status": "swap 1 · axis X trading for a hidden direction ·  88% · 769 wires",
+   "frameHead": [
+    -0.1026839092373848,
+    0.029081178829073906,
+    -0.2176799476146698
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -289,31 +417,15 @@
     -5.537003841538102e-11
    ]
   },
-  "tumble|seed=11|t=7|search": {
-   "frame": "c6b12b92ae28fc610b5218589cf17b57e9aab51d6af06cb27d79a52a032bbeef",
+  "lattice|seed=3|t=20|swing": {
+   "frame": "5c90733b84cb3057290e53e87996adc5111a4c28e71e9ee3547ce87fc46c0d97",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.009333175864958,
-   "status": "tour of 8 strongest directions · 76.8% of variance",
+   "zoom": 1.2823347955310955,
+   "status": "swap 4 · axis X trading for a hidden direction ·  82% · 769 wires",
    "frameHead": [
-    -0.04198898375034332,
-    -0.07368128001689911,
-    0.1161278635263443
-   ],
-   "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
-   ]
-  },
-  "tumble|seed=11|t=10|search": {
-   "frame": "85a8ce3836b1a028e221a4b8b7adea4b69870f31dcc1888fdc68f04e3185315b",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 0.9907520896722584,
-   "status": "tour of 8 strongest directions · 76.8% of variance",
-   "frameHead": [
-    0.00929290521889925,
-    -0.3782369792461395,
-    0.03697039932012558
+    0.1630817949771881,
+    0.16938598453998566,
+    0.03511344641447067
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -401,15 +513,79 @@
     -5.537003841538102e-11
    ]
   },
-  "lattice|seed=3|t=0|search": {
-   "frame": "991132e3cd69da3e729d6484846fee884b8470157faee8ac10a0dc4faabb69bc",
+  "lattice|seed=3|t=20|none": {
+   "frame": "749e4d128b8e263ccb94e0376cf3324890d42fe0fdb2a5c858f0525959f16691",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 2.273238294211886,
+   "zoom": 1.1650896006380576,
+   "status": "swap 6 · axis Z trading for a hidden direction ·  88% · 769 wires",
+   "frameHead": [
+    0.1426592767238617,
+    -0.08408329635858536,
+    0.16241756081581116
+   ],
+   "centreHead": [
+    -1.0858639543087634e-9,
+    6.581103439984304e-10,
+    -5.537003841538102e-11
+   ]
+  },
+  "lattice|seed=11|t=0.5|swing": {
+   "frame": "ee641a771da513248ad5eb06c3bdbbf7fe8645a964595581f0f36ff5fd59716b",
+   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+   "zoom": 2.360026754168357,
+   "status": "swap 1 · axis X trading for a hidden direction ·  15% · measuring 100%",
+   "frameHead": [
+    -0.01793966442346573,
+    -0.03342951461672783,
+    0.09846360236406326
+   ],
+   "centreHead": [
+    -1.0858639543087634e-9,
+    6.581103439984304e-10,
+    -5.537003841538102e-11
+   ]
+  },
+  "lattice|seed=11|t=2.25|swing": {
+   "frame": "9d00346979b6852d867a1635d8b60b3c2119139663ddee7626e0d255bbb9abde",
+   "centre": "e115d1f6d8c229eebf0301a9a699a8016459c24cce1b2169c4383a33ca3ea0cd",
+   "zoom": 0.7507336313575315,
+   "status": "swinging to face the search, then swapping axes on",
+   "frameHead": [
+    -0.12690334022045135,
+    0.10982091724872589,
+    0.14074206352233887
+   ],
+   "centreHead": [
+    0.07690724730491638,
+    -0.07483028620481491,
+    0.13129392266273499
+   ]
+  },
+  "lattice|seed=11|t=7|swing": {
+   "frame": "7c0433501db204ffd3b7684f1c9a84f7424018c1c0b1a5936ae38719900d9362",
+   "centre": "b112899be7728c6c20100b753180bd29f555ec8e8b48aa611daf17409a053d64",
+   "zoom": 0.6266706502417522,
    "status": "swap 1 · axis X trading for a hidden direction ·   0% · 769 wires",
    "frameHead": [
-    0.0037726822774857283,
-    0.0847848579287529,
-    -0.20733579993247986
+    -0.12045006453990936,
+    0.09983628243207932,
+    0.12236328423023224
+   ],
+   "centreHead": [
+    0.08378420025110245,
+    -0.08152152597904205,
+    0.14303407073020935
+   ]
+  },
+  "lattice|seed=11|t=10|swing": {
+   "frame": "26aa866cd71fe421c84746b1c1b394ac76dcc31f6413b246d627ecd3d87906ea",
+   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+   "zoom": 1.497349141218034,
+   "status": "swap 1 · axis X trading for a hidden direction ·  88% · 769 wires",
+   "frameHead": [
+    0.16032245755195618,
+    0.01687433011829853,
+    -0.1389298290014267
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -417,63 +593,15 @@
     -5.537003841538102e-11
    ]
   },
-  "lattice|seed=3|t=0.5|search": {
-   "frame": "0501270ec14cbcd89f4a38b36018dc719360a0c03f9de53698cffd42b6994238",
+  "lattice|seed=11|t=20|swing": {
+   "frame": "2fcb5ba48b65a6faddb5294d6595c1786034b50956030bf5f47e074928c3de15",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 2.267341754941123,
-   "status": "swap 1 · axis X trading for a hidden direction ·  15% · 769 wires",
+   "zoom": 1.0421241252036788,
+   "status": "swap 4 · axis X trading for a hidden direction ·  82% · 769 wires",
    "frameHead": [
-    0.0035731077659875154,
-    0.0755305215716362,
-    -0.20373770594596863
-   ],
-   "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
-   ]
-  },
-  "lattice|seed=3|t=2.25|search": {
-   "frame": "c53551f6c8128a4a7d509e10edabaa9b79e6ad772f033e9d6839d466e5fbc9c1",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.7003047063233132,
-   "status": "swap 1 · axis X trading for a hidden direction ·  66% · 769 wires",
-   "frameHead": [
-    -0.004779801703989506,
-    -0.2512418031692505,
-    0.04043174162507057
-   ],
-   "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
-   ]
-  },
-  "lattice|seed=3|t=7|search": {
-   "frame": "ba07642a347575eb6ba23b002c825b1bc4815e04f89f00da1b4187e094f8388c",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.42735276909247,
-   "status": "swap 3 · axis Z trading for a hidden direction ·   6% · 769 wires",
-   "frameHead": [
-    -0.006278304848819971,
-    -0.29254692792892456,
-    0.11099643260240555
-   ],
-   "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
-   ]
-  },
-  "lattice|seed=3|t=10|search": {
-   "frame": "07c35aaef1ed67aab41c2719e5fd7c9b569fd5f35bb25d77aae40b1aac27283b",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.1309947163136493,
-   "status": "swap 3 · axis Z trading for a hidden direction ·  94% · 769 wires",
-   "frameHead": [
-    -0.006278304848819971,
-    -0.29254692792892456,
-    0.11099643260240555
+    -0.012997111305594444,
+    -0.3429259657859802,
+    -0.07776547223329544
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -561,15 +689,15 @@
     -5.537003841538102e-11
    ]
   },
-  "lattice|seed=11|t=0|search": {
-   "frame": "7e62009097d94054ba235491624a136b096db43df7c40253c2eb8996d4b1b0c3",
+  "lattice|seed=11|t=20|none": {
+   "frame": "151571eec2bde4a194f7abc2aaeaf5de72b8232036fe1dd0158ad7dd52b3ae93",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 2.399873458700204,
-   "status": "swap 1 · axis X trading for a hidden direction ·   0% · 769 wires",
+   "zoom": 1.141274660345803,
+   "status": "swap 6 · axis Z trading for a hidden direction ·  88% · 769 wires",
    "frameHead": [
-    -0.017666472122073174,
-    -0.03977670520544052,
-    0.09604089707136154
+    0.01939387619495392,
+    -0.31193938851356506,
+    -0.10154491662979126
    ],
    "centreHead": [
     -1.0858639543087634e-9,
@@ -577,68 +705,84 @@
     -5.537003841538102e-11
    ]
   },
-  "lattice|seed=11|t=0.5|search": {
-   "frame": "ee641a771da513248ad5eb06c3bdbbf7fe8645a964595581f0f36ff5fd59716b",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 2.360026754168357,
-   "status": "swap 1 · axis X trading for a hidden direction ·  15% · 769 wires",
+  "wander|seed=3|t=0.5|swing": {
+   "frame": "6ae1e0ae451635af63571393e469213c1e1bfc4bae52e4a4fdd30035851294df",
+   "centre": "b38a119f0ee1b6f3077a62b048b7254a6e5b61620a804dc6077d139f42754e84",
+   "zoom": 2.701422071921288,
+   "status": "heading to \"penalty\"",
    "frameHead": [
-    -0.01793966442346573,
-    -0.03342951461672783,
-    0.09846360236406326
+    -0.0113174207508564,
+    0.08263034373521805,
+    -0.20067454874515533
    ],
    "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
+    -0.010139288380742073,
+    0.0011139288544654846,
+    0.009830489754676819
    ]
   },
-  "lattice|seed=11|t=2.25|search": {
-   "frame": "692843b709f1850aaf1c07ac285526db1284549a4c352e0d326e95806f392d47",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.2571924438973812,
-   "status": "swap 1 · axis X trading for a hidden direction ·  66% · 769 wires",
+  "wander|seed=3|t=2.25|swing": {
+   "frame": "ce90f7cf59507db1f613e7300b970e3abdfb968868420e34dee3f42acccc8f6d",
+   "centre": "7d7a73457402d97f39a188d6e9419c10dad0b349d022bf55d040b43699d86ce9",
+   "zoom": 0.7969680931253021,
+   "status": "swinging to face the search, then wandering on",
    "frameHead": [
-    -0.01403898373246193,
-    0.17834977805614471,
-    0.10459370166063309
+    0.12004153430461884,
+    -0.11201484501361847,
+    -0.1381157487630844
    ],
    "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
+    0.07402799278497696,
+    -0.07451396435499191,
+    0.1340854912996292
    ]
   },
-  "lattice|seed=11|t=7|search": {
-   "frame": "1bae01d2eefcfafea6e08a0738936be2696df61137e593e10c203615365fe39b",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.139508597804338,
-   "status": "swap 3 · axis Z trading for a hidden direction ·   6% · 769 wires",
+  "wander|seed=3|t=7|swing": {
+   "frame": "2632383f91dc01f7c1d8bde7390279f096f9cf21102beea9106ea99215118057",
+   "centre": "e38284332a80e4474a295354ca36da15d923bc788a3423d27d1a7766d3fbf230",
+   "zoom": 0.6266741109758194,
+   "status": "heading to \"dribble\"",
    "frameHead": [
-    -0.008953765965998173,
-    0.20093600451946259,
-    0.07844840735197067
+    0.1243179589509964,
+    -0.128386452794075,
+    -0.1384151726961136
    ],
    "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
+    0.08378398418426514,
+    -0.08152150362730026,
+    0.14303427934646606
    ]
   },
-  "lattice|seed=11|t=10|search": {
-   "frame": "ef0a7f0bb4c29c3f40349bd597225c59bbef5a3b7f2f613aeffe4644341276b2",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
-   "zoom": 1.0511235577342042,
-   "status": "swap 3 · axis Z trading for a hidden direction ·  94% · 769 wires",
+  "wander|seed=3|t=10|swing": {
+   "frame": "f64f42eff9b07ab483084b94c6144c2ef85bb995dcf85dd3aca390b27a82daee",
+   "centre": "cbd30693cd5a92c7bdf03519ae60454038ac594ca52cc0ec1c3f53aee09e3d09",
+   "zoom": 2.7014220719212876,
+   "status": "at \"dribble\" · sport · stop 2",
    "frameHead": [
-    -0.008953765965998173,
-    0.20093600451946259,
-    0.07844840735197067
+    -0.19054478406906128,
+    0.04717937111854553,
+    -0.004543003626167774
    ],
    "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
+    -0.09949880838394165,
+    -0.0010289029451087117,
+    0.13917015492916107
+   ]
+  },
+  "wander|seed=3|t=20|swing": {
+   "frame": "0061cb218a0fea2165370794349257335caa99edfaebc7b2c595e8ed7ec437cc",
+   "centre": "8cf13ba32b5d9e467e6b50c852ce96458a625438f69b9974202f0f1b538c1946",
+   "zoom": 2.7014220719212876,
+   "status": "at \"hurdle\" · sport · stop 4",
+   "frameHead": [
+    -0.19398878514766693,
+    0.03341468423604965,
+    0.0037589555140584707
+   ],
+   "centreHead": [
+    -0.08585691452026367,
+    -0.013884029351174831,
+    0.16968166828155518
    ]
   },
   "wander|seed=3|t=0|none": {
@@ -721,84 +865,100 @@
     0.14058813452720642
    ]
   },
-  "wander|seed=3|t=0|search": {
-   "frame": "a057fe67b3f32f176058da69437fa69ca8c0fa390f0ba302897ae91e49395925",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+  "wander|seed=3|t=20|none": {
+   "frame": "5722071c23d397fb7a2fdab36d2097d72f1427298e1f9a9742490c4929252553",
+   "centre": "28b15b9d52c27443e7c2d372ced3d840a353875339da16d7ee63678e62e5a871",
    "zoom": 2.701422071921288,
-   "status": "heading to \"penalty\"",
+   "status": "\"hurdle\" → \"verdict\" · long leap to law",
    "frameHead": [
-    0.0037726822774857283,
-    0.0847848579287529,
-    -0.20733579993247986
+    -0.2454650104045868,
+    0.051620207726955414,
+    -0.04584277421236038
    ],
    "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
+    -0.042047858238220215,
+    -0.059950586408376694,
+    0.12374378740787506
    ]
   },
-  "wander|seed=3|t=0.5|search": {
-   "frame": "6ae1e0ae451635af63571393e469213c1e1bfc4bae52e4a4fdd30035851294df",
-   "centre": "b38a119f0ee1b6f3077a62b048b7254a6e5b61620a804dc6077d139f42754e84",
+  "wander|seed=11|t=0.5|swing": {
+   "frame": "8e68ac53983f20d9c8f8eb1250b3378b4d769b5097fd153ef172fe4dab946225",
+   "centre": "8d7ecdf7d5799012c5526099b8cb68307b58087448c98d4e63c12f375a7ffc4d",
    "zoom": 2.701422071921288,
-   "status": "heading to \"penalty\"",
+   "status": "heading to \"starlight\"",
    "frameHead": [
-    -0.0113174207508564,
-    0.08263034373521805,
-    -0.20067454874515533
+    0.004504719283431768,
+    -0.017684388905763626,
+    0.07363972812891006
    ],
    "centreHead": [
-    -0.010139288380742073,
-    0.0011139288544654846,
-    0.009830489754676819
+    -0.013076329603791237,
+    -0.0022261731792241335,
+    -0.008360277861356735
    ]
   },
-  "wander|seed=3|t=2.25|search": {
-   "frame": "6e4f4e3ee0a7f0aa7838237957d6e086e18fa2fdbb3a8450473788f0053540b8",
-   "centre": "9acbfb8d0cedb23b98a72b6981e717408cdb371bda034b571097f9d7560f64ed",
-   "zoom": 2.701422071921288,
-   "status": "heading to \"penalty\"",
+  "wander|seed=11|t=2.25|swing": {
+   "frame": "d3fba255faa6bbc53a2b28c8048e48484d86fa9e4d006a01b05b96d05766a5e0",
+   "centre": "e7759001bd39e5377a2307e5dc5a7e4efe4f97d638bde409c7b0906c914ee326",
+   "zoom": 0.7969680931253021,
+   "status": "swinging to face the search, then wandering on",
    "frameHead": [
-    -0.16173924505710602,
-    0.005949743557721376,
-    0.0004958795034326613
+    -0.11905308067798615,
+    0.11388421803712845,
+    0.13131169974803925
    ],
    "centreHead": [
-    -0.10820949077606201,
-    0.011888173408806324,
-    0.10491390526294708
+    0.07319396734237671,
+    -0.0754624530673027,
+    0.12891985476016998
    ]
   },
-  "wander|seed=3|t=7|search": {
-   "frame": "6f7d1eaccbe77959e5eba5d718b05728d71d1b5467be98fe31f9d26669ad1ea6",
-   "centre": "99c10c2b74903261d5cc847c9671c61f5f6df0dc845b0019ef43045a7325fcb4",
-   "zoom": 2.701422071921288,
-   "status": "\"penalty\" → \"dribble\"",
+  "wander|seed=11|t=7|swing": {
+   "frame": "bcdd1e4142666e083556d589c22db7d8d25d77ad721fc9d814e9bf3f001fd27f",
+   "centre": "05ce7fbc4c1b32bcf7e9998b05665fbe755d0aa48bb4bd139a6381e7d38f8f1c",
+   "zoom": 0.6266741109758194,
+   "status": "heading to \"perigee\"",
    "frameHead": [
-    -0.18822036683559418,
-    0.04131867736577988,
-    -0.0012114072451367974
+    -0.12044952064752579,
+    0.0998365581035614,
+    0.12236262857913971
    ],
    "centreHead": [
-    -0.10195636749267578,
-    0.0006532893748953938,
-    0.13651083409786224
+    0.08378392457962036,
+    -0.08152157068252563,
+    0.14303389191627502
    ]
   },
-  "wander|seed=3|t=10|search": {
-   "frame": "8edbb32aa2687f819a36ecfccb92dd1fb12a19ecb60273f56f4baf0d3ef332d7",
-   "centre": "b07f4e68ad73990627f8dfedfe6ecd398540f93d3f17554807b97ac598ec9630",
-   "zoom": 2.701422071921288,
-   "status": "\"dribble\" → \"pitstop\"",
+  "wander|seed=11|t=10|swing": {
+   "frame": "33ae7aeee3901f32d2fb0bfd188c81aafd1a9b8222b809c6a46dda95bea2c1b0",
+   "centre": "67d75661b3a76e0347bd5b3e6f3161a6e2ce7e1e30374d7912d8c73f991a54a7",
+   "zoom": 2.7014220719212876,
+   "status": "at \"perigee\" · astronomy · stop 2",
    "frameHead": [
-    -0.19015398621559143,
-    0.038998719304800034,
-    -0.005519060418009758
+    -0.11006350070238113,
+    0.16407015919685364,
+    0.13326257467269897
    ],
    "centreHead": [
-    -0.0992891862988472,
-    -0.005275005009025335,
-    0.14058813452720642
+    -0.12845049798488617,
+    -0.043221794068813324,
+    -0.07000885158777237
+   ]
+  },
+  "wander|seed=11|t=20|swing": {
+   "frame": "d8c19983372eabffb784918ff5a67cb98090fa576264d1cbf7f7928e0035299a",
+   "centre": "ca387e76c4f916ce7cf576c1adc70c0ea5e5deca3b4e63ad7dfe0ac248168b3e",
+   "zoom": 2.7014220719212876,
+   "status": "at \"galaxy\" · astronomy · stop 4",
+   "frameHead": [
+    -0.12609821557998657,
+    0.1536167412996292,
+    0.3022291660308838
+   ],
+   "centreHead": [
+    -0.13709673285484314,
+    -0.059383999556303024,
+    -0.16093869507312775
    ]
   },
   "wander|seed=11|t=0|none": {
@@ -881,84 +1041,20 @@
     -0.07520917803049088
    ]
   },
-  "wander|seed=11|t=0|search": {
-   "frame": "e38f407057079676f8c7cf6a1bf6d39d0a95b38b9b265c59ca60b03fe5db3267",
-   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+  "wander|seed=11|t=20|none": {
+   "frame": "fe3fe440d946422dcbcf10a1a1758462c53bc16411995ae49b8d4b1ad49c7d01",
+   "centre": "04931ca83c54403f3cf44a877ac6b0f5efd9b14313dd3d2b90139aff057702fd",
    "zoom": 2.701422071921288,
-   "status": "heading to \"starlight\"",
+   "status": "\"galaxy\" → \"audit\" · long leap to money",
    "frameHead": [
-    -0.017666472122073174,
-    -0.03977670520544052,
-    0.09604089707136154
+    0.2422465980052948,
+    0.1817886382341385,
+    -0.17137199640274048
    ],
    "centreHead": [
-    -1.0858639543087634e-9,
-    6.581103439984304e-10,
-    -5.537003841538102e-11
-   ]
-  },
-  "wander|seed=11|t=0.5|search": {
-   "frame": "8e68ac53983f20d9c8f8eb1250b3378b4d769b5097fd153ef172fe4dab946225",
-   "centre": "8d7ecdf7d5799012c5526099b8cb68307b58087448c98d4e63c12f375a7ffc4d",
-   "zoom": 2.701422071921288,
-   "status": "heading to \"starlight\"",
-   "frameHead": [
-    0.004504719283431768,
-    -0.017684388905763626,
-    0.07363972812891006
-   ],
-   "centreHead": [
-    -0.013076329603791237,
-    -0.0022261731792241335,
-    -0.008360277861356735
-   ]
-  },
-  "wander|seed=11|t=2.25|search": {
-   "frame": "c419eb141281321567ec81f8325b097b95a2df87121a79fc3d64ad21e3ff69c5",
-   "centre": "5fd91540ca667b3da1d567b20550fd3b1ffa2242a6379c2c8ac42ae9d4a436a2",
-   "zoom": 2.701422071921288,
-   "status": "heading to \"starlight\"",
-   "frameHead": [
-    0.23384791612625122,
-    0.22576093673706055,
-    -0.21068933606147766
-   ],
-   "centreHead": [
-    -0.1395544707775116,
-    -0.023758389055728912,
-    -0.08922336995601654
-   ]
-  },
-  "wander|seed=11|t=7|search": {
-   "frame": "7fba84949967657ae2db97f7888c14d75806e9b438008596efd5a965167f9db1",
-   "centre": "ff98495507443c4cf640f78a48a592ab837c600f2cb4986d529eece32ed3f445",
-   "zoom": 2.701422071921288,
-   "status": "\"starlight\" → \"perigee\"",
-   "frameHead": [
-    0.24459783732891083,
-    0.2288079708814621,
-    -0.2309636026620865
-   ],
-   "centreHead": [
-    -0.13160459697246552,
-    -0.041237395256757736,
-    -0.07345592975616455
-   ]
-  },
-  "wander|seed=11|t=10|search": {
-   "frame": "d5309f0f400318773f00caf67a4a30caa1fb38f350c43c8f9f23ddc4f4d6d88e",
-   "centre": "4415a93c836f32ef4307155d137311b71833c57eebc28ebc840ca49e19d4b272",
-   "zoom": 2.701422071921288,
-   "status": "\"perigee\" → \"asteroid\"",
-   "frameHead": [
-    0.2455892264842987,
-    0.22561320662498474,
-    -0.22986449301242828
-   ],
-   "centreHead": [
-    -0.12838907539844513,
-    -0.043722961097955704,
-    -0.07520917803049088
+    -0.07061003148555756,
+    -0.06709133088588715,
+    -0.09429831057786942
    ]
   },
   "focus|seed=3|t=0|none": {
@@ -1026,6 +1122,22 @@
    ]
   },
   "focus|seed=3|t=10|none": {
+   "frame": "1c79640c974ce358e69598a8790e89fe46223b57d53072eca48cbadb21e32886",
+   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+   "zoom": 1.0032322620632734,
+   "status": "fitted to every point",
+   "frameHead": [
+    0.07579150050878525,
+    -0.14363078773021698,
+    0.1355966329574585
+   ],
+   "centreHead": [
+    -1.0858639543087634e-9,
+    6.581103439984304e-10,
+    -5.537003841538102e-11
+   ]
+  },
+  "focus|seed=3|t=20|none": {
    "frame": "1c79640c974ce358e69598a8790e89fe46223b57d53072eca48cbadb21e32886",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
    "zoom": 1.0032322620632734,
@@ -1121,6 +1233,22 @@
     -0.029681656509637833
    ]
   },
+  "focus|seed=3|t=20|search": {
+   "frame": "d79f7781617db3435161b1fec7b2caf017195d043145ab0e5bc78be9a1e5ef37",
+   "centre": "2242ef631a48cf38a7f6bbb24f5f6fb4f9c7c7073159599847e7301a315f2246",
+   "zoom": 1.0890779463331215,
+   "status": "fitted to the results of A, B",
+   "frameHead": [
+    0.14875656366348267,
+    -0.3975374698638916,
+    0.05373384431004524
+   ],
+   "centreHead": [
+    0.16069655120372772,
+    -0.006871948018670082,
+    -0.029681656509637833
+   ]
+  },
   "focus|seed=11|t=0|none": {
    "frame": "cd8015139eae2c56699d3ba3b5db9ee4ce1b11039c3141236c3c02477c9ff2a5",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
@@ -1201,6 +1329,22 @@
     -5.537003841538102e-11
    ]
   },
+  "focus|seed=11|t=20|none": {
+   "frame": "cd8015139eae2c56699d3ba3b5db9ee4ce1b11039c3141236c3c02477c9ff2a5",
+   "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
+   "zoom": 1.0032924614030068,
+   "status": "fitted to every point",
+   "frameHead": [
+    -0.0757913663983345,
+    0.14363223314285278,
+    -0.13559086620807648
+   ],
+   "centreHead": [
+    -1.0858639543087634e-9,
+    6.581103439984304e-10,
+    -5.537003841538102e-11
+   ]
+  },
   "focus|seed=11|t=0|search": {
    "frame": "cd8015139eae2c56699d3ba3b5db9ee4ce1b11039c3141236c3c02477c9ff2a5",
    "centre": "833ed4e1ae441c18a44bb4a215d0c4d0a8d3913a39378b0f8d6fee9ce8bd7afb",
@@ -1266,6 +1410,22 @@
    ]
   },
   "focus|seed=11|t=10|search": {
+   "frame": "c06afc77613b56b672686dcc0500219764207e5d5cf2589a6d5c0de27c60ce8c",
+   "centre": "2242ef631a48cf38a7f6bbb24f5f6fb4f9c7c7073159599847e7301a315f2246",
+   "zoom": 1.089078033057209,
+   "status": "fitted to the results of A, B",
+   "frameHead": [
+    -0.14875656366348267,
+    0.3975374698638916,
+    -0.05373384431004524
+   ],
+   "centreHead": [
+    0.16069655120372772,
+    -0.006871948018670082,
+    -0.029681656509637833
+   ]
+  },
+  "focus|seed=11|t=20|search": {
    "frame": "c06afc77613b56b672686dcc0500219764207e5d5cf2589a6d5c0de27c60ce8c",
    "centre": "2242ef631a48cf38a7f6bbb24f5f6fb4f9c7c7073159599847e7301a315f2246",
    "zoom": 1.089078033057209,

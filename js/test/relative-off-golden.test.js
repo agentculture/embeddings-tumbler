@@ -15,7 +15,8 @@ test("the golden set covers all four views, with and without a search", () => {
   const keys = Object.keys(golden.cases);
   for (const v of VIEWS) {
     assert.ok(keys.some((k) => k.startsWith(v + "|") && k.endsWith("|none")), v + " without a search");
-    assert.ok(keys.some((k) => k.startsWith(v + "|") && k.endsWith("|search")), v + " with a search");
+    const search = v === "focus" ? "|search" : "|swing";
+    assert.ok(keys.some((k) => k.startsWith(v + "|") && k.endsWith(search)), v + " with a search");
   }
   assert.deepStrictEqual(Object.keys(now).sort(), keys.slice().sort());
 });
