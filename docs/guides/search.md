@@ -263,6 +263,10 @@ be the highest on the ruler, and the viewer says so.
   points of equal height stand at nearly equal heights on the screen, within
   about 2 percent of the ruler's length by the build's own check. If you tilt
   the picture by dragging, heights stop reading true until you level it.
+  Moving the picture without turning it (a right-button drag, Shift and drag,
+  two fingers on a touch screen, or the arrow keys) is safe: it shifts the
+  ruler, the stems and the points together by the same amount on screen, so
+  every height still reads true. The Reset view button puts it back.
 
 **A search made from a point or a whole title names that point first.** Type
 `Rice`, the whole title of an article, and the search starts from that article's

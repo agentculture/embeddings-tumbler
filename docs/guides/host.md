@@ -374,7 +374,7 @@ const viewer = EmbeddingsTumbler.mount(document.getElementById("space"), {
 Other options: `speed`, `labels`, `trails`, `readout`, `masthead`,
 `maxPixelRatio`, `modeOptions`, `prepareBudgetMs`, `refitQuietSeconds`,
 `refitShare`, `preserveDrawingBuffer`, `onModeChange`, `onPauseChange`. They
-and the whole handle (`pause`, `resume`, `setMode`, `seek`, `zoom`, `info` and
+and the whole handle (`pause`, `resume`, `setMode`, `seek`, `zoom`, `pan`, `info` and
 more) are documented in `js/api/50-viewer.md`.
 
 ## The web component form
@@ -1821,9 +1821,15 @@ line and the controls, which are real buttons and inputs that work from the
 keyboard, but the shape of the data itself is not described. Do not make the
 viewer the only way to reach a fact. The viewer starts paused for visitors who
 prefer reduced motion. Keys work while the viewer has focus: `Escape` dismisses
-a notice, `1` to `9` pick a mode, space pauses or plays, `+` and `-` zoom and
-`0` resets the zoom. A vertical swipe on a phone scrolls the page; a horizontal
-drag turns the cloud.
+a notice, `1` to `9` pick a mode, space pauses or plays, `+` and `-` zoom,
+the arrow keys move the picture and `0` resets the zoom and the move. A vertical
+swipe on a phone scrolls the page; a horizontal drag turns the cloud. To move
+the picture without turning it, drag with the right mouse button, or hold Shift
+and drag (for trackpads), or drag with two fingers on a touch screen (pinching
+still zooms). The viewer suppresses the browser's context menu over the picture
+so a right-drag works; it is left alone over the controls. Double-click,
+double-tap and the Reset view button put both the zoom and the move back
+(`handle.resetView()`; `handle.pan()` reads the move, see `js/api/50-viewer.md`).
 
 ## Where the data goes
 

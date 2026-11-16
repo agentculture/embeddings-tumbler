@@ -59,8 +59,12 @@ the row packing (`const int PER_ROW`) and the wire-brightness scale
 variant ones: their `place()` reads the perspective constant from a uniform,
 `uPersp`, instead of the literal `3.0`. Without it (or with `opts` left out) the
 sources are exactly the original strings, with the constant `3.0` written in.
+With `opts.pan` true as well, `place()` also reads the uniform `uPan` and adds it
+after the perspective: `vec4((x1 * s + uPan.x) * uView.x, (y2 * s + uPan.y) *
+uView.y, 0.0, s)`. The renderer always compiles its variants with both.
 `draw` uses the variant programs only when the draw state's `perspective` is not
-3 (see the `perspective` key under `renderer.draw`).
+3 or its `pan` is not `[0, 0]` (see the `perspective` and `pan` keys under
+`renderer.draw`).
 
 ### `ET.renderer.wireDensity(src, view) -> number`
 
@@ -83,8 +87,8 @@ Corrected after the owner's browser look (2026-11-14).
 Pure JavaScript copy of the shader's screen mapping, for drawing labels and
 hit-testing on top of the canvas. `p` is `[a, b, c]`, a point's coordinates along
 the three frame rows after subtracting the centre (the same numbers the vertex
-shader computes). `state` uses `zoom`, `yaw`, `pitch`, `radius`, `focus` (defaults
-as below). Returns canvas pixels with `y` growing downward, the perspective
+shader computes). `state` uses `zoom`, `yaw`, `pitch`, `radius`, `focus`,
+`perspective` and `pan` (defaults as below). Returns canvas pixels with `y` growing downward, the perspective
 `scale`, and `depth` relative to the focus plane.
 
 ### `ET.renderer.placer(state, width, height) -> (a, b, c, out) => out`
@@ -289,6 +293,7 @@ still clears (and fades trails).
 | `unlitGain` | brightness factor of a point with lit value 0, at `filter` 1 (Focus's Only results uses `0`: unlit points are hidden); also of a wire with an unlit end | `0.07` |
 | `wireLoad` | `0` = off. Above 0: the most wire light per pixel (`wireDensity` times `wires * wireGain * gain`) the wires may pile up to; above it the wires' gain is multiplied by `wireLoad / light`. The viewer sets `8` whenever wires are shown. | `0` |
 | `perspective` | The perspective constant `P` in the screen scale `s = P / max(0.6, P + z2)`. Larger is flatter; at `ET.renderer.RELATIVE_PERSPECTIVE` (60) points of equal height at the near and far ends of the cloud land within 2 percent of the ruler's length of each other (the relative view relies on this). A value that is not a positive finite number reads as 3. | `3` |
+| `pan` | `[x, y]`: a screen-space offset of the whole drawn picture, added after zoom and perspective, in units of `R = min(width, height) * radius` (one unit of the picture after zoom and perspective, so a pan follows the stage when it is resized). Positive `x` moves the picture right, positive `y` moves it up. It changes no frame, centre, zoom or depth. Anything that is not two finite numbers reads as `[0, 0]`. The viewer sets it from the user's pan (task t17). | `[0, 0]` |
 
 The `perspective` key is read by the vertex shaders, by `ET.renderer.place` and by
 `ET.renderer.placer`, which stay in step, so labels and overlays placed with
@@ -301,6 +306,16 @@ drawn (the lit and wire variants the first time one of those is needed), not at
 `create`. If that compile fails, `draw` returns `false` and the renderer reports
 the failure as it reports any other (`status().ok` is `false` until `rebuild()`
 succeeds).
+
+The `pan` key (task t17) works the same way. `ET.renderer.place` and
+`ET.renderer.placer` add `pan[0] * R` to the canvas `x` and subtract `pan[1] *
+R` from the canvas `y` (canvas `y` grows downward), so everything placed with
+them moves with the points: names, the hover ring, the search panel's rings and
+links, and the relative overlay. With the pan left out or `[0, 0]` the shader
+text, the GL calls and the CPU numbers are exactly those of before the key
+existed (pinned by hash in `js/test/renderer.test.js`). Any other value is drawn
+by the variant programs above, which then get both `uPersp` (3 when only the pan
+is set) and `uPan`; a perspective change alone gives them `uPan` `[0, 0]`.
 
 Corrected after the owner's browser look (2026-11-14); see
 `docs/search-interface.md`, "Corrected after the owner's browser look":

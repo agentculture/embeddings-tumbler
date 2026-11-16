@@ -22,6 +22,9 @@
 //   * Perspective: the draw key perspective (P in s = P / max(0.6, P + z2)) is 3 by default,
 //     drawn by the programs above, unchanged. Any other value is drawn by variant programs
 //     that read it as the uniform uPersp, compiled the first time such a value is drawn.
+//   * Pan (task t17): the draw key pan moves the drawn picture on screen without turning it.
+//     [0, 0] (the default) draws with the original programs, unchanged; any other value is
+//     drawn by the same variant programs, which also read it as the uniform uPan.
 //
 // The API is documented in js/api/30-renderer.md.
 // ---------------------------------------------------------------------------
@@ -65,6 +68,12 @@ ET.renderer = (function () {
     // the perspective constant P in s = P / max(0.6, P + z2); larger is flatter. 3 (the default)
     // draws with the original programs; the relative view uses RELATIVE_PERSPECTIVE.
     perspective: 3,
+    // [x, y]: a screen-space offset of the whole picture, added after zoom and perspective, in
+    // units of R = min(width, height) * radius (one unit of the picture after zoom and
+    // perspective, so a pan follows the stage when it is resized). Positive x moves the picture
+    // to the right, positive y moves it up. [0, 0] (the default) draws with the original
+    // programs; any other value with the variant programs.
+    pan: Object.freeze([0, 0]),
   });
 
   var RELATIVE_PERSPECTIVE = 60; // the settled relative view: nearly flat, so heights read true
@@ -75,7 +84,7 @@ ET.renderer = (function () {
   // The point program's uniforms (the lit programs add uFilter and uUnlit).
   var POINT_UNIFORMS = ["uPx", "uMinPx", "uFog", "uTime", "uGain", "uDim", "uTwinkle", "uDof", "uFogNear", "uFogWidth"];
   var VIEW_UNIFORMS = ["uX", "uF", "uRot", "uView", "uZoom", "uFocus"];
-  var FLAT_VIEW_UNIFORMS = VIEW_UNIFORMS.concat(["uPersp"]); // the variant programs add uPersp
+  var FLAT_VIEW_UNIFORMS = VIEW_UNIFORMS.concat(["uPersp", "uPan"]); // the variant programs add these
 
   var MAX_ROW_WIDTH = 4096; // preferred texture row width (texels) before widening
   var INT32_MAX = 2147483647;
@@ -104,7 +113,8 @@ ET.renderer = (function () {
       pointLit: null, // the point program that reads lit values, compiled on first setLit
       line: null,
       lineLit: null, // the wire program that reads each wire's lit value, compiled with pointLit
-      // the same four programs reading the perspective as uPersp, compiled when first needed
+      // the same four programs reading the perspective as uPersp and the pan as uPan, compiled
+      // when first needed
       pointFlat: null,
       lineFlat: null,
       pointLitFlat: null,
@@ -255,9 +265,12 @@ ET.renderer = (function () {
   }
 
   // opts.perspective true: the variant sources whose place() reads the perspective from the
-  // uniform uPersp. Without it the sources are the original ones, with the constant 3.
+  // uniform uPersp. Without it the sources are the original ones, with the constant 3. With
+  // opts.pan true as well, place() also adds the uniform uPan after the perspective (the
+  // renderer always compiles its variants with both).
   function shaderSources(lay, opts) {
     var flat = !!opts?.perspective;
+    var panned = flat && !!opts?.pan;
     var T = lay.texelsPerPoint;
     var P = lay.pointsPerRow;
     var wireScale = Math.sqrt(lay.dimension / 3).toFixed(4);
@@ -280,7 +293,7 @@ ET.renderer = (function () {
       "  dist = sqrt(dd);",
       "  return p;",
       "}",
-      "uniform vec4 uRot; uniform vec2 uView; uniform float uZoom; uniform float uFocus;" + (flat ? " uniform float uPersp;" : ""),
+      "uniform vec4 uRot; uniform vec2 uView; uniform float uZoom; uniform float uFocus;" + (flat ? " uniform float uPersp;" : "") + (panned ? " uniform vec2 uPan;" : ""),
       // place(): turn by yaw and pitch, then a gentle perspective. zf is the depth
       // relative to the focus plane, used for depth of field.
       "vec4 place(vec3 p, out float zf) {",
@@ -289,7 +302,9 @@ ET.renderer = (function () {
       "  float y2 = p.y * uRot.z - z1 * uRot.w; float z2 = p.y * uRot.w + z1 * uRot.z;",
       flat ? "  float s = uPersp / max(0.6, uPersp + z2);" : "  float s = 3.0 / max(0.6, 3.0 + z2);",
       "  zf = z2 - uFocus;",
-      "  return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);",
+      panned
+        ? "  return vec4((x1 * s + uPan.x) * uView.x, (y2 * s + uPan.y) * uView.y, 0.0, s);"
+        : "  return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);",
       "}",
     ].join("\n");
     var pointVertex = head + proj + "\n" + pointMain(false);
@@ -433,6 +448,23 @@ ET.renderer = (function () {
     return typeof p === "number" && p > 0 && Number.isFinite(p) ? p : DEFAULTS.perspective;
   }
 
+  // The pan a merged draw state asks for, as [x, y]: draw.pan when it holds two finite numbers,
+  // else [0, 0]. place(), placer() and draw() all read it here, so they agree.
+  var NO_PAN = DEFAULTS.pan;
+  function panOf(s) {
+    var p = s.pan;
+    if (p === NO_PAN || p === null || typeof p !== "object" || p.length !== 2) return NO_PAN;
+    var x = p[0];
+    var y = p[1];
+    return typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y) ? [x, y] : NO_PAN;
+  }
+
+  // True when the variant programs must draw: a perspective other than 3 or a pan other than 0.
+  function needsVariant(s) {
+    var pan = panOf(s);
+    return perspectiveOf(s) !== DEFAULTS.perspective || pan[0] !== 0 || pan[1] !== 0;
+  }
+
   // p: [x, y, z] coordinates along the frame (already centred). Returns canvas pixels
   // (y grows downward), the perspective scale and the depth relative to the focus plane.
   function place(p, state, width, height) {
@@ -443,6 +475,7 @@ ET.renderer = (function () {
       sp = Math.sin(s.pitch);
     var R = Math.min(width, height) * s.radius;
     var P = perspectiveOf(s);
+    var pan = panOf(s);
     var x = p[0] * s.zoom,
       y = p[1] * s.zoom,
       z = p[2] * s.zoom;
@@ -451,7 +484,7 @@ ET.renderer = (function () {
     var y2 = y * cp - z1 * sp,
       z2 = y * sp + z1 * cp;
     var k = P / Math.max(0.6, P + z2);
-    return { x: width / 2 + x1 * k * R, y: height / 2 - y2 * k * R, scale: k, depth: z2 - s.focus };
+    return { x: width / 2 + (x1 * k + pan[0]) * R, y: height / 2 - (y2 * k + pan[1]) * R, scale: k, depth: z2 - s.focus };
   }
 
   // place() for many points under one state: the state is merged once, not per point
@@ -466,6 +499,8 @@ ET.renderer = (function () {
     var R = Math.min(width, height) * s.radius;
     var zoom = s.zoom;
     var P = perspectiveOf(s);
+    var panX = panOf(s)[0];
+    var panY = panOf(s)[1];
     return function (p0, p1, p2, out) {
       var x = p0 * zoom,
         y = p1 * zoom,
@@ -475,8 +510,8 @@ ET.renderer = (function () {
       var y2 = y * cp - z1 * sp,
         z2 = y * sp + z1 * cp;
       var k = P / Math.max(0.6, P + z2);
-      out.x = width / 2 + x1 * k * R;
-      out.y = height / 2 - y2 * k * R;
+      out.x = width / 2 + (x1 * k + panX) * R;
+      out.y = height / 2 - (y2 * k + panY) * R;
       return out;
     };
   }
@@ -758,17 +793,18 @@ ET.renderer = (function () {
       gpu.texF = floatTexture(gpu.fWidth, 4, gpu.fStage);
     }
 
-    // The variant programs for a perspective other than 3: the point and wire ones, and with
+    // The variant programs for a perspective other than 3 or a pan other than 0 (they read both
+    // as uniforms): the point and wire ones, and with
     // lit true the lit ones too. Each is compiled once per layout, the first time it is needed.
     function ensureFlat(lit) {
       var src = null;
       if (!gpu.pointFlat) {
-        src = shaderSources(gpu.progLayout, { perspective: true });
+        src = shaderSources(gpu.progLayout, { perspective: true, pan: true });
         gpu.pointFlat = compile(src.pointVertex, src.pointFragment, FLAT_VIEW_UNIFORMS.concat(POINT_UNIFORMS));
         gpu.lineFlat = compile(src.lineVertex, src.lineFragment, FLAT_VIEW_UNIFORMS.concat(["uGain", "uWireDof"]));
       }
       if (lit && !gpu.pointLitFlat) {
-        src = src || shaderSources(gpu.progLayout, { perspective: true });
+        src = src || shaderSources(gpu.progLayout, { perspective: true, pan: true });
         gpu.pointLitFlat = compile(
           src.pointVertexLit,
           src.pointFragment,
@@ -1063,6 +1099,7 @@ ET.renderer = (function () {
       gl.uniform1f(p.u.uZoom, s.zoom);
       gl.uniform1f(p.u.uFocus, s.focus);
       if (p.u.uPersp) gl.uniform1f(p.u.uPersp, perspectiveOf(s)); // the variant programs only
+      if (p.u.uPan) gl.uniform2f(p.u.uPan, panOf(s)[0], panOf(s)[1]); // the same
     }
 
     // True when this frame draws with the lit values: some are set and filter is above 0.
@@ -1075,7 +1112,7 @@ ET.renderer = (function () {
     function drawScene(s, gain, W, H) {
       var R = Math.min(W, H) * s.radius;
       var lit = litApplies(s);
-      var flat = perspectiveOf(s) !== DEFAULTS.perspective;
+      var flat = needsVariant(s);
       if (wires.count && s.wires > 0.02 && gpu.vaoLine) drawWires(s, gain, W, H, R, lit && gpu.vaoLineLit !== null, flat);
       var prog = lit ? gpu.pointLit : gpu.point;
       if (flat) prog = lit ? gpu.pointLitFlat : gpu.pointFlat;
@@ -1100,7 +1137,7 @@ ET.renderer = (function () {
     }
 
     // The wires. litWires false: the program and calls used before search existed. flat: the
-    // variant programs that read the perspective.
+    // variant programs that read the perspective and the pan.
     function drawWires(s, gain, W, H, R, litWires, flat) {
       var prog = litWires ? gpu.lineLit : gpu.line;
       if (flat) prog = litWires ? gpu.lineLitFlat : gpu.lineFlat;
@@ -1357,7 +1394,7 @@ ET.renderer = (function () {
         if (!usable()) return false;
         var s = merge(state);
         var hasData = store.count > 0 && gpu.point;
-        if (hasData && perspectiveOf(s) !== DEFAULTS.perspective) {
+        if (hasData && needsVariant(s)) {
           try {
             ensureFlat(litApplies(s));
           } catch (e) {
