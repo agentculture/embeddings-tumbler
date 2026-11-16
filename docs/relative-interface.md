@@ -665,7 +665,7 @@ div.tumbler-search-controls
 - **Notes** for searches that give no axis and for a set too small for the
   free axes, in the panel's note, one sentence each:
 
-<!-- interface-names module="45-search-panel.js" object="ET.searchPanel" match="present" task="t8" prefix="ET.searchPanel." landed="auto" -->
+<!-- interface-names module="45-search-panel.js" object="ET.searchPanel" match="present" task="t8" prefix="ET.searchPanel." landed="yes" -->
 ```text
 relativeNoteText
 ```
@@ -677,7 +677,7 @@ every entry of `search.relative.dropped` (letter order) and for
 `search.relative.fixed > 0`, joined by a space; `""` when the relative view is
 not shown or nothing is to be said. `noteText` includes it.
 
-<!-- interface-strings module="45-search-panel.js" task="t8" landed="auto" -->
+<!-- interface-strings module="45-search-panel.js" task="t8" landed="yes" -->
 ```text
 Show the origin
 Relative
