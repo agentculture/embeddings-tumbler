@@ -70,7 +70,7 @@ function runPage(search, fetchImpl, extra = {}) {
   const listeners = {};
   const world = {
     els, body, mounted: 0, generated: 0, fetches: [], listeners, updates: [],
-    routeFetches: [], timers: [], mountOptions: [], cleared: [], fills: {},
+    routeFetches: [], replaced: [], timers: [], mountOptions: [], cleared: [], fills: {},
   };
   const handle = {
     update(data) {
@@ -109,7 +109,18 @@ function runPage(search, fetchImpl, extra = {}) {
       pathname: "/index.html",
       protocol: extra.protocol || "http:",
       origin,
+      hash: extra.hash || "",
     },
+    history: extra.noHistory
+      ? undefined
+      : {
+          replaceState(_state, _title, url) {
+            world.replaced.push(url);
+            if (extra.replaceThrows) throw new Error("blocked");
+            const q = String(url).split("#")[0].split("?")[1];
+            window.location.search = q ? "?" + q : "";
+          },
+        },
     EmbeddingsTumbler: api,
     fetch(url, init) {
       if (String(url).endsWith("/_tumbler/search")) {
@@ -675,4 +686,74 @@ test("a viewer that fails to start on the default set is reported plainly", asyn
   const w = await settled(runPage("", demoFetch(), { mountThrows: true }));
   assert.strictEqual(w.body.getAttribute("data-page-state"), "error");
   assert.match(w.els["wait-text"].textContent, /could not start the viewer/);
+});
+
+// ---------- Relative and Show the origin in the address ----------
+
+const search = (relative, showOrigin) => ({ relative: { relative, showOrigin } });
+
+test("relative=1 and origin=1 are passed at mount; absent or other values leave them off", async () => {
+  const on = await settled(runPage("?relative=1&origin=1", demoFetch()));
+  assert.strictEqual(on.mountOptions[0].relative, true);
+  assert.strictEqual(on.mountOptions[0].showOrigin, true);
+  for (const q of ["", "?relative=0&origin=0", "?relative=yes&origin=true", "?relative=&origin="]) {
+    const off = await settled(runPage(q, demoFetch()));
+    assert.strictEqual("relative" in off.mountOptions[0], false, q);
+    assert.strictEqual("showOrigin" in off.mountOptions[0], false, q);
+  }
+});
+
+test("the page asks the viewer to report setting changes, and a change is written to the address", async () => {
+  const w = await settled(runPage("?mode=lattice&seed=7&sample=synthetic", () => Promise.reject(new Error("none"))));
+  const report = w.mountOptions[0].onSearchChange;
+  assert.strictEqual(typeof report, "function");
+  report(search(true, false));
+  assert.deepStrictEqual(w.replaced, ["?mode=lattice&seed=7&sample=synthetic&relative=1"]);
+  report(search(true, true));
+  assert.strictEqual(w.replaced[1], "?mode=lattice&seed=7&sample=synthetic&relative=1&origin=1");
+  report(search(false, true));
+  assert.strictEqual(w.replaced[2], "?mode=lattice&seed=7&sample=synthetic&origin=1");
+});
+
+test("the address round-trips: what is written is read back at the next load", async () => {
+  const first = await settled(runPage("?seed=3", demoFetch()));
+  first.mountOptions[0].onSearchChange(search(true, true));
+  const reopened = await settled(runPage(first.replaced[0], demoFetch()));
+  assert.strictEqual(reopened.mountOptions[0].relative, true);
+  assert.strictEqual(reopened.mountOptions[0].showOrigin, true);
+  assert.strictEqual(reopened.mountOptions[0].seed, 3);
+});
+
+test("turning both off removes them and leaves a bare path; an unchanged setting rewrites nothing", async () => {
+  const w = await settled(runPage("?relative=1&origin=1", demoFetch()));
+  const report = w.mountOptions[0].onSearchChange;
+  report(search(true, true));
+  assert.strictEqual(w.replaced.length, 0);
+  report(search(false, false));
+  assert.deepStrictEqual(w.replaced, ["/index.html"]);
+  report(search(false, false));
+  assert.strictEqual(w.replaced.length, 1);
+});
+
+test("the hash is kept, and search info without the settings changes nothing", async () => {
+  const w = await settled(runPage("", demoFetch(), { hash: "#x" }));
+  const report = w.mountOptions[0].onSearchChange;
+  report({});
+  report(null);
+  report({ relative: { relative: "1", showOrigin: false } });
+  assert.strictEqual(w.replaced.length, 0);
+  report(search(true, false));
+  assert.deepStrictEqual(w.replaced, ["?relative=1#x"]);
+});
+
+test("a page with no history, or one that refuses replaceState, still works", async () => {
+  const a = await settled(runPage("", demoFetch(), { noHistory: true }));
+  a.mountOptions[0].onSearchChange(search(true, false));
+  const b = await settled(runPage("", demoFetch(), { replaceThrows: true }));
+  b.mountOptions[0].onSearchChange(search(true, false));
+  assert.strictEqual(b.body.getAttribute("data-page-state"), "ready");
+});
+
+test("the controls are the viewer's own: the page adds no checkbox of its own", () => {
+  assert.doesNotMatch(CODE, /createElement|type\s*=\s*["']checkbox/);
 });
