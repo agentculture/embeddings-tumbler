@@ -29,6 +29,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["embeddings_tumbler"]
 
+[tool.hatch.build.targets.sdist]
+# Reference data for a spec's reference page, regenerable with
+# scripts/build_reference_rerank.py; it is not source and is kept out of the sdist so the
+# sdist stays under its size limit (tests/test_packages.py).
+exclude = ["docs/specs/reference/demo-wikipedia-rerank.json"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
