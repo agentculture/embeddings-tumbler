@@ -1342,9 +1342,12 @@ ET.renderer = (function () {
         if (disposed || !canvas) return;
         var w = Math.max(1, Math.round(width)),
           h = Math.max(1, Math.round(height));
+        // Wipe only when the size really changed: a resize call at the same size (the page
+        // around the stage changed) must not wipe the accumulated picture.
+        var resized = canvas.width !== w || canvas.height !== h;
         if (canvas.width !== w) canvas.width = w;
         if (canvas.height !== h) canvas.height = h;
-        needClear = true;
+        if (resized) needClear = true;
       },
 
       // Draw one frame. state: see DEFAULTS, plus frame (Float32Array 3 * D) and
