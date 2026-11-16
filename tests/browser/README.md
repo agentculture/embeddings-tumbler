@@ -123,6 +123,20 @@ whose embed callback (`fixtures/search-embed.js`) asks the test server.
 | No planted key or address reaches the browser or a caller | `test_search_forms.py` | every response the browser received, the helper's answers to direct requests, its output and the page's text, scanned for the sentinels |
 | A refused append or query vector leaves the lit set unchanged | `test_search_forms.py` | eight refusals per form, the lit state compared before and after; control: an accepted append changes it |
 
+Relative search (task t13 of the relative-search plan) is proven on the shipped
+Wikipedia demo pair and the relative fixtures (`tests/fixtures/relative/`), with
+the expected heights, rankings and cut-off recomputed in Python from the vectors
+(`relative_site.py`). The viewer's test hook is `handle._viewer.relativeDrawn`.
+
+| Relative criterion | Test file | Measure |
+|--------------------|-----------|---------|
+| The named results of Rice at the heights their cosines map to; none moves by more than 1 px in 30 s of tumbling | `test_relative_heights.py` | hook positions every frame for 30 s of mode time; control: the free axes sweep the results sideways |
+| Equal heights within 2 percent of the ruler, desktop and phone width, untilted | `test_relative_heights.py` | each result against the ruler's point at its height, every frame; a paused screenshot shows the points drawn where the hook places them |
+| No request from relative on or off, searches, the origin | `test_relative_heights.py` | the request log before and after the steps |
+| Ranks 1 to top on labels, cut-off at the lowest candidate; no "cosine" for height on the mixed-length set | `test_relative_rerank.py` | a test reranker through `setSearchCallbacks`; the overlay canvas's pixels on the cut-off row; every "cosine" on the page classified |
+| Script, web component and standalone page pin the same axis; Pause and reduced motion stop the tour | `test_relative_forms.py` | frame row 1 against Rice's direction; mode time and drawn positions while paused |
+| Relative off: Tumble, Lattice, Wander and Focus pixel-identical to 0.12.1 | `test_relative_off_pixels.py` | screenshots against the 0.12.1 core file kept gzipped beside the test (`embeddings-tumbler-0.12.1.js.gz`); control: another seed differs |
+
 The older tests (`test_renderer_render.py`, `test_modes_render.py`,
 `test_viewer_render.py`, `test_viewer_controls.py`, `test_web_component.py`,
 `test_standalone_page.py`, `test_guide_examples.py`) use the same server,
