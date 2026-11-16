@@ -566,3 +566,103 @@ test("Show the origin glides the centre and zoom to the wider window with no tur
   assert.ok(Math.abs(s.draw.zoom - want) < 1e-12, "zoom " + s.draw.zoom + " vs " + want);
   assert.ok(a.stateAt(6).draw.zoom > s.draw.zoom, "the wider window is zoomed out");
 });
+
+// Frobenius norm of the change between two frames.
+function frameChange(A, B) {
+  let s = 0;
+  for (let i = 0; i < A.length; i++) s += (A[i] - B[i]) * (A[i] - B[i]);
+  return Math.sqrt(s);
+}
+
+// A swing interrupted by a switch to the relative view: the setting is off, a search is
+// active, face() swings toward it at 1.0 (until 7.0), and Relative is ticked either during
+// the swing (3.0) or during the release after it (9.0).
+for (const variant of [
+  { name: "during the swing", on: 3.0 },
+  { name: "during the release after the swing", on: 9.0 },
+]) {
+  test("a swing interrupted by the relative switch " + variant.name + ": orthonormal, no jump, reproducible, settled, and back to plain", () => {
+    const fx = wiki();
+    const D = fx.D;
+    const set = setOf(fx);
+    const FPS = 120;
+    const H = 1 / FPS;
+    const SWING_AT = 1.0;
+    const OFF_AT = variant.on + 5;
+    const probe = ready(set, 1);
+    const tgt = probe.stateAt(9);
+    const target = { frame: new Float32Array(tgt.frame), centre: new Float32Array(tgt.centre), zoom: 1.3 };
+    const search = searchOf(fx, [["A", "Rice"]]);
+
+    function run(mode, shownBefore) {
+      const inst = ready(set, 1);
+      assert.strictEqual(inst.searchChanged(search, 0.5), null, "setting off: stored only");
+      assert.strictEqual(inst.face(target, SWING_AT), true, "the swing starts with the setting off");
+      // Frames shown before the switch, recorded as the viewer would draw them.
+      for (let t = 0; t < variant.on; t += 0.25) if (shownBefore) shownBefore.push([t, snap(inst, t)]);
+      const w = inst.setRelative({ relative: true }, variant.on);
+      assert.ok(w && typeof w.step === "function", "turning on with a search starts a fit");
+      if (mode === "one") {
+        w.step();
+      } else {
+        let k = 0;
+        while (!w.step(0)) {
+          k++;
+          const t = Math.min(variant.on - 0.5 + k * 1e-4, variant.on - 1e-3);
+          const s = snap(inst, t);
+          if (shownBefore) shownBefore.push([t, s]);
+        }
+      }
+      inst.mark(variant.on);
+      return inst;
+    }
+
+    const shown = [];
+    const a = run("one", null);
+    const b = run("units", shown);
+    assert.strictEqual(a.describe().relative.switchAt, variant.on);
+    assert.ok(a.describe().facing.until <= Math.max(variant.on, 7.0) + 1e-12, "a swing in progress ends at the switch");
+
+    // 3: bit-identical however pumped; seeking back reproduces what was shown before T.
+    for (let t = 0; t <= OFF_AT; t += 0.37) assertSameSnap(snap(a, t), snap(b, t), "one step vs units at t=" + t);
+    for (const [t, s] of shown) assertSameSnap(snap(b, t), s, "seek back to t=" + t);
+
+    // 2: orthonormal at 120 fps from before the swing to well after the turn.
+    let worst = 0;
+    const end = variant.on + TURN + 2;
+    for (let k = 0; k * H <= end; k++) worst = Math.max(worst, frameError(a.stateAt(k * H).frame, D));
+    assert.ok(worst < 1e-5, "orthonormal through the swing and the turn (worst " + worst + ")");
+
+    // 2: no jump at T. The turn starts from the frame shown at T (the blend is the identity
+    // there, up to one orthonormalisation in double precision, about 1e-7), so the change
+    // from T - 1/120 to T is the motion already under way. Bound: 1.5 times the largest
+    // one-frame change seen over the second before T, plus 1e-5 for rounding.
+    let before = 0;
+    for (let k = 1; k <= FPS; k++) {
+      const t = variant.on - k * H;
+      before = Math.max(before, frameChange(snap(a, t).frame, snap(a, t - H).frame));
+    }
+    const jump = frameChange(snap(a, variant.on).frame, snap(a, variant.on - H).frame);
+    assert.ok(jump <= 1.5 * before + 1e-5, "no jump at T: " + jump + " against one frame of motion " + before);
+
+    // 4: settled after the turn, row 1 the search direction.
+    const u = unit(rowOf(fx, "Rice"));
+    for (const t of [variant.on + TURN, variant.on + TURN + 1.7, OFF_AT - 0.01]) {
+      const s = a.stateAt(t);
+      assert.strictEqual(s.relative.settled, true, "settled at t=" + t);
+      const gap = rowGap(s.frame, 1, u, D);
+      assert.ok(gap <= 1e-6, "row 1 is u within 1e-6 at t=" + t + " (gap " + gap + ")");
+    }
+
+    // 4: off again ends on plain Tumble, bit-identical to an instance with no history at all
+    // (no search, no swing): the switch replaced the swing, and the turn back targets the
+    // plain tour itself, not the swing's relabelled release.
+    assert.strictEqual(a.setRelative({ relative: false }, OFF_AT), null);
+    const fresh = ready(set, 1);
+    for (const t of [OFF_AT + TURN, OFF_AT + 4.4, OFF_AT + 20]) {
+      const s = snap(a, t);
+      assertSameSnap(s, snap(fresh, t), "plain again at t=" + t);
+      assert.strictEqual(s.relative, null);
+    }
+  });
+}
