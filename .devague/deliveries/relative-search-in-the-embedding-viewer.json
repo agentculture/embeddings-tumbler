@@ -2,7 +2,7 @@
   "plan_slug": "relative-search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-16T22:05:02Z",
-  "updated": "2026-11-16T22:21:05Z",
+  "updated": "2026-11-16T23:12:03Z",
   "deviations": [
     {
       "id": "d1",
@@ -67,6 +67,24 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "Four changes before the release, chosen by the owner from the open questions of the reference comparison: the ruler's labels show the article's title where the point has one; the search marker carries the search's name ('A \u00b7 Rice'); with reduced motion (or the view paused) the relative view is shown settled at once with no turn; and the faint gradient on points that are not results is made brighter, the strength to be picked by the owner from examples. Letters kept only while Relative is on is accepted as built. Added as task t19.",
+      "task_ref": "t7",
+      "reason": "Asked on 2026-11-17 which open questions to change before release, the owner ticked 'Titles on ruler labels', 'Name on the search marker', 'Reduced motion shows the view' and 'Brighter gradient', and chose 'Accept as built' for letters. The owner had said of the side-by-side 'build looks good' and 'Confirmed and looks good'; the formal sign-off is recorded after these changes are seen.",
+      "affects": [
+        "t6",
+        "t9",
+        "t10",
+        "t13",
+        "t14",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 5
     }
   ],
   "evidence": [],
