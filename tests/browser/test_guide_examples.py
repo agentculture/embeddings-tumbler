@@ -298,7 +298,13 @@ def test_script_form_relative_page_turns_relative_on_and_reports_it(opened):
     )
 
     # A second search pins the horizontal axis; the first keeps its letter and its axis.
-    two = _press(page, "two", "Done: Add p0100", lambda s: s["relative"]["settled"])["relative"]
+    # The view stays settled on the first search until the switch, so wait for both to be pinned.
+    two = _press(
+        page,
+        "two",
+        "Done: Add p0100",
+        lambda s: s["relative"]["settled"] and len(s["relative"]["pinned"]) == 2,
+    )["relative"]
     assert [(p["letter"], p["axis"]) for p in two["pinned"]] == [
         ("A", "vertical"),
         ("B", "horizontal"),
