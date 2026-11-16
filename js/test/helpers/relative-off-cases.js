@@ -1,0 +1,78 @@
+"use strict";
+// The cases of the relative-off regression gate (js/test/relative-off-golden.test.js).
+// One function, `computeCases`, runs every (view, seed, time, search) case through the
+// assembled file and returns a compact record per case. The goldens were made from the
+// 0.12.1 file by scripts/gen_relative_off_golden.js; the test recomputes and compares.
+// Inputs are deterministic: the built-in sample set and seeded modes, no timers.
+const crypto = require("node:crypto");
+const F = require("./modes-fixtures.js");
+const { loadAssembled } = require("./load.js");
+
+const VIEWS = ["tumble", "lattice", "wander", "focus"];
+const SEEDS = [3, 11];
+const TIMES = [0, 0.5, 2.25, 7, 10];
+const SET_OPTIONS = { dimension: 48, count: 400, seed: 20261113 };
+const SEARCH_AT = 0; // the mode time a search is given
+const NAMES = ["tumble", "lattice", "wander", "focus"];
+
+function sha(typed) {
+  const b = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
+  return crypto.createHash("sha256").update(b).digest("hex");
+}
+
+function rowOf(set, i) {
+  return set.vectors.slice(i * set.dimension, (i + 1) * set.dimension);
+}
+
+function entry(ET, set, at, k, letter) {
+  const ranking = ET.search.rank(set, rowOf(set, at), { k });
+  return { letter, query: rowOf(set, at), indices: Int32Array.from(ranking.hits, (h) => h.index) };
+}
+
+function searchOf(ET, set) {
+  return {
+    searches: [entry(ET, set, 40, 8, "A"), entry(ET, set, 250, 8, "B")],
+    scale: null,
+    onlyResults: false,
+  };
+}
+
+function record(state) {
+  const frame = new Float32Array(state.frame);
+  const centre = new Float32Array(state.centre);
+  const draw = state.draw || {};
+  return {
+    frame: sha(frame),
+    centre: sha(centre),
+    zoom: draw.zoom === undefined ? null : Number(draw.zoom),
+    status: state.status === undefined ? null : String(state.status),
+    frameHead: Array.from(frame.slice(0, 3)),
+    centreHead: Array.from(centre.slice(0, 3)),
+  };
+}
+
+function computeCases() {
+  const ET = loadAssembled()._internal;
+  const set = F.sampleSet(ET, SET_OPTIONS);
+  const search = searchOf(ET, set);
+  const cases = {};
+  for (const view of VIEWS) {
+    for (const seed of SEEDS) {
+      for (const withSearch of [false, true]) {
+        const inst = F.ready(ET, view, set, { seed });
+        if (withSearch && typeof inst.searchChanged === "function") {
+          // As the viewer does: hand it the search, pump what comes back, mark the time.
+          const work = inst.searchChanged(search, SEARCH_AT);
+          if (work) work.step();
+          inst.mark(SEARCH_AT);
+        }
+        for (const t of TIMES) {
+          cases[`${view}|seed=${seed}|t=${t}|${withSearch ? "search" : "none"}`] = record(inst.stateAt(t));
+        }
+      }
+    }
+  }
+  return cases;
+}
+
+module.exports = { computeCases, VIEWS, SEEDS, TIMES, SET_OPTIONS, NAMES };
