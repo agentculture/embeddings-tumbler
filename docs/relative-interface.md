@@ -297,8 +297,9 @@ work") whose `result` equals `relativeFit`'s bit for bit however it is pumped.
 - Steps: `relativeDirections(queries, D)`; when `count` is 0 the result has no
   tour. Otherwise the remainder (centred rows with the pinned directions
   removed) is fitted on at most `sampleRows` rows taken at an even stride, to
-  `m = min(subspace, D - count)` directions, each made orthogonal to every
-  pinned direction (`|dot| < 1e-6`); `unitLength` and `heightWindow` (along
+  `m = min(max(subspace, 3 - count), D - count)` directions (a subspace smaller
+  than the free rows is raised to them; 0 when nothing tours), each made
+  orthogonal to every pinned direction (`|dot| < 1e-6`); `unitLength` and `heightWindow` (along
   the first pinned direction, with that query's length) run over **all** rows,
   in units like the rest.
 - Result:

@@ -23,9 +23,10 @@ are set through `element.style`; it never draws text on a canvas.
 | `summaryText(search)` | string | The collapsed bar's text from `info().search`. |
 | `usedText(search)` | string | What the searches used, for the provenance row. |
 | `suggest(entries, typed)` | string[] | Suggestions for one typed line (below). |
-| `noteText(search, ctx?)` | string | The note under the controls; `ctx`: `{ extraLines, refusal, focus }`. |
+| `noteText(search, ctx?)` | string | The note under the controls; `ctx`: `{ extraLines, refusal, focus }`. Includes `relativeNoteText(search)`. |
+| `relativeNoteText(search)` | string | The relative part of the note (below). |
 | `pairText(search, pair, sharedWord)` | string | One pair line from `info().search.pairs[i]`. |
-| `resultMeta(q, result, distances)` | string[] | The meta parts of one result line. |
+| `resultMeta(q, result, distances, rel?)` | string[] | The meta parts of one result line. `rel` is `{ measure, height, cosine }` or absent; see "Relative" below. |
 | `thousands(n)` | string | `1234567` to `"1,234,567"` (fixed, not the host's locale). |
 | `COLOURS` | object | `{ dark, light, sharedDark, sharedLight }`: the default search colours. |
 
@@ -50,11 +51,12 @@ The returned panel:
 | `destroy()` | Removes the section, the stage label layer, the Focus list and layout, the provenance row and clause, and every listener. Safe to call twice. |
 | `setOpen(open)`, `isOpen()` | Open or close the panel from code (the bar does the same). |
 
-`frame` is `{ queries, filter, dpr, light, labels, mode, hidden(i) }`: each
-shown search's raw query vector (`Float32Array(D)`, in letter order), the
+`frame` is `{ queries, filter, dpr, light, labels, mode, hidden(i), relative }`:
+each shown search's raw query vector (`Float32Array(D)`, in letter order), the
 filter value (0..1), the device pixel ratio, whether the viewer's labels are on,
-the current mode id, and whether point `i` is hidden this frame (Focus's Only
-results). `project(vector)` maps a `Float32Array(D)` to `{ x, y, scale, depth }`
+the current mode id, whether point `i` is hidden this frame (Focus's Only
+results), and `relative`, true while the relative view is shown (see
+"Relative" below). `project(vector)` maps a `Float32Array(D)` to `{ x, y, scale, depth }`
 in overlay (device) pixels.
 
 On each frame the panel also notices a new or appended set (the viewer tells it
@@ -171,3 +173,51 @@ See `docs/search-interface.md`, "Candidates and top". In the panel:
   auto` (the Focus list beside the stage already scrolled). Stage labels keep
   the overlap rule; at most 160 label elements (`SP_LABEL_POOL`, was 96), and
   placing stops once they are used.
+
+## Relative (relative search, task t8)
+
+See `docs/relative-interface.md`, "Search panel (t8)". The relative view is a
+setting of Tumble; the panel offers its two controls and changes its words and
+drawing while it is shown. It still drives the viewer only through the handle.
+
+- **Two controls**, in the controls row before Face the searches, offered in
+  Tumble only (the panel learns the mode from `handle.mode()` and the frame's
+  `mode`): `label.tumbler-search-relative`, a checkbox named **Relative**, and
+  `label.tumbler-search-origin`, a checkbox named **Show the origin**. A change
+  calls `handle.setRelative({ relative })` or `handle.setRelative({ showOrigin })`.
+  Both checkboxes follow `search.relative.relative` and
+  `search.relative.showOrigin` on every `update(search)`, so a change made
+  through the handle (or by a host's mount option) shows in them. Both carry a
+  title (a tooltip); Show the origin works in the plain view and with no search.
+  While Relative is checked in Tumble, **Face the searches** is hidden (the
+  view is fitted by the search itself, so there is nothing to swing). It is shown again when
+  Relative is unchecked.
+- **`relativeNoteText(search) -> string`**: the relative sentences of the note,
+  from `search.relative` of `info().search`. One sentence for each entry of
+  `relative.dropped`, in letter order: a search with no direction (length zero),
+  a search that "points the same way as" earlier pinned ones (the opposite
+  direction gives the same sentence, because it lies on the same axis), and a
+  search that is lit but has no axis because the first three pin all three.
+  Then, when `relative.fixed` is above 0, one sentence that the set is too small
+  for the free axes to follow its spread. Sentences are joined by a space.
+  Returns `""` while the relative view is not on, in a mode that does not offer
+  it, or when there is nothing to say. `noteText` includes it, after the
+  distance sentence and before the unmatched-words sentence.
+- **`resultMeta(q, result, distances, rel)`**: the fourth argument is the
+  result's relative numbers, `{ measure, height, cosine }`, taken by the panel
+  from `search.relative.searches[j].results[r]` (matched by point index, else by
+  place) and passed only while the relative view is active. When it carries a
+  finite `cosine` the last meta part is added: `cosine 0.839` when `measure` is
+  `"cosine"`, otherwise `length along the search 0.700 · cosine 0.839` (three
+  decimals; `height` shows as `-` when it is not a number). With no `rel`, the
+  parts are what they were before relative search existed.
+- **Colours follow the letter.** A search's ring, links, letter, rank and list
+  heading use the colour of its letter (`--tumbler-search-1` for A, `-2` for B,
+  and so on), not of its place in the list. While Relative is on the viewer
+  keeps letters, so B stays in B's colour when A is removed. A letter outside
+  A to D falls back to its place in the list.
+- **`frame.relative`.** While it is true the panel draws each search's ring and
+  letter but no links to the results and no result labels: the relative overlay
+  (`ET.relativeOverlay`, `js/api/46-relative-overlay.md`) draws stems and result
+  labels instead. The viewer sets it while `search.relative.active` and the
+  mode is Tumble. With it false or absent the panel draws as before.

@@ -1199,6 +1199,281 @@ the package's `NOTICE` file gives the source, the revision and the changes
 made. If you publish the page with that data, the licence's terms apply to you
 too. The generated set is at `index.html?sample=synthetic`.
 
+### Relative search
+
+Relative is a setting of the Tumble view. It is built on search: with it on and
+at least one search present, the first search's direction becomes the vertical
+axis, so a point's height is its vector measured along the search. On a set
+whose vectors all have length one that height is cosine similarity. A ticked
+ruler from the origin shows it, and named results are joined to the ruler by
+stems. The other axes still tour the strongest directions of what remains. A
+second search lies in the plane shown exactly and a third pins depth; a fourth
+is only lit. What the setting looks like, and what is exact in it and what is
+not, is in the [search guide](search.md#relative-search); this section is for
+the page that hosts the viewer.
+
+**Relative changes only the frame, the zoom and what is drawn over the
+picture.** It adds no callback and no request, changes no vector and nothing in
+the data file. Turning it on or off, adding searches and showing the origin send
+nothing anywhere. With the setting off, every view is exactly as it was.
+
+There are two settings, each on or off, both off to begin with:
+
+| Setting | Meaning |
+|---------|---------|
+| `relative` | Relative itself. It has an effect in Tumble, with at least one search that gives an axis; otherwise Tumble is the plain view. It is kept in every mode, so it is still on when the visitor comes back to Tumble. |
+| `showOrigin` | Show the origin. In the relative view it zooms out to include the all-zero vector. In the plain Tumble view, with or without a search, it marks where the all-zero vector falls, with its true distance from the centre and how much of that distance the picture shows. |
+
+Each form of the viewer has its own way to set them:
+
+| Form | Off to begin with; turn on | Change later |
+|------|----------------------------|--------------|
+| Script | mount options `relative: true`, `showOrigin: true` | `viewer.setRelative({ relative, showOrigin })`; read with `viewer.relativeSettings()` |
+| Web component | attributes `relative` and `show-origin` (boolean: present, unless the value is `"false"`, is on) | the attributes, or the properties `el.relative` and `el.showOrigin`, which reflect to them |
+| Standalone page | address parameters `relative=1` and `origin=1` (anything else is off) | the panel's checkboxes; the page keeps both in its address |
+| Any, with the panel | the panel's two checkboxes, **Relative** and **Show the origin**, which are offered in Tumble only | the same checkboxes |
+
+Three things to know about those, because they are not symmetrical:
+
+- **The web component's attribute is not a mirror of the checkbox.** A change
+  made with the panel's checkbox reaches the viewer, but is not written back to
+  the element's attribute or property. To learn what a visitor chose, read the
+  viewer (`el.handle.relativeSettings()` or `info().search.relative`), not the
+  attribute.
+- **The standalone page keeps both settings in its address** with
+  `history.replaceState` (no history entry is added), so a view can be
+  reopened from the address bar. The link under the notes that switches to the
+  other data set is worked out once, when the page loads. It does not carry a
+  setting changed after load.
+- **A setting set before the element is mounted** (attributes in the markup, a
+  property set early) is passed as a mount option. After that it goes through
+  `setRelative`.
+
+`viewer.setRelative(patch)` takes `{ relative?, showOrigin? }`. A key that is
+not a boolean is ignored, and a key left out keeps its value. It is synchronous
+and returns the settings now in force, `{ relative, showOrigin }`. It re-ranks
+nothing, supersedes nothing and calls none of your callbacks, but
+`onSearchChange` is called when either value changed. After `destroy` it does
+nothing. Turning Relative on replaces a swing toward the searches that is in
+progress: the view turns onto the pinned frame instead, in about a second and a
+half of view time, and pause and reduced motion stop that turn as they stop
+everything else. While Relative is on, the panel's **Face the searches** button
+is not offered, since the search itself fixes the view.
+
+**Letters are kept while Relative is on.** Searches are lettered in the order
+given, as before. But with Relative on, a call to `setSearches` that repeats a
+search keeps its letter: after `["rice", "wheat"]`, the call `["wheat"]` leaves
+one search that is still B, and since it is now the first, B is the vertical
+axis. Two entries are the same search when they have the same kind and the same
+text and `via`, the same point id, or the same vector bytes and model. With
+Relative off, letters are given by position, and turning it off gives positional
+letters back.
+
+#### What `info().search.relative` reports
+
+`info().search.relative` is always present, and is part of what
+`onSearchChange` receives.
+
+| Field | Meaning |
+|-------|---------|
+| `relative`, `showOrigin` | The two settings. |
+| `offered` | `true` while the mode is Tumble. |
+| `active` | `true` when it is offered and at least one search gives an axis. |
+| `settled` | `true` once the turn onto the pinned frame has ended. Until then the pinned axes are not drawn as exact. |
+| `measure` | `"cosine"` when every vector has length one (within 0.001), otherwise `"length along the search"`. `null` with no data. |
+| `unit` | `{ unit, min, max, tolerance }`: whether the set is of unit length, and its shortest and longest vector. |
+| `pinned` | `[{ letter, axis, length }]`: the searches that pin an axis, in order. `axis` is `"vertical"`, `"horizontal"` or `"depth"`; `length` is the length of the search's vector. |
+| `dropped` | `[{ letter, reason, against }]`: searches that give no axis. `reason` is `"zero-length"` (no direction), `"same-direction"` (it points the same way as, or exactly opposite to, the axes already pinned; `against` names them) or `"no-axis-left"` (a fourth). They are still ranked and lit. |
+| `free`, `fixed` | The axes not pinned, and how many of them are fixed directions, because the set is too small to spread that far. |
+| `window` | `{ low, high, bottom, top }` or `null`: the heights the ruler covers. `low` is the lowest height of any point, and `high` the higher of the search's own length and the highest height of any point. `bottom` and `top` are the edges as framed: a small margin beyond them, and reaching 0 with Show the origin. It comes from the data, not from a fixed range. |
+| `share`, `subspace` | How much of the spread the pinned axes leave is held by the directions the free axes tour, as a share from 0 to 1, and how many directions that is. `null` when nothing tours. |
+| `searches` | `[{ letter, results: [{ index, id, height, cosine }] }]`, lined up with `info().search.searches`. `height` is the result's vector measured along that search; `cosine` is its plain cosine similarity to it. The two are the same on a set of unit-length vectors. Empty when not active. |
+
+A page test can read heights straight from `searches[i].results` instead of
+reading pixels. For a test that does look at the drawing,
+`viewer._viewer.relativeDrawn` (a hook for tests, not for hosts) is `null`, or
+holds for the last frame the ruler's two ends, the origin mark and, for each
+named result with a stem, where it was drawn and where the ruler puts its
+height. Its positions are in device pixels, not CSS pixels.
+
+#### A complete page
+
+The folder `examples/script-relative/` turns Relative on at mount, searches from
+a point, adds a second search, and reads `info().search.relative` into a report.
+Its data is the same small set as the other examples, whose vectors are not of
+unit length, so the report says `length along the search` and shows both the
+height and the cosine of each result. It makes no request except for its own
+files. First the page.
+
+<!-- file: examples/script-relative/example.html -->
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embeddings viewer: script form with relative search</title>
+  <link rel="stylesheet" href="host.css">
+</head>
+<body>
+  <main>
+    <h1>My vectors, relative to a search</h1>
+    <p class="row">
+      <button type="button" data-action="one">From point p0007</button>
+      <button type="button" data-action="two">Add p0100 as a second search</button>
+      <button type="button" data-action="relative">Relative on or off</button>
+      <button type="button" data-action="origin">Show the origin on or off</button>
+      <button type="button" data-action="clear">Clear</button>
+    </p>
+    <p><output id="note">Loading.</output></p>
+    <pre id="report"></pre>
+    <div id="space" class="space"></div>
+  </main>
+  <script src="embeddings-tumbler.js"></script>
+  <script src="host.js"></script>
+</body>
+</html>
+```
+
+Its stylesheet is the one of `examples/script-search/` (the folder carries a
+copy). The script:
+
+<!-- file: examples/script-relative/host.js -->
+
+```js
+(function () {
+  "use strict";
+
+  const el = document.getElementById("space");
+  const note = document.getElementById("note");
+  const report = document.getElementById("report");
+  let loaded = false;
+
+  function say(text) {
+    note.textContent = text;
+  }
+
+  // ---------- what the relative view reports ----------
+
+  // onSearchChange gets info().search each time it changes, and its `relative` key says
+  // what the relative view is doing, as numbers and text, so a host (or a test) never has
+  // to read pixels.
+  function describe(search) {
+    const rel = search.relative;
+    const lines = ["Relative is " + (rel.relative ? "on" : "off") + ", Show the origin is " +
+      (rel.showOrigin ? "on" : "off") + "."];
+    if (!rel.offered) {
+      lines.push("Relative is a setting of Tumble; the view is in another mode.");
+      return lines.join("\n");
+    }
+    if (!search.active) {
+      lines.push("No search, so there is nothing to measure along.");
+      return lines.join("\n");
+    }
+    for (const gap of rel.dropped) {
+      lines.push(gap.letter + " gives no axis (" + gap.reason + ").");
+    }
+    if (!rel.active) {
+      lines.push(rel.relative ? "No search gives an axis." : "The plain view: the setting is off.");
+      return lines.join("\n");
+    }
+    const first = rel.pinned[0];
+    lines.push("Vertical axis: " + rel.measure + " to " + first.letter +
+      (rel.settled ? ", exact." : ", the view is still turning onto it."));
+    if (rel.window) {
+      lines.push("The ruler runs from " + rel.window.low.toFixed(2) + " to " + rel.window.high.toFixed(2) + ".");
+    }
+    if (rel.subspace > 0) {
+      lines.push("The other axes tour " + rel.subspace + " directions that hold " +
+        Math.round(rel.share * 100) + "% of what remains: sideways position is still a shadow.");
+    }
+    for (const one of rel.searches) {
+      for (const hit of one.results.slice(0, 3)) {
+        // height is null for a search that has no direction; cosine is always a number
+        lines.push("   " + one.letter + " " + hit.id + ": height " +
+          (hit.height === null ? "none" : hit.height.toFixed(2)) + ", cosine " + hit.cosine.toFixed(3));
+      }
+    }
+    return lines.join("\n");
+  }
+
+  // ---------- the viewer ----------
+
+  const viewer = EmbeddingsTumbler.mount(el, {
+    seed: 7,
+    title: "My vectors",
+    relative: true, // the Relative setting at mount; the panel's checkbox changes it too
+    showOrigin: false, // the Show the origin setting at mount
+    onSearchChange: function (search) {
+      report.textContent = describe(search);
+    },
+  });
+
+  // The host does the fetching. The viewer never makes a request of its own.
+  async function loadData(jsonUrl) {
+    const meta = await (await fetch(jsonUrl)).json();
+    const file = meta?.vectors?.file;
+    if (typeof file !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file)) return { ...meta };
+    const block = await (await fetch(new URL(file, new URL(jsonUrl, location.href)))).arrayBuffer();
+    return { ...meta, vectors: { ...meta.vectors, data: block } };
+  }
+
+  // ---------- the buttons ----------
+
+  const actions = {
+    // A search from a loaded point needs no embedder and sends nothing anywhere.
+    one: function () {
+      return viewer.setSearches([{ point: "p0007" }]);
+    },
+    // A second search lies in the plane shown exactly. Its letter is B.
+    two: function () {
+      return viewer.setSearches([{ point: "p0007" }, { point: "p0100" }]);
+    },
+    // setRelative is synchronous and returns the settings now in force. It sends nothing and
+    // re-ranks nothing. A key that is left out keeps its value.
+    relative: function () {
+      const now = viewer.setRelative({ relative: !viewer.relativeSettings().relative });
+      return { ok: true, now: now };
+    },
+    origin: function () {
+      const now = viewer.setRelative({ showOrigin: !viewer.relativeSettings().showOrigin });
+      return { ok: true, now: now };
+    },
+    clear: function () {
+      return { ok: viewer.clearSearches(), code: "nothing-to-clear", message: "There was no search." };
+    },
+  };
+
+  // setSearches returns a promise that never rejects: { ok: true, search } or
+  // { ok: false, code, message }, and a refusal changes nothing.
+  document.addEventListener("click", async function (event) {
+    const action = actions[event.target.dataset?.action];
+    if (!action || !loaded) return;
+    const result = await action();
+    if (result.ok) say("Done: " + event.target.textContent + ".");
+    else if (result.code !== "superseded") say("Refused (" + result.code + "): " + result.message);
+  });
+
+  loadData("space.json")
+    .then(function (data) {
+      const result = viewer.update(data);
+      if (result.ok) {
+        loaded = true;
+        say("Showing " + result.count + " points.");
+      } else {
+        say("The viewer refused the data (" + result.code + "): " + result.message);
+      }
+    })
+    .catch(function (error) {
+      say("Could not load the data: " + error.message);
+    });
+})();
+```
+
+The buttons call `setSearches` with a point, which needs no embedder, and
+`setRelative`, which needs nothing. Nothing is sent by either.
+
 ### Search refusals
 
 A search that cannot be made faithfully is refused with a code and a plain

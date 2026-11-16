@@ -67,6 +67,33 @@ measured against the plan, is in
 spec is GitHub issue 11 (directions and neighbours computed when the data file
 is made) `(planned)`.
 
+Relative search is **built on the branch `spec/relative-search`; its release is
+`(planned)`** and no version is claimed for it. It is a setting inside Tumble:
+with it on and a search present, the first search's direction becomes the
+vertical axis, so a point's height is its vector measured along the search
+(cosine similarity on unit-length sets), drawn with a ticked ruler; a second
+search is exact in the plane, a third pins depth, a fourth is only lit; Show the
+origin zooms out to the all-zero vector. It changes only the frame, the zoom and
+what is drawn over the picture, and with the setting off every view is as it
+was. Its pieces: the maths in `js/src/10-math.js`, the draw key `perspective` in
+`js/src/30-renderer.js`, Tumble's `searchChanged` and `setRelative`
+(`js/src/40-mode-tumble.js`), the overlay `js/src/46-relative-overlay.js`, the
+panel's two controls (`js/src/45-search-panel.js`), the handle's `setRelative`
+(`js/src/50-viewer.js`), the web component attributes `relative` and
+`show-origin`, and the page's `relative=1` and `origin=1`. The spec is
+`docs/specs/2026-11-16-relative-search-in-the-embedding-viewer.md`, its
+obligations the file of the same name ending `-obligations.md`, the plan
+`docs/plans/2026-11-16-relative-search-in-the-embedding-viewer.md` (rules for
+task agents: `docs/workforce/relative-search.md`), the reference page
+`docs/specs/reference/tumbler-relative-search.html`, the binding interface
+`docs/relative-interface.md`, and what two real models showed
+`docs/evidence/2026-11-relative-search.md`. The guides are
+`docs/guides/search.md` ("Relative search") and `docs/guides/host.md`
+("Relative search", with the example `docs/guides/examples/script-relative/`);
+the module pages are in `js/api/`, with `46-relative-overlay.md` new. The owner's
+sign-off of the relative part of `docs/reference-differences.md` and the
+release are `(planned)`.
+
 What real vectors showed, and what was changed because of it (Lattice's hidden
 directions, brightness of crowded sets), is in
 `docs/evidence/2026-11-14-real-atlas-proof.md`. Intended differences from the

@@ -145,6 +145,8 @@ so all of them work from the keyboard.
 | Control | What it does |
 |---------|--------------|
 | **The text box** | One search per line, up to four. The viewer searches a moment after you stop typing. |
+| **Relative** | Tumble only. Makes the first search the vertical axis, so a point's height is its vector measured along the search. See [Relative search](#relative-search). While it is on, **Face the searches** is not shown. |
+| **Show the origin** | Tumble only. Zooms out to include the all-zero vector, or, in the plain view, marks where it falls. See [Show the origin](#show-the-origin). |
 | **Face the searches** | Swings the view so that the searches are spread across the picture, then lets it move on. A new search does this once by itself; the button does it again. It does nothing in Focus, where the view is already fitted to the results. |
 | **Lit** | Which points are lit. *The results, evenly*: every point within the radius, all equally bright. *By closeness: nearer is brighter*: a variable lit power, where the nearest result is lit most strongly and points fade with distance, down to nothing a little beyond the radius. *Named results only*: just the results themselves. |
 | **Distance difference** | Writes the distances out. Each result in the lists shows its distance and how much farther it is than the nearest result, with a small bar, and each line on the picture shows its distance. |
@@ -186,7 +188,9 @@ The view buttons are under the panel. A search stays when you change view.
 
 - **Tumble**, **Lattice** and **Wander** move as they always do. A search
   lights its points, dims the rest, and swings the view once toward the
-  searches. In Lattice, a wire between two lit points keeps its strength and
+  searches. In Tumble, the **Relative** setting
+  can instead make the search the vertical axis (see
+  [Relative search](#relative-search)). In Lattice, a wire between two lit points keeps its strength and
   every other wire fades.
 - **Focus** is the view made for search. It fits the picture to your searches
   and their results, so the results are spread across the picture instead of
@@ -195,6 +199,197 @@ The view buttons are under the panel. A search stays when you change view.
   full lists are laid beside it. In Focus you can also click a point to search
   from that point, and **Only results** hides everything that is not lit. With
   no search, Focus fits the picture to every point.
+
+## Relative search
+
+Relative is a setting of the **Tumble** view. It turns a search into a ruler.
+Without it, the picture is a shadow of the space and a point's place on the
+screen says little about how near it is to your search. With it, one direction
+on the screen is the search itself, and how high a point stands is how far
+along the search its vector reaches.
+
+This section was written from the code and from measurements of the Wikipedia
+set. Its screen text is quoted from the code. The steps in it have not been
+taken in a browser by a test the way the steps above were, and Only Chromium has
+been tested for the rest of the viewer.
+
+### Turning it on
+
+Open the panel in Tumble. Two checkboxes are in the controls row, before the
+other controls: **Relative** and **Show the origin**. Both are off to begin
+with. They are offered in Tumble only; the setting is remembered in the other
+views and applies when you come back to Tumble. A page can also start with them
+on (the host guide says how).
+
+With **Relative** on and at least one search, the view turns onto the search
+over about a second and a half. While it turns, you see only a faint line for the
+ruler: the ruler is not drawn as exact until the turn has ended. Turning
+Relative on while the view is swinging toward a new search replaces that swing.
+The **Face the searches** button is not shown while Relative is on, because the
+search itself fixes the view.
+
+### What you see, and what it means
+
+Search `Rice` and turn Relative on. The searched article, Rice, is a point
+that sits on the ring at the top of a vertical ruler. The ruler has a tick and a
+faint level ring every 0.1 and a title, `cosine to A`. A point's **height**
+is its vector measured along the search: the number you read off the ruler.
+Each named result is joined to the ruler by a thin stem at its height, and
+carries its text and its height, for example `Cereal  0.84`. With several
+searches, a result's label gives its height along each. The panel's lists add
+`cosine 0.839` to each result row.
+
+On this set every vector has length one, so height along the search is the same
+as cosine similarity. That is the sentence the viewer's provenance block gives:
+"Every vector has length one (within 0.001), which is why height is cosine
+similarity." On a set whose vectors are not all of length one, the ruler's title
+says `length along the search to A`, and a result's label shows both numbers:
+its height, then `cosine` and its cosine to the search. In that case height and
+cosine are different things, and the viewer never calls one by the other's name.
+Results are still ranked by cosine, so on such a set the first result need not
+be the highest on the ruler, and the viewer says so.
+
+**What is exact and what is not.**
+
+- **Height is exact.** It is measured over every dimension of the data. A
+  point's height does not depend on how the picture is turned, and the same
+  number is in the panel's list.
+- **Sideways position is still a shadow.** The other two directions on the
+  screen tour the strongest directions of what is left once the search is taken
+  out. They hold only a share of what is left (the viewer prints it; on the
+  Wikipedia set, about 18% of the remaining spread). Two points side by side may
+  be far apart in the space.
+- The view is level and nearly flat (the perspective is almost removed), so two
+  points of equal height stand at nearly equal heights on the screen, within
+  about 2 percent of the ruler's length by the build's own check. If you tilt
+  the picture by dragging, heights stop reading true until you level it.
+
+**A search made from a point or a whole title names that point first.** Type
+`Rice`, the whole title of an article, and the search starts from that article's
+own vector. Rice is then its own first result, at rank 1, height 1.00 on a set
+of unit-length vectors. It sits on the search's marker at the top of the ruler,
+so it gets no stem and no label of its own. The other results are the same as
+without Relative: Relative changes the picture, not the ranking.
+
+**The ruler's range comes from the data.** It covers the lowest point's height up
+to the higher of the search's own length and the highest point's height, with a
+small margin, and starts no lower than 0. How wide that is depends on the model.
+For the demo set (`google/embeddinggemma-2`), articles sit in a narrow cone:
+the cosine of any article to *Rice*, *Jazz* or *Volcano* lies between about 0.53
+and 0.84 (apart from the article itself), and the mean of all the vectors is
+0.79 from the all-zero vector. By the ruler's rule that puts its ticks for *Rice* from about 0.3
+to 1.0 (worked out from the rule, not read off a screen). A model that spreads articles more gives a longer ruler. The measured
+second model, `Qwen/Qwen3-Embedding-0.6B`, spreads the same articles from about
+0.05 to 0.72, with a mean 0.49 from the origin. The 0.53 to 0.84 band is the
+demo model's, not a property of every model.
+
+**Labels that would collide are left out.** Ticks and the title are placed
+first, then result labels, the highest on the ruler first. A label that would
+overlap one already placed is left out. The panel's lists always carry every
+result.
+
+Points that are not results are drawn faintly brighter the closer they are to a
+search in plain cosine. That is only a hint; results are brighter by far.
+
+### Show the origin
+
+**Show the origin** zooms out to include the all-zero vector, the origin, at
+height 0 on the ruler. It is drawn as a cross labelled `origin (0, 0, … , 0)`.
+On a set of unit-length vectors a dashed circle also marks the vectors of length
+one around it. When height 0 already lies inside the ruler's range, the cross is
+drawn without the checkbox.
+
+In the plain Tumble view (no search, or Relative off) the checkbox marks where
+the all-zero vector falls in the picture, with its true distance and how much of
+that distance the picture shows, in the form `origin · truly {far} from the
+centre, {seen} of it visible`. The first number is the true distance, over every
+dimension. The second is the part of it that the three directions on the screen
+can show, and it changes as the picture moves. On the Wikipedia set the picture
+centres on the mean of the vectors, which is 0.79 from the origin, so the first
+number reads 0.79.
+
+### More than one search
+
+A search's letter is its colour, and Relative keeps letters: if you have `rice`
+and `wheat` (A and B) and delete the first line, the remaining search is still
+B, in B's colour, and is now the vertical axis. With Relative off, letters are
+given by position as before.
+
+- **A second search** pins the horizontal axis to the part of B that A does not
+  contain. The plane of A and B is then shown exactly, and a second ruler for B
+  starts at the origin and has dots at 0.1 to 0.9. *Rice* and *Wheat* (cosine
+  about 0.82 on the demo set) give two axes.
+- **A third search** pins depth the same way. All three axes are then exact and
+  nothing tumbles. The status line says so.
+- **A fourth search** is lit and listed but gives no axis, and the note says so:
+  the first three searches pin all three.
+- **A search that points the same way as an earlier one** gives no axis. The note
+  says "points the same way as", and the search is still lit. A search pointing
+  exactly the opposite way is treated the same, because it lies on the same
+  axis. A repeated search is the usual case; two different articles are not
+  close enough to count as the same direction.
+- A search whose vector has length zero has no direction and gives no axis.
+
+### With the reranker
+
+The reranker does not move anything. The frame comes from the search vectors
+alone, so the picture stays where it was and only the results change. The
+results the reranker keeps carry its ranks next to their text (`1.`, or `A1.`
+with several searches). A dashed line across the ruler marks the lowest of the
+candidates that were sent to it, with the words "50 candidates above this line
+went to the reranker" (the number is how many were sent). The reranker saw only
+the nearest candidates, not every point, and the line sits at the height of the
+lowest of them.
+
+### With a point of view
+
+"From this search's point of view" (above) ranks that search's results in a
+scaled measure. **Height is not the scaled measure.** Height is always the plain
+measurement along the search, whatever point of view is on. So with it on, rank
+and height can disagree: the first result need not be the highest on the ruler.
+The viewer says so: "With A's point of view on, its results are ranked in the
+scaled measure and height is not: rank and height use different measures." The
+list shows the plain rank that a moved result had.
+
+A real case. On the demo set, search `Jazz` (it is the whole title of an
+article, so the search starts from that article's vector). Without a point of
+view, the nearest results after Jazz itself are Rock music (cosine 0.778), Dance
+(0.762), History of music (0.753), Pop music (0.739) and Singing (0.721). Turn
+on A's point of view, which is the scaled measure. Jazz is still first, at
+height 1.00. The next, in the scaled measure, are:
+
+| Rank | Article | Height on the ruler |
+|------|---------|---------------------|
+| 2 | Dance | 0.762 |
+| 3 | Film | 0.710 |
+| 4 | History of music | 0.753 |
+| 5 | History of life | 0.677 |
+| 6 | Singing | 0.721 |
+| 7 | Urbanization | 0.680 |
+| 8 | Rock music | 0.778 |
+
+Dance is first after Jazz itself, and is not the highest: Rock music, ranked
+last of the eight, stands highest of them on the ruler, at 0.778. The scaled
+distances of these results to Jazz are all between 0.008 and 0.010, so small
+differences decide the scaled order. Neither order is wrong.
+They answer two questions: rank answers "nearest in the measure that gives this
+search's own strongest dimensions the most weight", and height answers "how far
+along the search's own direction". This was worked out for this guide with a
+short script, using the committed demo pair and the same rule as the viewer
+(each dimension scaled by the size of the search's own vector there), and the
+ranks checked against the viewer's own ranking code. It is one search and
+one set. A search where the first result is also the highest, like *Rice* (Cereal
+first and highest in both measures), shows nothing of this.
+
+### Limits
+
+- Relative applies in Tumble only.
+- It needs at least one search with a direction.
+- Height is exact only once the turn has ended, and only while the view is
+  not tilted.
+- Only Chromium has been tested automatically.
+- It adds no request: Relative sends nothing anywhere, with or without a
+  reranker (a reranker is sent what it is sent without Relative).
 
 ## Reading a search honestly
 
