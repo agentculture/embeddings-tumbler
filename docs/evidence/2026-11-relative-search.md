@@ -57,6 +57,76 @@ Bean 0.492.
   world" and "how do volcanoes form?" came back with length 1.0, highest cosines 0.80
   to 0.83 and lowest 0.53 to 0.57. This probe was not repeated on the second model.
 
+## The free axes reuse the plain fit (deviation d4, 2026-11-17)
+
+**Why it changed.** Turning Relative on, and every new search, used to fit the
+strongest directions of the remainder (the centred set with the search directions
+removed): a second fit as heavy as the one the page makes when it loads. On the
+owner's iPhone the switch took more than 30 seconds with nothing shown. On a CPU
+slowed eight times it took 10.8 s, about the page's own first fit (11.2 s). Since
+task t18 the free axes tour the set's strongest directions, the ones the plain tour
+already found, with the search directions removed; the full fit of the remainder is
+kept only as a fallback. The owner approved the change on 2026-11-17.
+
+**What it costs in share.** The share of the remainder's variance held by the 8
+toured directions, full fit of the remainder against the plain directions with the
+search removed.
+
+Measured in node on the viewer's own code (`ET.math.relativeFit` without and with
+`plain`, seed 7; the plain directions from `ET.math.principalDirections` on the
+centred set, seed 7). The coordinating agent measured these before the change with
+a throwaway script; t18 measured them again on the built code and got the same
+figures to four places:
+
+| Search | Demo set, full | Demo set, reused | Second model, full | Second model, reused |
+|---|---|---|---|---|
+| Rice | 0.1819 | 0.1819 | 0.1773 | 0.1772 |
+| Jazz | 0.1817 | 0.1816 | 0.1779 | 0.1778 |
+| Volcano | 0.1812 | 0.1812 | 0.1776 | 0.1775 |
+| Rice and Wheat | 0.1800 | 0.1799 | 0.1742 | 0.1740 |
+
+The reused directions hold 99.87 to 99.98 percent of the full fit's share in these
+eight cases (t18's run).
+
+Printed by `scripts/measure_relative.py` (t18's run; its own fit is a fixed 14
+iterations from a seeded start, so its full-fit figures sit slightly below node's
+converged ones and the reused share can come out above the full one):
+
+| Search | Demo set, full | Demo set, reused | Second model, full | Second model, reused |
+|---|---|---|---|---|
+| Rice | 0.1812 | 0.1809 (99.85%) | 0.1771 | 0.1770 (99.93%) |
+| Jazz | 0.1813 | 0.1807 (99.69%) | 0.1777 | 0.1776 (99.94%) |
+| Volcano | 0.1806 | 0.1803 (99.82%) | 0.1773 | 0.1774 (100.02%) |
+| Rice+Wheat | 0.1798 | 0.1790 (99.57%) | 0.1740 | 0.1738 (99.87%) |
+
+All 8 plain directions survived the removal in every case.
+
+**What it saves in work.** Multiply-adds counted by the stepper (`work`) for one
+preparation, and wall time of `step()` to the end, node 24 on the development
+machine (t18's run; times vary with the machine's other load):
+
+| Set | Full fit | Reused | Ratio (work) | Time, full | Time, reused |
+|---|---|---|---|---|---|
+| Demo set, 999 x 768, one search | 444.8 to 470.0 million | 12.4 million | 36 to 38 | 230 to 231 ms | 12 to 16 ms |
+| Demo set, Rice and Wheat | 450.9 million | 15.5 million | 29 | 224 ms | 15 ms |
+| Second model, 999 x 1,024, one search | 826.5 to 843.3 million | 16.6 million | 50 to 51 | 696 to 715 ms | 15 ms |
+| Second model, Rice and Wheat | 868.2 million | 20.7 million | 42 | 740 ms | 19 ms |
+| Test fixture `wikipedia-subset`, 173 x 768, Rice | 28.4 million | 2.3 million | 12.4 | | |
+| Test fixture, Rice and Wheat | 30.2 million | 2.8 million | 10.6 | | |
+
+The coordinating agent's timing before the change, with its throwaway script: 220 to
+230 ms against 7 to 14 ms on the demo set, 680 to 720 ms against 9 to 18 ms on the
+second model. The slowed-CPU and iPhone figures above are the coordinating agent's
+and the owner's, also from before the change; the switch was not timed again on a
+slowed CPU or a phone after it. `js/test/math-relative.test.js` asserts that the
+reused preparation on the test fixture counts more than 6 times fewer multiply-adds
+than the full one.
+
+**What stays exact.** The pinned rows are still exactly the search directions, the
+free rows are orthogonal to them, and the share shown is still the exact share of
+the remainder's variance held by the directions that tour (recomputed independently
+to 1e-9 in the tests); only which directions tour changed.
+
 ## Not measured
 
 No real set whose vectors are not of unit length was available. The fixture
@@ -82,14 +152,14 @@ evidence about any model.
 ```bash
 # the demo model, from committed data
 python3 scripts/measure_relative.py embeddings_tumbler/static/demo-wikipedia.json \
-    --search Rice --search Jazz --search Volcano
+    --search Rice --search Jazz --search Volcano --search Rice+Wheat
 
 # the second model: embed the committed corpus through the gateway, then measure
 grant run --inject EMBEDDINGS_API_KEY=LOBES_GATEWAY_API_KEY -- \
     python3 scripts/build_demo_set.py --model Qwen/Qwen3-Embedding-0.6B \
     --out-dir .local/relative-evidence --name wikipedia-qwen3 --apply
 python3 scripts/measure_relative.py .local/relative-evidence/wikipedia-qwen3.json \
-    --search Rice --search Jazz --search Volcano
+    --search Rice --search Jazz --search Volcano --search Rice+Wheat
 ```
 
 The measurement script uses a seeded start (seed 7) for its direction fit, reads local

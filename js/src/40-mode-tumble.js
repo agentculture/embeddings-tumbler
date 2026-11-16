@@ -663,18 +663,67 @@
       if (relFits.length > 4) relFits.shift();
     }
 
-    // A relative fit of `list` on the current set, as a stepper (one unit of
-    // ET.math.makeRelativeFit per run). When it is done the switch waits for its
-    // time (mark, or the first stateAt).
+    // A relative fit of `list` on the current set, as a stepper. First the plain
+    // fit's directions of that same set (the ones the plain tour fits: the same
+    // seed, subspace and rows): kept with the set when the plain tour, a refit or
+    // Lattice has fitted them already, otherwise fitted here (centring, then
+    // ET.math.makePrincipalDirections, one unit per run, exactly as makeGuidedTour
+    // fits them) and kept with the set for the refit that follows. They are the
+    // same bits either way, and are looked for again on every run, so a plain fit
+    // that finishes meanwhile is taken at once. Then one unit of
+    // ET.math.makeRelativeFit per run, given those directions. When it is done the
+    // switch waits for its time (mark, or the first stateAt).
     function startFit(list) {
       relGen++;
       var g = gen;
       var rg = relGen;
       var fitSet = set;
+      var rows = fitSet.count > opt.fitRows ? opt.fitRows : undefined;
       var p = { list: list, set: fitSet, fit: null };
+      var plain = null;
+      var cen = null;
+      var pcaJob = null;
       var job = null;
       relPending = p;
+      function stale() {
+        return g !== gen || rg !== relGen;
+      }
+      // One unit of the plain fit of fitSet; its result (kept with the set) once done.
+      function plainStep() {
+        if (!cen) cen = ET.math.makeCentre(fitSet.vectors, fitSet.count, D);
+        if (!cen.done) {
+          cen.step(0);
+          return null;
+        }
+        if (!pcaJob) {
+          pcaJob = ET.math.makePrincipalDirections(cen.result.data, fitSet.count, D, Math.min(opt.subspace, D), {
+            seed: seed,
+            sampleRows: rows,
+          });
+        }
+        if (!pcaJob.step(0)) return null;
+        M.keepDirections(fitSet, seed, opt.subspace, rows, pcaJob.result);
+        return pcaJob.result;
+      }
       return M.stepper([
+        {
+          required: true,
+          weight: 8,
+          progress: function () {
+            if (plain) return 1;
+            if (pcaJob) return 0.1 + 0.9 * pcaJob.progress;
+            return cen ? 0.1 * cen.progress : 0;
+          },
+          run: function () {
+            if (stale()) return true;
+            plain = M.fittedDirections(fitSet, seed, opt.subspace, rows) || null;
+            if (!plain) plain = plainStep();
+            if (!plain) return false;
+            cen = null;
+            pcaJob = null;
+            return true;
+          },
+        },
         {
           required: true,
           weight: 1,
@@ -682,7 +731,7 @@
             return job ? job.progress : 0;
           },
           run: function () {
-            if (g !== gen || rg !== relGen) return true;
+            if (stale()) return true;
             if (!job) {
               var qs = list.map(function (q) {
                 return q.query;
@@ -691,6 +740,7 @@
                 seed: seed,
                 subspace: opt.subspace,
                 sampleRows: opt.fitRows,
+                plain: plain,
               });
             }
             if (!job.step(0)) return false;

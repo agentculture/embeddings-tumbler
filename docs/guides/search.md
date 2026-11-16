@@ -255,10 +255,11 @@ be the highest on the ruler, and the viewer says so.
   point's height does not depend on how the picture is turned, and the same
   number is in the panel's list.
 - **Sideways position is still a shadow.** The other two directions on the
-  screen tour the strongest directions of what is left once the search is taken
-  out. They hold only a share of what is left (the viewer prints it; on the
-  Wikipedia set, about 18% of the remaining spread). Two points side by side may
-  be far apart in the space.
+  screen tour the set's strongest directions with the search directions
+  removed (the ones the plain tour already found, so turning Relative on needs
+  no second fit). They hold only a share of what is left once the search is
+  taken out (the viewer prints it; on the Wikipedia set, about 18% of the
+  remaining spread). Two points side by side may be far apart in the space.
 - The view is level and nearly flat (the perspective is almost removed), so two
   points of equal height stand at nearly equal heights on the screen, within
   about 2 percent of the ruler's length by the build's own check. If you tilt

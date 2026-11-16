@@ -445,7 +445,8 @@ instance, as `face` is optional to the mode interface:
   frame. With the setting off it stores the queries and returns `null`. With it
   on, when the list of queries differs from the one in force (a query added,
   removed or changed, compared by letter and by the bytes of the query) it
-  starts a relative fit (`ET.math.makeRelativeFit`) and returns its stepper; a
+  starts a relative fit (`ET.math.makeRelativeFit`, given the plain fit's
+  directions, below) and returns its stepper; a
   call that changes nothing of that returns `null`. Letters are not
   re-given: the search lettered B stays B when A is removed, and becomes the
   vertical axis because it is then the first.
@@ -467,8 +468,27 @@ not contain, so the plane of the two is exact. A third pins row 2 the same way,
 and then nothing tours. A later search adds no axis (it is listed in `dropped`, with a reason) when
 its vector has no length, when it points the same way as the axes already
 pinned (an exactly opposite search is treated the same, because it lies on the
-same axis), or when three are already pinned. The rows not pinned tour the strongest
-directions of what remains once the pinned directions are removed.
+same axis), or when three are already pinned. The rows not pinned tour the set's
+strongest directions with the search directions removed: the directions the plain
+tour fitted for the same set (the same seed, `subspace` and rows), each with the
+pinned directions taken out (`ET.math.relativeFit` with `plain`, method
+`"plain-reused"`). Since 2026-11-17 (deviation d4) no second fit of what remains
+runs: on the demo set that fit cost as much as the page's first fit (10.8 s
+against 11.2 s on a CPU slowed eight times; more than 30 s on an iPhone), while the
+reused directions hold 99.9 to 100 percent of its share for 29 to 51 times fewer
+multiply-adds on the two real 999-item sets (`docs/evidence/2026-11-relative-search.md`).
+
+**Which plain directions.** The relative preparation looks for the plain fit of the
+set it is for among the fits kept with their sets (`fittedDirections`, below:
+filled by the plain tour's preparation, a refit, or Lattice). When there is none
+yet (after an append, whose plain tour is fitted again only by a later refit, or
+when the relative fit is pumped before the preparation has finished), it fits them
+itself, the same computation as `makeGuidedTour`'s (centring, then
+`ET.math.makePrincipalDirections` with the same options, one unit per run), and
+keeps them with the set, so the refit that follows gets them at once. It looks
+again on every run, so a plain fit that finishes meanwhile is taken instead. The
+directions are the same bits either way, so the relative view never depends on
+which happened; it never uses the directions of an earlier set.
 
 **A switch is an event.** As for a refit, it happens at a fixed time T, recorded
 when the fit has finished (`inst.mark(t)`), and the frame after it is a pure
@@ -697,7 +717,9 @@ set with one point (no variance) reports a share of 0.
   `ET.math.makeGuidedTour` as `pca` and is ready in a fraction of the work. It
   is the result the fit would produce again (tested: a Lattice that took a
   kept fit shows the same frames, bit for bit, as one that fitted for itself).
-  An appended set is another set and is fitted afresh.
+  An appended set is another set and is fitted afresh. Tumble's relative
+  preparation reads them too (and keeps the ones it fits itself), to tour the
+  set's strongest directions with the searches removed.
 - `requireDimension(set, min, title)`, `holdState(...)`, `changed(work,
   restart)`, `EMPTY_STATUS`: shared by the three modes for the rules above.
 - `REFERENCE_RADIUS = 0.963`: the sample set's radius (measured: 0.963 at

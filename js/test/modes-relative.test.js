@@ -666,3 +666,142 @@ for (const variant of [
     }
   });
 }
+
+// ----- t18 (deviation d4): the free axes reuse the plain fit ---------------------
+//
+// Tumble hands its relative fit the plain fit's directions for the same set (the
+// centred set's 8 strongest directions, seed and rows as the plain tour fits them), so
+// the free rows tour those directions with the searches removed. When the plain
+// directions of the set are not known yet (after an append, or before the preparation
+// has finished) the relative preparation fits them itself, the same computation, and
+// keeps them with the set; the view is the same either way.
+
+// A copy of a set: a new object, so that nothing kept with the original is found for it.
+function copyOf(set) {
+  return { dimension: set.dimension, count: set.count, vectors: set.vectors.slice() };
+}
+
+// What ET.math gives for the set with the plain directions reused, as Tumble asks.
+function reusedFit(set, labels, seed) {
+  const M = ET().math;
+  const { vectors: X, count: N, dimension: D } = set;
+  const plain = M.principalDirections(M.centre(X, N, D).data, N, D, 8, { seed });
+  const qs = labels.map((l) => rowOf(wiki(), l));
+  return M.relativeFit(X, N, D, qs, { seed, subspace: 8, sampleRows: 4096, plain });
+}
+
+test("t18: Tumble's relative fit tours the plain fit's directions with the searches removed", () => {
+  const fx = wiki();
+  const set = setOf(fx);
+  for (const labels of [["Rice"], ["Rice", "Wheat"]]) {
+    const inst = ready(set, 7);
+    inst.setRelative({ relative: true }, 0);
+    const pairs = labels.map((l, j) => ["AB"[j], l]);
+    inst.searchChanged(searchOf(fx, pairs), 0.5).step();
+    inst.mark(0.5);
+    const s = inst.stateAt(5).relative;
+    const want = reusedFit(set, labels, 7);
+    assert.strictEqual(want.method, "plain-reused");
+    assert.ok(Object.is(s.share, want.share), labels.join("+") + ": share " + s.share + " vs " + want.share);
+    assert.strictEqual(s.subspace, want.subspace);
+    const full = ET().math.relativeFit(set.vectors, set.count, set.dimension, labels.map((l) => rowOf(fx, l)), { seed: 7, sampleRows: 4096 });
+    assert.ok(!Object.is(s.share, full.share), "not the full fit's share");
+  }
+});
+
+test("t18: after an append the relative fit uses the new set's plain directions, and keeps them for the refit", () => {
+  const fx = wiki();
+  const D = fx.D;
+  const base = setOf(fx, 0, 150);
+  const full = setOf(fx);
+  const M = ET().modes;
+  const inst = ready(base, 6);
+  inst.setRelative({ relative: true }, 0);
+  inst.searchChanged(searchOf(fx, [["A", "Rice"]]), 0.5).step();
+  inst.mark(0.5);
+  assert.strictEqual(M.fittedDirections(full, 6, 8, undefined), undefined, "the new set has no plain fit yet");
+  const res = inst.dataChanged(full, { op: "append", t: 4 });
+  res.work.step();
+  inst.mark(4.2);
+  const s = inst.stateAt(9).relative;
+  const want = reusedFit(full, ["Rice"], 6);
+  assert.ok(Object.is(s.share, want.share), "share " + s.share + " vs " + want.share);
+  // Not the old set's directions.
+  const Mm = ET().math;
+  const oldPlain = Mm.principalDirections(Mm.centre(base.vectors, 150, D).data, 150, D, 8, { seed: 6 });
+  const stale = Mm.relativeFit(full.vectors, full.count, D, [rowOf(fx, "Rice")], { seed: 6, sampleRows: 4096, plain: oldPlain });
+  assert.ok(!Object.is(s.share, stale.share), "not the share of the old set's directions");
+  // The new set's plain directions are kept with it: the plain refit gets them at once.
+  const kept = M.fittedDirections(full, 6, 8, undefined);
+  assert.ok(kept && kept.count === 8, "kept with the new set");
+  const fresh = ready(copyOf(full), 6);
+  const freshPlain = fresh.describe();
+  const refit = inst.refit();
+  refit.step();
+  inst.mark(20);
+  assert.strictEqual(inst.describe().varianceShare, freshPlain.varianceShare, "the refit's share is the fresh plain fit's");
+});
+
+test("t18: a relative fit pumped before the preparation finishes fits the plain directions itself, with the same view", () => {
+  const fx = wiki();
+  const TIMES = [1.0, 1.7, 3, 8.5, 22];
+  const pairs = [["A", "Rice"]];
+  function normal() {
+    const inst = ready(copyOf(setOf(fx)), 3);
+    inst.setRelative({ relative: true }, 0);
+    inst.searchChanged(searchOf(fx, pairs), 0.5).step();
+    inst.mark(1.0);
+    return inst;
+  }
+  // The relative fit is pumped to the end first, then the preparation.
+  function early() {
+    const set = copyOf(setOf(fx));
+    const inst = ET().modes.create("tumble");
+    inst.enter(set, { seed: 3 });
+    const prep = inst.prepare();
+    assert.strictEqual(inst.setRelative({ relative: true }, 0), null);
+    const work = inst.searchChanged(searchOf(fx, pairs), 0.5);
+    assert.ok(work, "a fit is started before the preparation is done");
+    work.step();
+    assert.ok(ET().modes.fittedDirections(set, 3, 8, undefined), "the plain directions it fitted are kept with the set");
+    prep.step();
+    inst.mark(1.0);
+    return inst;
+  }
+  // Interleaved: a few units of the relative fit, then the whole preparation, then the rest.
+  function interleaved() {
+    const set = copyOf(setOf(fx));
+    const inst = ET().modes.create("tumble");
+    inst.enter(set, { seed: 3 });
+    const prep = inst.prepare();
+    inst.setRelative({ relative: true }, 0);
+    const work = inst.searchChanged(searchOf(fx, pairs), 0.5);
+    for (let k = 0; k < 5; k++) work.step(0);
+    assert.strictEqual(work.done, false);
+    prep.step();
+    work.step();
+    inst.mark(1.0);
+    return inst;
+  }
+  const a = normal();
+  for (const [name, b] of [
+    ["early", early()],
+    ["interleaved", interleaved()],
+  ]) {
+    for (const t of TIMES) assertSameSnap(snap(a, t), snap(b, t), name + " vs normal at t=" + t);
+  }
+});
+
+test("t18: after a replace the relative fit uses the new set's plain directions", () => {
+  const fx = wiki();
+  const inst = ready(setOf(fx), 8);
+  inst.setRelative({ relative: true }, 0);
+  inst.searchChanged(searchOf(fx, [["A", "Rice"]]), 0.5).step();
+  inst.mark(0.5);
+  const smaller = setWithout(fx, fx.byLabel.Rice);
+  const res = inst.dataChanged(smaller, { op: "replace", t: 5 });
+  res.work.step();
+  inst.mark(1.0);
+  const want = reusedFit(smaller, ["Rice"], 8);
+  assert.ok(Object.is(inst.stateAt(7).relative.share, want.share), "share of the new set's plain directions");
+});
