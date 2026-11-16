@@ -162,8 +162,9 @@ def test_lit_pixels_change_every_second_during_and_after_the_swing(motion, mode)
     assert len(during) >= 3, [s["facing"] for s in samples]
     assert len(after) >= 4, [s["facing"] for s in samples]
     for second in seconds:
-        # a second of the mode's time, to within the two frames around it
-        assert 1.0 <= second["gap"] < 1.2, second
+        # a second of the mode's time, to within the two frames around it (and float rounding:
+        # 1.5 - 0.5000000000000001 is 0.9999999999999999)
+        assert 1.0 - 1e-9 <= second["gap"] < 1.2, second
         assert second["to"]["union"] >= 50, second
         assert second["rate"] >= MOVING, second
 
