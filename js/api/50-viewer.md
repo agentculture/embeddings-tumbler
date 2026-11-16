@@ -66,7 +66,7 @@ All optional.
 | `paused` | `null` | `true` / `false` to start paused or running. `null`: start paused when the user prefers reduced motion, otherwise running. |
 | `labels` | `true` | Show labels (group names, Wander stops and neighbours, hover name). Also a checkbox. |
 | `trails` | `true` | Motion trails. Also a checkbox. |
-| `controls` | `true` | `false` hides the controls row (play, reset zoom, speed, labels, trails, hint). The mode switch, readout and provenance stay. |
+| `controls` | `true` | `false` hides the controls row (play, reset view, speed, labels, trails, hint). The mode switch, readout and provenance stay. |
 | `readout` | `true` | `false` hides the readout strip. |
 | `masthead` | `true` | `false` hides the masthead over the stage (the count line, and the title if given). |
 | `title` | `""` | A title drawn over the stage in the masthead (text, never markup). Empty: no title line. |
@@ -116,7 +116,9 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 | `seed()` | number or string | The view seed. |
 | `setSpeed(s)` | number | Set the speed (positive); returns it. |
 | `zoom(z?)` | number | Read, or set, the user zoom factor (clamped 0.2 to 12). |
-| `resetZoom()` | — | User zoom back to 1. |
+| `resetZoom()` | — | User zoom back to 1 and the user pan back to `[0, 0]` (since t17 it resets the pan too, as every reset of the zoom does). |
+| `pan(p?)` | `[x, y]` | Read, or set with `[x, y]`, the user pan: the renderer's draw key `pan`, in units of the stage's `R = min(W, H) * radius`, `x` right and `y` up. Clamped so the picture's centre stays on the stage; anything that is not two finite numbers sets `[0, 0]`. Returns a copy. |
+| `resetView()` | — | The same as `resetZoom()`: zoom 1 and no pan. The name the Reset view button goes by. |
 | `refreshTheme()` | — | Re-read the `--tumbler-*` custom properties (also done on every `update`). The viewer never polls. |
 | `info()` | object | A snapshot for hosts and tests (below). |
 | `setSearches(list)` | Promise | Search: replace the searches (text, vector or point id); see "Search". |
@@ -769,22 +771,30 @@ name and its ring use the stop's colour.
 ## Controls and input
 
 - Mode buttons (real `<button>`s with `aria-pressed`, at least 44 px tall),
-  Pause/Play, Reset zoom, a speed slider, Labels and Trails checkboxes, a hint.
-  Pause/Play and Reset zoom are the reference's button (12 px type, 6 by 16 px
+  Pause/Play, Reset view (class `tumbler-zoom-reset`, kept from when it was
+  labelled Reset zoom; it resets the zoom and the pan, and is always offered,
+  so also when the picture is moved at zoom 1), a speed slider, Labels and
+  Trails checkboxes, a hint: "Drag to turn; right-drag, Shift + drag or two
+  fingers move. Pinch, or Ctrl + wheel, to zoom; double-click or double-tap
+  resets. Keys 1-3 switch views and arrows move while the viewer has focus."
+  (the `3` is the number of views, at most 9)
+  Pause/Play and Reset view are the reference's button (12 px type, 6 by 16 px
   padding, at least 76 px wide and 28 px tall); under 600 px wide they are at
   least 32 px tall for touch. The speed slider is 130 px wide.
 - **Keys** only while focus is inside the viewer (the root is focusable and a
   pointer press on the stage focuses it): `Escape` dismisses the notice,
   `1`..`9` modes in button order,
   space play/pause (when the root itself has focus), `+`/`=` zoom in, `-` zoom
-  out, `0` reset zoom. Keys typed into the viewer's inputs are ignored. No key
+  out, `0` reset zoom and pan, the arrow keys move the picture the way they
+  point by 0.1 of a pan unit (`ET.viewer.PAN_STEP`; not with Ctrl, Cmd or Alt,
+  as for every key). Keys typed into the viewer's inputs are ignored. No key
   listener is ever added to the document or window.
 - **Drag** to turn (pointer events, so mouse, pen and touch). Only a press on
   the sky itself (the canvases or the label layer) starts a drag, captures the
   pointer and focuses the viewer; a press on a control inside the stage (the
   notice's Dismiss button) is left to that control, so it gets its click, and a
   drag that starts on it does not turn the camera. Double-click resets the zoom
-  only on the sky. Every control is a native element, so Enter and Space work. The stage has
+  and the pan, only on the sky. Every control is a native element, so Enter and Space work. The stage has
   `touch-action: pan-y`: a vertical swipe on a phone scrolls the page, a
   horizontal drag turns the cloud, as in the reference.
 - **User zoom** multiplies each mode's automatic zoom, so switching modes still
@@ -792,7 +802,29 @@ name and its ring use the stop's colour.
   pinch arrives this way) over the stage; or a plain wheel over the stage
   **only while the viewer has focus**. Otherwise the wheel scrolls the page.
   Double-click (mouse) or double-tap (touch, pen) resets, as does the Reset
-  zoom button or `0`.
+  view button or `0`.
+- **User pan** (task t17) moves the drawn picture without turning it. It is
+  the renderer's draw key `pan`, `[x, y]` in units of the stage's `R = min(W,
+  H) * radius` (one unit of the picture after zoom and perspective, so it
+  follows the stage when it is resized), `x` right and `y` up. It changes no
+  frame, centre, zoom, ranking or measure, and like the user zoom and the drag
+  angles it is view state held by the viewer: reproducibility is untouched. The
+  key is left out of the draw state while the pan is `[0, 0]`, so the draw
+  state and everything drawn are exactly as before. Gestures: **right-button
+  drag** or **Shift + left drag** (for trackpads) pans by the pointer's
+  movement; a left drag still turns, unchanged; with **two fingers** the
+  movement of their midpoint pans while their distance still zooms; the
+  **arrow keys** pan by `PAN_STEP` while the viewer has focus. The browser's
+  context menu is suppressed over the sky (the canvases and the label layer) so
+  a right-drag works; over the controls it is left alone. A pan drag pauses
+  the idle spin as a turn drag does, and a pan press is never a Focus click.
+  The pan is clamped so the picture's centre (the point the zoom scales about)
+  stays on the stage: `|x|` at most half the stage's width and `|y|` half its
+  height, in pan units; a stage that shrinks clamps the pan held. Every reset
+  of the zoom (double-click, double-tap, `0`, the Reset view button,
+  `resetZoom()`, `resetView()`) resets the pan too. While the picture is
+  moved the status line says `· moved`, after the zoom part and before
+  `· paused`. A new data set keeps the pan, as it keeps the zoom.
 
 ## Lifecycle rules
 
