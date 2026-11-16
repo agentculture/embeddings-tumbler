@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-16T17:49:58Z",
-  "updated": "2026-11-16T19:35:31Z",
+  "updated": "2026-11-16T20:06:26Z",
   "claims": [
     {
       "id": "c1",
@@ -759,7 +759,56 @@
       "seeds": []
     }
   ],
-  "lapses": [],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "assumption-for-measurement",
+      "what": "Task t1's interface page set the rule for when a second search gives an axis from a reading of the reference page's code, not from running it: it took the page's 0.5 test as 'less than half of the direction is new', which would have given Rice and Wheat one axis where the approved reference pins two. Caught at the main agent's review before merge; the agent was sent back to correct it.",
+      "skipped_check": "running the reference page (or its maths) with two searches before writing the threshold down",
+      "refs": [
+        "t1",
+        "docs/relative-interface.md",
+        "o11"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l2",
+      "code": "assumption-for-measurement",
+      "what": "Task t1's flatness bound (about 1.7 percent at perspective 60 against the 2 percent limit), its zoom cap and its window top rest on reading and estimate, not measurement; the agent reported this itself. t3 and t13 measure the bound.",
+      "skipped_check": "measuring the drawn heights",
+      "refs": [
+        "t1",
+        "c14"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "control-absent",
+      "what": "The main agent's reference page was only looked at with Rice and Wheat as the two-search case; no test or run covers what the page does for two nearly identical searches, so the same-direction fallback in the reference is itself unexercised.",
+      "skipped_check": "a two-search run on the reference page with a repeated search",
+      "refs": [
+        "docs/specs/reference/tumbler-relative-search.html"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "grader-unverified",
+      "what": "Task t8's agent first read a pass of the existing panel test as validating its change, when that test loads the committed assembled file and so ran the old code; the agent caught it and re-ran against a scratch copy with the file assembled. Reported by the agent itself.",
+      "skipped_check": "checking which file the test loads before trusting its result",
+      "refs": [
+        "t8",
+        "js/test/search-panel.test.js"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
   "obligations": [
     {
       "id": "o1",
