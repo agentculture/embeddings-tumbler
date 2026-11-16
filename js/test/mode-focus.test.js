@@ -266,7 +266,14 @@ test("criterion 3: Only results hides the other points in Focus only", () => {
   for (const id of ["tumble", "lattice", "wander"]) {
     const m = F.ready(ET, id, SET, { seed: SEED });
     for (const t of [0, 2, 9]) assert.strictEqual(m.stateAt(t).draw.unlitGain, undefined, id);
-    assert.strictEqual(m.searchChanged, undefined, id + " does not take searches");
+    if (id === "tumble") {
+      // Tumble takes searches for its relative setting (docs/relative-interface.md, t6);
+      // with the setting off it only stores them and returns null.
+      assert.strictEqual(m.searchChanged(searchOf([e], { onlyResults: true }), 9), null, id);
+      assert.strictEqual(m.stateAt(10).draw.unlitGain, undefined, id);
+    } else {
+      assert.strictEqual(m.searchChanged, undefined, id + " does not take searches");
+    }
   }
 });
 
