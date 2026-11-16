@@ -1176,6 +1176,436 @@
       return tour;
     }
 
+    // ----- the relative frame (Tumble with searches pinned) --------------------
+    //
+    // One to three frame rows are fixed to search directions (row 1 vertical, row
+    // 0 horizontal, row 2 depth) and the rows left free tour the strongest
+    // directions of what the set holds once those directions are removed (the
+    // remainder). Everything is linear; nothing here changes makeTour or
+    // guidedTour.
+
+    var RELATIVE_UNIT_TOLERANCE = 1e-3; // a set is unit-length when min and max lengths are this close to 1
+    var RELATIVE_ZERO_LENGTH = 1e-9; // a query no longer than this has no direction
+    var RELATIVE_SAME_DIRECTION = 1e-6; // squared new part below this: the same direction as an earlier search
+
+    // Search directions in order, made orthonormal. A zero-length query, one that
+    // points the same way as the directions already pinned, and any after three
+    // pinned are dropped with a reason. The first pinned row is the query's own
+    // unit direction (rounded to float32 once). Never throws for zero, repeated or
+    // parallel queries; D below 3 is a RangeError.
+    function relativeDirections(queries, D) {
+      checkDim(D);
+      if (D < 3) throw new RangeError("relative directions need a dimension of at least three");
+      checkQueries(queries, D);
+      var rows = []; // pinned directions, Float64Array(D) each
+      var pinned = [];
+      var dropped = [];
+      for (var qi = 0; qi < queries.length; qi++) {
+        var q = queries[qi];
+        var len = Math.sqrt(sqNorm(q, 0, D));
+        if (!above(len, RELATIVE_ZERO_LENGTH)) {
+          dropped.push({ index: qi, reason: "zero-length", against: [] });
+          continue;
+        }
+        if (rows.length === 3) {
+          dropped.push({ index: qi, reason: "no-axis-left", against: [] });
+          continue;
+        }
+        var v = new Float64Array(D);
+        for (var d = 0; d < D; d++) v[d] = q[d] / len;
+        if (rows.length === 0) {
+          rows.push(v);
+          pinned.push({ index: qi, length: len });
+          continue;
+        }
+        for (var pass = 0; pass < 2; pass++) {
+          for (const p of rows) removeRow(v, 0, p, 0, D);
+        }
+        var nn = sqNorm(v, 0, D);
+        if (!atLeast(nn, RELATIVE_SAME_DIRECTION)) {
+          dropped.push({
+            index: qi,
+            reason: "same-direction",
+            against: pinned.map(function (pp) {
+              return pp.index;
+            }),
+          });
+          continue;
+        }
+        var inv = 1 / Math.sqrt(nn);
+        for (var d2 = 0; d2 < D; d2++) v[d2] *= inv;
+        rows.push(v);
+        pinned.push({ index: qi, length: len });
+      }
+      var directions = new Float32Array(rows.length * D);
+      for (var r = 0; r < rows.length; r++) directions.set(rows[r], r * D);
+      return { directions: directions, count: rows.length, pinned: pinned, dropped: dropped };
+    }
+
+    function checkQueries(queries, D) {
+      if (!Array.isArray(queries)) throw new TypeError("queries must be an array of query vectors");
+      for (var i = 0; i < queries.length; i++) {
+        if (queries[i]?.length !== D) {
+          throw new TypeError("query " + i + " must have dimension (" + D + ") values");
+        }
+      }
+    }
+
+    // The shortest and longest row lengths and whether both are within
+    // `tolerance` of 1, row by row in double precision.
+    function* unitLengthGen(X, N, D, tolerance, wk) {
+      var min = Infinity;
+      var max = -Infinity;
+      for (var i = 0; i < N; i++) {
+        var l = Math.sqrt(sqNorm(X, i * D, D));
+        if (l < min) min = l;
+        if (l > max) max = l;
+        if (wk.add(D)) yield;
+      }
+      if (N === 0) return { unit: false, min: null, max: null, tolerance: tolerance };
+      var unit = Math.abs(min - 1) < tolerance && Math.abs(max - 1) < tolerance;
+      return { unit: unit, min: min, max: max, tolerance: tolerance };
+    }
+
+    function unitLength(X, N, D, tolerance) {
+      checkData(X, N, D);
+      var tol = tolerance === undefined ? RELATIVE_UNIT_TOLERANCE : tolerance;
+      if (!atLeast(tol, 0) || !Number.isFinite(tol)) throw new RangeError("tolerance must be a finite number >= 0");
+      return runAll(unitLengthGen(X, N, D, tol, NO_PAUSE));
+    }
+
+    // Heights x_i . direction over every row (never a sample): the lowest and the
+    // highest with their row indices (ties to the lower index), and the window's
+    // top, the higher of the search's length and the highest point.
+    function* heightWindowGen(X, N, D, direction, length, wk) {
+      var low = null;
+      var pointHigh = null;
+      var lowest = null;
+      var highest = null;
+      for (var i = 0; i < N; i++) {
+        var o = i * D;
+        var h = 0;
+        for (var d = 0; d < D; d++) h += X[o + d] * direction[d];
+        if (low === null || h < low) {
+          low = h;
+          lowest = i;
+        }
+        if (pointHigh === null || h > pointHigh) {
+          pointHigh = h;
+          highest = i;
+        }
+        if (wk.add(D)) yield;
+      }
+      var high = pointHigh === null ? length : Math.max(length, pointHigh);
+      return { low: low, high: high, pointHigh: pointHigh, lowest: lowest, highest: highest };
+    }
+
+    function checkWindow(direction, length, D) {
+      if (direction?.length !== D) throw new TypeError("heightWindow: direction must have dimension values");
+      var nn = sqNorm(direction, 0, D);
+      if (!(Math.abs(nn - 1) <= 1e-4)) throw new RangeError("heightWindow: direction must be unit length");
+      if (!atLeast(length, 0) || !Number.isFinite(length)) {
+        throw new RangeError("heightWindow: length must be a finite number >= 0");
+      }
+    }
+
+    function heightWindow(X, N, D, direction, length) {
+      checkData(X, N, D);
+      checkWindow(direction, length, D);
+      return runAll(heightWindowGen(X, N, D, direction, length, NO_PAUSE));
+    }
+
+    // A tour of `rows` (1 to 3) frame rows inside the span of m >= rows
+    // orthonormal basis rows: makeTour's construction with `rows` in place of
+    // three (the same seeded draws, the same arithmetic), so with three rows it
+    // gives makeTour's frames. With m = 1 the single row is constant.
+    function makeTourRows(basis, m, D, rows, opts) {
+      checkDim(D);
+      if (!intAtLeast(rows, 1) || rows > 3) throw new RangeError("a tour of rows needs 1, 2 or 3 rows");
+      if (!intAtLeast(m, rows)) throw new RangeError("a tour of rows needs at least as many directions as rows");
+      if (m > D) throw new RangeError("a tour cannot use more directions than the dimension");
+      if (!basis || basis.length < m * D) throw new TypeError("makeTourRows: basis needs m * dimension values");
+      var o = opts || {};
+      var seed = toSeed(o.seed === undefined ? 0 : o.seed);
+      var speed = o.speed === undefined ? 0.42 : o.speed;
+      var rng = makeRandom(mixSeed(seed, SALT_TOUR));
+      var P = new Float64Array(m * m);
+      rng.fillGauss(P, 0, m * m);
+      orthonormalize(P, m, m);
+      var planes = Math.floor(m / 2);
+      var freq = new Float64Array(planes);
+      for (var h = 0; h < planes; h++) {
+        var mag = speed * (0.55 + 0.9 * rng.next());
+        freq[h] = rng.next() < 0.5 ? -mag : mag;
+      }
+      // E = first `rows` rows of P^T: E[r][c] = P[c][r].
+      var E = new Float64Array(rows * m);
+      for (var r = 0; r < rows; r++) for (var c = 0; c < m; c++) E[r * m + c] = P[c * m + r];
+      var L = new Float64Array(rows * m);
+      var A = new Float64Array(rows * m);
+      var F64 = new Float64Array(rows * D);
+      var basisCopy = new Float32Array(basis.subarray ? basis.subarray(0, m * D) : basis.slice(0, m * D));
+
+      function coefficientsAt(t) {
+        for (var i = 0; i < rows * m; i++) L[i] = E[i];
+        for (var hh = 0; hh < planes; hh++) {
+          var ang = freq[hh] * t;
+          var cs = Math.cos(ang);
+          var sn = Math.sin(ang);
+          var c0 = 2 * hh;
+          for (var rr = 0; rr < rows; rr++) {
+            var x = E[rr * m + c0];
+            var y = E[rr * m + c0 + 1];
+            L[rr * m + c0] = cs * x - sn * y;
+            L[rr * m + c0 + 1] = sn * x + cs * y;
+          }
+        }
+        for (var r2 = 0; r2 < rows; r2++) {
+          for (var c2 = 0; c2 < m; c2++) {
+            var s = 0;
+            for (var q = 0; q < m; q++) s += L[r2 * m + q] * P[q * m + c2];
+            A[r2 * m + c2] = s;
+          }
+        }
+        orthonormalize(A, rows, m);
+      }
+
+      function rowsAt(t, out) {
+        if (typeof t !== "number" || !Number.isFinite(t)) throw new RangeError("time must be a finite number");
+        var F = out || new Float32Array(rows * D);
+        coefficientsAt(t);
+        F64.fill(0);
+        for (var r3 = 0; r3 < rows; r3++) {
+          var orow = r3 * D;
+          for (var j = 0; j < m; j++) {
+            var w = A[r3 * m + j];
+            var ob = j * D;
+            for (var d = 0; d < D; d++) F64[orow + d] += w * basisCopy[ob + d];
+          }
+        }
+        orthonormalize(F64, rows, D);
+        for (var i2 = 0; i2 < rows * D; i2++) F[i2] = F64[i2];
+        orthonormalize(F, rows, D);
+        return F;
+      }
+
+      return {
+        kind: "tour-rows",
+        seed: seed,
+        speed: speed,
+        dimension: D,
+        subspace: m,
+        rows: rows,
+        basis: basisCopy,
+        rowsAt: rowsAt,
+      };
+    }
+
+    // Frame rows the pinned directions go to, in pin order: vertical, horizontal, depth.
+    var PINNED_SLOTS = [1, 0, 2];
+    // Frame rows left free for each number pinned, in row order.
+    var FREE_SLOTS = [null, [0, 2], [2], []];
+
+    // The relative frame as a closed-form function of t: the pinned directions
+    // copied into their rows (never re-orthonormalised against the free rows, so
+    // row 1 dotted with a point is its height to float32 accuracy), the free rows
+    // a tour of rows inside the basis (directions orthogonal to the pinned ones).
+    function makeRelativeTour(directions, count, basis, m, D, opts) {
+      checkDim(D);
+      if (!intAtLeast(count, 1) || count > 3) throw new RangeError("a relative tour needs 1 to 3 pinned directions");
+      checkRows(directions, count, D, "makeRelativeTour");
+      var o = opts || {};
+      var free = 3 - count;
+      var rowsTour = free > 0 ? makeTourRows(basis, m, D, free, o) : null;
+      var pinnedCopy = new Float32Array(directions);
+      var slots = FREE_SLOTS[count];
+      var freeRows = free > 0 ? new Float32Array(free * D) : null;
+
+      function frameAt(t, out) {
+        if (typeof t !== "number" || !Number.isFinite(t)) throw new RangeError("time must be a finite number");
+        var F = out || new Float32Array(3 * D);
+        for (var p = 0; p < count; p++) {
+          F.set(pinnedCopy.subarray(p * D, (p + 1) * D), PINNED_SLOTS[p] * D);
+        }
+        if (rowsTour) {
+          rowsTour.rowsAt(t, freeRows);
+          for (var f = 0; f < free; f++) F.set(freeRows.subarray(f * D, (f + 1) * D), slots[f] * D);
+        }
+        return F;
+      }
+
+      return {
+        kind: "relative-tour",
+        pinned: count,
+        free: free,
+        subspace: rowsTour ? m : 0,
+        seed: toSeed(o.seed === undefined ? 0 : o.seed),
+        speed: o.speed === undefined ? 0.42 : o.speed,
+        dimension: D,
+        frameAt: frameAt,
+      };
+    }
+
+    // Everything the relative view needs from the data, in one computation (see
+    // relativeFit). Arguments are checked here; the directions are found here.
+    function prepareRelativeFit(X, N, D, queries, opts) {
+      checkData(X, N, D);
+      var dirs = relativeDirections(queries, D);
+      var o = opts || {};
+      var pcaOpts = {
+        seed: o.seed,
+        maxIterations: o.maxIterations,
+        tolerance: o.tolerance,
+        oversample: o.oversample,
+      };
+      checkPca(X, N, D, pcaOpts);
+      var S = toInt32(o.sampleRows);
+      var free = 3 - dirs.count;
+      var sub = o.subspace === undefined ? 8 : toInt32(o.subspace);
+      return {
+        dirs: dirs,
+        pcaOpts: pcaOpts,
+        S: S > 0 && N > S ? S : N,
+        // A subspace below the number of free rows is raised to it (no tour exists otherwise).
+        m: dirs.count === 0 || free === 0 ? 0 : Math.min(Math.max(sub, free), D - dirs.count),
+      };
+    }
+
+    function relativeFitWork(N, D, plan) {
+      var c = plan.dirs.count;
+      var S = plan.S;
+      var m = plan.m;
+      var fit = m > 0 ? pcaWorkEstimate(S, D, m, plan.pcaOpts) : 0;
+      return 3 * N * D + 2 * S * D * (4 * c + 1) + S * D * m + fit + 4 * (c + m) * (c + m) * D;
+    }
+
+    // The fitted row s of S taken at an even stride over N rows (as the sampled fit takes them).
+    function strideRow(s, S, N) {
+      return Math.floor((s * N) / S);
+    }
+
+    // v = (row `src` of X - mean) with the `count` pinned directions removed (twice).
+    function remainderRow(X, src, D, mean, dirs, count, v) {
+      loadRow(X, src * D, D, mean, v);
+      removeSpan(v, 0, dirs, count, D);
+    }
+
+    // The fitted rows' remainders as a float32 block for the fit.
+    function* remainderBlockGen(X, N, D, mean, dirs, count, S, wk) {
+      var Ys = new Float32Array(S * D);
+      var v = new Float64Array(D);
+      for (var s = 0; s < S; s++) {
+        remainderRow(X, strideRow(s, S, N), D, mean, dirs, count, v);
+        for (var d = 0; d < D; d++) Ys[s * D + d] = v[d];
+        if (wk.add((4 * count + 1) * D)) yield;
+      }
+      return Ys;
+    }
+
+    // Exact variances along the basis rows and the remainder's total variance,
+    // over the fitted rows, recomputed in double precision from the data.
+    function* remainderVarianceGen(X, N, D, mean, dirs, count, basis, m, S, wk) {
+      var v = new Float64Array(D);
+      var sums = new Float64Array(m);
+      var total = 0;
+      for (var s = 0; s < S; s++) {
+        remainderRow(X, strideRow(s, S, N), D, mean, dirs, count, v);
+        total += sqNorm(v, 0, D);
+        for (var k = 0; k < m; k++) {
+          var ok = k * D;
+          var p = 0;
+          for (var d = 0; d < D; d++) p += v[d] * basis[ok + d];
+          sums[k] += p * p;
+        }
+        if (wk.add((4 * count + 1 + m) * D)) yield;
+      }
+      var variances = new Float64Array(m);
+      for (var k2 = 0; k2 < m; k2++) variances[k2] = S > 0 ? sums[k2] / S : 0;
+      return { variances: variances, totalVariance: S > 0 ? total / S : 0 };
+    }
+
+    // The fitted directions made orthogonal to the pinned ones: Gram-Schmidt on
+    // [pinned; fitted], whose fallback completes any direction that collapses.
+    function* orthogonalBasisGen(dirs, count, fitted, m, D, wk) {
+      var B = new Float64Array((count + m) * D);
+      for (var i = 0; i < count * D; i++) B[i] = dirs[i];
+      for (var j = 0; j < m * D; j++) B[count * D + j] = fitted[j];
+      yield* orthonormalizeGen(B, count + m, D, wk);
+      var basis = new Float32Array(m * D);
+      for (var k = 0; k < m * D; k++) basis[k] = B[count * D + k];
+      return basis;
+    }
+
+    function* relativeFitGen(X, N, D, plan, wk) {
+      var dirs = plan.dirs;
+      var c = dirs.count;
+      var S = plan.S;
+      var m = plan.m;
+      var unit = yield* unitLengthGen(X, N, D, RELATIVE_UNIT_TOLERANCE, wk);
+      var result = {
+        directions: dirs.directions,
+        count: c,
+        pinned: dirs.pinned,
+        dropped: dirs.dropped,
+        basis: null,
+        subspace: 0,
+        share: null,
+        variances: new Float64Array(0),
+        totalVariance: 0,
+        fittedRows: 0,
+        rank: 0,
+        fixed: 0,
+        window: null,
+        unit: unit,
+        method: "none",
+      };
+      if (c === 0) return result;
+      result.window = yield* heightWindowGen(X, N, D, dirs.directions.subarray(0, D), dirs.pinned[0].length, wk);
+      var mean = new Float64Array(D);
+      for (var i = 0; i < N; i++) {
+        var o = i * D;
+        for (var d = 0; d < D; d++) mean[d] += X[o + d];
+        if (wk.add(D)) yield;
+      }
+      if (N > 0) for (var e = 0; e < D; e++) mean[e] /= N;
+      result.fittedRows = S;
+      result.rank = Math.max(0, Math.min(S - 1, D - c));
+      result.fixed = Math.max(0, 3 - c - result.rank);
+      if (m > 0) {
+        var Ys = yield* remainderBlockGen(X, N, D, mean, dirs.directions, c, S, wk);
+        var pca = yield* pcaGen(Ys, S, D, m, plan.pcaOpts, wk, true);
+        Ys = null;
+        result.basis = yield* orthogonalBasisGen(dirs.directions, c, pca.directions, m, D, wk);
+        result.subspace = m;
+        result.method = pca.method + (S < N ? "-sampled" : "");
+      }
+      var held = yield* remainderVarianceGen(X, N, D, mean, dirs.directions, c, result.basis, m, S, wk);
+      result.variances = held.variances;
+      result.totalVariance = held.totalVariance;
+      if (m > 0) {
+        var s = 0;
+        for (var k = 0; k < m; k++) s += held.variances[k];
+        result.share = above(held.totalVariance, 0) ? clamp01(s / held.totalVariance) : 0;
+      }
+      return result;
+    }
+
+    // The search directions, the remainder's toured directions and their share,
+    // the window along the first pinned direction and the unit-length check.
+    // opts: { seed (0), subspace (8), sampleRows (the fit cap), maxIterations,
+    //         tolerance, oversample }. Runs makeRelativeFit to the end.
+    function relativeFit(X, N, D, queries, opts) {
+      var plan = prepareRelativeFit(X, N, D, queries, opts);
+      return runAll(relativeFitGen(X, N, D, plan, NO_PAUSE));
+    }
+
+    // The same as a stepper whose result is relativeFit's, bit for bit.
+    function makeRelativeFit(X, N, D, queries, opts) {
+      var plan = prepareRelativeFit(X, N, D, queries, opts);
+      var wk = new Tracker(relativeFitWork(N, D, plan));
+      return genStepper(relativeFitGen(X, N, D, plan, wk), wk);
+    }
+
     // ----- axis swap (Lattice) ------------------------------------------------
 
     // A unit vector orthogonal to the frame's three rows, drawn from rng. When
@@ -1672,6 +2102,16 @@
       makeTour: makeTour,
       guidedTour: guidedTour,
       makeGuidedTour: makeGuidedTour,
+      RELATIVE_UNIT_TOLERANCE: RELATIVE_UNIT_TOLERANCE,
+      RELATIVE_ZERO_LENGTH: RELATIVE_ZERO_LENGTH,
+      RELATIVE_SAME_DIRECTION: RELATIVE_SAME_DIRECTION,
+      relativeDirections: relativeDirections,
+      unitLength: unitLength,
+      heightWindow: heightWindow,
+      makeTourRows: makeTourRows,
+      makeRelativeTour: makeRelativeTour,
+      relativeFit: relativeFit,
+      makeRelativeFit: makeRelativeFit,
       hiddenDirection: hiddenDirection,
       swapAngle: swapAngle,
       swapStep: swapStep,
