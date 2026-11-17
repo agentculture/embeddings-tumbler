@@ -447,7 +447,10 @@ instance, as `face` is optional to the mode interface:
   removed or changed, compared by letter and by the bytes of the query) it
   starts a relative fit (`ET.math.makeRelativeFit`, given the plain fit's
   directions, below) and returns its stepper; a
-  call that changes nothing of that returns `null`. Letters are not
+  call that changes nothing of that returns `null`. From that call's time until
+  the fit switches in, a relative view that is shown is the earlier searches'
+  and is reported as not settled (`state.relative.settled` false, the status
+  `turning until`); giving the earlier searches again drops the new fit. Letters are not
   re-given: the search lettered B stays B when A is removed, and becomes the
   vertical axis because it is then the first.
 - `inst.setRelative(settings, t) -> stepper | null`. `settings` is `{ relative?,
@@ -490,8 +493,8 @@ multiply-adds on the two real 999-item sets (`docs/evidence/2026-11-relative-sea
 **Which plain directions.** The relative preparation looks for the plain fit of the
 set it is for among the fits kept with their sets (`fittedDirections`, below:
 filled by the plain tour's preparation, a refit, or Lattice). When there is none
-yet (after an append, whose plain tour is fitted again only by a later refit, or
-when the relative fit is pumped before the preparation has finished), it fits them
+yet (a search changed after an append, whose plain tour is fitted again only by a
+later refit, or a relative fit pumped before the preparation has finished), it fits them
 itself, the same computation as `makeGuidedTour`'s (centring, then
 `ET.math.makePrincipalDirections` with the same options, one unit per run), and
 keeps them with the set, so the refit that follows gets them at once. It looks
@@ -509,7 +512,16 @@ mode is still (`setStill(true)`): the event then records duration 0, so seeking
 and two instances given the same events still agree. A swing in progress
 (`face`) gives way to the switch.
 While the relative view is shown, or a switch to it is pending, `face` returns
-`false` and starts nothing; with the setting off it is as before.
+`false` and starts nothing; with the setting off it is as before. A swing may
+start during the turn back to the plain view; the draw's `perspective` goes on
+easing by `mix` through the swing, so the picture does not pop.
+A switch from a settled view onto a fit that pins the same directions (the same
+searches fitted again after an append) moves no pinned row: they are written
+from the fit's directions on every frame of the turn, and the view stays
+settled through it.
+The events are all kept while the mode is entered, so a seek back shows any
+earlier frame, centre, zoom and perspective bit for bit. An event holds a few
+rows of D numbers and never the set it was fitted on.
 
 **Centre and zoom.** The window is the lowest point's height to the higher of the
 search's length and the highest point's height, over all points, with 0.04 added
@@ -526,7 +538,8 @@ viewer reads `s.relative || null`):
 relative: null | {        // null: setting off and no turn back in progress (the plain view)
   relative, showOrigin,   // the settings
   active,                 // at least one axis pinned at t
-  settled,                // active and the turn has ended: the pinned rows are exact
+  settled,                // active, the pinned rows are exact (the turn has ended, or moved none of
+                          //   them) and the searches are those in force (no changed search awaits its fit)
   mix,                    // 0 to 1: how far into the relative look (flat, level)
   pinned,                 // [{ letter, axis, length }]; axis "vertical" | "horizontal" | "depth"
   dropped,                // [{ letter, reason, against }]; reason "zero-length" | "same-direction"
@@ -536,13 +549,16 @@ relative: null | {        // null: setting off and no turn back in progress (the
   window,                 // null | { low, high, bottom, top } along the vertical search
   share, subspace,        // the remainder share and how many directions tour
   free, fixed,            // free rows (3 minus pinned), and the ones that are filler
+  searches,               // [{ letter, query }]: the searches the frame at t was built from
+                          //   (the mode's copies: read, never write); [] when not active
 }
 ```
 
 `describe()` gains `relative`: the same fields at the instance's time, plus
 `switchAt` (the latest relative switch's T, or `null`), `pending` (a fit or a
-switch is waiting), `transition` and `instant` (the latest switch or framing
-change had no turn because the mode was still). With the setting off and no turn in progress
+switch is waiting), `transition`, `instant` (the latest switch or framing
+change had no turn because the mode was still) and `pointsSinceFit` (points
+appended since the newest event's fit was made). With the setting off and no turn in progress
 it is `{ relative: false, showOrigin, active: false, switchAt, pending: false }`.
 
 **Status.** In the relative view the status line starts `relative to {letters}
@@ -555,11 +571,19 @@ directions holding {share} of the remaining spread`; three give `all three axes
 are pinned: the space of {letters} is shown exactly` and `nothing tumbles`. Each
 search that gave no axis adds `{letter} pins no axis`. The share is the share of
 what remains after the pinned directions are removed, measured on the rows
-fitted. The line is longer than the plain status's 70 characters.
+fitted. While points have been appended since the fit shown was made the line
+ends `before {n} new points`, as the plain one does. The line is longer than the
+plain status's 70 characters.
 
-**Data.** An append while the relative view is shown starts a new relative fit on
-the new set (the searches kept) and switches at a recorded time, as a refit. A
-replace re-enters the mode, and the viewer drops the searches.
+**Data.** An append while the relative view is shown (or while its fit is under
+way) starts no fit and cancels none: the view is kept, its pinned rows exact
+(a search's direction does not depend on the data), its free rows, window and
+unit figures those of the rows fitted. `refit(t)` makes the relative fit again
+after the plain one, whose directions it reuses, and it switches in at a recorded
+time. The viewer calls `refit` by its quiet and share policy, so a stream of
+appends costs one fit at its end, not one per append. A search changed after an
+append is fitted on the data as it is then. A replace re-enters the mode, and the
+viewer drops the searches.
 
 ## Lattice (`"lattice"`)
 
