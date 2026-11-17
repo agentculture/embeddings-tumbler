@@ -269,19 +269,22 @@ def test_the_settled_relative_view_draws_with_no_depth_blur_and_bloom_02(seen):
     for name in ("sharp", "all", "named"):
         s = seen[name]
         assert s["relative"] is True, name
-        assert s["depthOfField"] == 0 and s["bloom"] == 0.2, (name, s["depthOfField"], s["bloom"])
+        assert s["depthOfField"] == 0, (name, s["depthOfField"], s["bloom"])
+        assert s["bloom"] == 0.2, (name, s["depthOfField"], s["bloom"])
     # The plain view, with and without a search, keeps Tumble's own depth of field and the
     # renderer's default bloom (the key left out).
     for name in ("none", "plain_all", "plain_even"):
         s = seen[name]
         assert s["relative"] is False, name
-        assert s["depthOfField"] == pytest.approx(1.1) and s["bloom"] is None, name
+        assert s["depthOfField"] == pytest.approx(1.1), name
+        assert s["bloom"] is None, name
 
 
 def test_the_relative_view_is_sharper_than_with_the_keys_from_before(seen):
     sharp, before = seen["sharp"], seen["before"]
     # the same frame and lit values, so the two pictures show the same points
-    assert sharp["lit"] > 5000 and before["lit"] > 5000
+    assert sharp["lit"] > 5000
+    assert before["lit"] > 5000
     # far fewer pixels at or near white (measured 228 against 852)
     assert before["white"] > 300, before["white"]
     assert sharp["white"] <= 0.5 * before["white"], (sharp["white"], before["white"])
@@ -299,7 +302,8 @@ def test_the_lit_menu_has_the_fourth_option_and_it_reaches_the_viewer(seen):
         ["all", "everything, results highlighted"],
     ]
     assert seen["panel_even"]["lit"] == "even"  # the default is unchanged
-    assert seen["panel_all"]["lit"] == "all" and seen["all"]["setting"] == "all"
+    assert seen["panel_all"]["lit"] == "all"
+    assert seen["all"]["setting"] == "all"
     assert "(every other point is shown too)" in seen["panel_all"]["note"]
     # the counts count results under every setting
     assert seen["all"]["litCount"] == seen["sharp"]["litCount"] > 0
@@ -319,7 +323,8 @@ def test_under_everything_the_rest_is_shown_and_the_sharp_keys_hold_it_down(seen
     assert shown["light"] > 1.3 * named["light"], (shown["light"], named["light"])
     assert shown["light"] < 0.85 * before["light"], (shown["light"], before["light"])
     # a point on its own that is not a result carries more light than under the gradient
-    assert len(shown["alone"]["rest"]) >= 3 and len(named["alone"]["rest"]) >= 3
+    assert len(shown["alone"]["rest"]) >= 3
+    assert len(named["alone"]["rest"]) >= 3
     # (measured medians 23,817 against 15,223)
     assert _median(shown["alone"]["rest"]) > 1.25 * _median(named["alone"]["rest"]), (
         shown["alone"]["rest"],
@@ -329,7 +334,8 @@ def test_under_everything_the_rest_is_shown_and_the_sharp_keys_hold_it_down(seen
 
 def test_under_everything_a_result_is_brighter_than_a_point_that_is_not_one(seen):
     alone = seen["all"]["alone"]
-    assert len(alone["results"]) >= 3 and len(alone["rest"]) >= 3, alone
+    assert len(alone["results"]) >= 3, alone
+    assert len(alone["rest"]) >= 3, alone
     # measured: every result at least 47,692, every other point at most 24,604
     assert min(alone["results"]) > 1.4 * max(alone["rest"]), alone
     # the results are drawn as under "the results, evenly" (the glow of brighter neighbours
