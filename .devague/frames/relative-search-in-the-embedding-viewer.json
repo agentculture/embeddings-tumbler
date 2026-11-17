@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-16T17:49:58Z",
-  "updated": "2026-11-17T06:03:04Z",
+  "updated": "2026-11-17T06:26:29Z",
   "claims": [
     {
       "id": "c1",
@@ -827,6 +827,17 @@
       "skipped_check": "",
       "refs": [
         "t21"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l7",
+      "code": "assumption-for-measurement",
+      "what": "Task t22's agent edited the sources before writing its tests (then confirmed the new tests fail on the earlier sources), and wrote a browser assertion that two loads give the same stage light within 2 percent without measuring repeatability; it failed at 2.6 percent, the cause was not investigated, and the comparison was replaced by an exact comparison of the fade values. Reported by the agent.",
+      "skipped_check": "",
+      "refs": [
+        "t22"
       ],
       "origin": "llm",
       "status": "proposed"

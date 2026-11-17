@@ -9760,9 +9760,6 @@ ET.modes = (function () {
     named: "named results only",
     all: "everything, results highlighted",
   };
-  var SP_REST_TITLE = "How bright the points that are not results are in the relative view.";
-  var SP_REST_ALL =
-    "Lit is set to everything, results highlighted: every point that is not a result is drawn at its usual brightness, so this setting does nothing.";
   var SP_PALETTE_DARK = { fg: "#e9eef6", muted: "#8a96ab", line: "#1b2436", accent: "#ffc56b", bg: "#04060b" };
   var SP_PALETTE_LIGHT = { fg: "#1b2130", muted: "#5b6578", line: "#d6dae2", accent: "#a35f00", bg: "#f6f4ee" };
   // A value that could name a resource is not used. The "r" is written as an escape so that
@@ -10545,19 +10542,6 @@ ET.modes = (function () {
       "showOrigin",
       "Zoom out to the all-zero vector, or, in the plain view, mark where it falls."
     );
-    // The rest: how bright the points that are not results are in the relative view (d6).
-    var rest = spSelect(p, "tumbler-search-rest", "The rest", [
-      ["faint", "faint"],
-      ["visible", "visible"],
-      ["bright", "bright"],
-    ]);
-    p.rest = rest.input;
-    p.restLabel = rest.label;
-    p.restLabel.title = SP_REST_TITLE;
-    p.rest.value = "bright";
-    spListen(p, p.rest, "change", function () {
-      if (typeof p.handle.setRelative === "function") p.handle.setRelative({ rest: p.rest.value });
-    });
     p.face = spText(p, "button", "tumbler-search-face", "Face the searches");
     p.face.type = "button";
     spListen(p, p.face, "click", function () {
@@ -10595,7 +10579,7 @@ ET.modes = (function () {
       spClear(p);
     });
     p.litLabel = lit.label;
-    [p.relative.label, p.origin.label, p.restLabel, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
+    [p.relative.label, p.origin.label, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
       row.appendChild(c);
     });
     return row;
@@ -10851,17 +10835,6 @@ ET.modes = (function () {
     spShow(p.origin.label, p.tumble, "inline-flex");
     p.relative.input.checked = !!rel && rel.relative === true;
     p.origin.input.checked = !!rel && rel.showOrigin === true;
-    // The rest sits with them in Tumble; it matters only in the relative view, so it is
-    // disabled (not hidden, so the row does not shift) while Relative is off. It is also
-    // disabled while Lit is "all", which draws the rest at its usual brightness whatever
-    // this says (d8); the title then says why.
-    spShow(p.restLabel, p.tumble, "inline-flex");
-    var relOn = !!rel && rel.relative === true;
-    var restUnused = relOn && st.lit === "all";
-    p.rest.disabled = !relOn || restUnused;
-    var restTitle = restUnused ? SP_REST_ALL : SP_REST_TITLE;
-    if (p.restLabel.title !== restTitle) p.restLabel.title = restTitle;
-    if (rel && typeof rel.rest === "string" && p.rest.value !== rel.rest) p.rest.value = rel.rest;
     spShow(p.face, !(p.tumble && rel && rel.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
     spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
@@ -12278,7 +12251,6 @@ ET.viewer = (function () {
     // Tumble's relative settings at mount (docs/relative-interface.md, "Viewer (t9, t10)").
     relative: false,
     showOrigin: false,
-    relativeRest: "bright", // how bright the points that are not results are: faint, visible, bright
   };
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
@@ -16006,7 +15978,7 @@ ET.viewer = (function () {
     }
     // In the relative view, points the searches do not light get the faint gradient; the
     // lit values above 0 are kept exactly (results follow the Lit setting as without it).
-    // Under Lit "all" there is no gradient: the rest keeps its constant, whatever The rest says.
+    // Under Lit "all" there is no gradient: the rest keeps its constant.
     s.litRelative = s.relActive;
     var grad = s.relActive && !showsRest ? relativeGradient(v) : null;
     if (grad) {
@@ -16632,18 +16604,11 @@ ET.viewer = (function () {
   // values as the search panel's defaults, so a search's ruler and its ring agree.
   var SEARCH_DEFAULTS_DARK = ["#ffc56b", "#6be0ff", "#ff8fb3", "#b6ff8a"];
   var SEARCH_DEFAULTS_LIGHT = ["#a35f00", "#00708a", "#b0245a", "#3d7a00"];
-  // The rest: the lit value of a point that is not a result in the relative view, base + scale
-  // * g^2 (deviation d6). "faint" is what was built first; "bright" is the owner's default.
-  var RELATIVE_REST = {
-    faint: { base: 0, scale: 0.2 },
-    visible: { base: 0.08, scale: 0.45 },
-    bright: { base: 0.2, scale: 0.6 },
-  };
-  var RELATIVE_REST_DEFAULT = "bright";
-
-  function restLevel(x) {
-    return typeof x === "string" && Object.hasOwn(RELATIVE_REST, x) ? x : null;
-  }
+  // The fade of the relative view: the lit value of a point that is not a result is
+  // RELATIVE_FADE_BASE + RELATIVE_FADE_SCALE * g^2, at one strength (deviation d9). Whether
+  // those points are faded at all is the Lit setting's: "all" shows them in full.
+  var RELATIVE_FADE_BASE = 0.2;
+  var RELATIVE_FADE_SCALE = 0.6;
   var OWN_POINT_DISTANCE = 1e-7; // a point this close to its search, at its length, is its own
   var OWN_POINT_LENGTH = 1e-6;
 
@@ -16683,16 +16648,15 @@ ET.viewer = (function () {
     return Math.abs(Math.sqrt(rowDot(set.vectors, o, set.vectors.subarray(o, o + D), D)) - length) < OWN_POINT_LENGTH;
   }
 
-  // The gradient for the searches shown, worked out once per change of the searches, the
-  // data or the rest setting: base + scale * g^2 (RELATIVE_REST), g the largest over the searches of
+  // The gradient for the searches shown, worked out once per change of the searches or the
+  // data: RELATIVE_FADE_BASE + RELATIVE_FADE_SCALE * g^2, g the largest over the searches of
   // clamp((c - mid) / (hi - mid), 0, 1) by plain cosine c, mid the median c (index N >> 1
   // of the ascending sort) and hi the largest c of a point other than the search's own.
   function relativeGradient(v) {
     var s = v.search;
     var set = s.shownSet;
     if (!s.shown.length || !set) return null;
-    var rest = v.rel.rest;
-    if (s.gradient?.shown === s.shown && s.gradient.set === set && s.gradient.rest === rest) return s.gradient.values;
+    if (s.gradient?.shown === s.shown && s.gradient.set === set) return s.gradient.values;
     var N = set.count;
     var g = new Float64Array(N);
     var c = new Float64Array(N);
@@ -16713,9 +16677,8 @@ ET.viewer = (function () {
       }
     }
     var values = new Float32Array(N);
-    var level = RELATIVE_REST[rest];
-    for (var k = 0; k < N; k++) values[k] = level.base + level.scale * g[k] * g[k];
-    s.gradient = { shown: s.shown, set: set, rest: rest, values: values };
+    for (var k = 0; k < N; k++) values[k] = RELATIVE_FADE_BASE + RELATIVE_FADE_SCALE * g[k] * g[k];
+    s.gradient = { shown: s.shown, set: set, values: values };
     return values;
   }
 
@@ -16798,7 +16761,6 @@ ET.viewer = (function () {
     return {
       relative: v.rel.relative,
       showOrigin: v.rel.showOrigin,
-      rest: v.rel.rest,
       offered: offered,
       active: active,
       settled: active && st.settled === true,
@@ -16985,31 +16947,23 @@ ET.viewer = (function () {
   // no request is made. onSearchChange fires when a value changes.
   function setRelative(v, patch) {
     var cur = v.rel;
-    var next = { relative: cur.relative, showOrigin: cur.showOrigin, rest: cur.rest };
+    var next = { relative: cur.relative, showOrigin: cur.showOrigin };
     if (v.destroyed || !isObj(patch)) return next;
     try {
       if (typeof patch.relative === "boolean") next.relative = patch.relative;
       if (typeof patch.showOrigin === "boolean") next.showOrigin = patch.showOrigin;
-      if (restLevel(patch.rest)) next.rest = patch.rest; // an unknown value is ignored
     } catch {
       // A getter on the host's patch threw: the patch is ignored.
-      return { relative: cur.relative, showOrigin: cur.showOrigin, rest: cur.rest };
+      return { relative: cur.relative, showOrigin: cur.showOrigin };
     }
-    var restChanged = next.rest !== cur.rest;
-    if (next.relative === cur.relative && next.showOrigin === cur.showOrigin && !restChanged) return next;
+    if (next.relative === cur.relative && next.showOrigin === cur.showOrigin) return next;
     v.rel = next;
-    if (next.relative !== cur.relative || next.showOrigin !== cur.showOrigin) {
-      var relettered = !next.relative && letterByPosition(v);
-      passRelative(v, v.mode);
-      if (relettered) notifyModeSearch(v);
-    }
-    // The rest changes only the lit values of the relative view shown; with it not shown
-    // nothing is uploaded, nor under Lit "all", which draws the rest at its constant.
-    var graded = v.search.lit && !(v.search.lit.rest > 0);
-    if (restChanged && graded && v.search.litUploaded && v.search.litRelative) uploadLit(v);
+    var relettered = !next.relative && letterByPosition(v);
+    passRelative(v, v.mode);
+    if (relettered) notifyModeSearch(v);
     searchChanged(v);
     invalidate(v);
-    return { relative: next.relative, showOrigin: next.showOrigin, rest: next.rest };
+    return { relative: next.relative, showOrigin: next.showOrigin };
   }
 
   // What the relative overlay is told about the results (docs/relative-interface.md,
@@ -17358,7 +17312,6 @@ ET.viewer = (function () {
       rel: {
         relative: opts.relative === true,
         showOrigin: opts.showOrigin === true,
-        rest: restLevel(opts.relativeRest) || RELATIVE_REST_DEFAULT,
       },
       provRel: null, // the provenance's Relative row while the relative view is shown
       search: newSearchState(opts),
@@ -17571,7 +17524,7 @@ ET.viewer = (function () {
         return setRelative(v, patch);
       },
       relativeSettings: function () {
-        return { relative: v.rel.relative, showOrigin: v.rel.showOrigin, rest: v.rel.rest };
+        return { relative: v.rel.relative, showOrigin: v.rel.showOrigin };
       },
     };
     Object.defineProperty(h, "_viewer", { value: v, enumerable: false });
@@ -17606,6 +17559,8 @@ ET.viewer = (function () {
     PAN_STEP: PAN_STEP,
     RELATIVE_DEPTH_OF_FIELD: RELATIVE_DEPTH_OF_FIELD,
     RELATIVE_BLOOM: RELATIVE_BLOOM,
+    RELATIVE_FADE_BASE: RELATIVE_FADE_BASE,
+    RELATIVE_FADE_SCALE: RELATIVE_FADE_SCALE,
     // Whether point i of a mounted handle is hidden this frame (Focus's Only results).
     hiddenPoint: function (handle, i) {
       var v = handle?._viewer;
