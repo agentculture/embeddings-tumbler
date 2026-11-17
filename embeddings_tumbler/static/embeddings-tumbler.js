@@ -9982,7 +9982,7 @@ ET.modes = (function () {
   // ----- the relative view's words (docs/relative-interface.md, "Search panel (t8)") -----
 
   function spRelative(search) {
-    var rel = search && search.relative;
+    var rel = search?.relative;
     return rel && typeof rel === "object" ? rel : null;
   }
 
@@ -9995,7 +9995,7 @@ ET.modes = (function () {
   function spLetterList(letters) {
     var list = Array.isArray(letters) ? letters : [];
     if (list.length < 2) return list.join("");
-    return list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
+    return list.slice(0, -1).join(", ") + " and " + list.at(-1);
   }
 
   function spDroppedText(d) {
@@ -10008,14 +10008,18 @@ ET.modes = (function () {
     return "";
   }
 
+  function spByLetter(a, b) {
+    if (a.letter < b.letter) return -1;
+    if (a.letter > b.letter) return 1;
+    return 0;
+  }
+
   function spRelativeNoteText(search) {
     if (!spRelativeOn(search)) return "";
     var rel = spRelative(search);
     var out = [];
     var dropped = Array.isArray(rel.dropped) ? rel.dropped.slice() : [];
-    dropped.sort(function (a, b) {
-      return a.letter < b.letter ? -1 : a.letter > b.letter ? 1 : 0;
-    });
+    dropped.sort(spByLetter);
     dropped.forEach(function (d) {
       var text = spDroppedText(d);
       if (text) out.push(text);
@@ -10045,7 +10049,7 @@ ET.modes = (function () {
   // point index, else by place).
   function spRelFor(search, q, r, at) {
     var rel = spRelative(search);
-    if (!rel || !rel.active || !Array.isArray(rel.searches)) return null;
+    if (!rel?.active || !Array.isArray(rel.searches)) return null;
     var mine = rel.searches.find(function (s) {
       return s && s.letter === q.letter;
     });
@@ -10835,7 +10839,7 @@ ET.modes = (function () {
     spShow(p.origin.label, p.tumble, "inline-flex");
     p.relative.input.checked = !!rel && rel.relative === true;
     p.origin.input.checked = !!rel && rel.showOrigin === true;
-    spShow(p.face, !(p.tumble && rel && rel.relative === true), "");
+    spShow(p.face, !(p.tumble && rel?.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
     spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
     p.distances.input.checked = !!st.distances;
@@ -11609,15 +11613,14 @@ ET.modes = (function () {
 
   function roLength(v) {
     var s = 0;
-    for (var d = 0; d < v.length; d++) s += v[d] * v[d];
+    for (var x of v) s += x * x;
     return Math.sqrt(s);
   }
 
   // x . row r of the frame, in double precision.
-  function roRowDot(F, D, r, v, o) {
+  function roRowDot(F, D, r, v, off = 0) {
     var s = 0;
     var base = r * D;
-    var off = o || 0;
     for (var d = 0; d < D; d++) s += v[off + d] * F[base + d];
     return s;
   }
@@ -11705,33 +11708,45 @@ ET.modes = (function () {
     return Math.sqrt(s);
   }
 
-  // The centre's true length and the part of it the frame shows.
+  // The centre's true length and the part of it the frame shows. Both are the square root of
+  // the squares summed in order (roLength), so the numbers are the same to the last bit
+  // whichever engine runs this.
   function roOriginNumbers(cx) {
-    return {
-      far: roLength(cx.C),
-      seen: Math.sqrt(cx.cF[0] * cx.cF[0] + cx.cF[1] * cx.cF[1] + cx.cF[2] * cx.cF[2]),
-    };
+    return { far: roLength(cx.C), seen: roLength(cx.cF) };
   }
 
   // The search's own point: a named result at cosine distance below 1e-7 from a search and
   // of the same length within 1e-6 sits on that search's marker; it gets no stem and no label.
+  // A row whose length is not a number above zero (an all-zero row, or one holding a value
+  // that is not a number) is no search's own point; nor is any point a zero-length search's.
   function roIsOwnPoint(cx, i, searches) {
     var len = roRowLength(cx, i);
-    if (!(len > 0)) return false;
-    for (var s of searches) {
-      if (!(s.length > ET.math.RELATIVE_ZERO_LENGTH)) continue;
+    return (
+      len > 0 &&
+      searches.some(function (s) {
+        return roIsOwnOf(cx, i, len, s);
+      })
+    );
+  }
+
+  function roIsOwnOf(cx, i, len, s) {
+    if (s.length > ET.math.RELATIVE_ZERO_LENGTH) {
       var cos = roHeight(cx, i, s.u) / len;
-      if (1 - cos < RO_OWN_DISTANCE && Math.abs(len - s.length) < RO_OWN_LENGTH) return true;
+      return 1 - cos < RO_OWN_DISTANCE && Math.abs(len - s.length) < RO_OWN_LENGTH;
     }
     return false;
   }
 
-  function roSegment(list, a, b, colour, alpha, width, kind, dash) {
-    list.segments.push({ x0: a.x, y0: a.y, x1: b.x, y1: b.y, colour: colour, alpha: alpha, width: width, dash: dash || null, kind: kind });
+  // A line from a to b. `style` is { colour, alpha, width, kind } and, for a broken line, dash.
+  function roSegment(list, a, b, style) {
+    list.segments.push({ x0: a.x, y0: a.y, x1: b.x, y1: b.y, colour: style.colour, alpha: style.alpha, width: style.width, dash: style.dash || null, kind: style.kind });
   }
 
-  function roText(list, x, y, text, align, colour, alpha, kind, extra) {
-    var t = { x: x, y: y, text: text, align: align, colour: colour, alpha: alpha, kind: kind };
+  // A text at (x, y). `style` is { align, colour, alpha, kind } and, optionally, `extra`: more
+  // keys for the entry (a height, a point's index, a search's letter).
+  function roText(list, x, y, text, style) {
+    var t = { x: x, y: y, text: text, align: style.align, colour: style.colour, alpha: style.alpha, kind: style.kind };
+    var extra = style.extra;
     if (extra) for (var k in extra) if (Object.hasOwn(extra, k)) t[k] = extra[k];
     list.texts.push(t);
   }
@@ -11747,7 +11762,8 @@ ET.modes = (function () {
   function roPlain(list, cx) {
     var p = cx.at(-cx.cF[0], -cx.cF[1], -cx.cF[2]);
     var n = roOriginMark(list, cx, p, 1);
-    roText(list, p.x + 12 * cx.dpr, p.y, "origin · truly " + n.far.toFixed(2) + " from the centre, " + n.seen.toFixed(2) + " of it visible", "left", cx.ink, 1, "origin");
+    var text = "origin · truly " + n.far.toFixed(2) + " from the centre, " + n.seen.toFixed(2) + " of it visible";
+    roText(list, p.x + 12 * cx.dpr, p.y, text, { align: "left", colour: cx.ink, alpha: 1, kind: "origin" });
   }
 
   // ----- the relative view -----
@@ -11763,7 +11779,7 @@ ET.modes = (function () {
   function roRuler(list, cx, s0, foot, top, alpha) {
     var a = roAlong(cx, s0, foot);
     var b = roAlong(cx, s0, top);
-    roSegment(list, a, b, s0.colour, alpha, cx.dpr, "ruler");
+    roSegment(list, a, b, { colour: s0.colour, alpha: alpha, width: cx.dpr, kind: "ruler" });
     list.ruler = { x0: a.x, y0: a.y, x1: b.x, y1: b.y, from: foot, to: top };
   }
 
@@ -11773,7 +11789,7 @@ ET.modes = (function () {
     for (var k = first; k <= last; k++) {
       var s = k * RO_TICK_STEP;
       var p = roAlong(cx, s0, s);
-      roSegment(list, { x: p.x - 4 * cx.dpr, y: p.y }, { x: p.x + 4 * cx.dpr, y: p.y }, s0.colour, 0.75 * m, cx.dpr, "tick");
+      roSegment(list, { x: p.x - 4 * cx.dpr, y: p.y }, { x: p.x + 4 * cx.dpr, y: p.y }, { colour: s0.colour, alpha: 0.75 * m, width: cx.dpr, kind: "tick" });
       // a level ring: every point at this height, whatever its side
       var pts = new Float32Array(2 * (RO_RING_SEGMENTS + 1));
       var b = s * s0.f[1] - cx.cF[1];
@@ -11784,7 +11800,7 @@ ET.modes = (function () {
         pts[2 * j + 1] = q.y;
       }
       list.rings.push({ points: pts, colour: s0.colour, alpha: 0.16 * m, kind: "level", dash: null });
-      roText(list, p.x - 9 * cx.dpr, p.y, s.toFixed(1), "right", s0.colour, 0.75 * m, "tick", { height: s });
+      roText(list, p.x - 9 * cx.dpr, p.y, s.toFixed(1), { align: "right", colour: s0.colour, alpha: 0.75 * m, kind: "tick", extra: { height: s } });
     }
   }
 
@@ -11806,13 +11822,13 @@ ET.modes = (function () {
   // Ruler B, in the plane it shares with A, along B's own direction.
   function roSecondRuler(list, cx, sB, foot, m) {
     var to = Math.max(1, sB.length) + RO_TOP_MARGIN;
-    roSegment(list, roAlong(cx, sB, foot), roAlong(cx, sB, to), sB.colour, 0.55 * m, cx.dpr, "ruler2");
+    roSegment(list, roAlong(cx, sB, foot), roAlong(cx, sB, to), { colour: sB.colour, alpha: 0.55 * m, width: cx.dpr, kind: "ruler2" });
     for (var k = 1; k <= 9; k++) {
       var s = k * RO_TICK_STEP;
       var p = roAlong(cx, sB, s);
       if (p.y < -20 * cx.dpr || p.y > cx.H + 20 * cx.dpr) continue;
       list.marks.push({ x: p.x, y: p.y, r: 1.8 * cx.dpr, colour: sB.colour, alpha: 0.8 * m, kind: "dot" });
-      roText(list, p.x + 8 * cx.dpr, p.y + 8 * cx.dpr, s.toFixed(1), "left", sB.colour, 0.6 * m, "tick", { height: s });
+      roText(list, p.x + 8 * cx.dpr, p.y + 8 * cx.dpr, s.toFixed(1), { align: "left", colour: sB.colour, alpha: 0.6 * m, kind: "tick", extra: { height: s } });
     }
   }
 
@@ -11850,16 +11866,40 @@ ET.modes = (function () {
     return (ranks ? ranks + " " : "") + str;
   }
 
-  function roStems(list, cx, input, rel, s0, searches, m) {
+  // The searches that pin an axis, in the order they pin them.
+  function roPinned(rel, searches) {
     var pinned = [];
     for (var pin of rel.pinned) {
-      var found = searches.find(function (s) {
-        return s.letter === pin.letter;
-      });
+      var found = roByLetter(searches, pin.letter);
       if (found) pinned.push(found);
     }
-    var unit = !!rel.unit?.unit;
-    var many = searches.length > 1;
+    return pinned;
+  }
+
+  function roByLetter(searches, letter) {
+    return searches.find(function (s) {
+      return s.letter === letter;
+    });
+  }
+
+  // One named result: its stem to the ruler and, when labels are wanted, its text. `how` is
+  // { s0, m, pinned, unit, many, labels }.
+  function roStem(list, cx, it, i, how) {
+    var s0 = how.s0;
+    var h = roHeight(cx, i, s0.u);
+    var p = roVectorAt(cx, cx.X, i * cx.D);
+    var r = roAlong(cx, s0, h);
+    roSegment(list, p, r, { colour: s0.colour, alpha: 0.42 * how.m, width: cx.dpr, kind: "stem" });
+    list.results.push({ index: i, x: p.x, y: p.y, rulerX: r.x, rulerY: r.y, height: h });
+    if (how.labels) {
+      var right = p.x > cx.W * 0.78;
+      var text = roResultText(cx, it, i, how.pinned, how.unit, how.many);
+      roText(list, p.x + (right ? -9 : 9) * cx.dpr, p.y, text, { align: right ? "right" : "left", colour: cx.ink, alpha: 0.95, kind: "result", extra: { height: h, index: i } });
+    }
+  }
+
+  function roStems(list, cx, input, rel, s0, searches, m) {
+    var how = { s0: s0, m: m, pinned: roPinned(rel, searches), unit: !!rel.unit?.unit, many: searches.length > 1, labels: input.labels };
     var seen = new Set();
     var N = cx.X.length / cx.D;
     for (var it of input.named || []) {
@@ -11867,15 +11907,56 @@ ET.modes = (function () {
       if (!Number.isInteger(i) || i < 0 || i >= N || seen.has(i)) continue;
       seen.add(i);
       if (roIsOwnPoint(cx, i, searches)) continue;
-      var h = roHeight(cx, i, s0.u);
-      var p = roVectorAt(cx, cx.X, i * cx.D);
-      var r = roAlong(cx, s0, h);
-      roSegment(list, p, r, s0.colour, 0.42 * m, cx.dpr, "stem");
-      list.results.push({ index: i, x: p.x, y: p.y, rulerX: r.x, rulerY: r.y, height: h });
-      if (input.labels) {
-        var right = p.x > cx.W * 0.78;
-        roText(list, p.x + (right ? -9 : 9) * cx.dpr, p.y, roResultText(cx, it, i, pinned, unit, many), right ? "right" : "left", cx.ink, 0.95, "result", { height: h, index: i });
-      }
+      roStem(list, cx, it, i, how);
+    }
+  }
+
+  // The reranker saw only the candidates: everything above this mark.
+  function roCut(list, cx, cut, s0, m) {
+    if (!cut || !roFinite(cut.height)) return;
+    var cp = roAlong(cx, s0, cut.height);
+    roSegment(list, { x: cp.x - 150 * cx.dpr, y: cp.y }, { x: cp.x + 150 * cx.dpr, y: cp.y }, { colour: cx.ink, alpha: 0.9 * m, width: cx.dpr, kind: "cut", dash: [4 * cx.dpr, 4 * cx.dpr] });
+    roText(list, cp.x + 156 * cx.dpr, cp.y, cut.sent + " candidates above this line went to the reranker", { align: "left", colour: cx.ink, alpha: 0.85 * m, kind: "cut" });
+  }
+
+  // The origin is marked whenever height 0 is inside the window shown (spec c31); Show the
+  // origin widens the window to include it and, on a unit-length set, adds the unit circle.
+  function roOriginOnRuler(list, cx, rel, s0, span) {
+    var w = span.window;
+    var inside = span.showOrigin || (w.bottom <= 0 && w.top >= 0);
+    if (!inside) return;
+    var m = span.m;
+    var op = roAlong(cx, s0, 0);
+    roOriginMark(list, cx, op, m);
+    roText(list, op.x + 12 * cx.dpr, op.y, "origin (0, 0, … , 0)", { align: "left", colour: cx.ink, alpha: m, kind: "origin" });
+    if (span.showOrigin && rel.unit?.unit === true) roUnitCircle(list, cx, m);
+  }
+
+  // The settled view: the ruler as exact, its ticks and title, the cut-off, the origin, the
+  // second ruler and the stems. `span` is { m, window, showOrigin, foot, top }.
+  function roSettled(list, cx, input, rel, searches, s0, span) {
+    var m = span.m;
+    roRuler(list, cx, s0, span.foot, span.top, 0.55 * m);
+    roTicks(list, cx, s0, span.foot, span.top, m);
+    var tp = roAlong(cx, s0, span.top);
+    roText(list, tp.x - 9 * cx.dpr, tp.y, rel.measure + " to " + s0.letter, { align: "right", colour: s0.colour, alpha: 0.8 * m, kind: "title" });
+    roCut(list, cx, input.cut, s0, m);
+    roOriginOnRuler(list, cx, rel, s0, span);
+    if (rel.pinned.length >= 2) {
+      var sB = roByLetter(searches, rel.pinned[1].letter);
+      if (sB) roSecondRuler(list, cx, sB, span.foot, m);
+    }
+    roStems(list, cx, input, rel, s0, searches, m);
+  }
+
+  // The searches themselves, each at its raw query, with its letter and name beside it
+  // ("A · Rice", the reference's form), placed before any result label (t19).
+  function roSearchMarks(list, cx, searches) {
+    for (var s of searches) {
+      var qp = roVectorAt(cx, s.query, 0);
+      list.marks.push({ x: qp.x, y: qp.y, r: 10 * cx.dpr, colour: s.colour, alpha: 1, kind: "search" });
+      var label = s.name ? s.letter + " · " + roShorten(s.name, RO_TEXT_MAX) : String(s.letter);
+      roText(list, qp.x + 15 * cx.dpr, qp.y + 4 * cx.dpr, label, { align: "left", colour: s.colour, alpha: 1, kind: "search", extra: { letter: s.letter } });
     }
   }
 
@@ -11884,49 +11965,23 @@ ET.modes = (function () {
     var w = roWindow(cx, rel, s0);
     var showOrigin = !!input.showOrigin;
     var foot = showOrigin ? 0 : Math.max(0, w.bottom - RO_FOOT_MARGIN);
-    var top = w.top;
+    var span = { m: m, window: w, showOrigin: showOrigin, foot: foot, top: w.top };
     if (rel.settled) {
-      roRuler(list, cx, s0, foot, top, 0.55 * m);
-      roTicks(list, cx, s0, foot, top, m);
-      var tp = roAlong(cx, s0, top);
-      roText(list, tp.x - 9 * cx.dpr, tp.y, rel.measure + " to " + s0.letter, "right", s0.colour, 0.8 * m, "title");
-      if (input.cut && roFinite(input.cut.height)) {
-        // the reranker saw only the candidates: everything above this mark
-        var cp = roAlong(cx, s0, input.cut.height);
-        roSegment(list, { x: cp.x - 150 * cx.dpr, y: cp.y }, { x: cp.x + 150 * cx.dpr, y: cp.y }, cx.ink, 0.9 * m, cx.dpr, "cut", [4 * cx.dpr, 4 * cx.dpr]);
-        roText(list, cp.x + 156 * cx.dpr, cp.y, input.cut.sent + " candidates above this line went to the reranker", "left", cx.ink, 0.85 * m, "cut");
-      }
-      // the origin is marked whenever height 0 is inside the window shown (spec c31); Show the
-      // origin widens the window to include it and, on a unit-length set, adds the unit circle
-      if (showOrigin || (w.bottom <= 0 && w.top >= 0)) {
-        var op = roAlong(cx, s0, 0);
-        roOriginMark(list, cx, op, m);
-        roText(list, op.x + 12 * cx.dpr, op.y, "origin (0, 0, … , 0)", "left", cx.ink, m, "origin");
-        if (showOrigin && rel.unit?.unit === true) roUnitCircle(list, cx, m);
-      }
-      if (rel.pinned.length >= 2) {
-        var sB = searches.find(function (s) {
-          return s.letter === rel.pinned[1].letter;
-        });
-        if (sB) roSecondRuler(list, cx, sB, foot, m);
-      }
-      roStems(list, cx, input, rel, s0, searches, m);
+      roSettled(list, cx, input, rel, searches, s0, span);
     } else {
       // turning: ruler A's line only, faint; it is not drawn as exact
-      roRuler(list, cx, s0, foot, top, 0.25 * m);
+      roRuler(list, cx, s0, foot, w.top, 0.25 * m);
     }
-    // the searches themselves, each at its raw query, with its letter and name beside it
-    // ("A · Rice", the reference's form), placed before any result label (t19)
-    for (var s of searches) {
-      var qp = roVectorAt(cx, s.query, 0);
-      list.marks.push({ x: qp.x, y: qp.y, r: 10 * cx.dpr, colour: s.colour, alpha: 1, kind: "search" });
-      var label = s.name ? s.letter + " · " + roShorten(s.name, RO_TEXT_MAX) : String(s.letter);
-      roText(list, qp.x + 15 * cx.dpr, qp.y + 4 * cx.dpr, label, "left", s.colour, 1, "search", { letter: s.letter });
-    }
+    roSearchMarks(list, cx, searches);
+  }
+
+  // There is a stage to draw on: a width and a height that are numbers above zero.
+  function roSized(input) {
+    return !!input && input.width > 0 && input.height > 0;
   }
 
   function roUsable(input) {
-    if (!input || !(input.width > 0) || !(input.height > 0)) return false;
+    if (!roSized(input)) return false;
     var D = input.dimension;
     if (!Number.isInteger(D) || D < 1) return false;
     if (!input.frame || input.frame.length < 3 * D || !input.centre || input.centre.length < D) return false;
@@ -11948,9 +12003,7 @@ ET.modes = (function () {
         .map(function (s) {
           return roSearch(cx, s);
         });
-      var s0 = searches.find(function (s) {
-        return s.letter === rel.pinned[0].letter;
-      });
+      var s0 = roByLetter(searches, rel.pinned[0].letter);
       if (s0 && s0.length > ET.math.RELATIVE_ZERO_LENGTH) {
         roRelative(list, cx, input, rel, searches, s0);
         return list;
@@ -12057,7 +12110,7 @@ ET.modes = (function () {
     var first = [];
     var results = [];
     texts.forEach(function (t, k) {
-      if (RO_FIRST_KINDS.indexOf(t.kind) >= 0) first.push({ t: t, k: k });
+      if (RO_FIRST_KINDS.includes(t.kind)) first.push({ t: t, k: k });
       else results.push({ t: t, k: k });
     });
     first.sort(function (a, b) {
@@ -12092,55 +12145,78 @@ ET.modes = (function () {
     return rec;
   }
 
-  function roPlaceLabels(layer, list, doc) {
-    if (!layer) return 0;
-    var d = doc || layer.ownerDocument;
+  // The spans kept for a layer, made on first use.
+  function roPool(layer) {
     var pool = RO_SPANS ? RO_SPANS.get(layer) : layer._roPool;
     if (!pool) {
       pool = { spans: [] };
       if (RO_SPANS) RO_SPANS.set(layer, pool);
       else layer._roPool = pool;
     }
-    var used = 0;
-    if (list && d) {
-      var dpr = Number(list.dpr) > 0 ? Number(list.dpr) : 1;
-      var outline = roOutline(typeof list.paper === "string" ? list.paper : RO_PAPER);
-      var boxes = [];
-      for (var t of roOrder(list.texts || [])) {
-        if (used >= RO_LABEL_POOL) break;
-        var str = String(t.text);
-        var x = t.x / dpr;
-        var y = t.y / dpr;
-        if (!roFinite(x) || !roFinite(y) || !roFits(boxes, x, y, str, t.align)) continue;
-        var rec = roSpanFor(layer, d, pool, used);
-        if (rec.text !== str) {
-          rec.el.textContent = str; // untrusted text is text, never markup
-          rec.text = str;
-        }
-        if (rec.colour !== t.colour) {
-          rec.el.style.color = t.colour;
-          rec.colour = t.colour;
-        }
-        if (rec.outline !== outline) {
-          rec.el.style.textShadow = outline;
-          rec.outline = outline;
-        }
-        var shift = t.align === "right" ? "-100%" : t.align === "center" ? "-50%" : "0";
-        rec.el.style.transform = "translate(" + x.toFixed(1) + "px, " + y.toFixed(1) + "px) translate(" + shift + ", -50%)";
-        rec.el.style.opacity = String(Math.round(Math.min(1, Math.max(0, t.alpha)) * 100) / 100);
-        if (!rec.shown) {
-          rec.el.style.display = "";
-          rec.shown = true;
-        }
-        used++;
-      }
+    return pool;
+  }
+
+  function roShift(align) {
+    if (align === "right") return "-100%";
+    if (align === "center") return "-50%";
+    return "0";
+  }
+
+  // One span made to show one text at (x, y) in CSS pixels; only what changed is written.
+  function roFill(rec, t, str, x, y, outline) {
+    if (rec.text !== str) {
+      rec.el.textContent = str; // untrusted text is text, never markup
+      rec.text = str;
     }
+    if (rec.colour !== t.colour) {
+      rec.el.style.color = t.colour;
+      rec.colour = t.colour;
+    }
+    if (rec.outline !== outline) {
+      rec.el.style.textShadow = outline;
+      rec.outline = outline;
+    }
+    rec.el.style.transform = "translate(" + x.toFixed(1) + "px, " + y.toFixed(1) + "px) translate(" + roShift(t.align) + ", -50%)";
+    rec.el.style.opacity = String(Math.round(Math.min(1, Math.max(0, t.alpha)) * 100) / 100);
+    if (!rec.shown) {
+      rec.el.style.display = "";
+      rec.shown = true;
+    }
+  }
+
+  // Places the list's texts, in roOrder's order, and returns how many spans are in use.
+  function roPlaceTexts(layer, list, d, pool) {
+    var used = 0;
+    var dpr = Number(list.dpr) > 0 ? Number(list.dpr) : 1;
+    var outline = roOutline(typeof list.paper === "string" ? list.paper : RO_PAPER);
+    var boxes = [];
+    for (var t of roOrder(list.texts || [])) {
+      if (used >= RO_LABEL_POOL) break;
+      var str = String(t.text);
+      var x = t.x / dpr;
+      var y = t.y / dpr;
+      if (!roFinite(x) || !roFinite(y) || !roFits(boxes, x, y, str, t.align)) continue;
+      roFill(roSpanFor(layer, d, pool, used), t, str, x, y, outline);
+      used++;
+    }
+    return used;
+  }
+
+  function roHideFrom(pool, used) {
     for (var k = used; k < pool.spans.length; k++) {
       if (pool.spans[k].shown) {
         pool.spans[k].el.style.display = "none";
         pool.spans[k].shown = false;
       }
     }
+  }
+
+  function roPlaceLabels(layer, list, doc) {
+    if (!layer) return 0;
+    var d = doc || layer.ownerDocument;
+    var pool = roPool(layer);
+    var used = list && d ? roPlaceTexts(layer, list, d, pool) : 0;
+    roHideFrom(pool, used);
     return used;
   }
 
