@@ -971,7 +971,7 @@ The settings that `setSearchSettings` accepts:
 | `k` | 3 to 100 | 8 | Results per search when no reranker runs. |
 | `candidates` | 3 to 100 | 50 | Nearest named points sent to the reranker. |
 | `top` | 3 to `candidates` | 20 | Reranked candidates kept as the results. |
-| `lit` | `"even"`, `"close"`, `"named"` | `"even"` | What is lit: every point within the result radius, evenly; the same with nearer points lit more strongly; or the results only. |
+| `lit` | `"even"`, `"close"`, `"named"`, `"all"` | `"even"` | What is lit: every point within the result radius, evenly; the same with nearer points lit more strongly; the results only; or, with `"all"` (shown as "everything, results highlighted"), every point within the radius fully lit while every other point keeps its usual brightness instead of being dimmed. Under `"all"` the counts in `info().search` (`litCount`, `sharedCount`, `insideCount`) still count results, as under `"even"`. |
 | `distances` | `true`, `false` | `false` | Show each result's distance, and how much farther it is than the nearest. |
 | `rerank` | `true`, `false` | `false` | Use the `rerank` callback. Stays `false` when there is no callback or the data carries no text. |
 | `pointOfView` | `"A"` to `"D"`, or `null` | `null` | Measure one search from its own point of view: every dimension is scaled by the size of that search's query there. |
@@ -991,7 +991,7 @@ starting values of `k`, `candidates`, `top` and `lit` can be given at mount.
 | `searchK` | `8` | The starting `k`. |
 | `searchCandidates` | `50` | The starting `candidates`. |
 | `searchTop` | `20` | The starting `top`. |
-| `searchLit` | `"even"` | The starting `lit`. |
+| `searchLit` | `"even"` | The starting `lit`: `"even"`, `"close"`, `"named"` or `"all"`; anything else is `"even"`. |
 | `onSearchChange(search)` | none | Called with the report each time it changes. |
 
 ### What `info()` reports about search
@@ -1217,6 +1217,14 @@ picture.** It adds no callback and no request, changes no vector and nothing in
 the data file. Turning it on or off, adding searches and showing the origin send
 nothing anywhere. With the setting off, every view is exactly as it was.
 
+**The relative view is drawn sharp.** As the view turns into the relative view,
+the viewer takes away the depth blur (a point is no longer drawn larger and
+softer for being in front of or behind the middle) and turns the glow down to
+0.2 of full (from 0.55 on a dark page and 0.3 on a light one), so each point is
+a separate dot and heights can be read off the ruler. It is not a setting and
+there is nothing to pass; the plain view is drawn exactly as before. Trails are
+unchanged.
+
 There are two settings, each on or off, both off to begin with, and a third,
 `rest`, with three levels:
 
@@ -1224,7 +1232,7 @@ There are two settings, each on or off, both off to begin with, and a third,
 |---------|---------|
 | `relative` | Relative itself. It has an effect in Tumble, with at least one search that gives an axis; otherwise Tumble is the plain view. It is kept in every mode, so it is still on when the visitor comes back to Tumble. |
 | `showOrigin` | Show the origin. In the relative view it zooms out to include the all-zero vector. In the plain Tumble view, with or without a search, it marks where the all-zero vector falls, with its true distance from the centre and how much of that distance the picture shows. |
-| `rest` | How bright the points that are not results are in the relative view: `"faint"`, `"visible"` or `"bright"` (the default). A point the Lit setting leaves unlit gets the lit value `base + scale × g²`, where `g` (0 to 1) says how close it is to the nearest search in plain cosine, from the median to the closest other point: faint is 0 + 0.2 g², visible 0.08 + 0.45 g², bright 0.2 + 0.6 g². Results keep their lit values exactly at every level. It changes nothing outside the relative view. With Lit set to "by closeness" every point is usually lit already, so it then changes nothing. |
+| `rest` | How bright the points that are not results are in the relative view: `"faint"`, `"visible"` or `"bright"` (the default). It has no effect while the search setting `lit` is `"all"`, which draws those points at their usual brightness (the setting is kept, and the panel's menu is disabled meanwhile). A point the Lit setting leaves unlit gets the lit value `base + scale × g²`, where `g` (0 to 1) says how close it is to the nearest search in plain cosine, from the median to the closest other point: faint is 0 + 0.2 g², visible 0.08 + 0.45 g², bright 0.2 + 0.6 g². Results keep their lit values exactly at every level. It changes nothing outside the relative view. With Lit set to "by closeness" every point is usually lit already, so it then changes nothing. |
 
 Each form of the viewer has its own way to set them:
 

@@ -2162,6 +2162,10 @@ ET.viewer = (function () {
       out.gain = 0.55;
       out.bloom = 0.3;
     }
+    // The relative view is drawn sharp (deviation d8): by its mix, no depth blur and less
+    // bloom. After the theme's bloom, so that is the value blended from; nothing is touched
+    // at mix 0, so the plain view's draw state is exactly as it was.
+    if (relMix > 0) sharpenRelative(out, relMix);
     // Many full-weight points pile up into a white (or, in ink, black) ball, so the
     // overall brightness comes down as their number goes up.
     var crowd = crowding(v);
@@ -2175,6 +2179,25 @@ ET.viewer = (function () {
     if (v.search.filter > 0) out.filter = v.search.filter;
     out.clear = !!v.needClear;
     return out;
+  }
+
+  // The relative view's depth of field and bloom at mix 1 (deviation d8): a height is read off
+  // a ruler, so no point is blurred by its depth, and the glow is cut so that a crowded cloud
+  // stays separate dots. The reference page draws its relative view this way.
+  var RELATIVE_DEPTH_OF_FIELD = 0;
+  var RELATIVE_BLOOM = 0.2;
+
+  // Blend the two keys of a draw state toward the relative view's by `mix` in (0, 1], from
+  // the value each would otherwise have (the mode's or the theme's, else the renderer's
+  // default). Bloom is never raised: a value already below RELATIVE_BLOOM is kept. Written
+  // so that mix 1 gives the targets exactly. The wires' key (wireDepthOfField) is left alone:
+  // Tumble draws no wires, only the fading ones of a change of view from Lattice.
+  function sharpenRelative(out, mix) {
+    var defaults = ET.renderer.DEFAULTS;
+    var dof = typeof out.depthOfField === "number" ? out.depthOfField : defaults.depthOfField;
+    var bloom = typeof out.bloom === "number" ? out.bloom : defaults.bloom;
+    out.depthOfField = dof * (1 - mix) + RELATIVE_DEPTH_OF_FIELD * mix;
+    out.bloom = bloom * (1 - mix) + Math.min(bloom, RELATIVE_BLOOM) * mix;
   }
 
   // Brightness factor for crowded sets, 1 up to a light load of CROWD_REF. The light
@@ -3196,6 +3219,7 @@ ET.viewer = (function () {
       // The relative view (docs/relative-interface.md, "Viewer (t9, t10)").
       relActive: false, // the relative view is shown this frame
       litRelative: false, // the lit values uploaded hold the gradient
+      litHidden: false, // the lit values uploaded hold 0 for the rest under Lit "all" (Only results)
       relKey: "", // what onSearchChange last saw of the relative view
       gradient: null, // { shown, values } the gradient for the searches shown
       heights: null, // { shown, list } heights and cosines of the results shown
@@ -3792,10 +3816,21 @@ ET.viewer = (function () {
     var shared = new Uint8Array(n);
     lit.set(s.lit.lit.subarray(0, Math.min(n, s.lit.lit.length)));
     shared.set(s.lit.shared.subarray(0, Math.min(n, s.lit.shared.length)));
+    // Lit "all" gives every point that is not a result the constant s.lit.rest (d8). While
+    // Focus's Only results hides the points that are not results, they go up at 0 instead,
+    // which the mode's unlitGain 0 does not draw: Only results wins.
+    var showsRest = s.lit.rest > 0;
+    s.litHidden = showsRest && s.hideUnlit;
+    if (s.litHidden) {
+      var inside = s.lit.inside;
+      var k = Math.min(n, inside.length);
+      for (var h = 0; h < k; h++) if (inside[h] === 0) lit[h] = 0;
+    }
     // In the relative view, points the searches do not light get the faint gradient; the
     // lit values above 0 are kept exactly (results follow the Lit setting as without it).
+    // Under Lit "all" there is no gradient: the rest keeps its constant, whatever The rest says.
     s.litRelative = s.relActive;
-    var grad = s.relActive ? relativeGradient(v) : null;
+    var grad = s.relActive && !showsRest ? relativeGradient(v) : null;
     if (grad) {
       var m = Math.min(n, grad.length);
       for (var i = 0; i < m; i++) if (!(lit[i] > 0)) lit[i] = grad[i];
@@ -4316,6 +4351,9 @@ ET.viewer = (function () {
   function hiddenPoint(v, i) {
     var lit = v.search.lit;
     if (!v.search.hideUnlit || !lit) return false;
+    // Under Lit "all" every point has a lit value above 0; the hidden ones are those inside
+    // no search, exactly the points "the results, evenly" leaves at 0.
+    if (lit.rest > 0) return lit.inside[i] === 0;
     return lit.lit[i] <= 0; // lit values are finite, in [0, 1]
   }
 
@@ -4723,12 +4761,15 @@ ET.viewer = (function () {
   }
 
   // Once a frame, before drawing: whether the relative view is shown. When that changes
-  // the lit values go up again, with or without the gradient.
+  // the lit values go up again, with or without the gradient. So do they when, under Lit
+  // "all", Focus's Only results starts or stops hiding the rest.
   function syncRelativeLit(v, st) {
     var s = v.search;
     var active = relativeShown(v, st);
     s.relActive = active;
-    if (s.lit && s.litUploaded && active !== s.litRelative) uploadLit(v);
+    if (!s.lit || !s.litUploaded) return;
+    var hidden = s.lit.rest > 0 && s.hideUnlit;
+    if (active !== s.litRelative || hidden !== s.litHidden) uploadLit(v);
   }
 
   // Once a frame, after the state is kept: the panel and host hear of a change in what
@@ -4785,8 +4826,9 @@ ET.viewer = (function () {
       if (relettered) notifyModeSearch(v);
     }
     // The rest changes only the lit values of the relative view shown; with it not shown
-    // nothing is uploaded.
-    if (restChanged && v.search.lit && v.search.litUploaded && v.search.litRelative) uploadLit(v);
+    // nothing is uploaded, nor under Lit "all", which draws the rest at its constant.
+    var graded = v.search.lit && !(v.search.lit.rest > 0);
+    if (restChanged && graded && v.search.litUploaded && v.search.litRelative) uploadLit(v);
     searchChanged(v);
     invalidate(v);
     return { relative: next.relative, showOrigin: next.showOrigin, rest: next.rest };
@@ -5384,6 +5426,13 @@ ET.viewer = (function () {
     makeProjector: makeProjector,
     SHADOW: SHADOW,
     PAN_STEP: PAN_STEP,
+    RELATIVE_DEPTH_OF_FIELD: RELATIVE_DEPTH_OF_FIELD,
+    RELATIVE_BLOOM: RELATIVE_BLOOM,
+    // Whether point i of a mounted handle is hidden this frame (Focus's Only results).
+    hiddenPoint: function (handle, i) {
+      var v = handle?._viewer;
+      return !!v && !v.destroyed && hiddenPoint(v, i);
+    },
     // The relative overlay's results and cut-off for a mounted handle (t10 draws them).
     relativeOverlayData: function (handle) {
       var v = handle?._viewer;

@@ -194,6 +194,21 @@ drawing while it is shown. It still drives the viewer only through the handle.
   (how bright the points that are not results are in the relative view). A change
   calls `handle.setRelative({ rest })`; it follows `search.relative.rest`. It is
   shown in Tumble only, and disabled (not hidden) while Relative is off.
+  It is also disabled while Relative is on and Lit is "everything, results
+  highlighted" (task t21, deviation d8): that setting draws every point that is
+  not a result at its usual brightness, so The rest decides nothing. The
+  select keeps showing the setting and the label's title becomes "Lit is set to
+  everything, results highlighted: every point that is not a result is drawn at
+  its usual brightness, so this setting does nothing."; another Lit setting
+  restores the usual title and enables it.
+- **Lit has a fourth option** (task t21, deviation d8): the menu
+  (`label.tumbler-search-lit`) lists `even` "the results, evenly", `close` "by
+  closeness: nearer is brighter", `named` "named results only" and, last,
+  `all` "everything, results highlighted". Choosing it calls
+  `handle.setSearchSettings({ lit: "all" })` like the others. Under it the
+  note's count reads "16 points lit (every other point is shown too)" (the
+  count is of results, as under the other settings), `usedText` says "lit:
+  everything, results highlighted", and the collapsed bar is unchanged.
   While Relative is checked in Tumble, **Face the searches** is hidden (the
   view is fitted by the search itself, so there is nothing to swing). It is shown again when
   Relative is unchecked.

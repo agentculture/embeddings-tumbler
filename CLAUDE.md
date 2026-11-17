@@ -95,7 +95,12 @@ build added, at the owner's request during live testing and recorded as
 deviations in `.devague/deliveries/`: moving the picture without turning it
 (the draw key `pan`; right-drag, Shift + drag, two fingers, arrow keys; the
 button is now "Reset view"), free axes that reuse the plain fit so the switch
-is fast on a phone, and no wipe of the picture when the search panel opens. The
+is fast on a phone, and no wipe of the picture when the search panel opens.
+Deviation d8 (the owner's decision of 2026-11-17) then made the relative view
+sharp (depth of field 0 and bloom 0.2 there, eased by the relative mix, in
+`js/src/50-viewer.js`) and added a fourth Lit setting in every view, `"all"`,
+"everything, results highlighted" (`js/src/26-search-sets.js`, the panel's
+menu; `docs/search-interface.md`, "Everything, results highlighted"). The
 owner's sign-off of the relative part of `docs/reference-differences.md` and the
 release are `(planned)`.
 

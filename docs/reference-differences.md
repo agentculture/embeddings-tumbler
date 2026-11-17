@@ -1144,6 +1144,14 @@ What was checked about the reference page itself, on 2026-11-17:
 - **Visible on comparable data:** yes *(read from the code; the browser test checks that "faint" lights fewer pixels than "bright", nobody has compared the levels with the reference by eye)*.
 - **Decided by:** owner, by the decision of 2026-11-17 (the brightest of three examples as the default, with a control), recorded as deviation d6.
 
+### A fourth Lit choice: everything, results highlighted
+
+- **Reference:** no Lit menu. Every article is always drawn, at a base brightness that rises with its similarity to the nearest search, and the results are drawn larger and brighter over that.
+- **Build:** the Lit menu gains a fourth choice, last in the menu, "everything, results highlighted" (the setting `lit: "all"`); the default is still "the results, evenly". Every point that is not a result is drawn at the brightness it has with no search (one constant lit value, about 0.4366, where the renderer's brightness factor is 1; about a tenth larger than with no search, because the renderer ties size to the same value), and every result is fully lit, as under "the results, evenly": 2.2 times as bright and 1.5 times the size. It is a setting of search in every view, not only the relative one. In the relative view it replaces the gradient of The rest by that constant, so The rest is disabled (not hidden) while it is chosen, with a title that says why. The counts ("8 points lit") still count results. In Focus, Only results still hides the points that are not results. In Lattice the wires that do not join two results fade to about half instead of to 0.07, and in Wander the far points are dimmed less by distance than with no search (both follow from the renderer's rules, which were not changed). Unlike the reference, the points that are not results are all equally bright, whatever their similarity to the search. Measured in Chromium as in "The 2-D canvas look": the stage's summed light is 8.4 million under "named results only", 14.5 million under this choice and 20.4 million for this choice drawn with the bloom and depth of field from before; among points with no other point within 14 px, the light within 6 px of each result is at least 47,692 and of each other point at most 24,604. In the crowded part of the cloud the picture is paler than under the other choices: 5,187 pixels at or near white, against 228 under "the results, evenly" with The rest "bright". With Relative off, the stage carries 28.4 million against 24.3 million with no search.
+- **Why:** the owner, asked what the Lit choices should show, answered: "A new option where everything is visible and sharp, but the results highlighted", with no new control.
+- **Visible on comparable data:** yes *(measured in the build's own pictures by `tests/browser/test_relative_sharp.py`; nobody has compared it with the reference by eye)*.
+- **Decided by:** owner, by the decision of 2026-11-17, recorded as deviation d8.
+
 ## Relative search: the ruler, the stems and the labels
 
 ### Short tick marks on ruler A
@@ -1303,10 +1311,10 @@ What was checked about the reference page itself, on 2026-11-17:
 ### The 2-D canvas look
 
 - **Reference:** a 2-D canvas: each article a soft sprite in its topic's colour, added light, a fading trail; no bloom or depth of field.
-- **Build:** the viewer's WebGL renderer, as in every view, with its bloom, trails and colours; nearly flat in the relative view (the reference's perspective, 60) and level until the person tilts it.
-- **Why:** relative is a setting of the one viewer, not a second renderer.
-- **Visible on comparable data:** yes *(read from the code)*.
-- **Decided by:** owner (follows from the spec's first decision).
+- **Build:** the viewer's WebGL renderer, as in every view, with its colours; nearly flat in the relative view (the reference's perspective, 60) and level until the person tilts it. In the relative view it draws with no depth blur (depth of field 0, against 1.1 in the plain view) and with bloom 0.2 (against 0.55 on a dark stage and 0.3 on a light one; never raised), both eased in by the same mix as the turn, so the plain view is drawn exactly as before. The build first drew the relative view with the plain view's bloom and depth of field; the owner compared the two pages and said "The lit is faint in that case for us, and sharp on the demo/reference", tried a copy with depth of field 0 and bloom 0.2, and confirmed it. What remains different: some bloom (0.2 against none), and the trails, 0.17 s in the build as in every view against the reference's about 0.03 s. The Trails checkbox is unchanged, by the owner's decision. Measured in Chromium (SwiftShader, the shipped pair, Rice, The rest "bright", motion stopped, trails off, a 1280 × 648 stage), the same frame drawn with the new keys and with the earlier ones: 228 against 852 pixels at or near white, 33,583 against 48,322 pixels brighter than the sky, 480 against 414 separate bright spots.
+- **Why:** relative is a setting of the one viewer, not a second renderer; within it, heights are read off a ruler, so the relative view gives up the depth blur and most of the glow that made a crowded cloud melt together.
+- **Visible on comparable data:** yes *(the owner saw the earlier build and the trial copy beside the reference; the figures are from `tests/browser/test_relative_sharp.py`, which compares the build with itself, not with the reference page)*.
+- **Decided by:** owner, by the decision of 2026-11-17, recorded as deviation d8.
 
 ## Relative search: behaviour the reference does not have
 
@@ -1497,6 +1505,10 @@ Read the same in both pages' code *(read from the code)*:
 - **The rest's three levels** were compared with the reference as lit values
   and formulas, not as pictures; the browser test checks only that "faint"
   lights fewer and dimmer pixels than "bright".
+- **The sharp relative view and the fourth Lit choice** (deviation d8) were
+  measured in the build's own pictures, the build against itself; the build as
+  it is now has not been put beside the reference page again, on a screen or
+  by numbers.
 
 ## Relative search: sign-off
 

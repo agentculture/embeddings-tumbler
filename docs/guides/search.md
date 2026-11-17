@@ -33,7 +33,8 @@ Each of these has one meaning here, and the viewer uses them the same way.
 - The **radius** of a search is the distance of its farthest result.
 - A point is **lit** when it is within the radius of a search, whether it is
   named or not. Lit points are drawn bright. Every other point is dimmed, not
-  removed.
+  removed. (One setting of **Lit**, *everything, results highlighted*, leaves the
+  other points at their usual brightness instead.)
 
 ## Opening the page
 
@@ -147,9 +148,9 @@ so all of them work from the keyboard.
 | **The text box** | One search per line, up to four. The viewer searches a moment after you stop typing. |
 | **Relative** | Tumble only. Makes the first search the vertical axis, so a point's height is its vector measured along the search. See [Relative search](#relative-search). While it is on, **Face the searches** is not shown. |
 | **Show the origin** | Tumble only. Zooms out to include the all-zero vector, or, in the plain view, marks where it falls. See [Show the origin](#show-the-origin). |
-| **The rest** | Tumble only, and only while Relative is on. How bright the points that are not results are: *faint*, *visible* or *bright* (to begin with). See [What you see, and what it means](#what-you-see-and-what-it-means). |
+| **The rest** | Tumble only, and only while Relative is on. How bright the points that are not results are: *faint*, *visible* or *bright* (to begin with). See [What you see, and what it means](#what-you-see-and-what-it-means). It is switched off while Lit is *everything, results highlighted*, which already shows every point. |
 | **Face the searches** | Swings the view so that the searches are spread across the picture, then lets it move on. A new search does this once by itself; the button does it again. It does nothing in Focus, where the view is already fitted to the results. |
-| **Lit** | Which points are lit. *The results, evenly*: every point within the radius, all equally bright. *By closeness: nearer is brighter*: a variable lit power, where the nearest result is lit most strongly and points fade with distance, down to nothing a little beyond the radius. *Named results only*: just the results themselves. |
+| **Lit** | Which points are lit. *The results, evenly*: every point within the radius, all equally bright. *By closeness: nearer is brighter*: a variable lit power, where the nearest result is lit most strongly and points fade with distance, down to nothing a little beyond the radius. *Named results only*: just the results themselves. *Everything, results highlighted*: the fourth choice, described under the table. |
 | **Distance difference** | Writes the distances out. Each result in the lists shows its distance and how much farther it is than the nearest result, with a small bar, and each line on the picture shows its distance. |
 | **Results** | How many results each search has: 3 to 100, and 8 to begin with. More results also means a larger radius, so more points are lit. |
 | **From this search's point of view** | Off, or one of your searches. See below. |
@@ -183,6 +184,22 @@ distance.
 This is still a linear change, one fixed scale per dimension. It is another way
 of measuring, not a truer one, and the panel names it whenever it is on.
 
+**Everything, results highlighted** is for when you want to see a search
+without losing the rest of the picture. The other three choices dim every point
+that is not lit, so the picture becomes the search and little else. This one
+leaves every other point as bright as it is with no search, with its own colour,
+and draws the results on top of that: more than twice as bright and about a
+third larger. So you keep the whole cloud, its groups and its shape, and still
+see where the results fall in it. What counts as a result is the same as under
+*the results, evenly* (every point within the radius), and the panel's count,
+"8 points lit", still counts the results, not every point; the note adds "(every
+other point is shown too)". Two things to know: the other points are drawn
+about a tenth larger than with no search, because the viewer has one dial for a
+point's size and brightness; and where many points crowd together, the results
+among them stand out by size more than by brightness, since a crowd is already
+near the brightest the screen can show. The lists and the labels always say
+which points are the results.
+
 ## The four views, with a search
 
 The view buttons are under the panel. A search stays when you change view.
@@ -192,14 +209,18 @@ The view buttons are under the panel. A search stays when you change view.
   searches. In Tumble, the **Relative** setting
   can instead make the search the vertical axis (see
   [Relative search](#relative-search)). In Lattice, a wire between two lit points keeps its strength and
-  every other wire fades.
+  every other wire fades. (With Lit set to *everything, results highlighted*
+  the other wires fade only to about half, and in Wander the far points are
+  dimmed less by distance than with no search.)
 - **Focus** is the view made for search. It fits the picture to your searches
   and their results, so the results are spread across the picture instead of
   sitting wherever the tour happens to be. It keeps turning slowly. The results
   are numbered on the picture (`1`, or `A1` with several searches) and the
   full lists are laid beside it. In Focus you can also click a point to search
   from that point, and **Only results** hides everything that is not lit. With
-  no search, Focus fits the picture to every point.
+  no search, Focus fits the picture to every point. Only results hides the
+  points that are not results under every Lit setting, *everything, results
+  highlighted* included: the checkbox wins.
 
 ## Relative search
 
@@ -310,6 +331,21 @@ every such point some light and the closest ones most; *visible* is dimmer;
 **Lit** setting gives them and stay the brightest. With Lit set to *by
 closeness* every point is usually lit already, so The rest then changes
 nothing.
+
+With Lit set to *everything, results highlighted* there is no such gradient:
+every point that is not a result is drawn at its usual brightness, the same for
+all of them, and the results are highlighted over that. The rest then has
+nothing to decide, so its menu is switched off (it keeps showing your choice,
+and hovering over it says why) until you pick another Lit setting.
+
+**The relative view is drawn sharp.** In the other views a point far in front
+of or behind the middle of the picture is drawn larger and softer, and bright
+points glow, which gives the cloud depth. In the relative view you read heights
+off a ruler, so nothing is blurred by its depth and the glow is turned well
+down: each point stays a separate dot, and a crowded cloud does not melt into
+one white patch. The change comes in as the view turns into the relative view
+and goes as it turns back; the plain view is drawn exactly as before. Trails
+are as in every view, and the **Trails** checkbox switches them as always.
 
 ### Show the origin
 
