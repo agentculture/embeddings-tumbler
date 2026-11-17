@@ -242,6 +242,8 @@ skills.local.yaml
 
 # JavaScript coverage reports (node --test, scripts/js_coverage.py)
 js-coverage*.lcov
+# Generated files kept for coverage while ET_COVERAGE_DIR is set (js/test/helpers/load.js)
+js-coverage-generated*/
 
 # devague working state (not committed by default)
 .devague/reviews/
