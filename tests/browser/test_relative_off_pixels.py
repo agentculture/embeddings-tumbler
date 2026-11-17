@@ -197,7 +197,8 @@ def test_the_two_core_files_are_the_release_and_this_checkout(runs):
     assert old["relative"] is None  # no relative setting before
     # off in the new one
     assert new["relative"] == {"relative": False, "showOrigin": False}
-    assert old["paused"] is True and new["paused"] is True  # reduced motion: a still picture
+    assert old["paused"] is True  # reduced motion: a still picture
+    assert new["paused"] is True
 
 
 @pytest.mark.parametrize("name", FIXTURES)
@@ -209,7 +210,8 @@ def test_relative_off_screenshots_are_pixel_identical_to_0_12_1(runs, name, step
     print(f"{name} / {step} on {runs['webgl']}: {differ} pixels differ; {lit} lit")
     assert lit > 50, "the stage was screenshotted with the picture on it"
     assert differ == 0
-    assert old["errors"] == [] and new["errors"] == []
+    assert old["errors"] == []
+    assert new["errors"] == []
 
 
 def test_the_comparison_can_fail(runs):

@@ -92,7 +92,8 @@ def test_the_build_was_given_the_reference_scores_and_counts_one_higher(run):
     assert out["reranker"] == "Qwen/Qwen3-Reranker-0.6B"
     # The searched article holds rank 1, so the ranks on its results start at 2.
     ranks = out["build_overlay_ranks"]
-    assert ranks[0]["title"] == "Rice" and ranks[0]["ranks"] == [1]
+    assert ranks[0]["title"] == "Rice"
+    assert ranks[0]["ranks"] == [1]
     assert [r["ranks"] for r in ranks[1:]] == [[n] for n in range(2, 10)]
 
 

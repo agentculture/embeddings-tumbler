@@ -256,11 +256,15 @@ def test_each_form_turns_relative_on_and_pins_the_vertical_axis_to_the_search(fo
     f = forms[form]
     assert f["settings"] == {"relative": True, "showOrigin": False}
     rel = f["relative"]
-    assert rel["relative"] is True and rel["active"] is True and rel["settled"] is True
+    assert rel["relative"] is True
+    assert rel["active"] is True
+    assert rel["settled"] is True
     assert [(p["letter"], p["axis"]) for p in rel["pinned"]] == [("A", "vertical")]
     assert abs(f["vertical"]["cos"] - 1) < 1e-6, f["vertical"]
     assert len(f["hook"]["results"]) == 8
-    assert f["errors"] == [] and f["csp"] == [] and f["foreign"] == []
+    assert f["errors"] == []
+    assert f["csp"] == []
+    assert f["foreign"] == []
 
 
 def test_the_forms_are_given_the_setting_their_own_way(forms):
@@ -290,19 +294,25 @@ def test_the_three_forms_show_the_same_pinned_axis(forms):
 def test_pause_stops_the_tour_and_resume_moves_it_again(forms, form):
     p = forms[form]["pause"]
     first, later, moved = p["first"], p["later"], p["moved"]
-    assert first["paused"] and later["paused"] and not moved["paused"]
+    assert first["paused"]
+    assert later["paused"]
+    assert not moved["paused"]
     assert later["frames"] > first["frames"]  # the viewer drew on while paused
     assert later["time"] == first["time"]
-    assert later["at"] == first["at"] and len(first["at"]) == 8
-    assert later["settled"] and moved["settled"]
+    assert later["at"] == first["at"]
+    assert len(first["at"]) == 8
+    assert later["settled"]
+    assert moved["settled"]
     assert moved["time"] - later["time"] >= 1.0
     assert moved["at"] != later["at"]
 
 
 def test_reduced_motion_stops_the_tour(forms):
     start, after = forms["reduced_start"], forms["reduced_after"]
-    assert start["paused"] is True and after["paused"] is True
-    assert start["time"] == 0 and after["time"] == 0
+    assert start["paused"] is True
+    assert after["paused"] is True
+    assert start["time"] == 0
+    assert after["time"] == 0
     assert after["active"] is True  # the search pins the axis ...
     # ... and, with motion stopped, the settled view is shown at once (t19; before t19 it
     # waited for Play, which this test asserted as settled False)

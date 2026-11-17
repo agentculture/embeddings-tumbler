@@ -47,8 +47,10 @@ from __future__ import annotations
 
 import argparse
 import array
+import itertools
 import json
 import math
+import re
 import shutil
 import struct
 import subprocess  # nosec B404 - runs node on a fixed script with fixed arguments
@@ -61,6 +63,9 @@ RERANK = ROOT / "docs" / "specs" / "reference" / "demo-wikipedia-rerank.json"
 BUILD_SIDE = ROOT / "scripts" / "compare_relative_reference.js"
 K = 8  # the reference page's Results slider at its start
 TIMEOUT = 240
+# An article title that may be handed to node: letters, digits and plain punctuation, and
+# no leading hyphen (nothing node could read as an option).
+TITLE = re.compile(r"(?!-)[\w .,'()&/:!?-]{1,120}")
 
 GIVEN = (
     "The build was run with k 9, candidates 51 and top 9, because it names the searched "
@@ -119,13 +124,29 @@ def reference_side(meta: dict, block: array.array, rerank: dict, label: str) -> 
     }
 
 
-def build_side(label: str) -> dict:
+def known_title(label: str, titles: list[str]) -> str:
+    """The set's own spelling of an article title; ValueError when the set has no such title.
+
+    What is handed to node is the title as the data file holds it, never the text typed on
+    the command line, and never one that could be read as an option.
+    """
+    for title in titles:
+        if title.lower() == label.lower() and TITLE.fullmatch(title):
+            return title
+    raise ValueError(f"no article titled {label!r} that can be handed to node")
+
+
+def build_side(label: str, titles: list[str]) -> dict:
     """What the built viewer shows, from node running the assembled core file."""
+    try:
+        title = known_title(label, titles)
+    except ValueError as err:
+        raise RuntimeError(str(err)) from None
     node = shutil.which("node")
     if node is None:
         raise RuntimeError("node is not installed, so the built viewer cannot be run")
-    done = subprocess.run(  # nosec B603 - fixed program, fixed script, arguments from this file
-        [node, str(BUILD_SIDE), str(PAIR), str(RERANK), label],
+    done = subprocess.run(  # nosec B603 - fixed program and script; the title is one of the set's
+        [node, str(BUILD_SIDE), str(PAIR), str(RERANK), title],
         capture_output=True,
         text=True,
         timeout=TIMEOUT,
@@ -141,71 +162,99 @@ def two(x: float) -> str:
     return f"{x:.2f}"
 
 
+def _check(name: str, ok: object, detail: str) -> dict:
+    return {"check": name, "ok": bool(ok), "detail": detail}
+
+
+def _same(x: dict | None, y: dict | None) -> bool:
+    """A build result and a reference result are the same article at the same height."""
+    if x is None or y is None:
+        return False
+    return x["index"] == y["index"] and two(x["height"]) == two(y["height"])
+
+
+def _row(part: str, place: int, x: dict | None, y: dict | None, titles: list[str]) -> dict:
+    """One line of the table: the reference's result ``y`` beside the build's ``x``."""
+    return {
+        "part": part,
+        "place": place,
+        "reference": titles[y["index"]] if y else "",
+        "reference_height": two(y["height"]) if y else "",
+        "build": titles[x["index"]] if x else "",
+        "build_height": two(x["height"]) if x else "",
+        "build_rank": x["rank"] if x else None,
+        "agree": _same(x, y),
+    }
+
+
+def _part(part: str, b: list[dict], r: list[dict], titles: list[str]) -> tuple[list, list]:
+    """The checks and the table rows for one list of results (build ``b``, reference ``r``)."""
+    same_items = [x["index"] for x in b] == [x["index"] for x in r]
+    same_heights = len(b) == len(r) and all(
+        two(x["height"]) == two(y["height"]) for x, y in zip(b, r)
+    )
+    checks = [
+        _check(
+            f"{part}: same articles in the same order", same_items, f"{len(b)} against {len(r)}"
+        ),
+        _check(f"{part}: heights to 2 decimal places", same_heights, ""),
+    ]
+    rows = [_row(part, n + 1, x, y, titles) for n, (x, y) in enumerate(itertools.zip_longest(b, r))]
+    return checks, rows
+
+
+def _frame_checks(ref: dict, build: dict, titles: list[str]) -> list[dict]:
+    own = ref["own"]
+    pinned = [(p["letter"], p["axis"]) for p in build["pinned"]]
+    return [
+        _check(
+            "pinned axis",
+            pinned == [("A", "vertical")] and build["own"]["index"] == own and build["settled"],
+            f"build {pinned}, search A from {titles[build['own']['index']]!r}, settled "
+            f"{build['settled']}; reference [('A', 'vertical')] from {titles[own]!r}",
+        ),
+        _check(
+            "frame row 1 is the search direction",
+            build["row1Error"] < 1e-6,
+            f"largest difference {build['row1Error']:.1e} (bound 1e-6)",
+        ),
+        _check(
+            "measure",
+            build["measure"] == "cosine",
+            f"build {build['measure']!r}, reference 'cosine'",
+        ),
+    ]
+
+
+def _reranker_checks(ref: dict, build: dict) -> list[dict]:
+    cut = build["cut"]["height"] if build["cut"] else None
+    return [
+        _check(
+            "reranker answered on the build",
+            build["reranker"] is not None
+            and not build["unknownCandidates"]
+            and build["sent"] == 51,
+            f"model {build['reranker']!r}, {build['sent']} candidates sent, "
+            f"{len(build['unknownCandidates'])} without a reference score",
+        ),
+        _check(
+            "cut-off line height",
+            cut is not None and two(cut) == two(ref["cut"]),
+            f"build {two(cut) if cut is not None else 'none'}, reference {two(ref['cut'])}",
+        ),
+    ]
+
+
 def compare(ref: dict, build: dict, titles: list[str]) -> dict:
     own = ref["own"]
-    checks = []
-
-    def check(name: str, ok: bool, detail: str) -> None:
-        checks.append({"check": name, "ok": bool(ok), "detail": detail})
-
-    pinned = [(p["letter"], p["axis"]) for p in build["pinned"]]
-    check(
-        "pinned axis",
-        pinned == [("A", "vertical")] and build["own"]["index"] == own and build["settled"],
-        f"build {pinned}, search A from {titles[build['own']['index']]!r}, settled "
-        f"{build['settled']}; reference [('A', 'vertical')] from {titles[own]!r}",
-    )
-    check(
-        "frame row 1 is the search direction",
-        build["row1Error"] < 1e-6,
-        f"largest difference {build['row1Error']:.1e} (bound 1e-6)",
-    )
-    check(
-        "measure", build["measure"] == "cosine", f"build {build['measure']!r}, reference 'cosine'"
-    )
-
+    checks = _frame_checks(ref, build, titles)
     rows = []
     for part in ("plain", "reranked"):
         b = [r for r in build[part] if r["index"] != own]
-        r = ref[part]
-        same_items = [x["index"] for x in b] == [x["index"] for x in r]
-        same_heights = len(b) == len(r) and all(
-            two(x["height"]) == two(y["height"]) for x, y in zip(b, r)
-        )
-        check(f"{part}: same articles in the same order", same_items, f"{len(b)} against {len(r)}")
-        check(f"{part}: heights to 2 decimal places", same_heights, "")
-        for n in range(max(len(b), len(r))):
-            x = b[n] if n < len(b) else None
-            y = r[n] if n < len(r) else None
-            rows.append(
-                {
-                    "part": part,
-                    "place": n + 1,
-                    "reference": titles[y["index"]] if y else "",
-                    "reference_height": two(y["height"]) if y else "",
-                    "build": titles[x["index"]] if x else "",
-                    "build_height": two(x["height"]) if x else "",
-                    "build_rank": x["rank"] if x else None,
-                    "agree": bool(
-                        x
-                        and y
-                        and x["index"] == y["index"]
-                        and two(x["height"]) == two(y["height"])
-                    ),
-                }
-            )
-    check(
-        "reranker answered on the build",
-        build["reranker"] is not None and not build["unknownCandidates"] and build["sent"] == 51,
-        f"model {build['reranker']!r}, {build['sent']} candidates sent, "
-        f"{len(build['unknownCandidates'])} without a reference score",
-    )
-    cut = build["cut"]["height"] if build["cut"] else None
-    check(
-        "cut-off line height",
-        cut is not None and two(cut) == two(ref["cut"]),
-        f"build {two(cut) if cut is not None else 'none'}, reference {two(ref['cut'])}",
-    )
+        part_checks, part_rows = _part(part, b, ref[part], titles)
+        checks += part_checks
+        rows += part_rows
+    checks += _reranker_checks(ref, build)
     return {"checks": checks, "rows": rows, "agree": all(c["ok"] for c in checks)}
 
 
@@ -247,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     titles = [str(p["label"]) for p in meta["points"]]
     ref = reference_side(meta, block, rerank, args.search)
     try:
-        build = build_side(args.search)
+        build = build_side(args.search, titles)
     except (RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError) as err:
         print(f"cannot compare: {err}", file=sys.stderr)
         return 2

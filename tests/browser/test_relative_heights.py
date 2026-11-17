@@ -232,7 +232,8 @@ def test_no_result_moves_by_more_than_a_pixel_during_30_seconds_of_tumbling(desk
 
 def _flatness(view: dict, label: str) -> float:
     s = view["sample"]
-    assert s["frames"] > 0 and s["unsettled"] == 0
+    assert s["frames"] > 0
+    assert s["unsettled"] == 0
     assert s["maxPitch"] < 1e-9, s["maxPitch"]  # untilted
     assert s["perspective"] == [60, 60], s["perspective"]  # the flat view, every frame
     worst = max(p["err"] for p in s["per"].values())

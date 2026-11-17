@@ -292,7 +292,8 @@ def test_script_form_relative_page_turns_relative_on_and_reports_it(opened):
     assert [(p["letter"], p["axis"]) for p in one["pinned"]] == [("A", "vertical")]
     assert one["unit"]["unit"] is False
     first = one["searches"][0]["results"][0]
-    assert first["id"] == "p0007" and first["cosine"] == pytest.approx(1, abs=1e-6)
+    assert first["id"] == "p0007"
+    assert first["cosine"] == pytest.approx(1, abs=1e-6)
     assert "Vertical axis: length along the search to A, exact." in page.evaluate(
         _text(page, "#report")
     )

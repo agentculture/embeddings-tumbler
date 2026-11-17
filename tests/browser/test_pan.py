@@ -85,7 +85,8 @@ def test_a_right_drag_moves_the_ruler_and_results_by_the_drag(panned):
     a, b = panned["before"], panned["after"]
     print(f"pan after a {DX} x {DY} px right-drag: {b['pan']}")
     assert a["pan"] == [0, 0]
-    assert b["pan"][0] > 0 and b["pan"][1] > 0, "right and up"
+    assert b["pan"][0] > 0, "right and up"
+    assert b["pan"][1] > 0, "right and up"
     for i in (0, 2):
         assert abs(b["ruler"][i] - a["ruler"][i] - DX) <= MOVE_PX, (a["ruler"], b["ruler"])
         assert abs(b["ruler"][i + 1] - a["ruler"][i + 1] - DY) <= MOVE_PX, (a["ruler"], b["ruler"])
@@ -113,6 +114,7 @@ def test_reset_view_puts_everything_back(panned):
     for i in range(4):
         assert abs(c["ruler"][i] - a["ruler"][i]) <= 0.01
     for ra, rc in zip(a["results"], c["results"]):
-        assert abs(rc[1] - ra[1]) <= 0.01 and abs(rc[2] - ra[2]) <= 0.01
+        assert abs(rc[1] - ra[1]) <= 0.01
+        assert abs(rc[2] - ra[2]) <= 0.01
     assert "moved" not in c["status"]
     assert panned["errors"] == []

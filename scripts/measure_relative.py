@@ -18,7 +18,9 @@ For a data file pair (``<name>.json`` and its float32 block) this prints, and wi
 A search is an item's label, or several labels joined by ``+`` (``Rice+Wheat``): their
 directions are taken in order and made orthonormal, as the viewer pins them.
 
-Standard library only. It reads local files and sends nothing anywhere. The figures in
+Standard library only. It reads local files and sends nothing anywhere. The data file and
+``--out`` must be inside the current folder or the repository, and the float32 block beside
+its JSON file; anything else is refused. The figures in
 ``docs/evidence/2026-11-relative-search.md`` come from this script::
 
     python3 scripts/measure_relative.py embeddings_tumbler/static/demo-wikipedia.json \
@@ -29,8 +31,10 @@ from __future__ import annotations
 
 import argparse
 import array
+import itertools
 import json
 import math
+import os
 import random
 import sys
 from pathlib import Path
@@ -41,18 +45,63 @@ ITERATIONS = 14
 UNIT_TOLERANCE = 1e-3
 SAME_DIRECTION = 1e-6  # ET.math.RELATIVE_SAME_DIRECTION
 PLAIN_KEEP = 1e-3  # the viewer's tolerance for keeping a plain direction (10-math.js)
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+def _confined(base_dir: str, value: str) -> str:
+    """The real path of ``value`` taken under ``base_dir``; ValueError unless it is inside.
+
+    SonarSource's documented path-traversal check: both paths through ``os.path.realpath``,
+    then a plain ``startswith(base + os.sep)``.
+    """
+    base = os.path.realpath(base_dir)
+    full = os.path.realpath(os.path.join(base, value))
+    if full.startswith(base + os.sep):
+        return full
+    raise ValueError(f"{value} is outside {base}")
+
+
+def allowed_path(value: str, what: str) -> str:
+    """The real path of a path argument: inside the current folder, or inside the repository.
+
+    A relative ``value`` is taken from the current folder. Anything else is refused, so a
+    mistyped or generated argument cannot make the script read or write elsewhere.
+    """
+    try:
+        return _confined(os.getcwd(), value)
+    except ValueError:
+        pass
+    try:
+        return _confined(ROOT, os.path.abspath(value))
+    except ValueError:
+        raise SystemExit(
+            f"{what} must be inside the current folder or the repository: {value}"
+        ) from None
+
+
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def load_pair(path: Path) -> tuple[dict, list[list[float]]]:
-    meta = json.loads(path.read_text(encoding="utf-8"))
+    full = allowed_path(str(path), "the data file")
+    with open(full, encoding="utf-8") as handle:
+        meta = json.load(handle)
+    try:
+        block_path = _confined(os.path.dirname(full), str(meta["vectors"]["file"]))
+    except ValueError:
+        raise SystemExit("the vector block must be beside its data file") from None
     block = array.array("f")
-    block.frombytes((path.parent / meta["vectors"]["file"]).read_bytes())
+    with open(block_path, "rb") as handle:
+        block.frombytes(handle.read())
     if sys.byteorder != "little":
         block.byteswap()
     count, dim = meta["count"], meta["dimension"]
-    if len(block) != count * dim:
+    if not _positive_int(count) or not _positive_int(dim) or len(block) != count * dim:
         raise SystemExit("the vector block does not match count x dimension")
-    return meta, [block[i * dim : (i + 1) * dim].tolist() for i in range(count)]
+    # One row per ``dim`` values of the block itself: its length, checked above, decides how
+    # many rows there are, not a number read from the file.
+    return meta, [list(chunk) for chunk in itertools.batched(block, dim)]
 
 
 def orthonormalize(rows: list[list[float]]) -> None:
@@ -139,7 +188,7 @@ def measure(path: Path, searches: list[str], seed: int) -> dict:
     centred_rows = centred(rows)
     plain, plain_total = strongest(centred_rows, seed)
     out = {
-        "file": path.name,
+        "file": os.path.basename(str(path)),
         "model": meta["model"],
         "dimension": meta["dimension"],
         "count": count,
@@ -183,21 +232,8 @@ def measure(path: Path, searches: list[str], seed: int) -> dict:
     return out
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("data", type=Path, help="the data JSON file of a pair")
-    parser.add_argument(
-        "--search", action="append", default=[], help="an item's label (repeatable)"
-    )
-    parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--out", type=Path, help="where --apply writes the measurements as JSON")
-    parser.add_argument(
-        "--apply", action="store_true", help="write --out (the default only prints)"
-    )
-    parser.add_argument("--force", action="store_true", help="overwrite an existing --out file")
-    args = parser.parse_args()
-
-    result = measure(args.data, args.search, args.seed)
+def report(result: dict) -> None:
+    """Print the measurements, one line per figure the evidence page quotes."""
     print(f"{result['file']}: {result['count']} x {result['dimension']} from {result['model']}")
     unit = "yes" if result["unit_length"] else "no"
     print(
@@ -219,14 +255,34 @@ def main() -> int:
             f" search removed ({s['reused_directions']} kept) {s['reused_share']:.4f}"
             f" ({ratio:.2%} of the full fit)"
         )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("data", type=Path, help="the data JSON file of a pair")
+    parser.add_argument(
+        "--search", action="append", default=[], help="an item's label (repeatable)"
+    )
+    parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--out", type=Path, help="where --apply writes the measurements as JSON")
+    parser.add_argument(
+        "--apply", action="store_true", help="write --out (the default only prints)"
+    )
+    parser.add_argument("--force", action="store_true", help="overwrite an existing --out file")
+    args = parser.parse_args(argv)
+
+    result = measure(args.data, args.search, args.seed)
+    report(result)
     if args.apply:
         if not args.out:
             print("--apply needs --out", file=sys.stderr)
             return 1
-        if args.out.exists() and not args.force:
+        out = allowed_path(str(args.out), "--out")
+        if os.path.exists(out) and not args.force:
             print(f"{args.out} exists; pass --force to overwrite", file=sys.stderr)
             return 1
-        args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        with open(out, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(result, indent=2) + "\n")
         print(f"wrote {args.out}")
     return 0
 

@@ -436,7 +436,8 @@ def test_host_guide_documents_the_relative_settings_in_every_form() -> None:
     ):  # fmt: skip
         assert name in " ".join(text.split()), name
     info = _section(HOST, "What `info().search.relative` reports")
-    assert "relativeDrawn" in info and "device pixels" in info
+    assert "relativeDrawn" in info
+    assert "device pixels" in info
     for name in (
         "relative", "showOrigin", "offered", "active", "settled", "measure", "unit", "pinned",
         "dropped", "free", "fixed", "window", "share", "subspace", "searches",
@@ -467,7 +468,9 @@ def test_search_guide_quotes_the_relative_sentences_of_the_code() -> None:
 def test_search_guide_figures_are_the_evidence_pages() -> None:
     evidence = " ".join(EVIDENCE.read_text("utf-8").split())
     text = " ".join(SEARCH.read_text("utf-8").split())
-    assert "0.530, 0.633, 0.839" in evidence and "0.793" in evidence and "0.491" in evidence
+    assert "0.530, 0.633, 0.839" in evidence
+    assert "0.793" in evidence
+    assert "0.491" in evidence
     for needle in (
         "0.53\nand 0.84",
         "0.79 from the all-zero vector",
@@ -475,7 +478,8 @@ def test_search_guide_figures_are_the_evidence_pages() -> None:
         "0.49 from the origin",
     ):
         assert " ".join(needle.replace("\n", " ").split()) in text, needle
-    assert "google/embeddinggemma-2" in text and "Qwen/Qwen3-Embedding-0.6B" in text
+    assert "google/embeddinggemma-2" in text
+    assert "Qwen/Qwen3-Embedding-0.6B" in text
 
 
 def test_the_relative_example_loads_nothing_from_another_origin_and_runs_no_inline_script() -> None:
@@ -486,7 +490,8 @@ def test_the_relative_example_loads_nothing_from_another_origin_and_runs_no_inli
     refs = re.findall(r'(?:src|href)="([^"]+)"', page)
     assert refs == ["host.css", "embeddings-tumbler.js", "host.js"]
     script = (RELATIVE_EXAMPLE / "host.js").read_text("utf-8")
-    assert "relative: true" in script and "setRelative" in script
+    assert "relative: true" in script
+    assert "setRelative" in script
     assert not re.search(r"https?://|innerHTML|eval\(", script)
     assert (RELATIVE_EXAMPLE / "host.css").read_bytes() == (
         EXAMPLES / "script-search" / "host.css"
