@@ -586,8 +586,9 @@ def test_compare_load_pair_reads_the_block_and_refuses_a_wrong_size(real, tmp_pa
     meta, block = compare.load_pair(path)
     assert list(block) == [1.0, 0.0, 0.0, 1.0]
     assert meta["count"] == 2
+    short = _write_pair(tmp_path, [[1.0, 0.0]], ["a"], count=2)
     with pytest.raises(SystemExit, match="does not match count x dimension"):
-        compare.load_pair(_write_pair(tmp_path, [[1.0, 0.0]], ["a"], count=2))
+        compare.load_pair(short)
 
 
 def test_the_reference_side_for_rice_is_the_specs_eight_and_the_files_order(real):

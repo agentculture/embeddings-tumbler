@@ -266,16 +266,21 @@ def read_map(generated: str) -> list[tuple[str, int, int]]:
     for value, first, count in spans:
         full = inside_current_folder(value)
         rel = os.path.relpath(full, base).replace(os.sep, "/")
-        own = _source_lines(full)
-        if own and own[-1] == "":
-            own.pop()
-        if count != len(own) or first < 1 or first - 1 + count > len(made):
-            raise Mismatch(f"the map of {name} does not fit {rel}")
-        for at, text in enumerate(own):
-            if made[first - 1 + at] != text and "@@VERSION@@" not in text:
-                raise Mismatch(f"{name} line {first + at} is not {rel} line {at + 1}")
+        _check_span(made, _source_lines(full), first, count, (name, rel))
         checked.append((rel, first, count))
     return checked
+
+
+def _check_span(made: list[str], own: list[str], first: int, count: int, names) -> None:
+    """Mismatch unless ``own`` (a source's lines) is ``made`` from line ``first`` on."""
+    name, rel = names
+    if own and own[-1] == "":
+        own = own[:-1]
+    if count != len(own) or first < 1 or first - 1 + count > len(made):
+        raise Mismatch(f"the map of {name} does not fit {rel}")
+    for at, text in enumerate(own):
+        if made[first - 1 + at] != text and "@@VERSION@@" not in text:
+            raise Mismatch(f"{name} line {first + at} is not {rel} line {at + 1}")
 
 
 def _generated_hits(found: list[tuple[str, list[str]]], folder: str) -> tuple[dict, set[int]]:
@@ -294,50 +299,57 @@ def _generated_hits(found: list[tuple[str, list[str]]], folder: str) -> tuple[di
     return per, used
 
 
+def _assembled_records(own: Hits, spans, per: dict[str, Hits]) -> list[str]:
+    """The assembled file's record and one per module, with the generated files' hits added."""
+    whole = Hits()
+    whole.add(own)
+    parts: list[str] = []
+    for path, first, count in spans:
+        part = own.window(first, count)
+        extra = per.get(path)
+        if extra:
+            part.add(extra)
+            whole.add(extra, first - 1)
+        if part:
+            parts.extend(part.record(path))
+    return whole.record(ASSEMBLED) + parts
+
+
+def _check_assembled(lines: list[str], spans) -> None:
+    """The same check as without generated files: every line belongs to a module."""
+    for raw in lines:
+        tag, _, rest = raw.partition(":")
+        if tag in ("FN", "DA", "BRDA"):
+            locate(spans, int(rest.partition(",")[0]))
+
+
+def _one_record(rel: str, lines: list[str], spans, per: dict[str, Hits], modules: set[str]):
+    """``(lines to write, paths now written)`` for one record that is not a generated file's."""
+    if rel == ASSEMBLED:
+        _check_assembled(lines, spans)
+        return _assembled_records(read_hits(lines), spans, per), {ASSEMBLED} | modules
+    if rel in per and rel not in modules:
+        both = read_hits(lines)
+        both.add(per[rel])
+        return both.record(rel), {rel}
+    return [f"SF:{rel}" if x.startswith("SF:") else x for x in lines], set()
+
+
 def _combine(found: list[tuple[str, list[str]]], per: dict[str, Hits], used: set[int]) -> str:
     """The report with the generated files' hits given to their sources."""
     spans = layout()
     modules = {path for path, _, _ in spans}
     out: list[str] = []
     written: set[str] = set()
-
-    def assembled_records(own: Hits) -> None:
-        whole = Hits()
-        whole.add(own)
-        parts = []
-        for path, first, count in spans:
-            part = own.window(first, count)
-            extra = per.get(path)
-            if extra:
-                part.add(extra)
-                whole.add(extra, first - 1)
-            if part:
-                parts.append(part.record(path))
-        out.extend(whole.record(ASSEMBLED))
-        for part in parts:
-            out.extend(part)
-        written.add(ASSEMBLED)
-        written.update(modules)
-
     for at, (source, lines) in enumerate(found):
         if at in used:
             continue
-        rel = relative(source)
-        if rel == ASSEMBLED:
-            for raw in lines:  # the same check as without generated files
-                tag, _, rest = raw.partition(":")
-                if tag in ("FN", "DA", "BRDA"):
-                    locate(spans, int(rest.partition(",")[0]))
-            assembled_records(read_hits(lines))
-        elif rel in per and rel not in modules:
-            both = read_hits(lines)
-            both.add(per[rel])
-            out.extend(both.record(rel))
-            written.add(rel)
-        else:
-            out.extend(f"SF:{rel}" if x.startswith("SF:") else x for x in lines)
+        text, done = _one_record(relative(source), lines, spans, per, modules)
+        out.extend(text)
+        written.update(done)
     if ASSEMBLED not in written and any(path in per for path in modules):
-        assembled_records(Hits())
+        out.extend(_assembled_records(Hits(), spans, per))
+        written.update({ASSEMBLED} | modules)
     for rel in sorted(per):
         if rel not in written:
             out.extend(per[rel].record(rel))

@@ -193,7 +193,8 @@ def test_two_generated_files_and_the_assembled_file_sum_on_a_module_line(
     assert set(by_file) == {cov.ASSEMBLED, MATH, "js/sample/sample-data.js"}
     module = by_file[MATH]
     assert [x for x in module if x.startswith("DA:")] == ["DA:5,15", "DA:6,0", "DA:7,5"]
-    assert "LF:3" in module and "LH:2" in module
+    assert "LF:3" in module
+    assert "LH:2" in module
     # The assembled file is the same text, so it gets the same sums at its own lines.
     assembled = [x for x in by_file[cov.ASSEMBLED] if x.startswith("DA:")]
     assert assembled == ["DA:1,7", f"DA:{at + 4},15", f"DA:{at + 5},0", f"DA:{at + 6},5"]
@@ -212,7 +213,8 @@ def test_a_partial_module_list_reaches_only_its_own_modules(tmp_path: Path, monk
     )
     by_file = _convert(tmp_path, monkeypatch, report)
     assert set(by_file) == {cov.ASSEMBLED, HEADER, MATH, FOOTER}
-    assert "DA:1,4" in by_file[MATH] and "LF:1" in by_file[MATH]
+    assert "DA:1,4" in by_file[MATH]
+    assert "LF:1" in by_file[MATH]
     assert "DA:1,1" in by_file[HEADER]
     assert "DA:2,6" in by_file[FOOTER]
     assert f"DA:{spans[FOOTER] + 1},6" in by_file[cov.ASSEMBLED]
@@ -230,11 +232,14 @@ def test_functions_and_branches_of_a_line_are_summed(tmp_path: Path, monkeypatch
         [f"FN:{own},f", "FNDA:3,f", f"BRDA:{own},7,0,1", f"DA:{own},3"],
     )
     module = _convert(tmp_path, monkeypatch, report)[MATH]
-    assert "FN:10,f" in module and "FNDA:3,f" in module
-    assert "FNF:1" in module and "FNH:1" in module
+    assert "FN:10,f" in module
+    assert "FNDA:3,f" in module
+    assert "FNF:1" in module
+    assert "FNH:1" in module
     # Branches of one line are matched in the order they are reported.
     assert [x for x in module if x.startswith("BRDA:")] == ["BRDA:10,0,0,1", "BRDA:10,1,0,2"]
-    assert "BRF:2" in module and "BRH:2" in module
+    assert "BRF:2" in module
+    assert "BRH:2" in module
     assert "DA:10,3" in module
 
 
