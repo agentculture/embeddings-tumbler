@@ -2,7 +2,7 @@
   "plan_slug": "relative-search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-16T22:05:02Z",
-  "updated": "2026-11-17T05:23:07Z",
+  "updated": "2026-11-17T05:41:21Z",
   "deviations": [
     {
       "id": "d1",
@@ -116,6 +116,22 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 7
+    },
+    {
+      "id": "d8",
+      "what": "Two changes to how lit points are drawn, from the owner's comparison with the reference: (1) the relative view is drawn sharp, with no depth blur and much less glow (the trial the owner confirmed: depth of field 0, bloom 0.2), blended in with the turn; (2) the Lit control gains a fourth option in which every point stays visible and sharp at its normal brightness and the results are highlighted. Built as added task t21. The trail-length control of d7 was withdrawn by the owner ('No new control') and is not built.",
+      "task_ref": "t9",
+      "reason": "Owner on 2026-11-17, after trying the trial page: '1. Confirmed 2. A new option where everything is visible and sharp, but the results highlighted.' Earlier the same day: 'The lit is faint in that case for us, and sharp on the demo/reference.'",
+      "affects": [
+        "t8",
+        "t11",
+        "t14",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 8
     }
   ],
   "evidence": [],
