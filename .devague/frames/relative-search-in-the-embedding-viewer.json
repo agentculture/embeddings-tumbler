@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-16T17:49:58Z",
-  "updated": "2026-11-17T07:00:39Z",
+  "updated": "2026-11-17T08:57:37Z",
   "claims": [
     {
       "id": "c1",
@@ -841,6 +841,17 @@
       ],
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "l8",
+      "code": "provenance-missing",
+      "what": "Agent s3 (SonarCloud fixes in Python) piped its one full-suite run through tail, so the tracebacks of 2 failures and 19 errors in two browser files were lost and their cause is unknown (both files pass alone; machine load was about 50). It also ran a script that starts node three times without the memory cap, against the workforce rule, and wrote one assertion from an assumption that measurement refuted. Reported by the agent.",
+      "skipped_check": "keeping the full output of a failing run",
+      "refs": [
+        "s3"
+      ],
+      "origin": "llm",
+      "status": "proposed"
     }
   ],
   "obligations": [
