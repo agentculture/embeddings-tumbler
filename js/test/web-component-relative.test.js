@@ -152,3 +152,88 @@ test("relative-rest is not watched, relativeRest is no property, and neither rea
   assert.strictEqual(told, 1);
   assert.deepStrictEqual(plain(el.handle.relativeSettings()), { relative: true, showOrigin: true });
 });
+
+// ---------- review of pull request 13, finding 2: the viewer's setting is reflected back ----------
+
+// Tick or untick one of the panel's two checkboxes, as a visitor does.
+function tick(el, cls, on) {
+  const box = el.querySelector("." + cls).querySelector("input");
+  box.checked = on;
+  box.dispatchEvent({ type: "change" });
+}
+
+const BOXES = { relative: "tumbler-search-relative", "show-origin": "tumbler-search-origin" };
+
+for (const [attr, prop] of PAIRS) {
+  const key = prop;
+
+  test("review 2: " + attr + ": the panel's checkbox is reflected to the attribute and the property", () => {
+    const env = makeShellEnv();
+    const el = env.connect(env.create());
+    tick(el, BOXES[attr], true);
+    assert.strictEqual(el.handle.relativeSettings()[key], true, "the checkbox reached the viewer");
+    assert.strictEqual(el[prop], true);
+    assert.strictEqual(el.getAttribute(attr), "");
+    tick(el, BOXES[attr], false);
+    assert.strictEqual(el[prop], false);
+    assert.strictEqual(el.getAttribute(attr), null);
+  });
+
+  test("review 2: " + attr + ": handle.setRelative is reflected, and the host can then turn it off by the property", () => {
+    const env = makeShellEnv();
+    const el = env.connect(env.create());
+    el.handle.setRelative({ [key]: true });
+    assert.strictEqual(el[prop], true);
+    assert.strictEqual(el.getAttribute(attr), "");
+    el[prop] = false;
+    assert.strictEqual(el.handle.relativeSettings()[key], false, "setting the property takes effect");
+    assert.strictEqual(el.getAttribute(attr), null);
+    assert.strictEqual(el[prop], false);
+  });
+
+  test("review 2: " + attr + ": reflecting calls the viewer once, with no loop and no remount", () => {
+    const env = makeShellEnv();
+    const el = env.connect(env.create());
+    let told = 0;
+    const real = el.handle.setRelative;
+    el.handle.setRelative = (patch) => (told++, real(patch));
+    el.handle.setRelative({ [key]: true });
+    assert.strictEqual(told, 1, "the reflected attribute is not sent back to the viewer");
+    el[prop] = false;
+    assert.strictEqual(told, 2);
+    el.setAttribute(attr, "false"); // off written another way: nothing to tell
+    el.handle.setRelative({ [key]: true });
+    assert.strictEqual(el.getAttribute(attr), "", "on over a \"false\" attribute makes it present");
+    assert.strictEqual(env.calls.mount.length, 1);
+    assert.strictEqual(env.calls.update.length, 0);
+  });
+
+  test("review 2: " + attr + ": an attribute of \"false\" is left as it is while the viewer is off", () => {
+    const env = makeShellEnv();
+    const el = env.connect(env.create({ [attr]: "false" }));
+    const other = attr === "relative" ? "showOrigin" : "relative";
+    el.handle.setRelative({ [other]: true }); // a report in which this setting is still off
+    assert.strictEqual(el.getAttribute(attr), "false");
+    assert.strictEqual(el[prop], false);
+  });
+}
+
+test("review 2: a viewer that was destroyed no longer writes to the element", () => {
+  const env = makeShellEnv();
+  const el = env.connect(env.create());
+  const report = env.calls.mount[0][1].onSearchChange;
+  assert.strictEqual(typeof report, "function", "the shell listens to the viewer's report");
+  env.disconnect(el);
+  report({ relative: { relative: true, showOrigin: true } });
+  assert.strictEqual(el.getAttribute("relative"), null);
+  env.connect(el);
+  report({ relative: { relative: true, showOrigin: true } }); // the old viewer's report
+  assert.strictEqual(el.relative, false);
+  // a report without the two booleans changes nothing
+  const now = env.calls.mount[1][1].onSearchChange;
+  now(null);
+  now({});
+  now({ relative: { relative: "1", showOrigin: 1 } });
+  assert.strictEqual(el.relative, false);
+  assert.strictEqual(el.showOrigin, false);
+});

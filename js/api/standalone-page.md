@@ -37,7 +37,8 @@ Examples: `index.html`, `index.html?sample=synthetic`,
 The page keeps the two relative settings in its address. Whenever the viewer reports a change of one (the
 panel's controls, or a host's call to the handle), the page sets or removes `relative=1` and
 `origin=1` with `history.replaceState`, so no history entry is added, and the other parameters
-(`data`, `sample`, `mode`, `seed`, and any the page does not know) and the hash stay as they are. Copy the address to reopen the same
+(`data`, `sample`, `mode`, `seed`, and any the page does not know) and the hash stay as they are, byte for byte as
+they were written; when the address already says what the viewer reports, nothing is written. Copy the address to reopen the same
 setting. Limit: the link under the notes that switches to the other data set is worked out once, when
 the page loads. It carries the settings the address had then, not one changed afterwards; a change
 made after load is in the address bar but not in that link.

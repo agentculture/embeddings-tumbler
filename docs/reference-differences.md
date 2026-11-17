@@ -1162,6 +1162,14 @@ What was checked about the reference page itself, on 2026-11-17:
 - **Visible on comparable data:** yes *(read from the code)*.
 - **Decided by:** build.
 
+### The tick step follows the ruler's length on vectors not of length one
+
+- **Reference:** a number and a level ring every 0.1, and a ring radius of 0.34, whatever the heights are.
+- **Build:** the same while ruler A is 0.2 to 1.2 long, which every ruler of a set of length one searched with a vector of length one is, bit for bit. A longer or shorter ruler (vectors of length 20, or 0.01) gets the smallest step of 1, 2 or 5 times a power of ten of which it is at most ten, numbers with that step's decimals, and a ring radius of 3.4 steps.
+- **Why:** found by the review of pull request 13: at a fixed 0.1 a ruler 40 long had 400 ticks, rings and numbers that pushed out the result labels, and a ruler 0.05 long had one tick *(read from the code)*.
+- **Visible on comparable data:** no: the reference's data and the Wikipedia set are of length one, where the step is 0.1 in both.
+- **Decided by:** build.
+
 ### While the view turns, only a faint ruler line, and the exactness sentences wait
 
 - **Reference:** fades the whole ruler, its numbers, rings, stems and the cut-off line in with the blend, and its status line says "exact" as soon as the search is made.
@@ -1350,11 +1358,11 @@ What was checked about the reference page itself, on 2026-11-17:
 - **Visible on comparable data:** yes, with reduced motion set or paused.
 - **Decided by:** owner, by the decision of 2026-11-17, recorded as deviation d5.
 
-### The panel's checkbox is not written back to the web component's attribute
+### The web component's attribute follows the panel's checkbox
 
 - **Reference:** not a web component.
-- **Build:** the `relative` and `show-origin` attributes and properties set the viewer's settings; a change made with the panel's own controls is not reflected back to the attribute.
-- **Why:** the shell only forwards; it holds no state of its own *(read from the code)*.
+- **Build:** the `relative` and `show-origin` attributes and properties set the viewer's settings, and a change made with the panel's own controls, or with the handle, is written back to the attribute: attribute, property and viewer always agree. Until the review of pull request 13 it was not written back, so the property could say off while the view was on and a host could not then turn it off by the property.
+- **Why:** the shell holds no state of its own; it listens to the viewer's report and sets the attribute *(read from the code)*.
 - **Visible on comparable data:** no: only a host reading the attribute sees it.
 - **Decided by:** build.
 
@@ -1472,7 +1480,7 @@ Read the same in both pages' code *(read from the code)*:
 
 | What | Result |
 |------|--------|
-| The ruler's title, its tick numbers and the level rings | "cosine to A", one decimal, a ring of radius 0.34 in 48 segments every 0.1 |
+| The ruler's title, its tick numbers and the level rings | "cosine to A", one decimal, a ring of radius 0.34 in 48 segments every 0.1 (the build: on a ruler 0.2 to 1.2 long, see "The tick step follows the ruler's length" above) |
 | Ruler A's foot | `max(0, bottom - 0.2)`, or the origin with Show the origin |
 | Ruler B | from `max(0, bottom - 0.2)`, or the origin with Show the origin, to `max(1, length) + 0.04`, with dots and numbers at 0.1 to 0.9 |
 | The cut-off line and its words | dashed, 300 px across, "50 candidates above this line went to the reranker" at the default 50 |

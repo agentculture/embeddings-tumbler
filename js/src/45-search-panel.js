@@ -1298,7 +1298,7 @@
         })
       );
     }
-    if (o.distances) li.appendChild(spGapBar(p, r.gap / o.widest, j, o.pal));
+    if (o.distances) li.appendChild(spGapBar(p, r.gap / o.widest, spSlot(q, j), o.pal));
     return li;
   }
 

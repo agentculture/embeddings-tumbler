@@ -523,6 +523,10 @@
      "visible": "yes"
     },
     {
+     "title": "The tick step follows the ruler's length on vectors not of length one",
+     "visible": "no"
+    },
+    {
      "title": "While the view turns, only a faint ruler line, and the exactness sentences wait",
      "visible": "yes"
     },
@@ -625,7 +629,7 @@
      "visible": "yes"
     },
     {
-     "title": "The panel's checkbox is not written back to the web component's attribute",
+     "title": "The web component's attribute follows the panel's checkbox",
      "visible": "no"
     },
     {

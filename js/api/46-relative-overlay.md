@@ -59,7 +59,11 @@ What it holds:
 - **The relative view, settled.** The vertical ruler along the first pinned
   search's direction, from `max(0, bottom - 0.2)` (from 0 with Show the origin)
   to the top of the window. A tick and a level ring every 0.1, each tick
-  labelled with the height to one decimal. A title `{measure} to {letter}` at
+  labelled with the height to one decimal. On a ruler shorter than 0.2 or
+  longer than 1.2 (vectors that are not of length one) the step is instead the
+  smallest of 1, 2 or 5 times a power of ten of which the ruler is at most
+  ten, the labels have that step's decimals, and a ring's radius is 3.4 steps
+  (0.34 at a step of 0.1); see `docs/relative-interface.md`, "The tick step". A title `{measure} to {letter}` at
   the top. One stem for each named result, from the result to the point on the
   ruler at its height. A marker at each search's raw query, with its letter
   and name beside it. With a second

@@ -259,7 +259,10 @@ Search `Rice` and turn Relative on. The searched article, Rice, is a point
 that sits on the ring at the top of a vertical ruler. Beside each search's ring
 is its letter and name, `A · Rice`: the words you searched for, or the title of
 the point you searched from. The ruler has a tick and a
-faint level ring every 0.1 and a title, `cosine to A`. A point's **height**
+faint level ring every 0.1 and a title, `cosine to A`. (On vectors that are
+not of length one the ruler can be much longer or shorter than one; its ticks
+are then at a round step that fits it, such as 5 or 0.005, so there are always
+a handful of them.) A point's **height**
 is its vector measured along the search: the number you read off the ruler.
 Each named result is joined to the ruler by a thin stem at its height, and
 carries its title and its height, for example `Cereal  0.84`. A point with no

@@ -782,6 +782,68 @@ test("rest= in the address is left alone when the settings are written, and is n
   assert.deepStrictEqual(clean.replaced, ["?seed=3&relative=1"]);
 });
 
+// ---------- review of pull request 13, finding 10: only the two settings change ----------
+
+const NONE = () => Promise.reject(new Error("none"));
+
+test("review 10: an address whose settings already say what the viewer reports is not rewritten", async () => {
+  // Each of these would read differently after a round trip through URLSearchParams.
+  const untouched = [
+    "?sample=synthetic&from=sets/a.json&mode=lattice",
+    "?sample=synthetic&note=my%20set+two",
+    "?sample=synthetic&k=1&k=2&",
+    "?sample=synthetic&&flag",
+    "?sample=synthetic&relative=0&origin=no",
+  ];
+  for (const q of untouched) {
+    const w = await settled(runPage(q, NONE, { hash: "#top" }));
+    w.mountOptions[0].onSearchChange(search(false, false));
+    assert.deepStrictEqual(w.replaced, [], q);
+  }
+  const on = await settled(runPage("?sample=synthetic&rel%61tive=1&a=b/c&origin=1", NONE));
+  on.mountOptions[0].onSearchChange(search(true, true));
+  assert.deepStrictEqual(on.replaced, [], "a setting spelled another way is still that setting");
+});
+
+test("review 10: a changed setting changes only its own parameter; the others stay byte for byte", async () => {
+  const q = "?sample=synthetic&from=sets/a.json&note=my%20set+two&k=1&k=2";
+  const w = await settled(runPage(q, NONE, { hash: "#top" }));
+  const report = w.mountOptions[0].onSearchChange;
+  report(search(true, false));
+  assert.deepStrictEqual(w.replaced, [q + "&relative=1#top"]);
+  report(search(true, true));
+  assert.strictEqual(w.replaced[1], q + "&relative=1&origin=1#top");
+  report(search(false, true));
+  assert.strictEqual(w.replaced[2], q + "&origin=1#top");
+  report(search(false, false));
+  assert.strictEqual(w.replaced[3], q + "#top");
+  assert.strictEqual(w.replaced.length, 4);
+});
+
+test("review 10: a trailing &, a repeated or oddly spelled setting", async () => {
+  const cases = [
+    // [address, relative, showOrigin, what is written]
+    ["?sample=synthetic&a=1&", true, false, "?sample=synthetic&a=1&relative=1"],
+    ["?sample=synthetic&relative=1&a=%2F&", false, false, "?sample=synthetic&a=%2F&"],
+    // the first relative is the one read: it says off, so both go and one that says on is added
+    ["?relative=0&sample=synthetic&a=b/c&relative=1", true, false, "?sample=synthetic&a=b/c&relative=1"],
+    // off must hold on the next load: every copy goes
+    ["?relative=1&sample=synthetic&relative=1&x=+", false, false, "?sample=synthetic&x=+"],
+    ["?sample=synthetic&rel%61tive=1&or+igin=1", false, false, "?sample=synthetic&or+igin=1"],
+    ["?sample=synthetic&origin=yes&z=%7e", false, true, "?sample=synthetic&z=%7e&origin=1"],
+    ["?relative=1", false, false, "/index.html"],
+  ];
+  for (const [q, relative, showOrigin, want] of cases) {
+    const w = await settled(runPage(q, NONE));
+    w.mountOptions[0].onSearchChange(search(relative, showOrigin));
+    assert.deepStrictEqual(w.replaced, [want], q);
+    // and what was written is read back as the same settings
+    const again = await settled(runPage(want.startsWith("?") ? want : "", NONE));
+    assert.strictEqual(again.mountOptions[0].relative === true, relative, want);
+    assert.strictEqual(again.mountOptions[0].showOrigin === true, showOrigin, want);
+  }
+});
+
 test("the controls are the viewer's own: the page adds no checkbox of its own", () => {
   assert.doesNotMatch(CODE, /createElement|type\s*=\s*["']checkbox/);
 });
