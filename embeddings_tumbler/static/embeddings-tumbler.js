@@ -122,6 +122,9 @@
     function above(x, min) {
       return x > min;
     }
+    function atMost(x, max) {
+      return x <= max;
+    }
     function intAtLeast(x, min) {
       return x >= min && Math.floor(x) === x;
     }
@@ -1206,45 +1209,44 @@
       var pinned = [];
       var dropped = [];
       for (var qi = 0; qi < queries.length; qi++) {
-        var q = queries[qi];
-        var len = Math.sqrt(sqNorm(q, 0, D));
-        if (!above(len, RELATIVE_ZERO_LENGTH)) {
-          dropped.push({ index: qi, reason: "zero-length", against: [] });
-          continue;
+        var got = pinDirection(queries[qi], D, rows);
+        if (got.row) {
+          rows.push(got.row);
+          pinned.push({ index: qi, length: got.length });
+        } else {
+          var against = got.reason === "same-direction" ? pinnedIndices(pinned) : [];
+          dropped.push({ index: qi, reason: got.reason, against: against });
         }
-        if (rows.length === 3) {
-          dropped.push({ index: qi, reason: "no-axis-left", against: [] });
-          continue;
-        }
-        var v = new Float64Array(D);
-        for (var d = 0; d < D; d++) v[d] = q[d] / len;
-        if (rows.length === 0) {
-          rows.push(v);
-          pinned.push({ index: qi, length: len });
-          continue;
-        }
-        for (var pass = 0; pass < 2; pass++) {
-          for (const p of rows) removeRow(v, 0, p, 0, D);
-        }
-        var nn = sqNorm(v, 0, D);
-        if (!atLeast(nn, RELATIVE_SAME_DIRECTION)) {
-          dropped.push({
-            index: qi,
-            reason: "same-direction",
-            against: pinned.map(function (pp) {
-              return pp.index;
-            }),
-          });
-          continue;
-        }
-        var inv = 1 / Math.sqrt(nn);
-        for (var d2 = 0; d2 < D; d2++) v[d2] *= inv;
-        rows.push(v);
-        pinned.push({ index: qi, length: len });
       }
       var directions = new Float32Array(rows.length * D);
       for (var r = 0; r < rows.length; r++) directions.set(rows[r], r * D);
       return { directions: directions, count: rows.length, pinned: pinned, dropped: dropped };
+    }
+
+    function pinnedIndices(pinned) {
+      return pinned.map(function (pp) {
+        return pp.index;
+      });
+    }
+
+    // One query against the rows already pinned: { row, length } when it gives a
+    // new direction (the row is unit length and orthogonal to `rows`), or
+    // { reason } when it is dropped.
+    function pinDirection(q, D, rows) {
+      var len = Math.sqrt(sqNorm(q, 0, D));
+      if (!above(len, RELATIVE_ZERO_LENGTH)) return { reason: "zero-length" };
+      if (rows.length === 3) return { reason: "no-axis-left" };
+      var v = new Float64Array(D);
+      for (var d = 0; d < D; d++) v[d] = q[d] / len;
+      if (rows.length === 0) return { row: v, length: len };
+      for (var pass = 0; pass < 2; pass++) {
+        for (const p of rows) removeRow(v, 0, p, 0, D);
+      }
+      var nn = sqNorm(v, 0, D);
+      if (!atLeast(nn, RELATIVE_SAME_DIRECTION)) return { reason: "same-direction" };
+      var inv = 1 / Math.sqrt(nn);
+      for (var d2 = 0; d2 < D; d2++) v[d2] *= inv;
+      return { row: v, length: len };
     }
 
     function checkQueries(queries, D) {
@@ -1308,7 +1310,7 @@
     function checkWindow(direction, length, D) {
       if (direction?.length !== D) throw new TypeError("heightWindow: direction must have dimension values");
       var nn = sqNorm(direction, 0, D);
-      if (!(Math.abs(nn - 1) <= 1e-4)) throw new RangeError("heightWindow: direction must be unit length");
+      if (!atMost(Math.abs(nn - 1), 1e-4)) throw new RangeError("heightWindow: direction must be unit length");
       if (!atLeast(length, 0) || !Number.isFinite(length)) {
         throw new RangeError("heightWindow: length must be a finite number >= 0");
       }
@@ -1514,26 +1516,33 @@
       removeSpan(v, 0, dirs, count, D);
     }
 
-    // The fitted rows' remainders as a float32 block for the fit.
-    function* remainderBlockGen(X, N, D, mean, dirs, count, S, wk) {
+    // The fitted rows' remainders as a float32 block for the fit. `rem` names
+    // what the remainder is taken of: { X, N, D, mean, dirs, count, S } (the
+    // data, its mean, the `count` pinned directions and the S fitted rows).
+    function* remainderBlockGen(rem, wk) {
+      var D = rem.D;
+      var S = rem.S;
       var Ys = new Float32Array(S * D);
       var v = new Float64Array(D);
       for (var s = 0; s < S; s++) {
-        remainderRow(X, strideRow(s, S, N), D, mean, dirs, count, v);
+        remainderRow(rem.X, strideRow(s, S, rem.N), D, rem.mean, rem.dirs, rem.count, v);
         for (var d = 0; d < D; d++) Ys[s * D + d] = v[d];
-        if (wk.add((4 * count + 1) * D)) yield;
+        if (wk.add((4 * rem.count + 1) * D)) yield;
       }
       return Ys;
     }
 
     // Exact variances along the basis rows and the remainder's total variance,
     // over the fitted rows, recomputed in double precision from the data.
-    function* remainderVarianceGen(X, N, D, mean, dirs, count, basis, m, S, wk) {
+    function* remainderVarianceGen(rem, basis, m, wk) {
+      var D = rem.D;
+      var S = rem.S;
+      var count = rem.count;
       var v = new Float64Array(D);
       var sums = new Float64Array(m);
       var total = 0;
       for (var s = 0; s < S; s++) {
-        remainderRow(X, strideRow(s, S, N), D, mean, dirs, count, v);
+        remainderRow(rem.X, strideRow(s, S, rem.N), D, rem.mean, rem.dirs, count, v);
         total += sqNorm(v, 0, D);
         for (var k = 0; k < m; k++) {
           var ok = k * D;
@@ -1560,6 +1569,25 @@
       return basis;
     }
 
+    // Row j of the plain directions copied into v; returns its squared length.
+    function loadPlainRow(plain, j, D, v) {
+      var oj = j * D;
+      var before = 0;
+      for (var d = 0; d < D; d++) {
+        v[d] = plain.directions[oj + d];
+        before += v[d] * v[d];
+      }
+      return before;
+    }
+
+    // v with the `count` pinned rows of dirs and the `kept` rows of B removed (twice).
+    function removePinnedAndKept(v, dirs, count, B, kept, D) {
+      for (var pass = 0; pass < 2; pass++) {
+        for (var p = 0; p < count; p++) removeRow(v, 0, dirs, p * D, D);
+        for (var k = 0; k < kept; k++) removeRow(v, 0, B, k * D, D);
+      }
+    }
+
     // The plain directions with the pinned ones removed, in the plain order
     // (strongest first): each row has the pinned rows and the rows already kept
     // removed (twice, in double precision, as Gram-Schmidt does) and is kept, made
@@ -1570,16 +1598,8 @@
       var v = new Float64Array(D);
       var kept = 0;
       for (var j = 0; j < plain.count && kept < m; j++) {
-        var oj = j * D;
-        var before = 0;
-        for (var d = 0; d < D; d++) {
-          v[d] = plain.directions[oj + d];
-          before += v[d] * v[d];
-        }
-        for (var pass = 0; pass < 2; pass++) {
-          for (var p = 0; p < count; p++) removeRow(v, 0, dirs, p * D, D);
-          for (var k = 0; k < kept; k++) removeRow(v, 0, B, k * D, D);
-        }
+        var before = loadPlainRow(plain, j, D, v);
+        removePinnedAndKept(v, dirs, count, B, kept, D);
         var nn = sqNorm(v, 0, D);
         if (above(before, 0) && atLeast(nn, RELATIVE_PLAIN_KEEP * before)) {
           var inv = 1 / Math.sqrt(nn);
@@ -1595,25 +1615,20 @@
 
     // The full fit of the remainder: its m strongest directions, made orthogonal
     // to the pinned ones. Returns { basis, method }.
-    function* remainderFitGen(X, N, D, plan, mean, wk) {
-      var dirs = plan.dirs;
-      var c = dirs.count;
-      var Ys = yield* remainderBlockGen(X, N, D, mean, dirs.directions, c, plan.S, wk);
-      var pca = yield* pcaGen(Ys, plan.S, D, plan.m, plan.pcaOpts, wk, true);
+    function* remainderFitGen(rem, plan, wk) {
+      var Ys = yield* remainderBlockGen(rem, wk);
+      var pca = yield* pcaGen(Ys, plan.S, rem.D, plan.m, plan.pcaOpts, wk, true);
       Ys = null;
-      var basis = yield* orthogonalBasisGen(dirs.directions, c, pca.directions, plan.m, D, wk);
-      return { basis: basis, method: pca.method + (plan.S < N ? "-sampled" : "") };
+      var basis = yield* orthogonalBasisGen(rem.dirs, rem.count, pca.directions, plan.m, rem.D, wk);
+      return { basis: basis, method: pca.method + (plan.S < rem.N ? "-sampled" : "") };
     }
 
-    function* relativeFitGen(X, N, D, plan, wk) {
-      var dirs = plan.dirs;
-      var c = dirs.count;
-      var S = plan.S;
-      var m = plan.m;
-      var unit = yield* unitLengthGen(X, N, D, RELATIVE_UNIT_TOLERANCE, wk);
-      var result = {
+    // relativeFit's result before anything is fitted: the pinned directions and
+    // the unit-length check, with nothing toured.
+    function blankRelativeFit(dirs, unit) {
+      return {
         directions: dirs.directions,
-        count: c,
+        count: dirs.count,
         pinned: dirs.pinned,
         dropped: dirs.dropped,
         basis: null,
@@ -1629,8 +1644,10 @@
         method: "none",
         plain: null,
       };
-      if (c === 0) return result;
-      result.window = yield* heightWindowGen(X, N, D, dirs.directions.subarray(0, D), dirs.pinned[0].length, wk);
+    }
+
+    // The mean of every row, in double precision.
+    function* rowMeanGen(X, N, D, wk) {
       var mean = new Float64Array(D);
       for (var i = 0; i < N; i++) {
         var o = i * D;
@@ -1638,33 +1655,59 @@
         if (wk.add(D)) yield;
       }
       if (N > 0) for (var e = 0; e < D; e++) mean[e] /= N;
-      result.fittedRows = S;
-      result.rank = Math.max(0, Math.min(S - 1, D - c));
-      result.fixed = Math.max(0, 3 - c - result.rank);
+      return mean;
+    }
+
+    // The toured directions written into `result` (basis, subspace, method and
+    // plain): the plain fit's directions when enough of them are left, otherwise
+    // a fit of the remainder.
+    function* relativeBasisGen(rem, plan, result, wk) {
+      var c = rem.count;
+      var m = plan.m;
+      var sampled = rem.S < rem.N;
       if (m > 0 && plan.plain) {
-        var reused = yield* plainBasisGen(dirs.directions, c, plan.plain, m, D, wk);
+        var reused = yield* plainBasisGen(rem.dirs, c, plan.plain, m, rem.D, wk);
         result.plain = { given: plan.plain.count, kept: reused.kept };
         if (reused.kept >= 3 - c) {
           result.basis = reused.basis;
           result.subspace = reused.kept;
-          result.method = "plain-reused" + (S < N ? "-sampled" : "");
+          result.method = sampled ? "plain-reused-sampled" : "plain-reused";
         }
       }
       if (m > 0 && !result.basis) {
-        var full = yield* remainderFitGen(X, N, D, plan, mean, wk);
+        var full = yield* remainderFitGen(rem, plan, wk);
         result.basis = full.basis;
         result.subspace = m;
         result.method = (plan.plain ? "fallback-" : "") + full.method;
       }
+    }
+
+    // The share of the remainder's variance the first `sub` toured directions hold.
+    function heldShare(held, sub) {
+      var s = 0;
+      for (var k = 0; k < sub; k++) s += held.variances[k];
+      return above(held.totalVariance, 0) ? clamp01(s / held.totalVariance) : 0;
+    }
+
+    function* relativeFitGen(X, N, D, plan, wk) {
+      var dirs = plan.dirs;
+      var c = dirs.count;
+      var S = plan.S;
+      var unit = yield* unitLengthGen(X, N, D, RELATIVE_UNIT_TOLERANCE, wk);
+      var result = blankRelativeFit(dirs, unit);
+      if (c === 0) return result;
+      result.window = yield* heightWindowGen(X, N, D, dirs.directions.subarray(0, D), dirs.pinned[0].length, wk);
+      var mean = yield* rowMeanGen(X, N, D, wk);
+      result.fittedRows = S;
+      result.rank = Math.max(0, Math.min(S - 1, D - c));
+      result.fixed = Math.max(0, 3 - c - result.rank);
+      var rem = { X: X, N: N, D: D, mean: mean, dirs: dirs.directions, count: c, S: S };
+      yield* relativeBasisGen(rem, plan, result, wk);
       var sub = result.subspace;
-      var held = yield* remainderVarianceGen(X, N, D, mean, dirs.directions, c, result.basis, sub, S, wk);
+      var held = yield* remainderVarianceGen(rem, result.basis, sub, wk);
       result.variances = held.variances;
       result.totalVariance = held.totalVariance;
-      if (sub > 0) {
-        var s = 0;
-        for (var k = 0; k < sub; k++) s += held.variances[k];
-        result.share = above(held.totalVariance, 0) ? clamp01(s / held.totalVariance) : 0;
-      }
+      if (sub > 0) result.share = heldShare(held, sub);
       return result;
     }
 
@@ -6630,6 +6673,51 @@ ET.modes = (function () {
     return s;
   }
 
+  // How far the view is into the relative look at t (0 in the plain view).
+  function mixAt(t, ev) {
+    if (!ev) return 0;
+    var tr = ev.turn;
+    if (t - tr.t0 < tr.duration) return tr.mixFrom + (tr.mixTo - tr.mixFrom) * refitEase((t - tr.t0) / tr.duration);
+    return tr.mixTo;
+  }
+
+  // The parts of state.relative that stay the same for an event.
+  function eventInfo(tr, target) {
+    var fit = tr.fit;
+    var letterOf = function (j) {
+      return tr.list[j].letter;
+    };
+    return {
+      pinned: fit.pinned.map(function (p, k) {
+        return { letter: letterOf(p.index), axis: RELATIVE_AXES[k], length: p.length };
+      }),
+      dropped: fit.dropped.map(function (dd) {
+        return { letter: letterOf(dd.index), reason: dd.reason, against: dd.against.map(letterOf) };
+      }),
+      measure: fit.unit.unit ? "cosine" : "length along the search",
+      unit: { unit: fit.unit.unit, min: fit.unit.min, max: fit.unit.max, tolerance: fit.unit.tolerance },
+      window: { low: target.low, high: target.high, bottom: target.bottom, top: target.top },
+      share: fit.share,
+      subspace: fit.subspace,
+      free: 3 - fit.count,
+      fixed: fit.fixed,
+    };
+  }
+
+  // A stepper task that pumps another stepper one unit per run.
+  function pumpTask(stp, weight) {
+    return {
+      required: true,
+      weight: weight,
+      progress: function () {
+        return stp.progress;
+      },
+      run: function () {
+        return stp.step(0);
+      },
+    };
+  }
+
   function create(options) {
     var opt = {};
     for (var k in DEFAULTS) opt[k] = options?.[k] === undefined ? DEFAULTS[k] : options[k];
@@ -7067,14 +7155,6 @@ ET.modes = (function () {
       return res;
     }
 
-    // How far the view is into the relative look at t (0 in the plain view).
-    function mixAt(t, ev) {
-      if (!ev) return 0;
-      var tr = ev.turn;
-      if (t - tr.t0 < tr.duration) return tr.mixFrom + (tr.mixTo - tr.mixFrom) * refitEase((t - tr.t0) / tr.duration);
-      return tr.mixTo;
-    }
-
     // The centre (written into `centre`) and the draw parameters at t for the
     // frame given: the plain glide and zoom, or the relative framing, glided
     // from the values shown at the framing's start.
@@ -7287,14 +7367,20 @@ ET.modes = (function () {
       ]);
     }
 
+    // How many directions the searches pin now: none with the setting off, no
+    // set or an empty one.
+    function pinnedCount() {
+      if (!relOn || !set || empty) return 0;
+      return ET.math.relativeDirections(queries.map((q) => q.query), D).count;
+    }
+
     // Bring what is shown in line with the setting, the searches and the set:
     // start a fit (returned as a stepper), switch now (a fit kept for the same
     // searches on the same set, or turning off), or nothing.
     function reconcile(t) {
       var h = heading();
       var shownFit = h ? h.fit : null;
-      var dirs = relOn && set && !empty ? ET.math.relativeDirections(queries.map((q) => q.query), D) : null;
-      if (!dirs?.count) {
+      if (!pinnedCount()) {
         if (relPending) cancelRelative();
         if (shownFit) addSwitch(t, null, null);
         return null;
@@ -7389,29 +7475,6 @@ ET.modes = (function () {
       };
     }
 
-    // The parts of state.relative that stay the same for an event.
-    function eventInfo(tr, target) {
-      var fit = tr.fit;
-      var letterOf = function (j) {
-        return tr.list[j].letter;
-      };
-      return {
-        pinned: fit.pinned.map(function (p, k) {
-          return { letter: letterOf(p.index), axis: RELATIVE_AXES[k], length: p.length };
-        }),
-        dropped: fit.dropped.map(function (dd) {
-          return { letter: letterOf(dd.index), reason: dd.reason, against: dd.against.map(letterOf) };
-        }),
-        measure: fit.unit.unit ? "cosine" : "length along the search",
-        unit: { unit: fit.unit.unit, min: fit.unit.min, max: fit.unit.max, tolerance: fit.unit.tolerance },
-        window: { low: target.low, high: target.high, bottom: target.bottom, top: target.top },
-        share: fit.share,
-        subspace: fit.subspace,
-        free: 3 - fit.count,
-        fixed: fit.fixed,
-      };
-    }
-
     // After a swing ends at U, Tumble turns back onto its tour from the frame
     // shown at U the way it turns onto a refitted tour: the tour's axes are
     // relabelled (order and sign) to match that frame, and a fixed rotation that
@@ -7501,20 +7564,6 @@ ET.modes = (function () {
       // The relative view in force (or a switch to it waiting) is fitted again on
       // the new set, the searches kept, and switches in at a recorded time.
       return M.changed(relOn ? reconcile(t) : null, false);
-    }
-
-    // A stepper task that pumps another stepper one unit per run.
-    function pumpTask(stp, weight) {
-      return {
-        required: true,
-        weight: weight,
-        progress: function () {
-          return stp.progress;
-        },
-        run: function () {
-          return stp.step(0);
-        },
-      };
     }
 
     // Fit the directions again on the current data. Returns a stepper. The
@@ -15072,6 +15121,13 @@ ET.viewer = (function () {
     return true;
   }
 
+  // Two fingers on the sky move and zoom the picture; the page must not scroll under them.
+  // One finger still scrolls the page vertically (the stage's touch-action allows it).
+  // A touch-action cannot change once a touch has begun, so the scroll is refused here.
+  function holdPage(e) {
+    if (e.touches?.length >= 2 && e.cancelable !== false && e.preventDefault) e.preventDefault();
+  }
+
   function wire(v) {
     var stage = v.stage;
     var pointers = {};
@@ -15240,12 +15296,8 @@ ET.viewer = (function () {
       { passive: false }
     );
 
-    // Two fingers on the sky move and zoom the picture; the page must not scroll under them.
-    // One finger still scrolls the page vertically (the stage's touch-action allows it).
-    // A touch-action cannot change once a touch has begun, so the scroll is refused here.
-    function holdPage(e) {
-      if (e.touches?.length >= 2 && e.cancelable !== false && e.preventDefault) e.preventDefault();
-    }
+    // Two fingers on the sky move and zoom the picture; the page must not scroll under them
+    // (holdPage).
     listen(v, stage, "touchstart", holdPage, { passive: false });
     listen(v, stage, "touchmove", holdPage, { passive: false });
 
@@ -16033,6 +16085,22 @@ ET.viewer = (function () {
     uploadLit(v);
   }
 
+  // The first n lit values of the points that are not results (inside 0) set to 0.
+  function hideOutside(lit, inside, n) {
+    var k = Math.min(n, inside.length);
+    for (var h = 0; h < k; h++) if (inside[h] === 0) lit[h] = 0;
+  }
+
+  // The gradient written over the first n lit values that are not above 0 (a value that
+  // is not a number counts as not above 0).
+  function fillGradient(lit, grad, n) {
+    var m = Math.min(n, grad.length);
+    for (var i = 0; i < m; i++) {
+      if (lit[i] > 0) continue;
+      lit[i] = grad[i];
+    }
+  }
+
   function uploadLit(v) {
     var s = v.search;
     var r = v.renderer;
@@ -16047,20 +16115,13 @@ ET.viewer = (function () {
     // which the mode's unlitGain 0 does not draw: Only results wins.
     var showsRest = s.lit.rest > 0;
     s.litHidden = showsRest && s.hideUnlit;
-    if (s.litHidden) {
-      var inside = s.lit.inside;
-      var k = Math.min(n, inside.length);
-      for (var h = 0; h < k; h++) if (inside[h] === 0) lit[h] = 0;
-    }
+    if (s.litHidden) hideOutside(lit, s.lit.inside, n);
     // In the relative view, points the searches do not light get the faint gradient; the
     // lit values above 0 are kept exactly (results follow the Lit setting as without it).
     // Under Lit "all" there is no gradient: the rest keeps its constant.
     s.litRelative = s.relActive;
     var grad = s.relActive && !showsRest ? relativeGradient(v) : null;
-    if (grad) {
-      var m = Math.min(n, grad.length);
-      for (var i = 0; i < m; i++) if (!(lit[i] > 0)) lit[i] = grad[i];
-    }
+    if (grad) fillGradient(lit, grad, n);
     try {
       r.setLit(lit, shared);
       s.litUploaded = true;
@@ -16709,19 +16770,44 @@ ET.viewer = (function () {
   function searchDirection(q) {
     var D = q.query.length;
     var len = Math.sqrt(rowDot(q.query, 0, q.query, D));
-    if (!(len > ET.math.RELATIVE_ZERO_LENGTH)) return null;
-    var u = new Float64Array(D);
-    for (var d = 0; d < D; d++) u[d] = q.query[d] / len;
-    return { u: u, length: len };
+    if (len > ET.math.RELATIVE_ZERO_LENGTH) {
+      var u = new Float64Array(D);
+      for (var d = 0; d < D; d++) u[d] = q.query[d] / len;
+      return { u: u, length: len };
+    }
+    return null; // also a length that is not a number
   }
 
   // The search's own point: at plain cosine distance below OWN_POINT_DISTANCE and of the
   // search's length (the rule the overlay draws by).
   function isOwnPoint(set, i, distance, length) {
-    if (!(distance < OWN_POINT_DISTANCE)) return false;
-    var D = set.dimension;
-    var o = i * D;
-    return Math.abs(Math.sqrt(rowDot(set.vectors, o, set.vectors.subarray(o, o + D), D)) - length) < OWN_POINT_LENGTH;
+    if (distance < OWN_POINT_DISTANCE) {
+      var D = set.dimension;
+      var o = i * D;
+      return Math.abs(Math.sqrt(rowDot(set.vectors, o, set.vectors.subarray(o, o + D), D)) - length) < OWN_POINT_LENGTH;
+    }
+    return false; // also a distance that is not a number
+  }
+
+  // Fills c with each point's plain cosine to the search (1 - dist) and returns the largest
+  // of a point other than the search's own (-Infinity when there is none).
+  function cosineTop(q, set, dist, c) {
+    var N = set.count;
+    var dir = searchDirection(q);
+    var hi = -Infinity;
+    for (var i = 0; i < N; i++) {
+      c[i] = 1 - dist[i];
+      if (c[i] > hi && !(dir && isOwnPoint(set, i, dist[i], dir.length))) hi = c[i];
+    }
+    return hi;
+  }
+
+  // g raised, point by point, to clamp((c - mid) / (hi - mid), 0, 1) where that is larger.
+  function raiseGradient(g, c, mid, hi) {
+    for (var j = 0; j < g.length; j++) {
+      var x = clamp((c[j] - mid) / (hi - mid), 0, 1);
+      if (x > g[j]) g[j] = x;
+    }
   }
 
   // The gradient for the searches shown, worked out once per change of the searches or the
@@ -16739,18 +16825,10 @@ ET.viewer = (function () {
     for (const q of s.shown) {
       var r = q.ranking;
       var dist = r.plainDistances || r.distances;
-      var dir = searchDirection(q);
-      var hi = -Infinity;
-      for (var i = 0; i < N; i++) {
-        c[i] = 1 - dist[i];
-        if (c[i] > hi && !(dir && isOwnPoint(set, i, dist[i], dir.length))) hi = c[i];
-      }
+      var hi = cosineTop(q, set, dist, c);
       var mid = Float64Array.from(c).sort()[N >> 1];
-      if (!(hi > mid)) continue;
-      for (var j = 0; j < N; j++) {
-        var x = clamp((c[j] - mid) / (hi - mid), 0, 1);
-        if (x > g[j]) g[j] = x;
-      }
+      // Nothing is raised unless hi is above mid (so not when either is not a number).
+      if (hi > mid) raiseGradient(g, c, mid, hi);
     }
     var values = new Float32Array(N);
     for (var k = 0; k < N; k++) values[k] = RELATIVE_FADE_BASE + RELATIVE_FADE_SCALE * g[k] * g[k];
@@ -16823,6 +16901,46 @@ ET.viewer = (function () {
     });
   }
 
+  // The parts of info().search.relative that come from the mode's state while the relative
+  // view is shown.
+  function shownRelativeParts(v, st) {
+    return {
+      settled: st.settled === true,
+      measure: st.measure,
+      pinned: st.pinned.map(function (p) {
+        return { letter: p.letter, axis: p.axis, length: p.length };
+      }),
+      dropped: st.dropped.map(function (d) {
+        return { letter: d.letter, reason: d.reason, against: d.against.slice() };
+      }),
+      free: st.free,
+      fixed: st.fixed,
+      window: st.window ? { ...st.window } : null,
+      share: st.share,
+      subspace: st.subspace,
+      searches: relativeResults(v),
+    };
+  }
+
+  // The same parts in the plain view: the measure from the viewer's own check of the set
+  // (`unit`, null with no set) and the searches that give no axis.
+  function plainRelativeParts(v, unit) {
+    var measure = null;
+    if (unit) measure = unit.unit ? "cosine" : "length along the search";
+    return {
+      settled: false,
+      measure: measure,
+      pinned: [],
+      dropped: plainDropped(v),
+      free: 3,
+      fixed: 0,
+      window: null,
+      share: null,
+      subspace: null,
+      searches: [],
+    };
+  }
+
   // info().search.relative. The mode's state is the one last drawn. In the plain view the
   // measure and unit come from the viewer's own check of the set (Tumble reports them only
   // once an axis is pinned), and dropped names the searches that give no axis.
@@ -16831,33 +16949,23 @@ ET.viewer = (function () {
     var st = offered && v.mode && v.last ? v.last.relative || null : null;
     var active = !!st?.active;
     var unit = active ? st.unit : unitOf(v);
-    var measure = null;
-    if (active) measure = st.measure;
-    else if (unit) measure = unit.unit ? "cosine" : "length along the search";
+    var parts = active ? shownRelativeParts(v, st) : plainRelativeParts(v, unit);
     return {
       relative: v.rel.relative,
       showOrigin: v.rel.showOrigin,
       offered: offered,
       active: active,
-      settled: active && st.settled === true,
-      measure: measure,
+      settled: parts.settled,
+      measure: parts.measure,
       unit: unit ? { unit: unit.unit, min: unit.min, max: unit.max, tolerance: unit.tolerance } : null,
-      pinned: active
-        ? st.pinned.map(function (p) {
-            return { letter: p.letter, axis: p.axis, length: p.length };
-          })
-        : [],
-      dropped: active
-        ? st.dropped.map(function (d) {
-            return { letter: d.letter, reason: d.reason, against: d.against.slice() };
-          })
-        : plainDropped(v),
-      free: active ? st.free : 3,
-      fixed: active ? st.fixed : 0,
-      window: active && st.window ? { ...st.window } : null,
-      share: active ? st.share : null,
-      subspace: active ? st.subspace : null,
-      searches: active ? relativeResults(v) : [],
+      pinned: parts.pinned,
+      dropped: parts.dropped,
+      free: parts.free,
+      fixed: parts.fixed,
+      window: parts.window,
+      share: parts.share,
+      subspace: parts.subspace,
+      searches: parts.searches,
     };
   }
 
@@ -16996,6 +17104,10 @@ ET.viewer = (function () {
     var rel = v.modeId === "tumble" ? st?.relative : null;
     var key = "";
     if (rel) {
+      // settled is part of what a host reads (info().search.relative.settled), so the end
+      // of a turn is announced too
+      var turn = "";
+      if (active) turn = rel.settled ? ":settled" : ":turning";
       key =
         (active ? "on:" : "off:") +
         rel.pinned
@@ -17009,9 +17121,7 @@ ET.viewer = (function () {
             return d.letter;
           })
           .join("") +
-        // settled is part of what a host reads (info().search.relative.settled), so the end
-        // of a turn is announced too
-        (active ? (rel.settled ? ":settled" : ":turning") : "");
+        turn;
     }
     if (key !== s.relKey) {
       s.relKey = key;

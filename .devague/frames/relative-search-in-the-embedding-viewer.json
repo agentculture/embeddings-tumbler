@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-16T17:49:58Z",
-  "updated": "2026-11-17T08:57:37Z",
+  "updated": "2026-11-17T09:10:49Z",
   "claims": [
     {
       "id": "c1",
@@ -849,6 +849,17 @@
       "skipped_check": "keeping the full output of a failing run",
       "refs": [
         "s3"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l9",
+      "code": "provenance-missing",
+      "what": "Agents s1 and s2 (SonarCloud fixes in JavaScript) each piped a failing browser run through tail and lost the error text, so the cause of those failures (2 failed, 8 errors in the heights module, on a machine at load about 100) is inferred from load and from clean reruns, not seen. Agent s2 also reran a timed-out command before establishing why it timed out, against the workforce rule; the cause (a 170 second cap against a fixture that waits up to 240 seconds) was read afterwards. Reported by the agents.",
+      "skipped_check": "keeping the full output of a failing run; never rerunning a killed command before its cause is known",
+      "refs": [
+        "s1, s2"
       ],
       "origin": "llm",
       "status": "proposed"
