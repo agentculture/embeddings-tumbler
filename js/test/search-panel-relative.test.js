@@ -445,3 +445,20 @@ test("t22 (d9): there is no control for the rest, in any view, whatever the sear
     assert.deepStrictEqual(t.calls, [], "and nothing was told to the handle");
   }
 });
+
+// ---------- review of pull request 13, finding 3 ----------
+
+test("review 3: the gap bar under a result takes its search's colour by letter, as its rank does", () => {
+  const t = build("tumble");
+  const far = { ...result(2, 2, "two"), gap: 0.2 };
+  const settings = { k: 8, lit: "even", distances: true, rerank: false, pointOfView: null, onlyResults: false };
+  // Only B is shown, first in the list (Relative on keeps the letters).
+  t.panel.update(search({ settings, relative: relState({ pinned: [{ letter: "B", axis: "vertical", length: 1 }] }) }, [oneSearch("B", [result(1, 1, "one"), far])]));
+  const bars = t.panelEl.querySelectorAll(".tumbler-search-gap");
+  assert.strictEqual(bars.length, 2);
+  assert.match(t.q(".tumbler-search-rank").style.color, /--tumbler-search-2/);
+  for (const bar of bars) {
+    assert.match(bar.children[0].style.background, /--tumbler-search-2/);
+    assert.doesNotMatch(bar.children[0].style.background, /--tumbler-search-1/);
+  }
+});

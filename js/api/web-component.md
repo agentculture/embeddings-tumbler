@@ -31,12 +31,14 @@ twice does nothing the second time. Without custom element support it does nothi
   same as reading its attribute (present, and not `"false"`, is `true`). Setting one sets or
   removes its attribute, and the attribute change reaches the viewer. They may be set before
   the element connects or the core loads; the value is used as a mount option.
-- **The attribute is the one record of the setting, and it goes one way.** A change made with the
-  panel's Relative or Show the origin checkbox reaches the viewer (`el.handle.relativeSettings()`
-  and `info().search.relative` show it) but is **not** written back to the attribute or the
-  property. Read the viewer, not the attribute, to learn what a visitor chose. If a host sets the
-  attribute to the value it already has, nothing happens, so it cannot undo a checkbox this way;
-  set the opposite value first.
+- **The attribute, the property and the viewer agree.** A change made with the panel's Relative
+  or Show the origin checkbox, or with `el.handle.setRelative`, is written back to the attribute
+  (set to `""` for on, removed for off), so `el.relative` and `el.showOrigin` say what a visitor
+  chose, a selector such as `embeddings-tumbler[relative]` matches it, and `el.relative = false`
+  turns off a view the visitor turned on. The shell learns of the change from the viewer's report
+  (it passes `onSearchChange` at mount for this alone) and does not call the viewer again for it.
+  An attribute whose value is `"false"` is left as it is while the setting is off. While no viewer
+  is mounted the attribute alone holds the setting, and is the mount option of the next mount.
 - `el.handle`: the viewer handle (see `js/api/50-viewer.md`), or `null` while not mounted.
 - `el.update(data)`: forwards to the viewer and returns its result (never throws). This is how a host
   appends: `el.update({ ...meta, op: "append", vectors })`.

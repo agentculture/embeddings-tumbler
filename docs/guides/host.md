@@ -1254,11 +1254,12 @@ Each form of the viewer has its own way to set them:
 
 Three things to know about those, because they are not symmetrical:
 
-- **The web component's attribute is not a mirror of the checkbox.** A change
-  made with the panel's checkbox reaches the viewer, but is not written back to
-  the element's attribute or property. To learn what a visitor chose, read the
-  viewer (`el.handle.relativeSettings()` or `info().search.relative`), not the
-  attribute.
+- **The web component's attribute follows the checkbox.** A change made with
+  the panel's checkbox, or with `el.handle.setRelative`, is written back to
+  the element's attribute, so `el.relative` and `el.showOrigin` say what a
+  visitor chose, `embeddings-tumbler[relative]` matches it in a style sheet,
+  and `el.relative = false` turns it off again. The attribute, the property
+  and `el.handle.relativeSettings()` always agree.
 - **The standalone page keeps both settings in its address** with
   `history.replaceState` (no history entry is added), so a view can be
   reopened from the address bar. The link under the notes that switches to the

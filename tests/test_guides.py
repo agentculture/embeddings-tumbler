@@ -432,7 +432,7 @@ def test_host_guide_documents_the_relative_settings_in_every_form() -> None:
     for name in (
         "relative: true", "showOrigin: true", "setRelative", "relativeSettings", "show-origin",
         "el.relative", "el.showOrigin", "relative=1", "origin=1", "history.replaceState",
-        "not written back", "Letters are kept",
+        "written back to", "Letters are kept",
     ):  # fmt: skip
         assert name in " ".join(text.split()), name
     info = _section(HOST, "What `info().search.relative` reports")

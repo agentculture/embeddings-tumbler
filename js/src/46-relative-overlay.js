@@ -10,8 +10,12 @@
   // Positions in the list are in device pixels of the overlay canvas; placeLabels divides by
   // the list's dpr to place the spans in CSS pixels.
 
-  var RO_TICK_STEP = 0.1; // a tick and a level ring every 0.1 along the vertical search
-  var RO_RING_RADIUS = 0.34; // a level ring's radius, in units (the reference's)
+  var RO_TICK_STEP = 0.1; // a tick and a level ring every 0.1 along the vertical search ...
+  var RO_STEPS_FEWEST = 2; // ... while the ruler is at least this many steps of 0.1 long ...
+  var RO_STEPS_MOST = 12; // ... and at most this many; any other ruler gets a step of its own,
+  var RO_STEPS_OWN = 10; // the smallest of 1, 2 or 5 times a power of ten it is at most this many of
+  var RO_RING_RADIUS = 0.34; // a level ring's radius, in units (the reference's), at a step of 0.1
+  var RO_RING_STEPS = 3.4; // and in tick steps, for a ruler with a step of its own
   var RO_RING_SEGMENTS = 48; // segments of a level ring (the reference's)
   var RO_CIRCLE_SEGMENTS = 96; // segments of the unit circle about the origin
   var RO_FOOT_MARGIN = 0.2; // the ruler starts this far below the window's bottom (not below 0)
@@ -203,24 +207,77 @@
     list.ruler = { x0: a.x, y0: a.y, x1: b.x, y1: b.y, from: foot, to: top };
   }
 
+  // The ticks of a ruler with the reference's step, 0.1: tick k is at k * 0.1, read to one
+  // decimal, and a level ring's radius is 0.34.
+  var RO_TICKS_TENTHS = {
+    step: RO_TICK_STEP,
+    radius: RO_RING_RADIUS,
+    at: function (k) {
+      return k * RO_TICK_STEP;
+    },
+    text: function (s) {
+      return s.toFixed(1);
+    },
+  };
+
+  // The ticks of a ruler with a step of mant * 10^exp (mant is 1, 2 or 5). A tick's height is
+  // read from its decimal form, so it is the nearest number to k * mant * 10^exp (0.6, never
+  // 0.6000000000000001) and its text has the step's decimals and no more.
+  function roTicksOwn(mant, exp) {
+    var step = Number(mant + "e" + exp);
+    var decimals = Math.min(100, Math.max(0, -exp));
+    return {
+      step: step,
+      radius: RO_RING_STEPS * step,
+      at: function (k) {
+        return Number(k * mant + "e" + exp);
+      },
+      text: function (s) {
+        return s.toFixed(decimals);
+      },
+    };
+  }
+
+  // The tick step for a ruler `span` long. 0.1 wherever the ruler is 2 to 12 steps of 0.1
+  // long (every ruler of a unit-length set with a search of length one). A longer or a shorter
+  // ruler (vectors that are not of length one) gets the smallest step of 1, 2 or 5 times a
+  // power of ten that it is at most ten of: more than four steps, at most ten.
+  function roTickScale(span) {
+    var tenths = span / RO_TICK_STEP;
+    if (!roFinite(span) || span <= 0 || (tenths >= RO_STEPS_FEWEST && tenths <= RO_STEPS_MOST)) return RO_TICKS_TENTHS;
+    var exp = Math.floor(Math.log10(span / RO_STEPS_OWN));
+    for (var e = exp - 1; e <= exp + 1; e++) {
+      for (var mant of [1, 2, 5]) {
+        if (span <= RO_STEPS_OWN * Number(mant + "e" + e)) return roTicksOwn(mant, e);
+      }
+    }
+    return roTicksOwn(1, exp + 2);
+  }
+
+  // A level ring: every point at height s, whatever its side.
+  function roLevelRing(list, cx, s0, s, radius, m) {
+    var pts = new Float32Array(2 * (RO_RING_SEGMENTS + 1));
+    var b = s * s0.f[1] - cx.cF[1];
+    for (var j = 0; j <= RO_RING_SEGMENTS; j++) {
+      var th = (j / RO_RING_SEGMENTS) * Math.PI * 2;
+      var q = cx.at(s * s0.f[0] - cx.cF[0] + radius * Math.cos(th), b, s * s0.f[2] - cx.cF[2] + radius * Math.sin(th));
+      pts[2 * j] = q.x;
+      pts[2 * j + 1] = q.y;
+    }
+    list.rings.push({ points: pts, colour: s0.colour, alpha: 0.16 * m, kind: "level", dash: null });
+  }
+
   function roTicks(list, cx, s0, foot, top, m) {
-    var first = Math.ceil(foot / RO_TICK_STEP - 1e-9);
-    var last = Math.floor(top / RO_TICK_STEP + 1e-6);
-    for (var k = first; k <= last; k++) {
-      var s = k * RO_TICK_STEP;
+    var scale = roTickScale(top - foot);
+    var first = Math.ceil(foot / scale.step - 1e-9);
+    var count = Math.floor(top / scale.step + 1e-6) - first + 1;
+    // counted, so the loop ends whatever the numbers are
+    for (var k = first, n = 0; n < count; k++, n++) {
+      var s = scale.at(k);
       var p = roAlong(cx, s0, s);
       roSegment(list, { x: p.x - 4 * cx.dpr, y: p.y }, { x: p.x + 4 * cx.dpr, y: p.y }, { colour: s0.colour, alpha: 0.75 * m, width: cx.dpr, kind: "tick" });
-      // a level ring: every point at this height, whatever its side
-      var pts = new Float32Array(2 * (RO_RING_SEGMENTS + 1));
-      var b = s * s0.f[1] - cx.cF[1];
-      for (var j = 0; j <= RO_RING_SEGMENTS; j++) {
-        var th = (j / RO_RING_SEGMENTS) * Math.PI * 2;
-        var q = cx.at(s * s0.f[0] - cx.cF[0] + RO_RING_RADIUS * Math.cos(th), b, s * s0.f[2] - cx.cF[2] + RO_RING_RADIUS * Math.sin(th));
-        pts[2 * j] = q.x;
-        pts[2 * j + 1] = q.y;
-      }
-      list.rings.push({ points: pts, colour: s0.colour, alpha: 0.16 * m, kind: "level", dash: null });
-      roText(list, p.x - 9 * cx.dpr, p.y, s.toFixed(1), { align: "right", colour: s0.colour, alpha: 0.75 * m, kind: "tick", extra: { height: s } });
+      roLevelRing(list, cx, s0, s, scale.radius, m);
+      roText(list, p.x - 9 * cx.dpr, p.y, scale.text(s), { align: "right", colour: s0.colour, alpha: 0.75 * m, kind: "tick", extra: { height: s } });
     }
   }
 

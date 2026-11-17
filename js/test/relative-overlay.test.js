@@ -712,3 +712,142 @@ test("t19: a marker's name is placed before result labels, so an overlapping res
   assert.ok(shown.includes("A · Rice") && shown.includes("B · Wheat"), "both names shown");
   assert.ok(!shown.includes("a result label in the way"));
 });
+
+// ---------- review of pull request 13, finding 5: the tick step follows the ruler ----------
+
+// A made set of N rows about one direction, every row `scale` long: lengths are far from
+// one, so the height is "length along the search" and the window is about `scale` tall.
+function scaled(scale, N = 60, D = 12) {
+  let seed = 12345;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648) * 2 - 1;
+  const X = new Float32Array(N * D);
+  const labels = [];
+  const byLabel = {};
+  for (let i = 0; i < N; i++) {
+    const v = new Float64Array(D);
+    for (let d = 0; d < D; d++) v[d] = rnd() * (0.25 + (1.5 * i) / N);
+    v[0] += 1;
+    const l = len(v);
+    for (let d = 0; d < D; d++) X[i * D + d] = (v[d] / l) * scale;
+    labels.push("p" + i);
+    byLabel["p" + i] = i;
+  }
+  return { X, N, D, byLabel, labels };
+}
+
+const kinds = (list) => ({
+  ticks: list.segments.filter((s) => s.kind === "tick"),
+  texts: list.texts.filter((t) => t.kind === "tick"),
+  rings: list.rings.filter((r) => r.kind === "level"),
+});
+
+// The step between neighbouring tick heights, which must be the same all along the ruler.
+function stepOf(texts) {
+  const step = texts[1].height - texts[0].height;
+  texts.forEach((t, j) => {
+    if (j) near(t.height - texts[j - 1].height, step, Math.abs(step) * 1e-9, "even steps");
+  });
+  return step;
+}
+
+// 1, 2 or 5 times a power of ten.
+function isNice(step) {
+  const mant = step / 10 ** Math.floor(Math.log10(step) + 1e-9);
+  return [1, 2, 5, 10].some((m) => Math.abs(mant - m) < 1e-6);
+}
+
+for (const scale of [20, 300, 3, 0.01, 0.0004]) {
+  test("review 5: a set of length " + scale + " gets a bounded number of ticks at a round step", () => {
+    const sc = scene(scaled(scale), ["p0"]);
+    assert.strictEqual(sc.fit.unit.unit, false);
+    const list = RO.build(sc.input);
+    const { ticks, texts, rings } = kinds(list);
+    assert.ok(ticks.length >= 4 && ticks.length <= 13, "ticks: " + ticks.length);
+    assert.strictEqual(texts.length, ticks.length);
+    assert.strictEqual(rings.length, ticks.length);
+    const step = stepOf(texts);
+    assert.ok(isNice(step), "step " + step);
+    const foot = list.ruler.from;
+    assert.ok(texts[0].height >= foot - step * 1e-6 && texts[0].height < foot + step, "the first tick is the first at or above the foot");
+    assert.ok(texts.at(-1).height <= sc.top + step * 1e-6 && texts.at(-1).height > sc.top - step, "the last is the last at or below the top");
+    texts.forEach((t, j) => {
+      // the text is the height itself, with as many decimals as the step has and no more
+      assert.strictEqual(Number(t.text), t.height, t.text);
+      assert.ok(t.text.length <= 12, t.text);
+      near(ticks[j].y0, alongPx(sc, sc.u, t.height).y, 1e-6, "tick at " + t.text);
+    });
+    assert.strictEqual(new Set(texts.map((t) => t.text)).size, texts.length, "no two ticks read the same");
+  });
+}
+
+test("review 5: tick texts follow the step: whole numbers, or just enough decimals", () => {
+  const read = (scale) => kinds(RO.build(scene(scaled(scale), ["p0"]).input)).texts.map((t) => t.text);
+  for (const t of read(20)) assert.match(t, /^\d+$/);
+  for (const t of read(0.01)) assert.match(t, /^0\.\d{3}$/);
+  // a step of 0.2: 0.6 is 0.6, not 0.6000000000000001
+  const sc = scene(wiki(), ["Rice"]);
+  sc.input.relative.window.top = 1.9;
+  sc.input.relative.window.bottom = 0.3;
+  const texts = kinds(RO.build(sc.input)).texts;
+  assert.deepStrictEqual(texts.map((t) => t.text), ["0.2", "0.4", "0.6", "0.8", "1.0", "1.2", "1.4", "1.6", "1.8"]);
+  assert.deepStrictEqual(texts.map((t) => t.height), [0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8]);
+});
+
+// A ring's width on the stage over the ruler's length on the stage.
+function ringShare(list) {
+  const ring = list.rings.find((r) => r.kind === "level");
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let j = 0; j < ring.points.length; j += 2) {
+    lo = Math.min(lo, ring.points[j]);
+    hi = Math.max(hi, ring.points[j]);
+  }
+  return (hi - lo) / Math.hypot(list.ruler.x1 - list.ruler.x0, list.ruler.y1 - list.ruler.y0);
+}
+
+test("review 5: a level ring is as wide beside its ruler on a long or a short set as on a unit-length one", () => {
+  const unit = ringShare(RO.build(scene(wiki(), ["Rice"]).input));
+  for (const scale of [20, 0.01]) {
+    const share = ringShare(RO.build(scene(scaled(scale), ["p0"]).input));
+    assert.ok(share > unit / 4 && share < unit * 4, "scale " + scale + ": " + share + " against " + unit);
+  }
+});
+
+test("review 5: where 0.1 suits the ruler the ticks and rings are exactly as before", () => {
+  for (const [fx, label, opts] of [[wiki(), "Rice", {}], [wiki(), "Rice", { showOrigin: true }], [mixed(), mixed().labels[7], {}]]) {
+    const sc = scene(fx, [label], opts);
+    const list = RO.build(sc.input);
+    const { ticks, texts, rings } = kinds(list);
+    const first = Math.ceil(list.ruler.from / 0.1 - 1e-9);
+    assert.ok(ticks.length >= 3 && ticks.length <= 13);
+    const put = ET.renderer.placer(sc.view, W, H);
+    const cF = [0, 1, 2].map((r) => {
+      let s = 0;
+      for (let d = 0; d < fx.D; d++) s += sc.centre[d] * sc.frame[r * fx.D + d];
+      return s;
+    });
+    const f = [0, 1, 2].map((r) => {
+      let s = 0;
+      for (let d = 0; d < fx.D; d++) s += sc.u[d] * sc.frame[r * fx.D + d];
+      return s;
+    });
+    texts.forEach((t, j) => {
+      // the same product, to the last bit (0.30000000000000004 for 3; minus zero for a first
+      // tick at zero, as Math.ceil gives it)
+      const s = (j ? first + j : first) * 0.1;
+      assert.strictEqual(t.height, s);
+      assert.strictEqual(t.text, s.toFixed(1));
+      // the ring: radius 0.34, 48 segments, about the ruler at this height
+      const want = new Float32Array(2 * 49);
+      for (let k = 0; k <= 48; k++) {
+        const th = (k / 48) * Math.PI * 2;
+        const q = put(s * f[0] - cF[0] + 0.34 * Math.cos(th), s * f[1] - cF[1], s * f[2] - cF[2] + 0.34 * Math.sin(th), { x: 0, y: 0 });
+        want[2 * k] = q.x;
+        want[2 * k + 1] = q.y;
+      }
+      let same = rings[j].points.length === want.length;
+      for (let k = 0; same && k < want.length; k++) same = rings[j].points[k] === want[k];
+      assert.ok(same, "ring " + j + " of " + label);
+    });
+  }
+});

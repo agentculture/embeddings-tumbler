@@ -658,7 +658,8 @@ What it holds (the reference's look; `m` is `relative.mix`):
   `max(0, bottom - 0.2)` (from 0 with Show the origin) to `top`; a tick and a
   level ring (radius 0.34 units, 48 segments, the reference's) every 0.1 from
   the first multiple of 0.1 at or above the ruler's foot to `top`, each tick
-  labelled; the title at `top`; one stem per named result from the result to
+  labelled (on a ruler that 0.1 does not suit the step and the radius are
+  others: see "The tick step" below); the title at `top`; one stem per named result from the result to
   the point on ruler A at its height, except the search's own point (see the
   answer above); the search markers at each search's raw query, each with
   its letter and name beside it (below); with two
@@ -725,7 +726,9 @@ origin · truly {far} from the centre, {seen} of it visible
 - The title is `{measure} to {letter}` (the reference's `MEASURE + ' to A'`):
   `cosine to A`, or `length along the search to A`.
 - Tick labels are the height with one decimal (`0.7`); a negative tick keeps
-  its sign (`-0.1`).
+  its sign (`-0.1`). With a step other than 0.1 (below) a label has the
+  step's decimals and no more: `15` at a step of 5, `0.6` at 0.2, `0.015` at
+  0.005.
 - A result label is `[{ranks} ]{text}  {heights}`: `text` is the point's
   title when the viewer gives one (`named[k].title`, t19), otherwise its text;
   cut to 28 characters as the panel does, `heights` the result's height along each pinned search
@@ -733,6 +736,26 @@ origin · truly {far} from the centre, {seen} of it visible
   two spaces and `cosine {c}` follow (its cosine to each pinned search, two decimals, joined
   by ` · `), so every named result shows both (o4).
 - `{far}` and `{seen}` have two decimals.
+
+#### The tick step
+
+The step between ticks, and between level rings, follows the length of ruler A,
+`top` minus its foot:
+
+- **0.1** while the ruler is 0.2 to 1.2 long (2 to 12 steps of 0.1). That is
+  every ruler of a set whose vectors have length one searched with a vector of
+  length one (such a ruler is 0.28 to 1.04 long), and there the ticks, the
+  rings and the labels are bit for bit what they were with a fixed step. A
+  level ring's radius is 0.34.
+- **Otherwise** (vectors that are not of length one: a ruler 40 long, or 0.05
+  long) the smallest step of 1, 2 or 5 times a power of ten of which the ruler
+  is at most ten: more than four steps and at most ten, so 4 to 11 ticks. Tick
+  `k` is at the number nearest to `k` times the step (0.6, not
+  0.6000000000000001), from the first multiple of the step at or above the
+  ruler's foot to `top`. A level ring's radius is 3.4 steps, which is 0.34 at
+  a step of 0.1.
+
+Ruler B's dots stay at 0.1 to 0.9 whatever the step of ruler A.
 
 ## Search panel (t8): the controls and the words
 
@@ -1039,7 +1062,13 @@ RELATIVE_BLOOM
 
 Setting either before the viewer is mounted passes it as a mount option;
 afterwards the shell calls `handle.setRelative`. A property set reflects to its
-attribute and the reverse. The shell holds no projection logic (the existing
+attribute and the reverse. The viewer's own setting is written back too: the
+shell listens to the viewer's report (`onSearchChange`, as a mount option of its
+own; the element has no such option for hosts) and, when a setting was changed
+with the panel's checkbox or with `handle.setRelative`, sets or removes the
+attribute, without calling the viewer again. So the attribute, the property and
+`handle.relativeSettings()` always agree while a viewer is mounted. An attribute
+whose value is `"false"` is left as it is while the setting is off. The shell holds no projection logic (the existing
 no-logic check is extended to the relative names of t2, t3, t6 and t7).
 
 <!-- interface-text file="js/shells/web-component.js" task="t11" landed="yes" -->
@@ -1063,8 +1092,13 @@ watched and is not passed on.
 The controls are the panel's (in the viewer the page mounts); the page reads
 the parameters, passes them as mount options, and keeps them in the address
 with `history.replaceState` when `onSearchChange` reports a change of a
-setting, so a view can be reopened. The other parameters (`mode`, `seed`,
-`data`, `sample`) are kept as they are, and so is any parameter the page does
+setting, so a view can be reopened. The address is written only when
+`relative` or `origin` does not already say what the viewer reports (read as at
+load: the first value is `1`, or it is not), and then only that parameter
+changes: every copy of it is taken out and, for on, `relative=1` or `origin=1`
+is added at the end. The other parameters (`mode`, `seed`,
+`data`, `sample`) are kept byte for byte as they were written (`%20`, `+`, a
+repeated key), and so is any parameter the page does
 not know: `rest=` (t19, deviation d6; removed by t22, deviation d9, before any
 release) is neither read nor written, so an address that still carries it
 loads as without it and keeps it.
