@@ -107,6 +107,51 @@
     return s;
   }
 
+  // How far the view is into the relative look at t (0 in the plain view).
+  function mixAt(t, ev) {
+    if (!ev) return 0;
+    var tr = ev.turn;
+    if (t - tr.t0 < tr.duration) return tr.mixFrom + (tr.mixTo - tr.mixFrom) * refitEase((t - tr.t0) / tr.duration);
+    return tr.mixTo;
+  }
+
+  // The parts of state.relative that stay the same for an event.
+  function eventInfo(tr, target) {
+    var fit = tr.fit;
+    var letterOf = function (j) {
+      return tr.list[j].letter;
+    };
+    return {
+      pinned: fit.pinned.map(function (p, k) {
+        return { letter: letterOf(p.index), axis: RELATIVE_AXES[k], length: p.length };
+      }),
+      dropped: fit.dropped.map(function (dd) {
+        return { letter: letterOf(dd.index), reason: dd.reason, against: dd.against.map(letterOf) };
+      }),
+      measure: fit.unit.unit ? "cosine" : "length along the search",
+      unit: { unit: fit.unit.unit, min: fit.unit.min, max: fit.unit.max, tolerance: fit.unit.tolerance },
+      window: { low: target.low, high: target.high, bottom: target.bottom, top: target.top },
+      share: fit.share,
+      subspace: fit.subspace,
+      free: 3 - fit.count,
+      fixed: fit.fixed,
+    };
+  }
+
+  // A stepper task that pumps another stepper one unit per run.
+  function pumpTask(stp, weight) {
+    return {
+      required: true,
+      weight: weight,
+      progress: function () {
+        return stp.progress;
+      },
+      run: function () {
+        return stp.step(0);
+      },
+    };
+  }
+
   function create(options) {
     var opt = {};
     for (var k in DEFAULTS) opt[k] = options?.[k] === undefined ? DEFAULTS[k] : options[k];
@@ -544,14 +589,6 @@
       return res;
     }
 
-    // How far the view is into the relative look at t (0 in the plain view).
-    function mixAt(t, ev) {
-      if (!ev) return 0;
-      var tr = ev.turn;
-      if (t - tr.t0 < tr.duration) return tr.mixFrom + (tr.mixTo - tr.mixFrom) * refitEase((t - tr.t0) / tr.duration);
-      return tr.mixTo;
-    }
-
     // The centre (written into `centre`) and the draw parameters at t for the
     // frame given: the plain glide and zoom, or the relative framing, glided
     // from the values shown at the framing's start.
@@ -764,14 +801,20 @@
       ]);
     }
 
+    // How many directions the searches pin now: none with the setting off, no
+    // set or an empty one.
+    function pinnedCount() {
+      if (!relOn || !set || empty) return 0;
+      return ET.math.relativeDirections(queries.map((q) => q.query), D).count;
+    }
+
     // Bring what is shown in line with the setting, the searches and the set:
     // start a fit (returned as a stepper), switch now (a fit kept for the same
     // searches on the same set, or turning off), or nothing.
     function reconcile(t) {
       var h = heading();
       var shownFit = h ? h.fit : null;
-      var dirs = relOn && set && !empty ? ET.math.relativeDirections(queries.map((q) => q.query), D) : null;
-      if (!dirs?.count) {
+      if (!pinnedCount()) {
         if (relPending) cancelRelative();
         if (shownFit) addSwitch(t, null, null);
         return null;
@@ -866,29 +909,6 @@
       };
     }
 
-    // The parts of state.relative that stay the same for an event.
-    function eventInfo(tr, target) {
-      var fit = tr.fit;
-      var letterOf = function (j) {
-        return tr.list[j].letter;
-      };
-      return {
-        pinned: fit.pinned.map(function (p, k) {
-          return { letter: letterOf(p.index), axis: RELATIVE_AXES[k], length: p.length };
-        }),
-        dropped: fit.dropped.map(function (dd) {
-          return { letter: letterOf(dd.index), reason: dd.reason, against: dd.against.map(letterOf) };
-        }),
-        measure: fit.unit.unit ? "cosine" : "length along the search",
-        unit: { unit: fit.unit.unit, min: fit.unit.min, max: fit.unit.max, tolerance: fit.unit.tolerance },
-        window: { low: target.low, high: target.high, bottom: target.bottom, top: target.top },
-        share: fit.share,
-        subspace: fit.subspace,
-        free: 3 - fit.count,
-        fixed: fit.fixed,
-      };
-    }
-
     // After a swing ends at U, Tumble turns back onto its tour from the frame
     // shown at U the way it turns onto a refitted tour: the tour's axes are
     // relabelled (order and sign) to match that frame, and a fixed rotation that
@@ -978,20 +998,6 @@
       // The relative view in force (or a switch to it waiting) is fitted again on
       // the new set, the searches kept, and switches in at a recorded time.
       return M.changed(relOn ? reconcile(t) : null, false);
-    }
-
-    // A stepper task that pumps another stepper one unit per run.
-    function pumpTask(stp, weight) {
-      return {
-        required: true,
-        weight: weight,
-        progress: function () {
-          return stp.progress;
-        },
-        run: function () {
-          return stp.step(0);
-        },
-      };
     }
 
     // Fit the directions again on the current data. Returns a stepper. The
