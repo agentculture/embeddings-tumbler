@@ -138,7 +138,7 @@
   // Keeps the two settings in the address (replaceState: no new history entry) so a view
   // can be reopened. Only these two parameters change; the others stay as they are.
   function keepSettingsInAddress(search) {
-    const settings = search && search.relative;
+    const settings = search?.relative;
     if (!settings || typeof settings.relative !== "boolean" || typeof settings.showOrigin !== "boolean") return;
     const history = window.history;
     if (!history || typeof history.replaceState !== "function") return;

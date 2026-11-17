@@ -65,34 +65,40 @@ function facingTarget(ET, set, rows) {
   return st.result;
 }
 
+// Tumble, Lattice and Wander react to a search through the swing: face() at a fixed time,
+// then the release back to the mode's own motion.
+function swingCases(cases, world, view, seed) {
+  const inst = F.ready(world.ET, view, world.set, { seed });
+  inst.face(world.facing, SWING_AT);
+  for (const t of SWING_TIMES) cases[`${view}|seed=${seed}|t=${t}|swing`] = record(inst.stateAt(t));
+}
+
+// The mode's own motion at every time, with the search given first when `withSearch`.
+function plainCases(cases, world, view, seed, withSearch) {
+  const inst = F.ready(world.ET, view, world.set, { seed });
+  if (withSearch && typeof inst.searchChanged === "function") {
+    // As the viewer does: hand it the search, pump what comes back, mark the time.
+    const work = inst.searchChanged(world.search, SEARCH_AT);
+    if (work) work.step();
+    inst.mark(SEARCH_AT);
+  }
+  const tag = withSearch ? "search" : "none";
+  for (const t of TIMES) cases[`${view}|seed=${seed}|t=${t}|${tag}`] = record(inst.stateAt(t));
+}
+
+function viewCases(cases, world, view, seed) {
+  const focus = view === "focus";
+  if (!focus) swingCases(cases, world, view, seed);
+  for (const withSearch of focus ? [false, true] : [false]) plainCases(cases, world, view, seed, withSearch);
+}
+
 function computeCases() {
   const ET = loadAssembled()._internal;
   const set = F.sampleSet(ET, SET_OPTIONS);
-  const search = searchOf(ET, set);
+  const world = { ET, set, search: searchOf(ET, set), facing: facingTarget(ET, set, [5, 300]) };
   const cases = {};
-  const facing = facingTarget(ET, set, [5, 300]);
   for (const view of VIEWS) {
-    for (const seed of SEEDS) {
-      if (view !== "focus") {
-        // Tumble, Lattice and Wander react to a search through the swing: face() at a fixed
-        // time, then the release back to the mode's own motion.
-        const inst = F.ready(ET, view, set, { seed });
-        inst.face(facing, SWING_AT);
-        for (const t of SWING_TIMES) cases[`${view}|seed=${seed}|t=${t}|swing`] = record(inst.stateAt(t));
-      }
-      for (const withSearch of view === "focus" ? [false, true] : [false]) {
-        const inst = F.ready(ET, view, set, { seed });
-        if (withSearch && typeof inst.searchChanged === "function") {
-          // As the viewer does: hand it the search, pump what comes back, mark the time.
-          const work = inst.searchChanged(search, SEARCH_AT);
-          if (work) work.step();
-          inst.mark(SEARCH_AT);
-        }
-        for (const t of TIMES) {
-          cases[`${view}|seed=${seed}|t=${t}|${withSearch ? "search" : "none"}`] = record(inst.stateAt(t));
-        }
-      }
-    }
+    for (const seed of SEEDS) viewCases(cases, world, view, seed);
   }
   return cases;
 }
