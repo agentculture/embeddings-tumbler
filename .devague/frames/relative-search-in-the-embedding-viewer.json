@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-16T17:49:58Z",
-  "updated": "2026-11-16T21:09:26Z",
+  "updated": "2026-11-17T06:03:04Z",
   "claims": [
     {
       "id": "c1",
@@ -816,6 +816,17 @@
       "refs": [
         "t14",
         "tests/browser/test_guide_examples.py"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l6",
+      "code": "assumption-for-measurement",
+      "what": "Task t21's agent drafted its browser test's thresholds from an exploratory run made before it changed the test's set-up, and briefly read a node run as green while the suite was loading the stale assembled file; it re-measured and rebuilt before committing. Three of its first browser assertions were assumptions that measurement refuted and were loosened to what was measured. Reported by the agent.",
+      "skipped_check": "",
+      "refs": [
+        "t21"
       ],
       "origin": "llm",
       "status": "proposed"

@@ -3435,7 +3435,7 @@
 //
 // Up to four searches are active together. Given their rankings (the shape
 // ET.search makes, js/api/24-search.md) this module answers what is lit and
-// how strongly under the three lit settings, which points carry the shared
+// how strongly under the four lit settings, which points carry the shared
 // mark, the report for each pair of searches, the point-of-view scale of one
 // search, and the seeded linear view that faces the searches.
 //
@@ -3449,9 +3449,19 @@
 ET.searchSets = (function () {
   var MAX_SEARCHES = 4;
   var LETTERS = Object.freeze(["A", "B", "C", "D"]);
-  var LIT_SETTINGS = Object.freeze(["even", "close", "named"]);
+  var LIT_SETTINGS = Object.freeze(["even", "close", "named", "all"]);
   var DEFAULT_LIT = "even";
   var LIT_THRESHOLD = 0.02;
+  // The setting "all" (everything, results highlighted; deviation d8) draws a point that is
+  // not a result as nearly as the renderer allows as with no search. The renderer's lit
+  // shader multiplies a point's colour by mix(unlitGain, 2.2, l) for a lit value l, at
+  // filter 1 (js/src/30-renderer.js, pointMain): unlitGain is the renderer's default 0.07
+  // (Focus draws with 0.05, where the factor is 0.989 instead of 1), and 2.2 is a result's.
+  // The factor is 1 at LIT_ALL_REST, about 0.4366. The size factor there, mix(0.8, 1.5, l),
+  // is about 1.106.
+  var LIT_UNLIT_GAIN = 0.07;
+  var LIT_FULL_GAIN = 2.2;
+  var LIT_ALL_REST = (1 - LIT_UNLIT_GAIN) / (LIT_FULL_GAIN - LIT_UNLIT_GAIN);
   var CLOSE_REACH = 2.2;
   var CLOSE_POWER = 1.6;
   var FACE_SALT = 0x46414345;
@@ -3510,7 +3520,7 @@ ET.searchSets = (function () {
   // The value one search gives a point at distance d (named results are set apart).
   function searchValue(how, d, isIn, near, reach) {
     if (how === "close") return closeValue(d, near, reach);
-    return how === "even" && isIn ? 1 : 0;
+    return (how === "even" || how === "all") && isIn ? 1 : 0;
   }
 
   function lightNamed(ranking, count, out) {
@@ -3553,6 +3563,9 @@ ET.searchSets = (function () {
       insideCounts: [],
       litCount: 0,
       sharedCount: 0,
+      // The lit value given to every point that is inside no search: LIT_ALL_REST under
+      // "all", 0 under the other settings (where such a point simply keeps what it has).
+      rest: how === "all" ? LIT_ALL_REST : 0,
     };
     for (const search of searches) out.insideCounts.push(lightSearch(search, count, how, out));
     for (var i = 0; i < count; i++) {
@@ -3561,6 +3574,10 @@ ET.searchSets = (function () {
         out.shared[i] = 1;
         out.sharedCount++;
       }
+    }
+    // After the counts, so that they keep counting results and not every point.
+    if (out.rest > 0) {
+      for (var j = 0; j < count; j++) if (out.inside[j] === 0) out.lit[j] = out.rest;
     }
     return out;
   }
@@ -4010,6 +4027,9 @@ ET.searchSets = (function () {
     LETTERS: LETTERS,
     LIT_SETTINGS: LIT_SETTINGS,
     DEFAULT_LIT: DEFAULT_LIT,
+    LIT_UNLIT_GAIN: LIT_UNLIT_GAIN,
+    LIT_FULL_GAIN: LIT_FULL_GAIN,
+    LIT_ALL_REST: LIT_ALL_REST,
     LIT_THRESHOLD: LIT_THRESHOLD,
     CLOSE_REACH: CLOSE_REACH,
     CLOSE_POWER: CLOSE_POWER,
@@ -9738,7 +9758,11 @@ ET.modes = (function () {
     even: "the results, evenly",
     close: "by closeness: nearer is brighter",
     named: "named results only",
+    all: "everything, results highlighted",
   };
+  var SP_REST_TITLE = "How bright the points that are not results are in the relative view.";
+  var SP_REST_ALL =
+    "Lit is set to everything, results highlighted: every point that is not a result is drawn at its usual brightness, so this setting does nothing.";
   var SP_PALETTE_DARK = { fg: "#e9eef6", muted: "#8a96ab", line: "#1b2436", accent: "#ffc56b", bg: "#04060b" };
   var SP_PALETTE_LIGHT = { fg: "#1b2130", muted: "#5b6578", line: "#d6dae2", accent: "#a35f00", bg: "#f6f4ee" };
   // A value that could name a resource is not used. The "r" is written as an escape so that
@@ -9880,6 +9904,7 @@ ET.modes = (function () {
   function spLitQualifier(setting) {
     if (setting === "close") return ", nearer ones brighter";
     if (setting === "named") return " (named results only)";
+    if (setting === "all") return " (every other point is shown too)";
     return "";
   }
 
@@ -10528,7 +10553,7 @@ ET.modes = (function () {
     ]);
     p.rest = rest.input;
     p.restLabel = rest.label;
-    p.restLabel.title = "How bright the points that are not results are in the relative view.";
+    p.restLabel.title = SP_REST_TITLE;
     p.rest.value = "bright";
     spListen(p, p.rest, "change", function () {
       if (typeof p.handle.setRelative === "function") p.handle.setRelative({ rest: p.rest.value });
@@ -10542,6 +10567,7 @@ ET.modes = (function () {
       ["even", SP_LIT_TEXT.even],
       ["close", SP_LIT_TEXT.close],
       ["named", SP_LIT_TEXT.named],
+      ["all", SP_LIT_TEXT.all],
     ]);
     p.lit = lit.input;
     spListen(p, p.lit, "change", function () {
@@ -10826,9 +10852,15 @@ ET.modes = (function () {
     p.relative.input.checked = !!rel && rel.relative === true;
     p.origin.input.checked = !!rel && rel.showOrigin === true;
     // The rest sits with them in Tumble; it matters only in the relative view, so it is
-    // disabled (not hidden, so the row does not shift) while Relative is off.
+    // disabled (not hidden, so the row does not shift) while Relative is off. It is also
+    // disabled while Lit is "all", which draws the rest at its usual brightness whatever
+    // this says (d8); the title then says why.
     spShow(p.restLabel, p.tumble, "inline-flex");
-    p.rest.disabled = !(rel && rel.relative === true);
+    var relOn = !!rel && rel.relative === true;
+    var restUnused = relOn && st.lit === "all";
+    p.rest.disabled = !relOn || restUnused;
+    var restTitle = restUnused ? SP_REST_ALL : SP_REST_TITLE;
+    if (p.restLabel.title !== restTitle) p.restLabel.title = restTitle;
     if (rel && typeof rel.rest === "string" && p.rest.value !== rel.rest) p.rest.value = rel.rest;
     spShow(p.face, !(p.tumble && rel && rel.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
@@ -14308,6 +14340,10 @@ ET.viewer = (function () {
       out.gain = 0.55;
       out.bloom = 0.3;
     }
+    // The relative view is drawn sharp (deviation d8): by its mix, no depth blur and less
+    // bloom. After the theme's bloom, so that is the value blended from; nothing is touched
+    // at mix 0, so the plain view's draw state is exactly as it was.
+    if (relMix > 0) sharpenRelative(out, relMix);
     // Many full-weight points pile up into a white (or, in ink, black) ball, so the
     // overall brightness comes down as their number goes up.
     var crowd = crowding(v);
@@ -14321,6 +14357,25 @@ ET.viewer = (function () {
     if (v.search.filter > 0) out.filter = v.search.filter;
     out.clear = !!v.needClear;
     return out;
+  }
+
+  // The relative view's depth of field and bloom at mix 1 (deviation d8): a height is read off
+  // a ruler, so no point is blurred by its depth, and the glow is cut so that a crowded cloud
+  // stays separate dots. The reference page draws its relative view this way.
+  var RELATIVE_DEPTH_OF_FIELD = 0;
+  var RELATIVE_BLOOM = 0.2;
+
+  // Blend the two keys of a draw state toward the relative view's by `mix` in (0, 1], from
+  // the value each would otherwise have (the mode's or the theme's, else the renderer's
+  // default). Bloom is never raised: a value already below RELATIVE_BLOOM is kept. Written
+  // so that mix 1 gives the targets exactly. The wires' key (wireDepthOfField) is left alone:
+  // Tumble draws no wires, only the fading ones of a change of view from Lattice.
+  function sharpenRelative(out, mix) {
+    var defaults = ET.renderer.DEFAULTS;
+    var dof = typeof out.depthOfField === "number" ? out.depthOfField : defaults.depthOfField;
+    var bloom = typeof out.bloom === "number" ? out.bloom : defaults.bloom;
+    out.depthOfField = dof * (1 - mix) + RELATIVE_DEPTH_OF_FIELD * mix;
+    out.bloom = bloom * (1 - mix) + Math.min(bloom, RELATIVE_BLOOM) * mix;
   }
 
   // Brightness factor for crowded sets, 1 up to a light load of CROWD_REF. The light
@@ -15342,6 +15397,7 @@ ET.viewer = (function () {
       // The relative view (docs/relative-interface.md, "Viewer (t9, t10)").
       relActive: false, // the relative view is shown this frame
       litRelative: false, // the lit values uploaded hold the gradient
+      litHidden: false, // the lit values uploaded hold 0 for the rest under Lit "all" (Only results)
       relKey: "", // what onSearchChange last saw of the relative view
       gradient: null, // { shown, values } the gradient for the searches shown
       heights: null, // { shown, list } heights and cosines of the results shown
@@ -15938,10 +15994,21 @@ ET.viewer = (function () {
     var shared = new Uint8Array(n);
     lit.set(s.lit.lit.subarray(0, Math.min(n, s.lit.lit.length)));
     shared.set(s.lit.shared.subarray(0, Math.min(n, s.lit.shared.length)));
+    // Lit "all" gives every point that is not a result the constant s.lit.rest (d8). While
+    // Focus's Only results hides the points that are not results, they go up at 0 instead,
+    // which the mode's unlitGain 0 does not draw: Only results wins.
+    var showsRest = s.lit.rest > 0;
+    s.litHidden = showsRest && s.hideUnlit;
+    if (s.litHidden) {
+      var inside = s.lit.inside;
+      var k = Math.min(n, inside.length);
+      for (var h = 0; h < k; h++) if (inside[h] === 0) lit[h] = 0;
+    }
     // In the relative view, points the searches do not light get the faint gradient; the
     // lit values above 0 are kept exactly (results follow the Lit setting as without it).
+    // Under Lit "all" there is no gradient: the rest keeps its constant, whatever The rest says.
     s.litRelative = s.relActive;
-    var grad = s.relActive ? relativeGradient(v) : null;
+    var grad = s.relActive && !showsRest ? relativeGradient(v) : null;
     if (grad) {
       var m = Math.min(n, grad.length);
       for (var i = 0; i < m; i++) if (!(lit[i] > 0)) lit[i] = grad[i];
@@ -16462,6 +16529,9 @@ ET.viewer = (function () {
   function hiddenPoint(v, i) {
     var lit = v.search.lit;
     if (!v.search.hideUnlit || !lit) return false;
+    // Under Lit "all" every point has a lit value above 0; the hidden ones are those inside
+    // no search, exactly the points "the results, evenly" leaves at 0.
+    if (lit.rest > 0) return lit.inside[i] === 0;
     return lit.lit[i] <= 0; // lit values are finite, in [0, 1]
   }
 
@@ -16869,12 +16939,15 @@ ET.viewer = (function () {
   }
 
   // Once a frame, before drawing: whether the relative view is shown. When that changes
-  // the lit values go up again, with or without the gradient.
+  // the lit values go up again, with or without the gradient. So do they when, under Lit
+  // "all", Focus's Only results starts or stops hiding the rest.
   function syncRelativeLit(v, st) {
     var s = v.search;
     var active = relativeShown(v, st);
     s.relActive = active;
-    if (s.lit && s.litUploaded && active !== s.litRelative) uploadLit(v);
+    if (!s.lit || !s.litUploaded) return;
+    var hidden = s.lit.rest > 0 && s.hideUnlit;
+    if (active !== s.litRelative || hidden !== s.litHidden) uploadLit(v);
   }
 
   // Once a frame, after the state is kept: the panel and host hear of a change in what
@@ -16931,8 +17004,9 @@ ET.viewer = (function () {
       if (relettered) notifyModeSearch(v);
     }
     // The rest changes only the lit values of the relative view shown; with it not shown
-    // nothing is uploaded.
-    if (restChanged && v.search.lit && v.search.litUploaded && v.search.litRelative) uploadLit(v);
+    // nothing is uploaded, nor under Lit "all", which draws the rest at its constant.
+    var graded = v.search.lit && !(v.search.lit.rest > 0);
+    if (restChanged && graded && v.search.litUploaded && v.search.litRelative) uploadLit(v);
     searchChanged(v);
     invalidate(v);
     return { relative: next.relative, showOrigin: next.showOrigin, rest: next.rest };
@@ -17530,6 +17604,13 @@ ET.viewer = (function () {
     makeProjector: makeProjector,
     SHADOW: SHADOW,
     PAN_STEP: PAN_STEP,
+    RELATIVE_DEPTH_OF_FIELD: RELATIVE_DEPTH_OF_FIELD,
+    RELATIVE_BLOOM: RELATIVE_BLOOM,
+    // Whether point i of a mounted handle is hidden this frame (Focus's Only results).
+    hiddenPoint: function (handle, i) {
+      var v = handle?._viewer;
+      return !!v && !v.destroyed && hiddenPoint(v, i);
+    },
     // The relative overlay's results and cut-off for a mounted handle (t10 draws them).
     relativeOverlayData: function (handle) {
       var v = handle?._viewer;
