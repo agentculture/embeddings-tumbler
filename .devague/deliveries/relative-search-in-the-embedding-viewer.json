@@ -2,7 +2,7 @@
   "plan_slug": "relative-search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-16T22:05:02Z",
-  "updated": "2026-11-16T23:17:03Z",
+  "updated": "2026-11-17T05:23:07Z",
   "deviations": [
     {
       "id": "d1",
@@ -102,6 +102,20 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 6
+    },
+    {
+      "id": "d7",
+      "what": "The length of the trail behind each moving point becomes a setting of the viewer, in every view: a slider beside the existing Trails checkbox (from a dot with no tail to a long comet tail), also reachable as a mount option, on the web component and in the page's address. With the slider at its default every frame is as before. Built as added task t20.",
+      "task_ref": "t11",
+      "reason": "Asked by the owner on 2026-11-17 while trying the build: 'Can we add a toggle/variable input component for the drag (Each point stays a dot, or does it have a comet like tail?)'. The on/off toggle already exists (Trails); the variable length does not.",
+      "affects": [
+        "t12",
+        "t14"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 7
     }
   ],
   "evidence": [],
