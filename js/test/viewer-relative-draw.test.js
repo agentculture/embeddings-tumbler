@@ -626,23 +626,13 @@ test("t19: with the clock running a change still turns, and Pause then a change 
   t.h.destroy();
 });
 
-test("t19 (d6): the panel's rest control changes the viewer's setting and reports it", async () => {
+test("t22 (d9): the panel has no control for the rest; Lit is the one that decides how the rest is shown", async () => {
   const t = setup({ relative: true, searchPanel: true });
   await ready(t);
   await searchAndSettle(t, [{ point: idOf(t.data, "Rice") }]);
-  const sel = t.v.el.querySelector(".tumbler-search-rest")?.querySelector("select");
-  assert.ok(sel, "the control is in the panel");
-  assert.strictEqual(sel.value, "bright");
-  assert.strictEqual(sel.disabled, false);
-  sel.value = "faint";
-  sel.dispatchEvent({ type: "change" });
-  assert.strictEqual(t.h.relativeSettings().rest, "faint");
-  t.dom.frames(2);
-  t.h.setRelative({ rest: "visible" });
-  t.dom.frames(2);
-  assert.strictEqual(sel.value, "visible", "a change through the handle shows in the control");
-  t.h.setRelative({ relative: false });
-  t.dom.frames(2);
-  assert.strictEqual(sel.disabled, true);
+  assert.strictEqual(t.v.el.querySelector(".tumbler-search-rest"), null, "no such control");
+  const lit = t.v.el.querySelector(".tumbler-search-lit")?.querySelector("select");
+  assert.ok(lit, "Lit is in the panel");
+  assert.ok(!lit.disabled);
   t.h.destroy();
 });

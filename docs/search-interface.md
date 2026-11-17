@@ -1184,8 +1184,10 @@ brightness was chosen. A result is 2.2 times as bright and 1.5 times the size.
   those points (`inside` is 0), which are the points `"even"` would hide.
   Turning Only results off, or leaving Focus, uploads the constant again.
 - **The relative view** (`docs/relative-interface.md`): results as under
-  `"even"`; every other point gets the constant instead of the gradient of The
-  rest, and the panel disables The rest while this setting is chosen.
+  `"even"`; every other point gets the constant instead of the gradient that
+  fades it under the other three settings. This setting is therefore the
+  choice between a faded rest and a rest shown in full; there is no separate
+  setting for it (deviation d9).
 
 `ET.searchSets` gains three constants: `LIT_UNLIT_GAIN` (0.07, checked against
 `ET.renderer.DEFAULTS.unlitGain` by a test), `LIT_FULL_GAIN` (2.2, checked

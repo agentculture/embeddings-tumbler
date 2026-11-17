@@ -221,7 +221,7 @@ function panelSearch(lit, relative) {
   };
   if (relative !== undefined) {
     out.relative = {
-      relative, showOrigin: false, offered: true, active: relative, settled: relative, measure: "cosine", rest: "bright",
+      relative, showOrigin: false, offered: true, active: relative, settled: relative, measure: "cosine",
       unit: { unit: true, min: 1, max: 1, tolerance: 1e-4 }, pinned: relative ? [{ letter: "A", axis: "vertical", length: 1 }] : [],
       dropped: [], fixed: 0, free: 2, window: null, share: 0.2, subspace: 10, searches: [],
     };
@@ -257,26 +257,15 @@ test("the panel's words under all: the count is of results, and the note and the
   assert.ok(SP.noteText(panelSearch("named"), {}).startsWith("10 points lit (named results only): "));
 });
 
-test("The rest is disabled (not hidden) while Lit is all, with a title that says why; another Lit setting brings it back", () => {
+test("t22 (d9): Lit all leaves no disabled control behind: the panel has none for the rest, and Lit stays usable", () => {
   const t = buildPanel("tumble");
-  t.panel.update(panelSearch("even", true));
-  const label = t.q(".tumbler-search-rest");
-  const rest = label.querySelector("select");
-  const plainTitle = "How bright the points that are not results are in the relative view.";
-  assert.strictEqual(rest.disabled, false);
-  assert.strictEqual(label.title, plainTitle);
-  t.panel.update(panelSearch("all", true));
-  assert.strictEqual(rest.disabled, true, "Lit all: disabled");
-  assert.strictEqual(label.hidden, false, "not hidden");
-  assert.strictEqual(rest.value, "bright", "it keeps showing the setting");
-  assert.strictEqual(label.title, "Lit is set to everything, results highlighted: every point that is not a result is drawn at its usual brightness, so this setting does nothing.");
-  t.panel.update(panelSearch("named", true));
-  assert.strictEqual(rest.disabled, false);
-  assert.strictEqual(label.title, plainTitle);
-  // Relative off: disabled as before, with the plain title, whatever Lit is
-  t.panel.update(panelSearch("all", false));
-  assert.strictEqual(rest.disabled, true);
-  assert.strictEqual(label.title, plainTitle);
+  for (const [lit, relative] of [["even", true], ["all", true], ["named", true], ["all", false]]) {
+    t.panel.update(panelSearch(lit, relative));
+    assert.strictEqual(t.q(".tumbler-search-rest"), null, lit);
+    const sel = t.q(".tumbler-search-lit").querySelector("select");
+    assert.ok(!sel.disabled, lit);
+    assert.strictEqual(sel.value, lit);
+  }
 });
 
 // ---------- the viewer: every view ----------
@@ -409,41 +398,35 @@ async function relativeRice(mountOpts) {
   return { dom, h, v, lit };
 }
 
-for (const level of ["bright", "faint", "visible"]) {
-  test(`relative view, the rest ${level}: under all the rest is uploaded at the constant, not the gradient; another Lit setting brings the gradient back`, async () => {
-    const t = await relativeRice({ searchLit: "all" });
-    if (level !== "bright") {
-      assert.strictEqual(t.h.setRelative({ rest: level }).rest, level, "the setting is still kept");
-      t.dom.frames(2);
+test("relative view: under all the rest is uploaded at the constant, not the gradient; another Lit setting brings the gradient back", async () => {
+  const t = await relativeRice({ searchLit: "all" });
+  assert.strictEqual(t.v.search.litRelative, true, "the relative view is shown");
+  assert.ok(!("rest" in t.h.info().search.relative));
+  const inside = t.v.search.lit.inside;
+  const results = assertUpload(t.lit.at(-1), inside, REST32, "relative, all");
+  assert.strictEqual(t.h.info().search.litCount, results);
+  // Back to even: results exactly as they were, the rest on the gradient 0.2 + 0.6 g^2.
+  await settle(t.dom, t.h.setSearchSettings({ lit: "even" }));
+  t.dom.frames(2);
+  const even = t.lit.at(-1);
+  const [base, scale] = [0.2, 0.6];
+  const seen = new Set();
+  for (let i = 0; i < even.length; i++) {
+    if (inside[i] > 0) {
+      if (even[i] !== 1) assert.fail("result " + i + " is " + even[i]);
+    } else {
+      if (!(even[i] >= base - 1e-7 && even[i] <= base + scale + 1e-7)) assert.fail("point " + i + " is " + even[i]);
+      seen.add(even[i]);
     }
-    assert.strictEqual(t.v.search.litRelative, true, "the relative view is shown");
-    assert.strictEqual(t.h.info().search.relative.rest, level);
-    const inside = t.v.search.lit.inside;
-    const results = assertUpload(t.lit.at(-1), inside, REST32, "relative, all");
-    assert.strictEqual(t.h.info().search.litCount, results);
-    // Back to even: results exactly as they were, the rest on the gradient of this level.
-    await settle(t.dom, t.h.setSearchSettings({ lit: "even" }));
-    t.dom.frames(2);
-    const even = t.lit.at(-1);
-    const [base, scale] = { faint: [0, 0.2], visible: [0.08, 0.45], bright: [0.2, 0.6] }[level];
-    const seen = new Set();
-    for (let i = 0; i < even.length; i++) {
-      if (inside[i] > 0) {
-        if (even[i] !== 1) assert.fail("result " + i + " is " + even[i]);
-      } else {
-        if (!(even[i] >= base - 1e-7 && even[i] <= base + scale + 1e-7)) assert.fail("point " + i + " is " + even[i]);
-        seen.add(even[i]);
-      }
-    }
-    assert.ok(seen.size > 10, "a gradient again: " + seen.size + " distinct values");
-    // And to all again, then relative off: still the constant (the plain view's values).
-    await settle(t.dom, t.h.setSearchSettings({ lit: "all" }));
-    t.dom.frames(2);
-    assertUpload(t.lit.at(-1), inside, REST32, "relative, all again");
-    t.h.setRelative({ relative: false });
-    t.dom.frames(2);
-    assert.strictEqual(t.v.search.litRelative, false);
-    assertUpload(t.lit.at(-1), inside, REST32, "plain view, all");
-    t.h.destroy();
-  });
-}
+  }
+  assert.ok(seen.size > 10, "a gradient again: " + seen.size + " distinct values");
+  // And to all again, then relative off: still the constant (the plain view's values).
+  await settle(t.dom, t.h.setSearchSettings({ lit: "all" }));
+  t.dom.frames(2);
+  assertUpload(t.lit.at(-1), inside, REST32, "relative, all again");
+  t.h.setRelative({ relative: false });
+  t.dom.frames(2);
+  assert.strictEqual(t.v.search.litRelative, false);
+  assertUpload(t.lit.at(-1), inside, REST32, "plain view, all");
+  t.h.destroy();
+});

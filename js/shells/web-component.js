@@ -8,11 +8,9 @@
 //   <embeddings-tumbler src="data/my-set.json" mode="tumble" seed="7"></embeddings-tumbler>
 //
 // Attributes: src (a data file on the page's own origin), mode, seed, relative and
-// show-origin (boolean: present, unless "false", is on), and relative-rest (faint, visible or
-// bright: how bright the points that are not results are in the relative view; absent or any
-// other value is bright). Each of the last three has a property (relative, showOrigin,
-// relativeRest) that reflects to its attribute and back; the shell only forwards the setting
-// to the viewer (mount option, then handle.setRelative).
+// show-origin (boolean: present, unless "false", is on). Each has a boolean property
+// (relative, showOrigin) that reflects to its attribute and back; the shell only forwards
+// the setting to the viewer (mount option, then handle.setRelative).
 // Properties (never attributes; nothing is read from markup): embed and rerank, the search
 // callbacks, set as el.embed = fn and el.rerank = fn (a function or null). See js/api/web-component.md.
 // Events (bubbling): tumbler-load (detail: the update result), tumbler-error (detail:
@@ -30,8 +28,6 @@
   if (root.customElements.get(NAME)) return;
 
   const PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-  const REST_LEVELS = ["faint", "visible", "bright"]; // the relative view's rest, as the core names them
-  const REST_DEFAULT = "bright";
 
   // The one place the core global is read. A missing core is a plain message, not an error.
   function getCore() {
@@ -61,7 +57,7 @@
 
   class EmbeddingsTumblerElement extends root.HTMLElement {
     static get observedAttributes() {
-      return ["src", "mode", "seed", "relative", "show-origin", "relative-rest"];
+      return ["src", "mode", "seed", "relative", "show-origin"];
     }
 
     constructor() {
@@ -92,18 +88,6 @@
 
     set showOrigin(value) {
       this._setFlag("show-origin", value);
-    }
-
-    // The rest: the attribute's value when it is one of the three levels, otherwise "bright".
-    get relativeRest() {
-      const v = this.getAttribute("relative-rest");
-      return REST_LEVELS.includes(v) ? v : REST_DEFAULT;
-    }
-
-    // An unknown value is ignored, as the viewer ignores it.
-    set relativeRest(value) {
-      if (!REST_LEVELS.includes(value) || value === this.getAttribute("relative-rest")) return;
-      this.setAttribute("relative-rest", value);
     }
 
     _flag(attr) {
@@ -160,7 +144,6 @@
       this._upgrade("rerank");
       this._upgrade("relative");
       this._upgrade("showOrigin");
-      this._upgrade("relativeRest");
       this.style.display = "block";
       this._start();
     }
@@ -171,9 +154,7 @@
 
     attributeChangedCallback(name, before, after) {
       if (before === after || !this.isConnected) return;
-      if (name === "relative-rest") {
-        this._handle?.setRelative({ rest: this.relativeRest });
-      } else if (name === "relative" || name === "show-origin") {
+      if (name === "relative" || name === "show-origin") {
         const key = name === "relative" ? "relative" : "showOrigin";
         this._handle?.setRelative({ [key]: this._flag(name) });
       } else if (name === "mode") {
@@ -219,7 +200,6 @@
       if (seed !== undefined) options.seed = seed;
       if (this._flag("relative")) options.relative = true;
       if (this._flag("show-origin")) options.showOrigin = true;
-      if (this.getAttribute("relative-rest") !== null) options.relativeRest = this.relativeRest;
       if (this._embed) options.embed = this._embed;
       if (this._rerank) options.rerank = this._rerank;
       try {

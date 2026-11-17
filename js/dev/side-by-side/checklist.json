@@ -502,11 +502,11 @@
    "group": "Relative search: brightness",
    "items": [
     {
-     "title": "Results follow the Lit setting; the rest get a gradient at one of three strengths",
+     "title": "Results follow the Lit setting; the rest get a gradient at one strength",
      "visible": "yes"
     },
     {
-     "title": "How bright the rest is: faint, visible or bright, bright by default",
+     "title": "The fade of the rest has one strength; Lit chooses between a faded rest and a full one",
      "visible": "yes"
     },
     {

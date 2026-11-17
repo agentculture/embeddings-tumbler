@@ -20,9 +20,13 @@ starts paused and the mode's time stays at 0 after the search; the settled relat
 its exact ruler, is drawn at once without pressing Play (task t19: with the clock still, a change
 has no turn), and stays settled once resumed.
 
-The rest (deviation d6): on the standalone page with ``?relative=1`` and a search, the panel's
-control shows "bright"; choosing "faint" dims the points that are not results, so the stage's
-bright pixels fall, with no page error.
+An old address (deviation d9): the setting "The rest" and the page's ``rest=`` parameter were
+removed before any release. ``?relative=1&rest=faint`` loads with no page error, shows the
+relative view with the one fade there is (the fade values handed to the renderer are those of
+the address without the parameter, and above what "faint" could give), has no such control, and
+the parameter stays in the address untouched. The two pictures are not compared: two loads of
+the same address differed by 2.6 percent of the stage's light when this was written (cause not
+looked into), so pixels would not tell the two apart.
 """
 
 from __future__ import annotations
@@ -100,6 +104,16 @@ STILL = f"""() => {{
     settled: !!(d && d.settled), active: h.info().search.relative.active }};
 }}"""
 
+# The fade the relative view gives the points that are not results, as handed to the renderer:
+# how many values, their sum and their largest.
+LIT_SUM = f"""() => {{
+  const g = {rs.H}._viewer.search.gradient;
+  if (!g) return {{ count: 0 }};
+  let sum = 0, top = 0;
+  for (const x of g.values) {{ sum += x; if (x > top) top = x; }}
+  return {{ count: g.values.length, sum: sum.toFixed(6), top: top.toFixed(6) }};
+}}"""
+
 
 def _form_state(tab: harness.Tab) -> dict:
     state = rs.settled(tab, 1, "Rice relative")
@@ -126,26 +140,6 @@ def _paused_still(tab: harness.Tab, pause, resume) -> dict:
         STILL, lambda s: s["time"] - later["time"] >= 1.0, timeout=rs.WAIT, what="resumed"
     )
     return {"first": first, "later": later, "moved": moved}
-
-
-def _stage_light(tab: harness.Tab) -> dict:
-    """With text and overlay hidden, the stage's pixels brighter than the sky: how many, and
-    their summed brightness."""
-    tab.page.wait_for_timeout(200)
-    tab.evaluate(rs.HIDE_LAYERS)
-    png = tab.png("#space canvas.tumbler-canvas", hide_text=True)
-    tab.evaluate(rs.SHOW_LAYERS)
-    width, height, rows = harness.decode_png(png)
-    lit = 0
-    light = 0
-    for y in range(height):
-        row = rows[y]
-        for x in range(width):
-            s = row[3 * x] + row[3 * x + 1] + row[3 * x + 2]
-            if s > 90:
-                lit += 1
-                light += s
-    return {"lit": lit, "light": light}
 
 
 @pytest.fixture(scope="module")
@@ -210,24 +204,20 @@ def forms(browser, webgl, folder):
         tab = harness.Tab(browser, viewport=(1280, 900))
         try:
             tab.goto(plain.url("/index.html?relative=1&seed=3"))
-            tab.wait_for(READY, timeout=rs.WAIT, what="the standalone page, the rest")
+            tab.wait_for(READY, timeout=rs.WAIT, what="the standalone page, no rest=")
             assert tab.evaluate(SEARCH_RICE)
-            rs.settled(tab, 1, "Rice relative, the rest")
-            tab.evaluate(f"() => {rs.H}.pause()")
-            out["rest_shown"] = tab.evaluate(
-                "() => document.querySelector('.tumbler-search-rest select').value"
+            rs.settled(tab, 1, "Rice relative, no rest=")
+            out["rest_absent_lit"] = tab.evaluate(LIT_SUM)
+            # the same view from an address written while the setting existed
+            tab.goto(plain.url("/index.html?relative=1&seed=3&rest=faint"))
+            tab.wait_for(READY, timeout=rs.WAIT, what="the standalone page, rest=faint")
+            assert tab.evaluate(SEARCH_RICE)
+            rs.settled(tab, 1, "Rice relative, rest=faint")
+            out["rest_old_lit"] = tab.evaluate(LIT_SUM)
+            out["rest_settings"] = tab.evaluate(f"() => {rs.H}.relativeSettings()")
+            out["rest_control"] = tab.evaluate(
+                "() => document.querySelector('.tumbler-search-rest') !== null"
             )
-            out["rest_bright"] = _stage_light(tab)
-            tab.page.click(".tumbler-search-bar")  # open the panel, as a person would
-            tab.page.select_option(".tumbler-search-rest select", "faint")
-            out["rest_setting"] = tab.wait_for(
-                f"() => {rs.H}.relativeSettings().rest",
-                lambda r: r == "faint",
-                timeout=rs.WAIT,
-                what="the rest set to faint",
-            )
-            tab.page.wait_for_timeout(300)
-            out["rest_faint"] = _stage_light(tab)
             out["rest_address"] = tab.evaluate("() => location.search")
             out["rest_errors"] = tab.console_errors()
         finally:
@@ -264,7 +254,7 @@ FORMS = ["script", "component", "page"]
 @pytest.mark.parametrize("form", FORMS)
 def test_each_form_turns_relative_on_and_pins_the_vertical_axis_to_the_search(forms, form):
     f = forms[form]
-    assert f["settings"] == {"relative": True, "showOrigin": False, "rest": "bright"}  # rest: d6
+    assert f["settings"] == {"relative": True, "showOrigin": False}
     rel = f["relative"]
     assert rel["relative"] is True and rel["active"] is True and rel["settled"] is True
     assert [(p["letter"], p["axis"]) for p in rel["pinned"]] == [("A", "vertical")]
@@ -328,11 +318,18 @@ def test_reduced_motion_draws_the_settled_ruler_without_play(forms):
     assert ruler["labels"] > 0
 
 
-def test_the_rest_control_shows_bright_and_faint_dims_the_stage(forms):
-    assert forms["rest_shown"] == "bright"
-    assert forms["rest_setting"] == "faint"
-    bright, faint = forms["rest_bright"], forms["rest_faint"]
-    assert faint["lit"] < bright["lit"], (bright, faint)
-    assert faint["light"] < bright["light"], (bright, faint)
-    assert "rest=faint" in forms["rest_address"]
+def test_an_old_address_with_rest_loads_as_without_it_and_keeps_the_parameter(forms):
     assert forms["rest_errors"] == []
+    assert forms["rest_settings"] == {"relative": True, "showOrigin": False}
+    assert forms["rest_control"] is False
+    # the parameter is left alone: neither read nor removed
+    assert "rest=faint" in forms["rest_address"]
+    assert "relative=1" in forms["rest_address"]
+    # the lit values handed to the renderer are those of the address without it
+    assert forms["rest_old_lit"] == forms["rest_absent_lit"]
+    fade = forms["rest_old_lit"]
+    assert fade["count"] == 999
+    # every value is at least the base 0.2, and the largest is above 0.2, which was the most
+    # "faint" (0 + 0.2 g^2) could give
+    assert float(fade["sum"]) >= 0.2 * fade["count"] - 1e-3
+    assert 0.2 < float(fade["top"]) <= 0.8 + 1e-6

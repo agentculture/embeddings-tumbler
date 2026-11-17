@@ -189,18 +189,9 @@ drawing while it is shown. It still drives the viewer only through the handle.
   `search.relative.showOrigin` on every `update(search)`, so a change made
   through the handle (or by a host's mount option) shows in them. Both carry a
   title (a tooltip); Show the origin works in the plain view and with no search.
-  A third control follows them (task t19, deviation d6): `label.tumbler-search-rest`,
-  a select named **The rest** with the options `faint`, `visible` and `bright`
-  (how bright the points that are not results are in the relative view). A change
-  calls `handle.setRelative({ rest })`; it follows `search.relative.rest`. It is
-  shown in Tumble only, and disabled (not hidden) while Relative is off.
-  It is also disabled while Relative is on and Lit is "everything, results
-  highlighted" (task t21, deviation d8): that setting draws every point that is
-  not a result at its usual brightness, so The rest decides nothing. The
-  select keeps showing the setting and the label's title becomes "Lit is set to
-  everything, results highlighted: every point that is not a result is drawn at
-  its usual brightness, so this setting does nothing."; another Lit setting
-  restores the usual title and enables it.
+  There is no third control: a select named The rest (task t19, deviation d6)
+  was merged into Lit before any release (task t22, deviation d9). Whether the
+  points that are not results are faded or shown in full is chosen with Lit.
 - **Lit has a fourth option** (task t21, deviation d8): the menu
   (`label.tumbler-search-lit`) lists `even` "the results, evenly", `close` "by
   closeness: nearer is brighter", `named` "named results only" and, last,
