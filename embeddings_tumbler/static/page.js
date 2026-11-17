@@ -135,21 +135,41 @@
     return { data: data, options: options, synthetic: sample !== null && sample.trim() === SYNTHETIC };
   }
 
+  // The name of one parameter of a raw query ("a%20b=1" is "a b"), read as the browser reads it.
+  function paramName(part) {
+    const raw = part.split("=")[0].replaceAll("+", " ");
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw; // not a readable name: it is none of the page's
+    }
+  }
+
+  // The raw query (no "?") made to say that the setting `key` is `on`. When it already says
+  // so (as readQuery reads it: the first value is "1", or is not), it is returned as it is.
+  // Otherwise every copy of that one parameter is taken out and, for on, `key=1` is added at
+  // the end. Every other parameter stays byte for byte, in its place.
+  function withSetting(query, key, on) {
+    if ((new URLSearchParams(query).get(key) === "1") === on) return query;
+    const kept = query
+      .split("&")
+      .filter((part) => paramName(part) !== key)
+      .join("&");
+    if (!on) return kept;
+    return kept + (kept === "" || kept.endsWith("&") ? "" : "&") + key + "=1";
+  }
+
   // Keeps the two settings in the address (replaceState: no new history entry) so a view
-  // can be reopened. Only these two parameters change; the others stay as they are.
+  // can be reopened. Only these two parameters change, and only when the address does not
+  // already say what the viewer reports; the others stay as they were written.
   function keepSettingsInAddress(search) {
     const settings = search?.relative;
     if (!settings || typeof settings.relative !== "boolean" || typeof settings.showOrigin !== "boolean") return;
     const history = window.history;
     if (!history || typeof history.replaceState !== "function") return;
     try {
-      const params = new URLSearchParams(String(window.location.search || ""));
-      if (settings.relative) params.set("relative", "1");
-      else params.delete("relative");
-      if (settings.showOrigin) params.set("origin", "1");
-      else params.delete("origin");
-      const query = params.toString();
       const before = String(window.location.search || "").replace(/^\?/, "");
+      const query = withSetting(withSetting(before, "relative", settings.relative), "origin", settings.showOrigin);
       if (query === before) return;
       history.replaceState(null, "", (query ? "?" + query : window.location.pathname) + String(window.location.hash || ""));
     } catch (err) {
