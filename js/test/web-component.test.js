@@ -39,8 +39,9 @@ test("without customElements the file does nothing and does not throw", () => {
   bare.globalThis = bare;
   const fs = require("node:fs");
   const { SHELL } = require("./helpers/fake-elements.js");
-  const { runAsFunction } = require("./helpers/load.js");
-  assert.doesNotThrow(() => runAsFunction(fs.readFileSync(SHELL, "utf8"), ["globalThis"], [bare], "bare-shell"));
+  const { runAsFunction, wholeFile } = require("./helpers/load.js");
+  const text = fs.readFileSync(SHELL, "utf8");
+  assert.doesNotThrow(() => runAsFunction(text, ["globalThis"], [bare], "bare-shell", [wholeFile(SHELL, text)]));
 });
 
 // ---------- connect mounts, disconnect destroys ----------
