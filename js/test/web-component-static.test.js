@@ -29,7 +29,7 @@ const SHIPPED = path.join(ROOT, "embeddings_tumbler", "static", "web-component.j
 const ALLOWED = new Set(["mount", "update", "destroy"]);
 // What the scan permits on the viewer handle (this._handle): the mode switch, and the
 // search callbacks (task t10). Nothing else, so the shell cannot start searches itself.
-const HANDLE_ALLOWED = new Set(["setMode", "setSearchCallbacks"]);
+const HANDLE_ALLOWED = new Set(["setMode", "setSearchCallbacks", "setRelative"]);
 
 // Remove comments, leaving strings. Strings in this file hold plain English messages.
 function stripComments(src) {
@@ -87,6 +87,8 @@ function scan(source) {
     [/requestAnimationFrame|cancelAnimationFrame/, "animation frame"],
     [/\bMath\s*\./, "arithmetic (Math.)"],
     [/_internal/, "_internal"],
+    [/\b(relativeDirections|makeRelativeTour|prepareRelativeFit|relativeFitWork|relativeFitGen|relativeFit|makeRelativeFit|fixRelative|cancelRelative|describeRelative|relativeStatus|passRelative|relativeShown|relativeGradient|relativeResults|relativeInfo|roRelative|roRuler|roSecondRuler|roOriginMark|roOriginNumbers|spRelative\w*)\b/, "relative maths, renderer or overlay name"],
+    [/\bET\s*\.\s*math\b|\brelativeSettings\b/, "relative maths or settings read"],
     [/\bET\s*\./, "the core's shared namespace"],
   ];
   for (const [re, name] of GRAPHICS) if (re.test(code)) flag("banned: " + name);
@@ -136,6 +138,8 @@ test("the scan flags deliberate breaches (it can fail)", () => {
     "a sample reference": source.replace("_clearNote() {", "_clearNote() { T.sample.generate();"),
     "getContext": source.replace("this._rerank = null;\n    }\n\n    get handle", "this._rerank = null;\n      this.getContext('webgl2');\n    }\n\n    get handle"),
     "gl call": source.replace("_clearNote() {", "_clearNote() { gl.drawArrays(0, 0, 1);"),
+    "a relative maths name": source.replace("_clearNote() {", "_clearNote() { var relativeFit = 1;"),
+    "a ruler name": source.replace("_clearNote() {", "_clearNote() { this.roRuler();"),
     "a shader word": source.replace("_clearNote() {", "_clearNote() { var shaderSource = 1;"),
     "a matrix word": source.replace("_clearNote() {", "_clearNote() { var matrix = 1;"),
     "typed array arithmetic": source.replace("_clearNote() {", "_clearNote() { new Float32Array(3);"),

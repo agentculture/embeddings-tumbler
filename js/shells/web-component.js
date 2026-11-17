@@ -7,7 +7,12 @@
 //   <script src="web-component.js"></script>
 //   <embeddings-tumbler src="data/my-set.json" mode="tumble" seed="7"></embeddings-tumbler>
 //
-// Attributes: src (a data file on the page's own origin), mode, seed.
+// Attributes: src (a data file on the page's own origin), mode, seed, relative and
+// show-origin (boolean: present, unless "false", is on). Each has a boolean property
+// (relative, showOrigin) that reflects to its attribute and back; the shell only forwards
+// the setting to the viewer (mount option, then handle.setRelative), and writes the
+// viewer's own setting back to the attribute when the viewer reports a change (the panel's
+// checkboxes, handle.setRelative), so attribute, property and viewer always agree.
 // Properties (never attributes; nothing is read from markup): embed and rerank, the search
 // callbacks, set as el.embed = fn and el.rerank = fn (a function or null). See js/api/web-component.md.
 // Events (bubbling): tumbler-load (detail: the update result), tumbler-error (detail:
@@ -54,7 +59,7 @@
 
   class EmbeddingsTumblerElement extends root.HTMLElement {
     static get observedAttributes() {
-      return ["src", "mode", "seed"];
+      return ["src", "mode", "seed", "relative", "show-origin"];
     }
 
     constructor() {
@@ -62,12 +67,59 @@
       this._handle = null;
       this._token = 0; // bumped whenever a load is superseded, or the viewer is destroyed
       this._note = null;
+      this._mounted = 0; // the number of the viewer now mounted; a destroyed viewer's reports are dropped
+      this._reflecting = false; // true while the viewer's setting is being written to the attributes
       this._embed = null; // the host's callbacks; they outlive every mount of this element
       this._rerank = null;
     }
 
     get handle() {
       return this._handle;
+    }
+
+    // The Relative setting. Its attribute is present when it is on (a value of "false" is
+    // off), and follows the viewer: see _reflect.
+    get relative() {
+      return this._flag("relative");
+    }
+
+    set relative(value) {
+      this._setFlag("relative", value);
+    }
+
+    get showOrigin() {
+      return this._flag("show-origin");
+    }
+
+    set showOrigin(value) {
+      this._setFlag("show-origin", value);
+    }
+
+    _flag(attr) {
+      const v = this.getAttribute(attr);
+      return v !== null && v !== "false";
+    }
+
+    // Reflect to the attribute; attributeChangedCallback forwards it to a mounted viewer.
+    _setFlag(attr, value) {
+      const on = Boolean(value);
+      if (on === this._flag(attr)) return;
+      if (on) this.setAttribute(attr, "");
+      else this.removeAttribute(attr);
+    }
+
+    // The viewer reports its search state after every change. Its two settings are written
+    // to the attributes, so a change made in the panel, or with handle.setRelative, shows on
+    // the element. The viewer already has the value: it is not sent back.
+    _reflect(settings) {
+      if (!settings) return;
+      this._reflecting = true;
+      try {
+        if (typeof settings.relative === "boolean") this._setFlag("relative", settings.relative);
+        if (typeof settings.showOrigin === "boolean") this._setFlag("show-origin", settings.showOrigin);
+      } finally {
+        this._reflecting = false;
+      }
     }
 
     // The embed callback, or null. A property, never an attribute.
@@ -109,6 +161,8 @@
     connectedCallback() {
       this._upgrade("embed");
       this._upgrade("rerank");
+      this._upgrade("relative");
+      this._upgrade("showOrigin");
       this.style.display = "block";
       this._start();
     }
@@ -119,7 +173,11 @@
 
     attributeChangedCallback(name, before, after) {
       if (before === after || !this.isConnected) return;
-      if (name === "mode") {
+      if (name === "relative" || name === "show-origin") {
+        if (this._reflecting) return; // written from the viewer's own report
+        const key = name === "relative" ? "relative" : "showOrigin";
+        this._handle?.setRelative({ [key]: this._flag(name) });
+      } else if (name === "mode") {
         // A running viewer switches mode in place; setMode returns false for an unknown id.
         if (this._handle && after !== null) this._handle.setMode(after);
       } else if (name === "seed") {
@@ -160,8 +218,14 @@
       if (mode) options.mode = mode;
       const seed = parseSeed(this.getAttribute("seed"));
       if (seed !== undefined) options.seed = seed;
+      if (this._flag("relative")) options.relative = true;
+      if (this._flag("show-origin")) options.showOrigin = true;
       if (this._embed) options.embed = this._embed;
       if (this._rerank) options.rerank = this._rerank;
+      const mounted = ++this._mounted;
+      options.onSearchChange = (search) => {
+        if (mounted === this._mounted) this._reflect(search?.relative);
+      };
       try {
         this._handle = T.mount(this, options);
       } catch (err) {
@@ -174,6 +238,7 @@
 
     _stop() {
       this._token++; // a fetch still in flight must not touch the destroyed viewer
+      this._mounted++; // nor a report from it the attributes
       const T = getCore();
       if (T && this._handle) T.destroy(this);
       this._handle = null;

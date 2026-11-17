@@ -447,6 +447,216 @@
      "visible": "yes"
     }
    ]
+  },
+  {
+   "group": "Relative search: the setting and its controls",
+   "items": [
+    {
+     "title": "Relative is a setting of Tumble, not a Relative and Plain switch",
+     "visible": "yes"
+    },
+    {
+     "title": "The reference is a page of its own; the build is the viewer",
+     "visible": "yes"
+    },
+    {
+     "title": "The Face the searches control is hidden while Relative is on",
+     "visible": "no"
+    },
+    {
+     "title": "The controls' wording does not say similarity",
+     "visible": "slightly"
+    },
+    {
+     "title": "The view opens with no search and Relative off",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: searches, ranking and the reranker",
+   "items": [
+    {
+     "title": "Up to three pinned axes, and a fourth search with none",
+     "visible": "no"
+    },
+    {
+     "title": "The searched article is named as its own first result",
+     "visible": "yes"
+    },
+    {
+     "title": "Reranking: the host's reranker, for any search with text, with Candidates and Keep top",
+     "visible": "yes"
+    },
+    {
+     "title": "A typed search is matched or embedded, not averaged from titles",
+     "visible": "no"
+    },
+    {
+     "title": "Result lists in the relative view",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: brightness",
+   "items": [
+    {
+     "title": "Results follow the Lit setting; the rest get a gradient at one strength",
+     "visible": "yes"
+    },
+    {
+     "title": "The fade of the rest has one strength; Lit chooses between a faded rest and a full one",
+     "visible": "yes"
+    },
+    {
+     "title": "A fourth Lit choice: everything, results highlighted",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: the ruler, the stems and the labels",
+   "items": [
+    {
+     "title": "Short tick marks on ruler A",
+     "visible": "yes"
+    },
+    {
+     "title": "The tick step follows the ruler's length on vectors not of length one",
+     "visible": "no"
+    },
+    {
+     "title": "While the view turns, only a faint ruler line, and the exactness sentences wait",
+     "visible": "yes"
+    },
+    {
+     "title": "The status line names the plane of A and B as exact during the turn",
+     "visible": "no"
+    },
+    {
+     "title": "The unit circle is drawn as a polygon of 96 sides",
+     "visible": "no"
+    },
+    {
+     "title": "The origin is marked whenever zero is inside the window",
+     "visible": "no"
+    },
+    {
+     "title": "The plain view's origin marker does not cross-fade",
+     "visible": "slightly"
+    },
+    {
+     "title": "Labels that would overlap are left out, in a fixed order",
+     "visible": "yes"
+    },
+    {
+     "title": "Result labels on the ruler show the title, as the reference does",
+     "visible": "no"
+    },
+    {
+     "title": "The search's marker carries its letter and name",
+     "visible": "yes"
+    },
+    {
+     "title": "Marks and texts take their colour from the theme",
+     "visible": "unknown"
+    },
+    {
+     "title": "Ruler texts and labels are page text in the viewer's type",
+     "visible": "yes"
+    },
+    {
+     "title": "Plain Tumble's topic names stay over the cloud",
+     "visible": "yes"
+    },
+    {
+     "title": "Hovering a point",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: the frame, the turn and the framing",
+   "items": [
+    {
+     "title": "The window's top is the higher of the search's length and the highest point",
+     "visible": "no"
+    },
+    {
+     "title": "The window follows the vertical search only",
+     "visible": "slightly"
+    },
+    {
+     "title": "The zoom is capped the same on every stage",
+     "visible": "slightly"
+    },
+    {
+     "title": "The stage's middle is not moved down",
+     "visible": "slightly"
+    },
+    {
+     "title": "The turn onto the pinned frame",
+     "visible": "slightly"
+    },
+    {
+     "title": "When a search adds no axis",
+     "visible": "no"
+    },
+    {
+     "title": "The 2-D canvas look",
+     "visible": "yes"
+    }
+   ]
+  },
+  {
+   "group": "Relative search: behaviour the reference does not have",
+   "items": [
+    {
+     "title": "Letters are kept while Relative is on",
+     "visible": "yes"
+    },
+    {
+     "title": "Letters are not kept in every view, for now",
+     "visible": "yes"
+    },
+    {
+     "title": "Turning Relative on replaces a swing in progress",
+     "visible": "yes"
+    },
+    {
+     "title": "With motion stopped, a change is shown at once with no turn",
+     "visible": "yes"
+    },
+    {
+     "title": "The web component's attribute follows the panel's checkbox",
+     "visible": "no"
+    },
+    {
+     "title": "Hosts are told when a turn ends",
+     "visible": "no"
+    },
+    {
+     "title": "On vectors not of length one, every label shows its cosine as well",
+     "visible": "no"
+    },
+    {
+     "title": "The other axes reuse the first fit",
+     "visible": "slightly"
+    },
+    {
+     "title": "The picture can be moved without turning it",
+     "visible": "no"
+    },
+    {
+     "title": "The reset button resets the move as well, and the hint names it",
+     "visible": "yes"
+    },
+    {
+     "title": "Opening the search panel no longer wipes the picture",
+     "visible": "yes"
+    }
+   ]
   }
  ]
 }

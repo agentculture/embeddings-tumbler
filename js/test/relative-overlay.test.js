@@ -1,0 +1,853 @@
+"use strict";
+// Task t7 of the relative-search plan: the relative overlay (docs/relative-interface.md,
+// "Overlay (t7)"). The overlay is loaded from source with the maths and the renderer; the
+// mode's state.relative (t6) is made here by hand in its documented shape from the maths of
+// t2 (relativeFit, makeRelativeTour), so the frames are real relative frames on the real
+// fixtures. Assertions compare numbers, strings and counts, never whole objects or nodes.
+const test = require("node:test");
+const assert = require("node:assert");
+const fs = require("node:fs");
+const path = require("node:path");
+const { loadSources, ROOT } = require("./helpers/load.js");
+const { makeFakeDom } = require("./helpers/fake-dom.js");
+
+const api = loadSources(["10-math.js", "30-renderer.js", "46-relative-overlay.js"]);
+const ET = api._internal;
+const RO = ET.relativeOverlay;
+const M = ET.math;
+
+const FIX = path.join(ROOT, "tests", "fixtures", "relative");
+
+function loadFixture(name) {
+  const meta = JSON.parse(fs.readFileSync(path.join(FIX, name + ".json"), "utf8"));
+  const buf = fs.readFileSync(path.join(FIX, meta.vectors.file));
+  const D = meta.dimension;
+  const N = meta.count;
+  const X = new Float32Array(N * D);
+  for (let i = 0; i < N * D; i++) X[i] = buf.readFloatLE(i * 4);
+  const byLabel = {};
+  const labels = meta.points.map((p) => p.label);
+  labels.forEach((l, i) => {
+    byLabel[l] = i;
+  });
+  return { X, N, D, byLabel, labels };
+}
+
+let wikiCache = null;
+let mixedCache = null;
+const wiki = () => (wikiCache ||= loadFixture("wikipedia-subset"));
+const mixed = () => (mixedCache ||= loadFixture("mixed-length"));
+
+const W = 1200;
+const H = 800;
+const DPR = 2;
+const COLOURS = ["#ff9a3c", "#4cc9f0", "#b5e48c", "#f72585"];
+const RELATIVE_FILL = 0.78 / 0.46;
+const RELATIVE_ZOOM_CAP = 0.5 / (0.42 * 0.46);
+
+function row(X, i, D) {
+  return X.slice(i * D, (i + 1) * D);
+}
+
+function len(v) {
+  let s = 0;
+  for (let d = 0; d < v.length; d++) s += v[d] * v[d];
+  return Math.sqrt(s);
+}
+
+function dotRow(X, i, D, u) {
+  let s = 0;
+  for (let d = 0; d < D; d++) s += X[i * D + d] * u[d];
+  return s;
+}
+
+function unitOf(q) {
+  const l = len(q);
+  return Float64Array.from(q, (v) => v / l);
+}
+
+// The k nearest rows to q by cosine (the search's ranking), nearest first.
+function nearest(fx, q, k) {
+  const { X, N, D } = fx;
+  const u = unitOf(q);
+  const all = [];
+  for (let i = 0; i < N; i++) {
+    const l = len(X.subarray(i * D, (i + 1) * D));
+    all.push({ index: i, cos: dotRow(X, i, D, u) / l });
+  }
+  all.sort((a, b) => b.cos - a.cos || a.index - b.index);
+  return all.slice(0, k);
+}
+
+// A settled (or turning) relative view on the fixture for the given searches, framed as t6
+// frames it: centre ((top + bottom) / 2) u, zoom from the window.
+function scene(fx, labelsOf, opts) {
+  const o = { settled: true, mix: 1, showOrigin: false, labels: true, k: 9, t: 3.7, ...opts };
+  const { X, N, D, byLabel, labels } = fx;
+  const queries = labelsOf.map((l) => row(X, byLabel[l], D));
+  const fit = M.relativeFit(X, N, D, queries, { seed: 5 });
+  const tour = M.makeRelativeTour(fit.directions, fit.count, fit.basis, fit.subspace, D, { seed: 5 });
+  const frame = tour.frameAt(o.t);
+  const u = unitOf(queries[0]);
+  let top = fit.window.high + 0.04;
+  let bottom = fit.window.low - 0.04;
+  if (o.showOrigin) {
+    bottom = Math.min(bottom, -0.06);
+    top = Math.max(top, 0.06);
+  }
+  const centre = Float32Array.from(u, (v) => ((top + bottom) / 2) * v);
+  const letters = ["A", "B", "C", "D"];
+  const searches = queries.map((q, j) => ({ letter: letters[j], colour: COLOURS[j], query: q }));
+  const axes = ["vertical", "horizontal", "depth"];
+  const relative = {
+    relative: true,
+    showOrigin: o.showOrigin,
+    active: true,
+    settled: o.settled,
+    mix: o.mix,
+    pinned: fit.pinned.map((p, j) => ({ letter: letters[p.index], axis: axes[j], length: p.length })),
+    dropped: [],
+    measure: fit.unit.unit ? "cosine" : "length along the search",
+    unit: fit.unit,
+    window: { low: fit.window.low, high: fit.window.high, bottom, top },
+    share: fit.share,
+    subspace: fit.subspace,
+    free: 3 - fit.count,
+    fixed: fit.fixed,
+  };
+  const named = [];
+  const seen = new Set();
+  queries.forEach((q) => {
+    for (const r of nearest(fx, q, o.k)) {
+      if (seen.has(r.index)) continue;
+      seen.add(r.index);
+      named.push({ index: r.index, text: labels[r.index], ranks: [] });
+    }
+  });
+  const view = {
+    zoom: Math.min(RELATIVE_FILL / (top - bottom), RELATIVE_ZOOM_CAP),
+    yaw: 0.4,
+    pitch: 0,
+    perspective: ET.renderer.RELATIVE_PERSPECTIVE,
+  };
+  const input = {
+    width: W,
+    height: H,
+    dpr: DPR,
+    view,
+    vectors: X,
+    dimension: D,
+    frame,
+    centre,
+    relative,
+    searches,
+    named,
+    cut: null,
+    showOrigin: o.showOrigin,
+    labels: o.labels,
+  };
+  return { input, fit, frame, centre, u, queries, top, bottom, view };
+}
+
+// Independent screen mapping: the point k along unit direction u, through the frame.
+function alongPx(sc, u, k) {
+  const { frame, centre, view } = sc;
+  const D = u.length;
+  const p = [0, 0, 0];
+  for (let r = 0; r < 3; r++) {
+    let a = 0;
+    let c = 0;
+    for (let d = 0; d < D; d++) {
+      a += u[d] * frame[r * D + d];
+      c += centre[d] * frame[r * D + d];
+    }
+    p[r] = k * a - c;
+  }
+  return ET.renderer.place(p, view, W, H);
+}
+
+function vectorPx(sc, v) {
+  const { frame, centre, view } = sc;
+  const D = v.length;
+  const p = [0, 0, 0];
+  for (let r = 0; r < 3; r++) {
+    let s = 0;
+    for (let d = 0; d < D; d++) s += (v[d] - centre[d]) * frame[r * D + d];
+    p[r] = s;
+  }
+  return ET.renderer.place(p, view, W, H);
+}
+
+const kindCount = (arr, kind) => arr.filter((e) => e.kind === kind).length;
+const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b}`);
+
+// ----- criterion 1: ticks every 0.1, one stem per named result, the search's marker -----
+
+test("Rice: ticks every 0.1 across the window, a level ring and a label at each", () => {
+  const sc = scene(wiki(), ["Rice"]);
+  const list = RO.build(sc.input);
+  const foot = Math.max(0, sc.bottom - 0.2);
+  const first = Math.ceil(foot * 10 - 1e-9);
+  const last = Math.floor(sc.top * 10 + 1e-6);
+  assert.ok(last - first >= 5, "the window spans several ticks");
+  const ticks = list.segments.filter((s) => s.kind === "tick");
+  const tickTexts = list.texts.filter((t) => t.kind === "tick");
+  const rings = list.rings.filter((r) => r.kind === "level");
+  assert.strictEqual(ticks.length, last - first + 1);
+  assert.strictEqual(tickTexts.length, ticks.length);
+  assert.strictEqual(rings.length, ticks.length);
+  tickTexts.forEach((t, j) => {
+    const s = (first + j) / 10;
+    assert.strictEqual(t.text, s.toFixed(1));
+    const p = alongPx(sc, sc.u, s);
+    near(ticks[j].y0, p.y, 1e-6, "tick at " + s);
+    near(t.y, p.y, 1e-6, "tick label at " + s);
+    assert.strictEqual(rings[j].points.length, 2 * 49);
+  });
+  assert.ok(Number(tickTexts[0].text) >= foot - 1e-9 && Number(tickTexts[0].text) < foot + 0.1);
+  assert.ok(Number(tickTexts.at(-1).text) <= sc.top + 1e-6 && Number(tickTexts.at(-1).text) > sc.top - 0.1);
+  // the ruler runs from its foot to the window's top
+  assert.strictEqual(kindCount(list.segments, "ruler"), 1);
+  assert.strictEqual(list.ruler.from, foot);
+  assert.strictEqual(list.ruler.to, sc.top);
+  near(list.ruler.y1, alongPx(sc, sc.u, sc.top).y, 1e-6, "ruler top");
+  near(list.ruler.y0, alongPx(sc, sc.u, foot).y, 1e-6, "ruler foot");
+  // the title
+  const titles = list.texts.filter((t) => t.kind === "title");
+  assert.strictEqual(titles.length, 1);
+  assert.strictEqual(titles[0].text, "cosine to A");
+});
+
+test("Rice: one stem per named result, ending at that result's height on the ruler", () => {
+  const fx = wiki();
+  const sc = scene(fx, ["Rice"]);
+  const list = RO.build(sc.input);
+  const rice = fx.byLabel.Rice;
+  const named = sc.input.named;
+  assert.strictEqual(named[0].index, rice, "Rice is its own first result");
+  const stems = list.segments.filter((s) => s.kind === "stem");
+  assert.strictEqual(stems.length, named.length - 1, "every named result but the search's own point");
+  assert.strictEqual(list.results.length, stems.length);
+  assert.ok(!list.results.some((r) => r.index === rice), "no stem for the search's own point");
+  const expected = new Set(["Cereal", "Wheat", "Maize", "Bean", "Bread"].map((l) => fx.byLabel[l]));
+  for (const i of expected) assert.ok(list.results.some((r) => r.index === i), fx.labels[i] + " has a stem");
+  list.results.forEach((r, j) => {
+    const h = dotRow(fx.X, r.index, fx.D, sc.u);
+    near(r.height, h, 1e-9, "height");
+    const onRuler = alongPx(sc, sc.u, h);
+    near(r.rulerX, onRuler.x, 1e-6, "ruler x");
+    near(r.rulerY, onRuler.y, 1e-6, "ruler y");
+    const at = vectorPx(sc, row(fx.X, r.index, fx.D));
+    near(r.x, at.x, 1e-3, "drawn x");
+    near(r.y, at.y, 1e-3, "drawn y");
+    // the stem joins the two
+    near(stems[j].x0, r.x, 1e-9, "stem start");
+    near(stems[j].x1, r.rulerX, 1e-9, "stem end x");
+    near(stems[j].y1, r.rulerY, 1e-9, "stem end y");
+    // and the end lies on ruler A's line
+    const R = list.ruler;
+    const cross = (R.x1 - R.x0) * (r.rulerY - R.y0) - (R.y1 - R.y0) * (r.rulerX - R.x0);
+    near(cross / Math.hypot(R.x1 - R.x0, R.y1 - R.y0), 0, 1e-6, "end on the ruler");
+  });
+  // settled and untilted at the relative perspective, the stem's ends sit at about the same
+  // screen height (o6's 2 percent of the ruler's visible length)
+  const rulerLen = Math.abs(list.ruler.y1 - list.ruler.y0);
+  for (const r of list.results) assert.ok(Math.abs(r.y - r.rulerY) < 0.02 * rulerLen, "level stem");
+});
+
+test("Rice: the search's marker is drawn at its own length on the ruler", () => {
+  const sc = scene(wiki(), ["Rice"]);
+  const list = RO.build(sc.input);
+  const marks = list.marks.filter((m) => m.kind === "search");
+  assert.strictEqual(marks.length, 1);
+  const l = len(sc.queries[0]);
+  near(l, 1, 1e-3, "unit-length query");
+  const p = alongPx(sc, sc.u, l);
+  near(marks[0].x, p.x, 1e-6, "marker x");
+  near(marks[0].y, p.y, 1e-6, "marker y");
+  const q = vectorPx(sc, sc.queries[0]);
+  near(marks[0].y, q.y, 1e-3, "the raw query");
+  assert.strictEqual(marks[0].colour, COLOURS[0]);
+});
+
+test("result labels: text cut to 28, heights with two decimals; none with labels off", () => {
+  const fx = wiki();
+  const sc = scene(fx, ["Rice"]);
+  sc.input.named.push({ index: fx.byLabel.Rice, text: "Rice", ranks: [] }); // a repeat is drawn once
+  sc.input.named[1].text = "<b>an extremely long label that goes on</b>";
+  const list = RO.build(sc.input);
+  const res = list.texts.filter((t) => t.kind === "result");
+  assert.strictEqual(res.length, list.results.length);
+  const first = res.find((t) => t.index === sc.input.named[1].index);
+  const h = dotRow(fx.X, sc.input.named[1].index, fx.D, sc.u);
+  assert.strictEqual(first.text, "<b>an extremely long label …  " + h.toFixed(2));
+  assert.ok(!res.some((t) => t.text.includes("cosine")), "a unit-length set calls the height cosine already");
+  const off = RO.build({ ...sc.input, labels: false });
+  assert.strictEqual(kindCount(off.texts, "result"), 0);
+  assert.strictEqual(off.results.length, list.results.length, "stems stay with labels off");
+});
+
+test("mixed-length set: the title says length along the search and labels show the cosine too", () => {
+  const fx = mixed();
+  const sc = scene(fx, [fx.labels[7]]);
+  assert.strictEqual(sc.fit.unit.unit, false);
+  const list = RO.build(sc.input);
+  assert.strictEqual(list.texts.find((t) => t.kind === "title").text, "length along the search to A");
+  const res = list.texts.filter((t) => t.kind === "result");
+  assert.ok(res.length > 0);
+  for (const t of res) {
+    const i = t.index;
+    const h = dotRow(fx.X, i, fx.D, sc.u);
+    const c = h / len(row(fx.X, i, fx.D));
+    assert.ok(t.text.endsWith("  " + h.toFixed(2) + "  cosine " + c.toFixed(2)), t.text);
+  }
+  assert.strictEqual(kindCount(list.rings, "unit"), 0);
+});
+
+test("two pinned: ruler B along B's own direction with dots and labels at 0.1 to 0.9", () => {
+  const fx = wiki();
+  const sc = scene(fx, ["Rice", "Wheat"]);
+  assert.strictEqual(sc.fit.count, 2);
+  const list = RO.build(sc.input);
+  const b = list.segments.filter((s) => s.kind === "ruler2");
+  assert.strictEqual(b.length, 1);
+  const uB = unitOf(sc.queries[1]);
+  const foot = Math.max(0, sc.bottom - 0.2);
+  const to = Math.max(1, len(sc.queries[1])) + 0.04;
+  near(b[0].y0, alongPx(sc, uB, foot).y, 1e-6, "B foot");
+  near(b[0].x1, alongPx(sc, uB, to).x, 1e-6, "B end x");
+  near(b[0].y1, alongPx(sc, uB, to).y, 1e-6, "B end y");
+  // dots at 0.1 to 0.9, left out where they fall off the stage (the reference's 20 px slack)
+  const want = [];
+  for (let k = 1; k <= 9; k++) {
+    const p = alongPx(sc, uB, k / 10);
+    if (p.y >= -20 * DPR && p.y <= H + 20 * DPR) want.push(p);
+  }
+  assert.ok(want.length >= 3, "some of ruler B is on the stage");
+  const dots = list.marks.filter((m) => m.kind === "dot");
+  assert.strictEqual(dots.length, want.length);
+  dots.forEach((d, j) => near(d.y, want[j].y, 1e-6, "dot " + j));
+  const bLabels = list.texts.filter((t) => t.kind === "tick" && t.colour === COLOURS[1]);
+  assert.strictEqual(bLabels.length, want.length);
+  assert.strictEqual(kindCount(list.marks, "search"), 2);
+  // labels carry the height along each pinned search
+  const i = fx.byLabel.Maize;
+  const t = list.texts.find((x) => x.kind === "result" && x.index === i);
+  assert.strictEqual(t.text, "Maize  " + dotRow(fx.X, i, fx.D, sc.u).toFixed(2) + " · " + dotRow(fx.X, i, fx.D, uB).toFixed(2));
+  // one pinned: no ruler B
+  assert.strictEqual(kindCount(RO.build(scene(fx, ["Rice"]).input).segments, "ruler2"), 0);
+});
+
+// ----- criterion 2: the origin's true distance, the unit circle -----
+
+test("relative view with Show the origin: true distance is len(centre), unit circle on a unit-length set", () => {
+  const sc = scene(wiki(), ["Rice"], { showOrigin: true });
+  const list = RO.build(sc.input);
+  const origin = list.marks.filter((m) => m.kind === "origin");
+  assert.strictEqual(origin.length, 1);
+  let far = 0;
+  for (const v of sc.centre) far += v * v;
+  near(origin[0].far, Math.sqrt(far), 1e-6, "true distance");
+  const p = alongPx(sc, sc.u, 0);
+  near(origin[0].y, p.y, 1e-6, "at height 0");
+  assert.strictEqual(list.ruler.from, 0, "the ruler starts at the origin");
+  assert.strictEqual(list.texts.find((t) => t.kind === "origin").text, "origin (0, 0, … , 0)");
+  assert.strictEqual(sc.fit.unit.unit, true);
+  const unit = list.rings.filter((r) => r.kind === "unit");
+  assert.strictEqual(unit.length, 1);
+  // the circle has radius one unit about the origin
+  // (untilted, a unit vector along the vertical row lands exactly one unit radius above it)
+  const D = sc.u.length;
+  const one = vectorPx(sc, Float32Array.from(sc.frame.subarray(D, 2 * D)));
+  near(Math.hypot(one.x - p.x, one.y - p.y), unit[0].radius, 1e-6 * unit[0].radius, "unit radius");
+  // the unit check false: no circle
+  const notUnit = { ...sc.input, relative: { ...sc.input.relative, unit: { ...sc.fit.unit, unit: false } } };
+  assert.strictEqual(kindCount(RO.build(notUnit).rings, "unit"), 0);
+  // Show the origin off on the plain Wikipedia fixture (framed without it, so zero is outside
+  // the window): no origin, no circle
+  const off = scene(wiki(), ["Rice"], { showOrigin: false });
+  assert.ok(off.bottom > 0, "zero is outside the window");
+  const plainOff = RO.build(off.input);
+  assert.strictEqual(kindCount(plainOff.marks, "origin"), 0);
+  assert.strictEqual(kindCount(plainOff.rings, "unit"), 0);
+});
+
+test("heights below zero, Show the origin off: the origin is marked (zero is inside the window), no unit circle", () => {
+  const fx = wiki();
+  const { X, N, D, byLabel, labels } = fx;
+  // the Wikipedia fixture with -Rice appended, as t2's window test does
+  const X2 = new Float32Array((N + 1) * D);
+  X2.set(X, 0);
+  const rice = row(X, byLabel.Rice, D);
+  for (let d = 0; d < D; d++) X2[N * D + d] = -rice[d];
+  const fx2 = { X: X2, N: N + 1, D, byLabel, labels: labels.concat(["-Rice"]) };
+  const sc = scene(fx2, ["Rice"], { showOrigin: false });
+  assert.ok(sc.bottom <= 0 && sc.top >= 0, "zero is inside the window");
+  assert.strictEqual(sc.fit.unit.unit, true);
+  const list = RO.build(sc.input);
+  const origin = list.marks.filter((m) => m.kind === "origin");
+  assert.strictEqual(origin.length, 1);
+  near(origin[0].y, alongPx(sc, sc.u, 0).y, 1e-6, "at height 0");
+  let far = 0;
+  for (const v of sc.centre) far += v * v;
+  near(origin[0].far, Math.sqrt(far), 1e-6, "true distance");
+  const texts = list.texts.filter((t) => t.kind === "origin");
+  assert.strictEqual(texts.length, 1);
+  assert.strictEqual(texts[0].text, "origin (0, 0, … , 0)");
+  assert.strictEqual(kindCount(list.rings, "unit"), 0, "the unit circle stays with Show the origin");
+  assert.strictEqual(list.ruler.from, 0, "the ruler reaches the origin");
+  // the window starts below zero, so ticks start at 0
+  assert.strictEqual(list.texts.find((t) => t.kind === "tick").text, "0.0");
+  // not settled: still ruler A's line only
+  const turning = RO.build(scene(fx2, ["Rice"], { settled: false, mix: 0.5 }).input);
+  assert.strictEqual(kindCount(turning.marks, "origin"), 0);
+});
+
+test("relative view on the mixed-length set with Show the origin: no unit circle", () => {
+  const fx = mixed();
+  const sc = scene(fx, [fx.labels[3]], { showOrigin: true });
+  const list = RO.build(sc.input);
+  assert.strictEqual(kindCount(list.marks, "origin"), 1);
+  let far = 0;
+  for (const v of sc.centre) far += v * v;
+  near(list.marks.find((m) => m.kind === "origin").far, Math.sqrt(far), 1e-6, "true distance");
+  assert.strictEqual(kindCount(list.rings, "unit"), 0);
+});
+
+test("plain view with Show the origin: the marker where zero falls, true and visible distance", () => {
+  const fx = wiki();
+  const { X, N, D } = fx;
+  const centre = new Float32Array(D);
+  for (let i = 0; i < N; i++) for (let d = 0; d < D; d++) centre[d] += X[i * D + d] / N;
+  const sc = scene(fx, ["Rice"]);
+  const frame = sc.frame;
+  const view = { zoom: 2.5, yaw: 0.7, pitch: 0.16 };
+  const input = { ...sc.input, frame, centre, view, relative: null, showOrigin: true };
+  const list = RO.build(input);
+  const origin = list.marks.filter((m) => m.kind === "origin");
+  assert.strictEqual(origin.length, 1);
+  let far = 0;
+  for (const v of centre) far += v * v;
+  far = Math.sqrt(far);
+  near(origin[0].far, far, 1e-6, "true distance");
+  near(far, 0.79, 0.05, "the set sits far from the origin");
+  let seen = 0;
+  const cF = [0, 0, 0];
+  for (let r = 0; r < 3; r++) {
+    for (let d = 0; d < D; d++) cF[r] += centre[d] * frame[r * D + d];
+    seen += cF[r] * cF[r];
+  }
+  seen = Math.sqrt(seen);
+  near(origin[0].seen, seen, 1e-6, "visible part");
+  const p = ET.renderer.place([-cF[0], -cF[1], -cF[2]], view, W, H);
+  near(origin[0].x, p.x, 1e-6, "origin x");
+  near(origin[0].y, p.y, 1e-6, "origin y");
+  const texts = list.texts.filter((t) => t.kind === "origin");
+  assert.strictEqual(texts.length, 1);
+  assert.strictEqual(texts[0].text, "origin · truly " + far.toFixed(2) + " from the centre, " + seen.toFixed(2) + " of it visible");
+  assert.strictEqual(list.rings.length, 0, "no unit circle in the plain view");
+  assert.strictEqual(list.segments.length, 0);
+  assert.strictEqual(list.ruler, null);
+  // Show the origin off in the plain view: an empty list
+  const empty = RO.build({ ...input, showOrigin: false });
+  assert.strictEqual(empty.segments.length + empty.rings.length + empty.marks.length + empty.texts.length, 0);
+  // a relative state that is not active is the plain view
+  const inactive = RO.build({ ...input, relative: { relative: true, active: false, settled: false, mix: 0.4, pinned: [] } });
+  assert.strictEqual(kindCount(inactive.marks, "origin"), 1);
+  assert.strictEqual(inactive.ruler, null);
+});
+
+// ----- criterion 3: ranks and the reranker's cut-off -----
+
+test("reranked: labels carry ranks 1 to top and the cut-off sits at the lowest candidate's height", () => {
+  const fx = wiki();
+  const top = 9;
+  const sc = scene(fx, ["Rice"], { k: top });
+  // the candidates sent: the 51 nearest; the lowest of them along the search
+  const sent = nearest(fx, sc.queries[0], 51);
+  const lowest = Math.min(...sent.map((c) => dotRow(fx.X, c.index, fx.D, sc.u)));
+  // the reranker's order: here, reversed from the embedding order but for the point itself
+  sc.input.named = sc.input.named.map((n, j) => ({ ...n, ranks: [{ letter: "A", rank: j === 0 ? 1 : top + 1 - j }] }));
+  sc.input.cut = { height: lowest, sent: 51 };
+  const list = RO.build(sc.input);
+  const res = list.texts.filter((t) => t.kind === "result");
+  const ranks = res.map((t) => Number(/^(\d+)\. /.exec(t.text)[1])).sort((a, b) => a - b);
+  assert.deepStrictEqual(ranks, [2, 3, 4, 5, 6, 7, 8, 9], "ranks 2 to top (1 is the search's own point, drawn as the search)");
+  const cut = list.segments.filter((s) => s.kind === "cut");
+  assert.strictEqual(cut.length, 1);
+  const p = alongPx(sc, sc.u, lowest);
+  near(cut[0].y0, p.y, 1e-6, "cut y");
+  near((cut[0].x0 + cut[0].x1) / 2, p.x, 1e-6, "cut across the ruler");
+  assert.ok(Array.isArray(cut[0].dash) && cut[0].dash.length === 2, "dashed");
+  const ct = list.texts.filter((t) => t.kind === "cut");
+  assert.strictEqual(ct.length, 1);
+  assert.strictEqual(ct[0].text, "51 candidates above this line went to the reranker");
+});
+
+test("reranked, a word search (not a point): ranks 1 to top on the labels", () => {
+  const fx = wiki();
+  const sc = scene(fx, ["Rice"], { k: 9 });
+  // make the search an average of Rice and Wheat so that no result is its own point
+  const q = new Float32Array(fx.D);
+  const a = row(fx.X, fx.byLabel.Rice, fx.D);
+  const b = row(fx.X, fx.byLabel.Wheat, fx.D);
+  for (let d = 0; d < fx.D; d++) q[d] = (a[d] + b[d]) / 2;
+  sc.input.searches[0].query = q;
+  sc.input.named = nearest(fx, q, 8).map((r, j) => ({ index: r.index, text: fx.labels[r.index], ranks: [{ letter: "A", rank: j + 1 }] }));
+  const list = RO.build(sc.input);
+  const ranks = list.texts.filter((t) => t.kind === "result").map((t) => Number(/^(\d+)\. /.exec(t.text)[1]));
+  assert.deepStrictEqual(ranks.slice().sort((x, y) => x - y), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.strictEqual(list.results.length, 8);
+});
+
+test("several searches: ranks are lettered, joined by a space", () => {
+  const fx = wiki();
+  const sc = scene(fx, ["Rice", "Wheat"]);
+  const i = fx.byLabel.Maize;
+  const n = sc.input.named.find((x) => x.index === i);
+  n.ranks = [{ letter: "A", rank: 3 }, { letter: "B", rank: 2 }];
+  const t = RO.build(sc.input).texts.find((x) => x.kind === "result" && x.index === i);
+  assert.ok(t.text.startsWith("A3. B2. Maize  "), t.text);
+});
+
+test("no reranking, or a failed one: no ranks and no cut-off mark", () => {
+  const sc = scene(wiki(), ["Rice"]);
+  const list = RO.build(sc.input); // ranks [] and cut null, as the viewer passes after a failure
+  assert.strictEqual(kindCount(list.segments, "cut"), 0);
+  assert.strictEqual(kindCount(list.texts, "cut"), 0);
+  for (const t of list.texts.filter((x) => x.kind === "result")) assert.ok(!/^[A-D]?\d+\. /.test(t.text), t.text);
+});
+
+// ----- criterion 4: not settled -----
+
+test("not settled: ruler A's line only, faint; no ticks, rings, labels, stems or cut-off", () => {
+  const sc = scene(wiki(), ["Rice", "Wheat"], { settled: false, mix: 0.5, showOrigin: true });
+  sc.input.cut = { height: 0.6, sent: 51 };
+  const list = RO.build(sc.input);
+  assert.strictEqual(kindCount(list.segments, "tick"), 0);
+  assert.strictEqual(kindCount(list.segments, "stem"), 0);
+  assert.strictEqual(kindCount(list.segments, "cut"), 0);
+  assert.strictEqual(kindCount(list.segments, "ruler2"), 0);
+  assert.strictEqual(list.rings.length, 0);
+  assert.strictEqual(list.results.length, 0);
+  // t19: only each search's letter and name beside its marker (the panel no longer letters
+  // the queries in the relative view); no tick, title, result, cut or origin text
+  assert.deepStrictEqual(list.texts.map((t) => t.kind), ["search", "search"]);
+  const ruler = list.segments.filter((s) => s.kind === "ruler");
+  assert.strictEqual(ruler.length, 1);
+  assert.strictEqual(list.segments.length, 1);
+  const settled = RO.build(scene(wiki(), ["Rice"]).input);
+  assert.ok(ruler[0].alpha < settled.segments.find((s) => s.kind === "ruler").alpha, "faint");
+  assert.strictEqual(kindCount(list.marks, "search"), 2, "the searches' markers stay");
+  assert.strictEqual(kindCount(list.marks, "origin") + kindCount(list.marks, "dot"), 0);
+});
+
+// ----- paint and placeLabels -----
+
+test("paint draws shapes only, never text, and returns false for an empty list", () => {
+  const dom = makeFakeDom();
+  const canvas = dom.document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const sc = scene(wiki(), ["Rice"], { showOrigin: true });
+  sc.input.cut = { height: 0.6, sent: 51 };
+  const list = RO.build(sc.input);
+  assert.strictEqual(RO.paint(ctx, list), true); // the fake context throws on fillText and strokeText
+  const calls = ctx._rec.calls;
+  const strokes = calls.filter((c) => c[0] === "stroke").length;
+  const marks = list.marks.filter((m) => m.kind !== "dot").length;
+  assert.strictEqual(strokes, list.segments.length + list.rings.length + marks);
+  assert.ok(calls.some((c) => c[0] === "setLineDash" && c[1].length === 2), "dashed cut and circle");
+  const before = calls.length;
+  assert.strictEqual(RO.paint(ctx, RO.build({ ...sc.input, relative: null, showOrigin: false })), false);
+  assert.strictEqual(calls.length, before, "nothing drawn for an empty list");
+});
+
+test("placeLabels: spans with textContent, markup kept as text, reused, overlaps left out", () => {
+  const dom = makeFakeDom();
+  const layer = dom.document.createElement("div");
+  const fx = wiki();
+  const sc = scene(fx, ["Rice"], { showOrigin: true });
+  sc.input.named[1].text = "<img src=x onerror=1>";
+  const list = RO.build(sc.input);
+  const shown = RO.placeLabels(layer, list, dom.document);
+  assert.ok(shown > 0 && shown <= list.texts.length);
+  assert.strictEqual(layer.children.length, shown);
+  const spans = layer.children;
+  assert.ok(spans.every((s) => s.tagName === "SPAN"));
+  const texts = spans.map((s) => s.textContent);
+  // the title and the ticks are placed before any result: the title always shows, and a
+  // tick is left out only where it meets the title or another first-placed text
+  const title0 = list.texts.find((x) => x.kind === "title");
+  assert.ok(texts.includes(title0.text), "the title is shown");
+  const ticks = list.texts.filter((x) => x.kind === "tick");
+  const ticksShown = ticks.filter((t) => texts.includes(t.text)).length;
+  assert.ok(ticksShown >= ticks.length - 1, ticksShown + " of " + ticks.length + " ticks shown");
+  const markup = list.texts.find((t) => t.index === sc.input.named[1].index);
+  if (texts.includes(markup.text)) {
+    const span = spans.find((s) => s.textContent === markup.text);
+    assert.strictEqual(span.children.length, 0, "markup is text");
+  }
+  // the transform places the span in CSS pixels
+  const title = list.texts.find((t) => t.kind === "title");
+  const tspan = spans.find((s) => s.textContent === title.text);
+  assert.ok(tspan.style.transform.startsWith("translate(" + (title.x / DPR).toFixed(1) + "px, " + (title.y / DPR).toFixed(1) + "px) translate(-100%"));
+  // a second call reuses the spans
+  const again = RO.placeLabels(layer, list, dom.document);
+  assert.strictEqual(again, shown);
+  assert.strictEqual(layer.children.length, shown);
+  // an empty list hides them all
+  assert.strictEqual(RO.placeLabels(layer, RO.build({ ...sc.input, relative: null, showOrigin: false }), dom.document), 0);
+  assert.strictEqual(layer.children.filter((s) => s.style.display !== "none").length, 0);
+  // overlapping texts: the later one is left out
+  const two = { dpr: 1, texts: [
+    { x: 100, y: 100, text: "first label", align: "left", colour: "#fff", alpha: 1, kind: "result", height: 0.8 },
+    { x: 104, y: 102, text: "second label", align: "left", colour: "#fff", alpha: 1, kind: "result", height: 0.7 },
+  ] };
+  const layer2 = dom.document.createElement("div");
+  assert.strictEqual(RO.placeLabels(layer2, two, dom.document), 1);
+  assert.strictEqual(layer2.children[0].textContent, "first label");
+});
+
+test("placeLabels keeps at most 160 spans", () => {
+  const dom = makeFakeDom();
+  const layer = dom.document.createElement("div");
+  const texts = [];
+  for (let i = 0; i < 400; i++) texts.push({ x: (i % 10) * 200, y: Math.floor(i / 10) * 20, text: "r" + i, align: "left", colour: "#fff", alpha: 1, kind: "result", height: -i });
+  assert.strictEqual(RO.placeLabels(layer, { dpr: 1, texts }, dom.document), 160);
+  assert.strictEqual(layer.children.length, 160);
+});
+
+test("build is pure: the same input gives the same list, and it leaves its input unchanged", () => {
+  const sc = scene(wiki(), ["Rice", "Wheat"], { showOrigin: true });
+  const centre = sc.input.centre.slice();
+  const a = RO.build(sc.input);
+  const b = RO.build(sc.input);
+  assert.strictEqual(a.segments.length, b.segments.length);
+  for (let j = 0; j < a.segments.length; j++) assert.strictEqual(a.segments[j].y0, b.segments[j].y0);
+  assert.strictEqual(a.texts.map((t) => t.text).join("|"), b.texts.map((t) => t.text).join("|"));
+  for (let d = 0; d < centre.length; d++) assert.strictEqual(sc.input.centre[d], centre[d]);
+  // malformed input gives an empty list, never a throw
+  const e = RO.build(null);
+  assert.strictEqual(e.segments.length + e.texts.length, 0);
+  assert.strictEqual(RO.build({ ...sc.input, width: 0 }).segments.length, 0);
+});
+
+// ----- t19: titles on the ruler's labels, the search's name on its marker -----
+
+test("t19: a result's label shows its title when given, the start of its text when not", () => {
+  const fx = wiki();
+  const sc = scene(fx, ["Rice"]);
+  const cereal = fx.byLabel.Cereal;
+  const e = sc.input.named.find((n) => n.index === cereal);
+  e.text = "A cereal is any grass cultivated for its edible grain, composed of the endosperm";
+  e.title = "Cereal";
+  const other = sc.input.named.find((n) => n.index !== cereal && n.index !== fx.byLabel.Rice);
+  other.text = "Some long article text that has no title given for it at all";
+  other.title = null;
+  const list = RO.build(sc.input);
+  const h = dotRow(fx.X, cereal, fx.D, sc.u);
+  const t = list.texts.find((x) => x.kind === "result" && x.index === cereal);
+  assert.strictEqual(t.text, "Cereal  " + h.toFixed(2));
+  const o = list.texts.find((x) => x.kind === "result" && x.index === other.index);
+  const ho = dotRow(fx.X, other.index, fx.D, sc.u);
+  assert.strictEqual(o.text, "Some long article text that…  " + ho.toFixed(2));
+  // an empty title falls back to the text; a long title is cut to 28 like the text
+  e.title = "";
+  assert.ok(RO.build(sc.input).texts.find((x) => x.index === cereal).text.startsWith("A cereal is any grass culti…  "));
+  e.title = "A title that is far longer than twenty-eight characters";
+  assert.strictEqual(RO.build(sc.input).texts.find((x) => x.index === cereal).text, "A title that is far longer …  " + h.toFixed(2));
+  // ranks still come first
+  e.title = "Cereal";
+  e.ranks = [{ letter: "A", rank: 2 }];
+  assert.strictEqual(RO.build(sc.input).texts.find((x) => x.index === cereal).text, "2. Cereal  " + h.toFixed(2));
+});
+
+test("t19: each search's marker carries its letter and name, settled and turning; none without a name but the letter", () => {
+  const fx = wiki();
+  for (const settled of [true, false]) {
+    const sc = scene(fx, ["Rice", "Wheat"], { settled, mix: settled ? 1 : 0.5 });
+    sc.input.searches[0].name = "Rice";
+    sc.input.searches[1].name = "a search whose words go on and on past the cut";
+    const list = RO.build(sc.input);
+    const names = list.texts.filter((x) => x.kind === "search");
+    assert.deepStrictEqual(names.map((x) => x.text), ["A · Rice", "B · a search whose words go on …"]);
+    const marks = list.marks.filter((m) => m.kind === "search");
+    names.forEach((n, j) => {
+      assert.strictEqual(n.colour, COLOURS[j]);
+      assert.strictEqual(n.align, "left");
+      near(n.x, marks[j].x + 15 * DPR, 1e-9, "to the right of the ring");
+      near(n.y, marks[j].y + 4 * DPR, 1e-9, "the panel's letter place");
+    });
+  }
+  const sc = scene(fx, ["Rice"]);
+  const bare = RO.build(sc.input).texts.filter((x) => x.kind === "search");
+  assert.deepStrictEqual(bare.map((x) => x.text), ["A"], "no name given: the letter alone");
+  // the plain view has no search names
+  const plain = RO.build({ ...sc.input, relative: null, showOrigin: true });
+  assert.strictEqual(plain.texts.filter((x) => x.kind === "search").length, 0);
+});
+
+test("t19: a marker's name is placed before result labels, so an overlapping result label is left out; markup stays text", () => {
+  const dom = makeFakeDom();
+  const layer = dom.document.createElement("div");
+  const list = { dpr: 1, texts: [
+    { x: 100, y: 100, text: "Cereal  0.84", align: "left", colour: "#fff", alpha: 1, kind: "result", height: 0.99 },
+    { x: 104, y: 102, text: "A · <b>Rice</b>", align: "left", colour: "#f90", alpha: 1, kind: "search" },
+  ] };
+  assert.strictEqual(RO.placeLabels(layer, list, dom.document), 1);
+  assert.strictEqual(layer.children[0].textContent, "A · <b>Rice</b>");
+  assert.strictEqual(layer.children[0].children.length, 0, "markup is text");
+  // on the real build, the name survives whatever results are named near it
+  const fx = wiki();
+  const sc = scene(fx, ["Rice", "Wheat"], { k: 40 });
+  sc.input.searches[0].name = "Rice";
+  sc.input.searches[1].name = "Wheat";
+  const built = RO.build(sc.input);
+  // put a result label right on A's name
+  const a = built.texts.find((x) => x.kind === "search");
+  built.texts.push({ x: a.x, y: a.y, text: "a result label in the way", align: "left", colour: "#fff", alpha: 1, kind: "result", height: 99 });
+  const layer2 = dom.document.createElement("div");
+  RO.placeLabels(layer2, built, dom.document);
+  const shown = layer2.children.filter((c) => c.style.display !== "none").map((c) => c.textContent);
+  assert.ok(shown.includes("A · Rice") && shown.includes("B · Wheat"), "both names shown");
+  assert.ok(!shown.includes("a result label in the way"));
+});
+
+// ---------- review of pull request 13, finding 5: the tick step follows the ruler ----------
+
+// A made set of N rows about one direction, every row `scale` long: lengths are far from
+// one, so the height is "length along the search" and the window is about `scale` tall.
+function scaled(scale, N = 60, D = 12) {
+  let seed = 12345;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648) * 2 - 1;
+  const X = new Float32Array(N * D);
+  const labels = [];
+  const byLabel = {};
+  for (let i = 0; i < N; i++) {
+    const v = new Float64Array(D);
+    for (let d = 0; d < D; d++) v[d] = rnd() * (0.25 + (1.5 * i) / N);
+    v[0] += 1;
+    const l = len(v);
+    for (let d = 0; d < D; d++) X[i * D + d] = (v[d] / l) * scale;
+    labels.push("p" + i);
+    byLabel["p" + i] = i;
+  }
+  return { X, N, D, byLabel, labels };
+}
+
+const kinds = (list) => ({
+  ticks: list.segments.filter((s) => s.kind === "tick"),
+  texts: list.texts.filter((t) => t.kind === "tick"),
+  rings: list.rings.filter((r) => r.kind === "level"),
+});
+
+// The step between neighbouring tick heights, which must be the same all along the ruler.
+function stepOf(texts) {
+  const step = texts[1].height - texts[0].height;
+  texts.forEach((t, j) => {
+    if (j) near(t.height - texts[j - 1].height, step, Math.abs(step) * 1e-9, "even steps");
+  });
+  return step;
+}
+
+// 1, 2 or 5 times a power of ten.
+function isNice(step) {
+  const mant = step / 10 ** Math.floor(Math.log10(step) + 1e-9);
+  return [1, 2, 5, 10].some((m) => Math.abs(mant - m) < 1e-6);
+}
+
+for (const scale of [20, 300, 3, 0.01, 0.0004]) {
+  test("review 5: a set of length " + scale + " gets a bounded number of ticks at a round step", () => {
+    const sc = scene(scaled(scale), ["p0"]);
+    assert.strictEqual(sc.fit.unit.unit, false);
+    const list = RO.build(sc.input);
+    const { ticks, texts, rings } = kinds(list);
+    assert.ok(ticks.length >= 4 && ticks.length <= 13, "ticks: " + ticks.length);
+    assert.strictEqual(texts.length, ticks.length);
+    assert.strictEqual(rings.length, ticks.length);
+    const step = stepOf(texts);
+    assert.ok(isNice(step), "step " + step);
+    const foot = list.ruler.from;
+    assert.ok(texts[0].height >= foot - step * 1e-6 && texts[0].height < foot + step, "the first tick is the first at or above the foot");
+    assert.ok(texts.at(-1).height <= sc.top + step * 1e-6 && texts.at(-1).height > sc.top - step, "the last is the last at or below the top");
+    texts.forEach((t, j) => {
+      // the text is the height itself, with as many decimals as the step has and no more
+      assert.strictEqual(Number(t.text), t.height, t.text);
+      assert.ok(t.text.length <= 12, t.text);
+      near(ticks[j].y0, alongPx(sc, sc.u, t.height).y, 1e-6, "tick at " + t.text);
+    });
+    assert.strictEqual(new Set(texts.map((t) => t.text)).size, texts.length, "no two ticks read the same");
+  });
+}
+
+test("review 5: tick texts follow the step: whole numbers, or just enough decimals", () => {
+  const read = (scale) => kinds(RO.build(scene(scaled(scale), ["p0"]).input)).texts.map((t) => t.text);
+  for (const t of read(20)) assert.match(t, /^\d+$/);
+  for (const t of read(0.01)) assert.match(t, /^0\.\d{3}$/);
+  // a step of 0.2: 0.6 is 0.6, not 0.6000000000000001
+  const sc = scene(wiki(), ["Rice"]);
+  sc.input.relative.window.top = 1.9;
+  sc.input.relative.window.bottom = 0.3;
+  const texts = kinds(RO.build(sc.input)).texts;
+  assert.deepStrictEqual(texts.map((t) => t.text), ["0.2", "0.4", "0.6", "0.8", "1.0", "1.2", "1.4", "1.6", "1.8"]);
+  assert.deepStrictEqual(texts.map((t) => t.height), [0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8]);
+});
+
+// A ring's width on the stage over the ruler's length on the stage.
+function ringShare(list) {
+  const ring = list.rings.find((r) => r.kind === "level");
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let j = 0; j < ring.points.length; j += 2) {
+    lo = Math.min(lo, ring.points[j]);
+    hi = Math.max(hi, ring.points[j]);
+  }
+  return (hi - lo) / Math.hypot(list.ruler.x1 - list.ruler.x0, list.ruler.y1 - list.ruler.y0);
+}
+
+test("review 5: a level ring is as wide beside its ruler on a long or a short set as on a unit-length one", () => {
+  const unit = ringShare(RO.build(scene(wiki(), ["Rice"]).input));
+  for (const scale of [20, 0.01]) {
+    const share = ringShare(RO.build(scene(scaled(scale), ["p0"]).input));
+    assert.ok(share > unit / 4 && share < unit * 4, "scale " + scale + ": " + share + " against " + unit);
+  }
+});
+
+test("review 5: where 0.1 suits the ruler the ticks and rings are exactly as before", () => {
+  for (const [fx, label, opts] of [[wiki(), "Rice", {}], [wiki(), "Rice", { showOrigin: true }], [mixed(), mixed().labels[7], {}]]) {
+    const sc = scene(fx, [label], opts);
+    const list = RO.build(sc.input);
+    const { ticks, texts, rings } = kinds(list);
+    const first = Math.ceil(list.ruler.from / 0.1 - 1e-9);
+    assert.ok(ticks.length >= 3 && ticks.length <= 13);
+    const put = ET.renderer.placer(sc.view, W, H);
+    const cF = [0, 1, 2].map((r) => {
+      let s = 0;
+      for (let d = 0; d < fx.D; d++) s += sc.centre[d] * sc.frame[r * fx.D + d];
+      return s;
+    });
+    const f = [0, 1, 2].map((r) => {
+      let s = 0;
+      for (let d = 0; d < fx.D; d++) s += sc.u[d] * sc.frame[r * fx.D + d];
+      return s;
+    });
+    texts.forEach((t, j) => {
+      // the same product, to the last bit (0.30000000000000004 for 3; minus zero for a first
+      // tick at zero, as Math.ceil gives it)
+      const s = (j ? first + j : first) * 0.1;
+      assert.strictEqual(t.height, s);
+      assert.strictEqual(t.text, s.toFixed(1));
+      // the ring: radius 0.34, 48 segments, about the ruler at this height
+      const want = new Float32Array(2 * 49);
+      for (let k = 0; k <= 48; k++) {
+        const th = (k / 48) * Math.PI * 2;
+        const q = put(s * f[0] - cF[0] + 0.34 * Math.cos(th), s * f[1] - cF[1], s * f[2] - cF[2] + 0.34 * Math.sin(th), { x: 0, y: 0 });
+        want[2 * k] = q.x;
+        want[2 * k + 1] = q.y;
+      }
+      let same = rings[j].points.length === want.length;
+      for (let k = 0; same && k < want.length; k++) same = rings[j].points[k] === want[k];
+      assert.ok(same, "ring " + j + " of " + label);
+    });
+  }
+});

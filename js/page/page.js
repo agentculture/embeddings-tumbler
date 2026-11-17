@@ -5,6 +5,7 @@
 //   index.html?sample=synthetic     the built-in synthetic sample set
 //   index.html?data=sets/a.json     a data file from this page's own origin
 //   ...&mode=lattice&seed=7         optional starting mode and view seed
+//   ...&relative=1&origin=1         Relative and Show the origin on (kept in the address)
 //
 // With no address the page loads the Wikipedia set from its own folder. When that
 // set cannot be read (a file: page, a host that copied only some files) or the
@@ -124,11 +125,56 @@
       const trimmed = seed.trim();
       options.seed = /^-?\d+(\.\d+)?$/.test(trimmed) && Number.isFinite(Number(trimmed)) ? Number(trimmed) : seed;
     }
+    // Relative and Show the origin: "1" is on, anything else (or nothing) is off.
+    if (get("relative") === "1") options.relative = true;
+    if (get("origin") === "1") options.showOrigin = true;
     // A data address of only spaces is no address: the default set, as for data=.
     let data = get("data");
     if (data !== null && data.trim() === "") data = null;
     const sample = get("sample");
     return { data: data, options: options, synthetic: sample !== null && sample.trim() === SYNTHETIC };
+  }
+
+  // The name of one parameter of a raw query ("a%20b=1" is "a b"), read as the browser reads it.
+  function paramName(part) {
+    const raw = part.split("=")[0].replaceAll("+", " ");
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw; // not a readable name: it is none of the page's
+    }
+  }
+
+  // The raw query (no "?") made to say that the setting `key` is `on`. When it already says
+  // so (as readQuery reads it: the first value is "1", or is not), it is returned as it is.
+  // Otherwise every copy of that one parameter is taken out and, for on, `key=1` is added at
+  // the end. Every other parameter stays byte for byte, in its place.
+  function withSetting(query, key, on) {
+    if ((new URLSearchParams(query).get(key) === "1") === on) return query;
+    const kept = query
+      .split("&")
+      .filter((part) => paramName(part) !== key)
+      .join("&");
+    if (!on) return kept;
+    return kept + (kept === "" || kept.endsWith("&") ? "" : "&") + key + "=1";
+  }
+
+  // Keeps the two settings in the address (replaceState: no new history entry) so a view
+  // can be reopened. Only these two parameters change, and only when the address does not
+  // already say what the viewer reports; the others stay as they were written.
+  function keepSettingsInAddress(search) {
+    const settings = search?.relative;
+    if (!settings || typeof settings.relative !== "boolean" || typeof settings.showOrigin !== "boolean") return;
+    const history = window.history;
+    if (!history || typeof history.replaceState !== "function") return;
+    try {
+      const before = String(window.location.search || "").replace(/^\?/, "");
+      const query = withSetting(withSetting(before, "relative", settings.relative), "origin", settings.showOrigin);
+      if (query === before) return;
+      history.replaceState(null, "", (query ? "?" + query : window.location.pathname) + String(window.location.hash || ""));
+    } catch (err) {
+      // An address that cannot be changed (a sandboxed frame) leaves the view as it is.
+    }
   }
 
   // ---------- the per-mode notes below the viewer ----------
@@ -314,7 +360,10 @@
       title: TITLE,
       provenanceOpen: false,
       onModeChange: showNotes,
+      onSearchChange: keepSettingsInAddress,
     };
+    if (options.relative) opts.relative = true;
+    if (options.showOrigin) opts.showOrigin = true;
     if (options.mode) opts.mode = options.mode;
     if (options.seed !== undefined) opts.seed = options.seed;
     if (callbacks.embed) opts.embed = callbacks.embed;

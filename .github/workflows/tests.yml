@@ -16,7 +16,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     # A stuck browser test once held this job for half an hour and more; it should fail fast.
-    timeout-minutes: 30
+    # The browser tests under coverage took 21 minutes on one run of the relative-search
+    # branch and more than 26 on the next (the job was cancelled at 30 before the scan),
+    # so the limit leaves room for a slow runner.
+    timeout-minutes: 45
     permissions:
       contents: read
     # Promote SONAR_TOKEN to job env so the SonarCloud step can gate on
@@ -52,17 +55,26 @@ jobs:
           python3 scripts/sync_static.py --check
           python3 scripts/sync_version.py --check
 
-      # The unit tests, with line coverage for SonarCloud. node reports coverage against
-      # the assembled core file; scripts/js_coverage.py attributes it to the js/src modules.
+      # The unit tests, with line coverage for SonarCloud. node reports coverage against the
+      # files it ran: the assembled core file, and the files the test helper generates when it
+      # runs source modules or a shell as text (js/test/helpers/load.js). ET_COVERAGE_DIR makes
+      # the helper keep those files, with a map of their lines, where node can report them;
+      # scripts/js_coverage.py gives all of it to the js/src modules and the shells and drops
+      # the generated files' own records. The folder is removed before the scan: it holds
+      # copies of source, not source.
       - name: node --test
+        env:
+          ET_COVERAGE_DIR: js-coverage-generated
         run: |
           set -euo pipefail
+          rm -rf "$ET_COVERAGE_DIR"
           # node leaves test files out of coverage by default; everything here counts
           # (sonar-project.properties), so that default is replaced.
           node --test --experimental-test-coverage --test-coverage-exclude='node_modules/**' \
             --test-reporter=spec --test-reporter-destination=stdout \
             --test-reporter=lcov --test-reporter-destination=js-coverage.raw.lcov
-          python3 scripts/js_coverage.py js-coverage.raw.lcov js-coverage.lcov
+          python3 scripts/js_coverage.py js-coverage.raw.lcov js-coverage.lcov "$ET_COVERAGE_DIR"
+          rm -rf "$ET_COVERAGE_DIR"
 
       # The browser tests run here too (as well as in browser.yml, which makes a skip a
       # failure), so the coverage report includes the harness and the browser test files.

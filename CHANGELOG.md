@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-11-17
+
+### Added
+
+- Relative search, a setting inside Tumble. With it on and a search present, the first search's direction becomes the vertical axis: a point's height is its vector measured along the search (cosine similarity on sets of unit-length vectors), read off a ticked ruler drawn from the origin, with stems to the named results. A second search is shown exactly in the plane, a third pins depth, a fourth is only lit. Show the origin zooms out to the all-zero vector. With the setting off every view is as it was.
+- Relative search works with the reranker: labels carry the reranker's ranks and the ruler marks how far down the candidates went.
+- Reaching it: the search panel's Relative and Show the origin checkboxes, the handle's `setRelative` and `relativeSettings`, `info().search.relative`, the mount options `relative` and `showOrigin`, the web component attributes `relative` and `show-origin`, and the page's `relative=1` and `origin=1`.
+- A fourth Lit choice in every view, "everything, results highlighted" (`lit: "all"`): every point stays at its usual brightness and the results are lit on top.
+- Moving the picture without turning it: right-drag, Shift + drag, two fingers on a touch screen, or the arrow keys. The button that undoes it is now "Reset view". The renderer has the draw keys `pan` and `perspective`.
+- Records: the spec, its obligations, the plan and the reference page for relative search; the binding interface `docs/relative-interface.md`; what two real models showed (`docs/evidence/2026-11-relative-search.md`); the reference comparison with the owner's sign-off; guides and a tested example page.
+
+### Changed
+
+- The relative view is drawn sharp: no depth blur and less glow there, so the cloud stays separate dots.
+- In the relative view, result labels show a point's title where it has one, and a search's marker carries its letter and name.
+- With motion paused or reduced, a change to the relative view is shown at once instead of waiting for Play.
+- The source package no longer includes the spec tool's working state (`.devague/`) or the reference page's rerank data.
+
+### Fixed
+
+- Opening or closing the search panel no longer wipes the picture for a frame.
+- A two-finger gesture on the stage no longer also scrolls the page.
+- Hosts are told through `onSearchChange` when a turn of the view ends.
+
 ## [0.12.1] - 2026-11-15
 
 ### Added

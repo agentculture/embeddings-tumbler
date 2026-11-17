@@ -22,9 +22,23 @@ twice does nothing the second time. Without custom element support it does nothi
 | `src` | URL of a data JSON file **on the page's own origin** (resolved against the page's base URL). The vector block named by `vectors.file` is fetched from the same folder and handed to the core beside its descriptor (`vectors.data`), so the core runs the file form's checks (`dtype`, `byte_order`, `byte_length`) with the contract's own codes and messages. Changing `src` loads the new file as a replace. Removing `src` leaves what is shown. |
 | `mode` | `tumble`, `lattice`, `wander` or `focus`. Read at mount; changing it later switches the running viewer. |
 | `seed` | The view seed, a number or a word. Read at mount; changing it later mounts a fresh viewer and reloads the data (points added with `update()` are lost). |
+| `relative` | Relative search: the Relative setting (see `js/api/50-viewer.md`, "Relative search"). A boolean attribute: present with any value but `"false"` is on; absent, or `"false"`, is off. Read at mount; changing it later calls `handle.setRelative({ relative })` on the running viewer, which does not remount and does not reload. |
+| `show-origin` | The Show the origin setting, the same way (`handle.setRelative({ showOrigin })`). |
 
 ## Properties, methods, events
 
+- `el.relative` and `el.showOrigin`: booleans for the two settings above. Reading one is the
+  same as reading its attribute (present, and not `"false"`, is `true`). Setting one sets or
+  removes its attribute, and the attribute change reaches the viewer. They may be set before
+  the element connects or the core loads; the value is used as a mount option.
+- **The attribute, the property and the viewer agree.** A change made with the panel's Relative
+  or Show the origin checkbox, or with `el.handle.setRelative`, is written back to the attribute
+  (set to `""` for on, removed for off), so `el.relative` and `el.showOrigin` say what a visitor
+  chose, a selector such as `embeddings-tumbler[relative]` matches it, and `el.relative = false`
+  turns off a view the visitor turned on. The shell learns of the change from the viewer's report
+  (it passes `onSearchChange` at mount for this alone) and does not call the viewer again for it.
+  An attribute whose value is `"false"` is left as it is while the setting is off. While no viewer
+  is mounted the attribute alone holds the setting, and is the mount option of the next mount.
 - `el.handle`: the viewer handle (see `js/api/50-viewer.md`), or `null` while not mounted.
 - `el.update(data)`: forwards to the viewer and returns its result (never throws). This is how a host
   appends: `el.update({ ...meta, op: "append", vectors })`.

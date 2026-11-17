@@ -1,0 +1,157 @@
+{
+  "plan_slug": "relative-search-in-the-embedding-viewer",
+  "schema_version": 2,
+  "created": "2026-11-16T22:05:02Z",
+  "updated": "2026-11-17T07:00:38Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Add panning to the viewer in this build, as an added task t17: right-drag pans (also Shift+left-drag, a two-finger drag on touch, and the arrow keys with focus); left-drag keeps turning; the reset control resets the pan as well as the zoom. It applies to all four views.",
+      "task_ref": "t10",
+      "reason": "The owner, trying the built relative view on 2026-11-17, said: 'I lack the ability to move without rotate. Like right click and drag or left click moves and ctrl+left click rotates'. Asked which gestures and when, the owner chose 'Right-drag pans' and 'In this build'.",
+      "affects": [
+        "t3",
+        "t13",
+        "t14",
+        "t15",
+        "c3"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Two fixes outside the plan, made at the owner's report during live testing: the picture is no longer wiped when the search panel opens or closes around an unchanged stage (a flicker present since 0.12.1), and hosts are told when a turn ends (onSearchChange fires when settled flips).",
+      "task_ref": "t10",
+      "reason": "The owner reported the flicker on 2026-11-17 ('When I click search there is a jump', 'It's a flicker') and confirmed the fix ('doesn't reproduce that little flicker'). The settled notice was found when the guide example's browser test first ran: its report stayed on 'still turning'.",
+      "affects": [
+        "t3",
+        "t9",
+        "c3"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "Two existing tests were changed, against obligation o9's words 'every existing test passes unchanged': the search panel's expected control list gained Relative and Show the origin, and the one-second gap check in the motion test allows float rounding. Also the reference page's reranker data is kept out of the source distribution to stay under its size limit, and the preparation of the reference comparison (t15) was delegated to a task agent where the approved split had the main agent do it; the sign-off stays the owner's.",
+      "task_ref": "t13",
+      "reason": "A new visible control cannot exist without the first change; the second is a float rounding flake unrelated to relative search (1.5 - 0.5000000000000001); the sdist went 1 KB over its 7 MB limit; the delegation kept the main session's context for merges and the sign-off.",
+      "affects": [
+        "t8",
+        "t15",
+        "t16",
+        "c3"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "The free axes of the relative view reuse the plain fit: they tour the set's strongest directions with the search directions removed, where requirement c10 and obligation o2 say the strongest directions of the set after those directions are removed (a second full fit). The height axis stays exact, the reported share stays the true share of the axes shown, and the full fit remains only as a fallback for sets too small to reuse. Added as task t18.",
+      "task_ref": "t6",
+      "reason": "On the owner's iPhone, ticking Relative took 30+ seconds with nothing shown ('The new search is very heavy on iphone. I don't see it working there... After 30+ seconds it returned to move fast'). Measured: the switch waits for a second fit as long as the page's first (10.8 s on a CPU slowed 8 times). Reusing the plain directions holds 99.9 to 100 percent of the best share on both real models for 20 to 70 times less work. Shown these figures and the changed sentence, the owner answered 'change approved' on 2026-11-17.",
+      "affects": [
+        "t2",
+        "t14",
+        "c10",
+        "h8"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "Four changes before the release, chosen by the owner from the open questions of the reference comparison: the ruler's labels show the article's title where the point has one; the search marker carries the search's name ('A \u00b7 Rice'); with reduced motion (or the view paused) the relative view is shown settled at once with no turn; and the faint gradient on points that are not results is made brighter, the strength to be picked by the owner from examples. Letters kept only while Relative is on is accepted as built. Added as task t19.",
+      "task_ref": "t7",
+      "reason": "Asked on 2026-11-17 which open questions to change before release, the owner ticked 'Titles on ruler labels', 'Name on the search marker', 'Reduced motion shows the view' and 'Brighter gradient', and chose 'Accept as built' for letters. The owner had said of the side-by-side 'build looks good' and 'Confirmed and looks good'; the formal sign-off is recorded after these changes are seen.",
+      "affects": [
+        "t6",
+        "t9",
+        "t10",
+        "t13",
+        "t14",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "The brightness of the points that are not results becomes a setting of the relative view with three levels (the three examples shown to the owner), with the brightest as the default, offered as a control in the search panel and through the handle, the mount options, the web component and the page's address. Folded into task t19.",
+      "task_ref": "t9",
+      "reason": "Shown three live examples on 2026-11-17 (A as built, B low base with a medium gradient, C higher base with a strong gradient), the owner answered: 'C ... Is best, though option toggle is event better'.",
+      "affects": [
+        "t8",
+        "t11",
+        "t12",
+        "t14",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 6
+    },
+    {
+      "id": "d7",
+      "what": "The length of the trail behind each moving point becomes a setting of the viewer, in every view: a slider beside the existing Trails checkbox (from a dot with no tail to a long comet tail), also reachable as a mount option, on the web component and in the page's address. With the slider at its default every frame is as before. Built as added task t20.",
+      "task_ref": "t11",
+      "reason": "Asked by the owner on 2026-11-17 while trying the build: 'Can we add a toggle/variable input component for the drag (Each point stays a dot, or does it have a comet like tail?)'. The on/off toggle already exists (Trails); the variable length does not.",
+      "affects": [
+        "t12",
+        "t14"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 7
+    },
+    {
+      "id": "d8",
+      "what": "Two changes to how lit points are drawn, from the owner's comparison with the reference: (1) the relative view is drawn sharp, with no depth blur and much less glow (the trial the owner confirmed: depth of field 0, bloom 0.2), blended in with the turn; (2) the Lit control gains a fourth option in which every point stays visible and sharp at its normal brightness and the results are highlighted. Built as added task t21. The trail-length control of d7 was withdrawn by the owner ('No new control') and is not built.",
+      "task_ref": "t9",
+      "reason": "Owner on 2026-11-17, after trying the trial page: '1. Confirmed 2. A new option where everything is visible and sharp, but the results highlighted.' Earlier the same day: 'The lit is faint in that case for us, and sharp on the demo/reference.'",
+      "affects": [
+        "t8",
+        "t11",
+        "t14",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 8
+    },
+    {
+      "id": "d9",
+      "what": "The setting 'The rest' (deviation d6) is removed and its job is carried by the one Lit control: the relative view's fade of the rest has one fixed strength (the brightest of the three, the owner's earlier choice) under the first three Lit options, and the fourth Lit option shows everything. Removed with it: the panel menu, the 'rest' key of setRelative and relativeSettings, the mount option relativeRest, the web component's relative-rest, and the page's rest= parameter; none was released. Sliders for strength are left for later. Built as added task t22.",
+      "task_ref": "t9",
+      "reason": "Owner on 2026-11-17, asked whether to merge The rest into Lit: 'Merging: confirmed. Strength can be sliders we can choose to add now or later'.",
+      "affects": [
+        "t8",
+        "t11",
+        "t12",
+        "t14",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 9
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

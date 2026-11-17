@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embeddings viewer: script form with relative search</title>
+  <link rel="stylesheet" href="host.css">
+</head>
+<body>
+  <main>
+    <h1>My vectors, relative to a search</h1>
+    <p class="row">
+      <button type="button" data-action="one">From point p0007</button>
+      <button type="button" data-action="two">Add p0100 as a second search</button>
+      <button type="button" data-action="relative">Relative on or off</button>
+      <button type="button" data-action="origin">Show the origin on or off</button>
+      <button type="button" data-action="clear">Clear</button>
+    </p>
+    <p><output id="note">Loading.</output></p>
+    <pre id="report"></pre>
+    <div id="space" class="space"></div>
+  </main>
+  <script src="embeddings-tumbler.js"></script>
+  <script src="host.js"></script>
+</body>
+</html>

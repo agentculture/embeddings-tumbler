@@ -5,13 +5,14 @@ screen), with the list of intended differences beside them to check off. It is
 for the owner's comparison before a release. It is not shipped in the wheel or
 the npm package.
 
-Three comparisons, chosen with the first row of buttons:
+Four comparisons, chosen with the first row of buttons:
 
 | Button | Reference (left) | Build (right) | Data on both sides |
 |--------|------------------|---------------|--------------------|
 | The first demo | `embedding-tumbler-demo.html` | the standalone page, `?sample=synthetic` | the synthetic sample set (the build's vectors are bit-identical to the reference's) |
 | Search in the views | `tumbler-sky-search.html` | the standalone page, `?sample=synthetic` | the same sample set, and the same searches typed into both |
 | Focus | `tumbler-focus-view.html` | `focus-build.html`: the built viewer in Focus | the reference's own 124 texts and their vectors, read out of the reference page |
+| Relative search | `tumbler-relative-search.html` | the standalone page, `?relative=1` | the shipped Wikipedia pair (999 articles, 768 dimensions), which the reference fetches from `embeddings_tumbler/static/`; the search Rice on both |
 
 It is plain HTML, stylesheets and scripts, with no inline script or style,
 under a policy that allows only the page's own origin. Nothing is fetched from
@@ -36,11 +37,11 @@ that typed words are matched among the loaded points on both sides.
 
 ## What the buttons do
 
-- **The first demo, Search in the views, Focus** load a reference and the
-  build's counterpart. `?pair=sky` or `?pair=focus` in the address opens on
-  that comparison.
+- **The first demo, Search in the views, Focus, Relative search** load a
+  reference and the build's counterpart. `?pair=sky`, `?pair=focus` or
+  `?pair=relative` in the address opens on that comparison.
 - **Tumble, Lattice, Wander** switch both pages (not shown for Focus, which is
-  one view). The first demo and the sky reference can be driven from outside:
+  one view, or for Relative search, which is Tumble on both sides). The first demo and the sky reference can be driven from outside:
   the mode lives in the URL fragment and the page listens for changes, so this
   page sets the fragment inside the frame (both are on one origin). The build
   reads `?mode=` once at load, so its frame is reloaded with the new query. If
@@ -53,6 +54,11 @@ that typed words are matched among the loaded points on both sides.
   (`tide harbor`, `reef kelp`, `comet nebula`; `water` for Focus), and the
   build is given them when its page has loaded, because the build's box starts
   empty. You can also type into either page directly.
+- **Relative search** starts with `Rice`, the reference's own starting search.
+  The reference takes a search when Enter is pressed in its box, and a second
+  Enter adds it as B, so Search both presses its Clear button and then enters
+  each line (two at most) in turn. On the build, Relative is on from the
+  address and the lines are typed into its search box as for the sky pair.
 
 ## The Focus comparison's data
 
@@ -69,6 +75,27 @@ of the words it knows. `focus-build.js` gives the viewer an `embed` callback
 that answers the same way from the same stored vectors, standing in for a
 host's embedder. It gives no `rerank` callback: the reference's reranker is a
 toy, the build has none of its own, and so the build offers no Reranker here.
+
+## The relative search comparison
+
+The relative reference has no embedding model: a search is an article of the
+set, or the mean of the articles whose titles contain the typed words. The
+build, served without `--embed`, matches the typed words among the loaded
+points, and a line that equals a whole title is that one article, so `Rice`
+is the same vector on both sides.
+
+The reference's Reranker uses scores made ahead of time
+(`docs/specs/reference/demo-wikipedia-rerank.json`). The build served this way
+has no reranker, so its Reranker control is not offered here. The reranked
+order is compared by numbers instead, with the reference file's scores given
+to the build's rerank callback: `python3 scripts/compare_relative_reference.py`.
+
+The reference page opens without this page too, from any plain web server
+started at the repository root, for example
+`python3 -m http.server 8792 --bind 127.0.0.1` and then
+<http://127.0.0.1:8792/docs/specs/reference/tumbler-relative-search.html>; it
+reads the Wikipedia pair from `../../../embeddings_tumbler/static/` when it is
+not beside it.
 
 ## Notes
 

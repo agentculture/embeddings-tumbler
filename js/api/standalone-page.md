@@ -26,10 +26,22 @@ demo-wikipedia.json  demo-wikipedia.f32  sample-data.js
 | `data` | Address of a data file (the contract's file form, a `.json` with its `.f32` block beside it), relative to the page or an absolute URL **on the page's own origin**. Anything else is refused with a plain message and nothing is requested. An empty `data=`, or one of only spaces, means no data file: the default set. |
 | `mode` | Starting mode: `tumble` (default), `lattice`, `wander` or `focus`. An unknown id falls back to `tumble` (the viewer's rule). |
 | `seed` | The view seed. Digits (optionally signed, with a decimal part) are read as a number, anything else as a string. Not the data's `provenance.seed`; the provenance block shows both. |
+| `relative` | `relative=1` mounts the viewer with the Relative setting on (see `js/api/50-viewer.md`, "Relative search"). Any other value, or none, is off. |
+| `origin` | `origin=1` mounts it with Show the origin on. Any other value, or none, is off. |
 
 Examples: `index.html`, `index.html?sample=synthetic`,
 `index.html?data=sets/atlas.json`,
-`index.html?data=atlas.json&mode=wander&seed=7`.
+`index.html?data=atlas.json&mode=wander&seed=7`,
+`index.html?relative=1&origin=1`.
+
+The page keeps the two relative settings in its address. Whenever the viewer reports a change of one (the
+panel's controls, or a host's call to the handle), the page sets or removes `relative=1` and
+`origin=1` with `history.replaceState`, so no history entry is added, and the other parameters
+(`data`, `sample`, `mode`, `seed`, and any the page does not know) and the hash stay as they are, byte for byte as
+they were written; when the address already says what the viewer reports, nothing is written. Copy the address to reopen the same
+setting. Limit: the link under the notes that switches to the other data set is worked out once, when
+the page loads. It carries the settings the address had then, not one changed afterwards; a change
+made after load is in the address bar but not in that link.
 
 ## Search
 

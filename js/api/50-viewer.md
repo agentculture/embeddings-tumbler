@@ -66,7 +66,7 @@ All optional.
 | `paused` | `null` | `true` / `false` to start paused or running. `null`: start paused when the user prefers reduced motion, otherwise running. |
 | `labels` | `true` | Show labels (group names, Wander stops and neighbours, hover name). Also a checkbox. |
 | `trails` | `true` | Motion trails. Also a checkbox. |
-| `controls` | `true` | `false` hides the controls row (play, reset zoom, speed, labels, trails, hint). The mode switch, readout and provenance stay. |
+| `controls` | `true` | `false` hides the controls row (play, reset view, speed, labels, trails, hint). The mode switch, readout and provenance stay. |
 | `readout` | `true` | `false` hides the readout strip. |
 | `masthead` | `true` | `false` hides the masthead over the stage (the count line, and the title if given). |
 | `title` | `""` | A title drawn over the stage in the masthead (text, never markup). Empty: no title line. |
@@ -89,8 +89,10 @@ All optional.
 | `searchK` | `8` | Search: results per search with no reranker (3 to 100). |
 | `searchCandidates` | `50` | Search: candidates handed to the reranker (3 to 100). |
 | `searchTop` | `20` | Search: reranked candidates kept (3 to `searchCandidates`). |
-| `searchLit` | `"even"` | Search: the starting lit setting (`"even"`, `"close"`, `"named"`). |
+| `searchLit` | `"even"` | Search: the starting lit setting (`"even"`, `"close"`, `"named"`, `"all"`). |
 | `onSearchChange(search)` | none | Search: called with `info().search` whenever it changes. |
+| `relative` | `false` | Relative search: the Relative setting at mount (see "Relative search"). |
+| `showOrigin` | `false` | Relative search: the Show the origin setting at mount. |
 
 A callback that throws does not break the viewer. Its error is rethrown on a
 later task with `setTimeout`, so it reaches the host's error handling, not
@@ -114,7 +116,9 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 | `seed()` | number or string | The view seed. |
 | `setSpeed(s)` | number | Set the speed (positive); returns it. |
 | `zoom(z?)` | number | Read, or set, the user zoom factor (clamped 0.2 to 12). |
-| `resetZoom()` | — | User zoom back to 1. |
+| `resetZoom()` | — | User zoom back to 1 and the user pan back to `[0, 0]` (since t17 it resets the pan too, as every reset of the zoom does). |
+| `pan(p?)` | `[x, y]` | Read, or set with `[x, y]`, the user pan: the renderer's draw key `pan`, in units of the stage's `R = min(W, H) * radius`, `x` right and `y` up. Clamped so the picture's centre stays on the stage; anything that is not two finite numbers sets `[0, 0]`. Returns a copy. |
+| `resetView()` | — | The same as `resetZoom()`: zoom 1 and no pan. The name the Reset view button goes by. |
 | `refreshTheme()` | — | Re-read the `--tumbler-*` custom properties (also done on every `update`). The viewer never polls. |
 | `info()` | object | A snapshot for hosts and tests (below). |
 | `setSearches(list)` | Promise | Search: replace the searches (text, vector or point id); see "Search". |
@@ -123,6 +127,8 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 | `searchSettings()` | object | Search: a copy of the settings. |
 | `faceSearches()` | boolean | Search: swing toward the searches again (false in a mode with no `face`, Focus). |
 | `setSearchCallbacks({ embed?, rerank? })` | object | Search: set or remove the callbacks after mount. |
+| `setRelative(patch)` | `{ relative, showOrigin }` | Relative search: change the settings, at once (see "Relative search"). |
+| `relativeSettings()` | `{ relative, showOrigin }` | Relative search: a copy of the settings. |
 
 `info()` returns `{ mode, paused, broken, suspended, hidden, onScreen, destroyed,
 reducedMotion, time, seed, speed, zoom, ready, preparing, count, dimension,
@@ -198,6 +204,170 @@ its "Clarifications from the build (t8)". In short:
   beside the stage (the root becomes a wrapping flex row while in Focus).
 
 Tested in `js/test/viewer-search.test.js`.
+
+## Relative search
+
+Relative is a setting of Tumble, kept by the viewer in every mode and with no
+search. With a search present it makes the first search's direction the vertical
+axis, so a point's height is its vector measured along the search (cosine
+similarity on a set of unit-length vectors), drawn with a ruler. The contract is
+`docs/relative-interface.md`; the mode's side is in `js/api/40-modes.md`
+("Relative"), the drawing in `js/api/46-relative-overlay.md`, the controls in
+`js/api/45-search-panel.md`. The viewer's part:
+
+- **Options.** `relative` and `showOrigin`, booleans, both `false` by default
+  (any value that is not `true` reads as `false`). A viewer mounted without
+  them is exactly as it was before the setting existed, until Relative is
+  turned on.
+- **`handle.setRelative(patch) -> { relative, showOrigin }`.** `patch` is
+  `{ relative?, showOrigin? }`. `relative` or `showOrigin` that is not a
+  boolean is ignored, as is any other key, and a missing key keeps its value.
+  (A key `rest` and a mount option `relativeRest` existed between tasks t19
+  and t22 and were never released; both are now unknown and ignored.) It is synchronous: no ranking is redone, nothing
+  is superseded, no callback of the host's is called, no request is made. It
+  returns the settings now in force. `onSearchChange` is called when any value
+  changed. The settings are kept in every mode and with no search; they
+  act in Tumble. Turning Relative on replaces a swing in progress with the turn
+  onto the pinned frame. After `destroy` it returns the last settings and does
+  nothing. `handle.relativeSettings()` returns a copy.
+- **Letters are kept while Relative is on.** `setSearches(list)` gives an entry
+  that is the same as a search shown now (the same kind, and the same text and
+  `via`, the same point id, or the same vector bytes and model) that search's
+  letter, and the other entries the lowest free letters in list order. So
+  `["rice", "wheat"]` and then `["wheat"]` leaves one search, lettered B, which
+  is then the vertical axis. With Relative off letters are given by position, as
+  before, and turning it off gives positional letters back (a search that was B
+  becomes A if it is alone).
+- **`info().search.relative`** is always present:
+
+  ```js
+  relative: {
+    relative, showOrigin,   // the settings
+    offered,                // the current mode is Tumble (the controls are offered)
+    active,                 // offered, and at least one axis is pinned
+    settled,                // active, and the turn onto the pinned frame has ended
+    measure,                // "cosine" | "length along the search" | null (no data)
+    unit,                   // { unit, min, max, tolerance } | null: are all vectors of length one?
+    pinned,                 // [{ letter, axis, length }] ([] when not active)
+    dropped,                // [{ letter, reason, against }]: searches that give no axis
+    free,                   // free axes: 3 minus pinned (3 when not active)
+    fixed,                  // free axes that are filler, because the set is too small to spread
+    window,                 // { low, high, bottom, top } | null: the heights shown
+    share, subspace,        // the remainder share and directions toured, or null
+    searches,               // [{ letter, results: [{ index, id, height, cosine }] }]
+  }
+  ```
+
+  `searches` lines up with `info().search.searches[j].results`: `height` is the
+  result's vector dotted with that search's direction, and `cosine` is 1 minus
+  its plain distance (never the point-of-view distance). `[]` when not active.
+  Each entry's `letter` is that search's letter as it is now.
+  While the setting is on in Tumble but no search gives an axis, `dropped` still
+  names the searches that give none.
+  `settled` is also false from the moment a changed search is committed until
+  the mode's fit for it has switched in: until then the frame shown is the
+  earlier searches', the status says `turning until`, the provenance leaves out
+  the exactness sentences, and the overlay draws the ruler's faint line along
+  the direction the frame is really pinned to (the mode's
+  `state.relative.searches`), with no ticks and no stems.
+  `measure` and `unit` are the fit's own while the relative view is shown (of
+  the rows that fit was made on). In the plain view they are accessors: the
+  check of the set (`ET.math.unitLength`, a pass over every row) runs when one
+  of them is first read, once per set, and not when the report is made, so
+  reports made on every append cost nothing for them.
+- **Appends.** With the relative view shown, appended points start no relative
+  fit: the view is kept (the status ends `before {n} new points`), and the
+  refit that follows by `refitQuietSeconds` and `refitShare` fits the plain
+  tour and the relative view again, once.
+- **What is drawn.** In Tumble, with the relative view shown or Show the origin
+  on, the viewer builds the overlay's draw list every frame, paints its shapes on
+  the overlay canvas and places its texts as spans in
+  `div.tumbler-relative-labels` (after the overlay canvas, `aria-hidden`). It
+  passes the draw state's `perspective` to the renderer and to the overlay's
+  placer, so they agree. The pitch is `0.16 * (1 - mix) + drag.pitch`, so the
+  settled view is level until the person tilts it. Nothing is drawn, and the
+  layer is empty, in other modes or with neither shown.
+- **Labels and markers.** A named result's label on the ruler shows the
+  point's title (its `label`, when that is more than its id) and otherwise the
+  start of its text; the panel's list and plain search's labels are unchanged.
+  Each search's marker carries `A · Rice`: its letter and its text as the
+  panel's summary names it, or the title of the point it was searched from. The
+  overlay draws that text once, with or without the panel (the panel draws the
+  ring, and no letter, in the relative view).
+- **With the clock still, no turn.** While the view is paused (reduced motion
+  starts paused) the viewer tells Tumble (`inst.setStill(true)`), so turning
+  Relative on or off, adding or removing a search and Show the origin take
+  effect at once: the next frame drawn is the settled relative view (or the
+  plain one), with the ruler exact, and `onSearchChange` reports `settled`
+  true. The mode's preparation keeps being pumped while paused, so a fit
+  finishes and applies without Play. With the clock running the turn is as
+  before.
+- **Non-results are brightened by closeness.** With the relative view
+  shown, a point that the Lit setting leaves unlit gets the lit value
+  `ET.viewer.RELATIVE_FADE_BASE + ET.viewer.RELATIVE_FADE_SCALE x g^2`, that
+  is 0.2 + 0.6 g². The fade has this one strength (task t22, deviation d9);
+  the choice between a faded rest and a rest shown in full is the Lit
+  setting's (`"all"`, below). `g` is, over the shown searches, the largest of `clamp((c - mid) / (hi -
+  mid), 0, 1)`, with `c` the point's plain cosine to the search, `mid` the median
+  cosine over all points and `hi` the highest over all points but the search's
+  own. It uses the plain cosine, never the point-of-view one. Results and points
+  inside the radius keep their lit values. `litCount` and `sharedCount` count
+  only the lit values the Lit setting gave. With the relative view not shown the
+  lit values are exactly as before. With Lit "by closeness" every point is
+  usually lit already, so the gradient changes nothing.
+- **Drawn sharp (task t21, deviation d8).** By the relative mix, the draw key
+  `depthOfField` goes from the mode's value (Tumble: 1.1) to
+  `ET.viewer.RELATIVE_DEPTH_OF_FIELD` (0) and `bloom` from its plain value (the
+  key left out on a dark stage, so the renderer's 0.55; 0.3 on a light stage)
+  to `ET.viewer.RELATIVE_BLOOM` (0.2), never upward: `from * (1 - mix) + to *
+  mix`. At mix 0 neither key is touched, so the plain view's draw state is
+  exactly as before, a left-out `bloom` included. `wireDepthOfField` and the
+  trails are not changed. The owner asked for it after comparing with the
+  reference page, whose relative view has no depth blur.
+- **Lit "everything, results highlighted" (`lit: "all"`, task t21, deviation
+  d8).** A fourth lit setting, in every view: results are lit at 1 as under
+  `"even"`, and every other point is uploaded at `ET.searchSets.LIT_ALL_REST`
+  (about 0.4366), where the renderer's brightness factor is 1, so it is drawn
+  about as with no search. `litCount`, `sharedCount` and each search's
+  `insideCount` are those of `"even"`. In the relative view the constant
+  replaces the gradient. In Focus, Only results still hides:
+  while it hides, the points that are not results are uploaded at 0 and are
+  skipped by the click, the hover name and the group names. Per view, with the
+  wires and the fog: `docs/search-interface.md`, "Everything, results
+  highlighted". `ET.viewer.hiddenPoint(handle, i)` reports whether point `i` is
+  hidden this frame (for tests).
+- **Status and provenance.** The status line is the mode's relative status
+  followed by the viewer's pieces, before its own zoom and paused parts: the words
+  `named results chosen and numbered by the reranker` while a shown search was
+  reranked, `with {letter}'s point of view, rank and height use different
+  measures` while the point of view is on, and `ranked by cosine, so rank and
+  height can disagree` on a set whose vectors are not all of length one. The
+  provenance block gains a `Relative` row (after `View`) while the relative view
+  is shown, with the sentences that apply: that the vertical axis is exact and
+  what the height measures, and that the horizontal and depth axes are exact
+  when pinned (these only once the turn onto the pinned frame has ended); the toured axes' share and that sideways position is still a shadow;
+  that every vector has length one (which is why height is cosine similarity),
+  or the range of lengths and that height is then length along the search; and
+  that with the point of view on, rank is in the scaled measure and height is
+  not. The summary line gains `relative to A`. The shadow sentence of the block
+  stays as it was.
+- **Test hook.** `handle._viewer.relativeDrawn` is `null` while no relative
+  overlay is drawn, and otherwise the record of the last frame's overlay:
+  `{ units: "device", dpr, width, height, settled, painted, labels, ruler,
+  origin, results }`. **Its positions are in device pixels of the overlay
+  canvas** (divide by `dpr` for CSS pixels). `ruler` is `{ x0, y0, x1, y1, from,
+  to }` or `null`; `origin` is `{ x, y, far, seen }` or `null`; `results` has,
+  for each named result with a stem, `{ index, height, x, y, rulerX, rulerY,
+  mappedX, mappedY }`: its drawn position, the point on the ruler at its height
+  as drawn, and where its height falls on the straight line between the ruler's
+  two ends. A test can compare `rulerY` with `mappedY` to see that heights are
+  drawn true. The hook is for tests; hosts use `info()`.
+- **Nothing is sent.** Relative search adds no callback and no request.
+  Turning it on or off, adding searches and showing the origin send nothing
+  anywhere. Reranking in the relative view sends what it sends elsewhere.
+
+Tested in `js/test/viewer-relative.test.js` and
+`js/test/viewer-relative-draw.test.js`.
 
 ## Results of `update`
 
@@ -348,6 +518,8 @@ texture. On "append 200 points" onto 12,288 points: 44 to 46 ms for the first
   paused**, the Play button is visible, and twinkle is off. Pressing Play
   starts the motion; the user's choice wins. `options.paused` overrides the
   starting state.
+- While paused, a change of the relative view is shown at once with no turn
+  (see "Relative search").
 
 ## Heavy work
 
@@ -660,22 +832,30 @@ name and its ring use the stop's colour.
 ## Controls and input
 
 - Mode buttons (real `<button>`s with `aria-pressed`, at least 44 px tall),
-  Pause/Play, Reset zoom, a speed slider, Labels and Trails checkboxes, a hint.
-  Pause/Play and Reset zoom are the reference's button (12 px type, 6 by 16 px
+  Pause/Play, Reset view (class `tumbler-zoom-reset`, kept from when it was
+  labelled Reset zoom; it resets the zoom and the pan, and is always offered,
+  so also when the picture is moved at zoom 1), a speed slider, Labels and
+  Trails checkboxes, a hint: "Drag to turn; right-drag, Shift + drag or two
+  fingers move. Pinch, or Ctrl + wheel, to zoom; double-click or double-tap
+  resets. Keys 1-3 switch views and arrows move while the viewer has focus."
+  (the `3` is the number of views, at most 9)
+  Pause/Play and Reset view are the reference's button (12 px type, 6 by 16 px
   padding, at least 76 px wide and 28 px tall); under 600 px wide they are at
   least 32 px tall for touch. The speed slider is 130 px wide.
 - **Keys** only while focus is inside the viewer (the root is focusable and a
   pointer press on the stage focuses it): `Escape` dismisses the notice,
   `1`..`9` modes in button order,
   space play/pause (when the root itself has focus), `+`/`=` zoom in, `-` zoom
-  out, `0` reset zoom. Keys typed into the viewer's inputs are ignored. No key
+  out, `0` reset zoom and pan, the arrow keys move the picture the way they
+  point by 0.1 of a pan unit (`ET.viewer.PAN_STEP`; not with Ctrl, Cmd or Alt,
+  as for every key). Keys typed into the viewer's inputs are ignored. No key
   listener is ever added to the document or window.
 - **Drag** to turn (pointer events, so mouse, pen and touch). Only a press on
   the sky itself (the canvases or the label layer) starts a drag, captures the
   pointer and focuses the viewer; a press on a control inside the stage (the
   notice's Dismiss button) is left to that control, so it gets its click, and a
   drag that starts on it does not turn the camera. Double-click resets the zoom
-  only on the sky. Every control is a native element, so Enter and Space work. The stage has
+  and the pan, only on the sky. Every control is a native element, so Enter and Space work. The stage has
   `touch-action: pan-y`: a vertical swipe on a phone scrolls the page, a
   horizontal drag turns the cloud, as in the reference.
 - **User zoom** multiplies each mode's automatic zoom, so switching modes still
@@ -683,7 +863,29 @@ name and its ring use the stop's colour.
   pinch arrives this way) over the stage; or a plain wheel over the stage
   **only while the viewer has focus**. Otherwise the wheel scrolls the page.
   Double-click (mouse) or double-tap (touch, pen) resets, as does the Reset
-  zoom button or `0`.
+  view button or `0`.
+- **User pan** (task t17) moves the drawn picture without turning it. It is
+  the renderer's draw key `pan`, `[x, y]` in units of the stage's `R = min(W,
+  H) * radius` (one unit of the picture after zoom and perspective, so it
+  follows the stage when it is resized), `x` right and `y` up. It changes no
+  frame, centre, zoom, ranking or measure, and like the user zoom and the drag
+  angles it is view state held by the viewer: reproducibility is untouched. The
+  key is left out of the draw state while the pan is `[0, 0]`, so the draw
+  state and everything drawn are exactly as before. Gestures: **right-button
+  drag** or **Shift + left drag** (for trackpads) pans by the pointer's
+  movement; a left drag still turns, unchanged; with **two fingers** the
+  movement of their midpoint pans while their distance still zooms; the
+  **arrow keys** pan by `PAN_STEP` while the viewer has focus. The browser's
+  context menu is suppressed over the sky (the canvases and the label layer) so
+  a right-drag works; over the controls it is left alone. A pan drag pauses
+  the idle spin as a turn drag does, and a pan press is never a Focus click.
+  The pan is clamped so the picture's centre (the point the zoom scales about)
+  stays on the stage: `|x|` at most half the stage's width and `|y|` half its
+  height, in pan units; a stage that shrinks clamps the pan held. Every reset
+  of the zoom (double-click, double-tap, `0`, the Reset view button,
+  `resetZoom()`, `resetView()`) resets the pan too. While the picture is
+  moved the status line says `· moved`, after the zoom part and before
+  `· paused`. A new data set keeps the pan, as it keeps the zoom.
 
 ## Lifecycle rules
 

@@ -1,11 +1,11 @@
-/*! embeddings-tumbler 0.12.1 | source: github.com/agentculture/embeddings-tumbler | assembled from js/src by scripts/assemble.py, do not edit by hand */
+/*! embeddings-tumbler 0.13.0 | source: github.com/agentculture/embeddings-tumbler | assembled from js/src by scripts/assemble.py, do not edit by hand */
 (function (root) {
   "use strict";
 
   // Shared internal namespace. Every later module adds its functions here
   // (ET.math = {...}, ET.contract = {...}) and reads earlier modules' from it.
   var ET = {};
-  ET.version = "0.12.1";
+  ET.version = "0.13.0";
   // The public API object. Only 50-viewer.js fills this (mount, update, destroy).
   ET.api = {};
   // ---------------------------------------------------------------------------
@@ -122,6 +122,9 @@
     function above(x, min) {
       return x > min;
     }
+    function atMost(x, max) {
+      return x <= max;
+    }
     function intAtLeast(x, min) {
       return x >= min && Math.floor(x) === x;
     }
@@ -226,9 +229,10 @@
     // A stepper over a generator: { step(budgetMs?) -> done, done, progress, result }.
     // step(budgetMs) runs units until budgetMs milliseconds have passed (always at
     // least one unit, so step(0) runs exactly one); step() runs to the end.
-    // `result` is null until done.
+    // `result` is null until done. `work` is the multiply-adds counted so far: a
+    // property of the computation, the same however the stepper is pumped.
     function genStepper(gen, tracker) {
-      var st = { done: false, progress: 0, result: null, step: null };
+      var st = { done: false, progress: 0, result: null, work: 0, step: null };
       st.step = function (budgetMs) {
         if (st.done) return true;
         var limit = budgetMs === undefined ? Infinity : budgetMs;
@@ -238,6 +242,7 @@
           first = false;
           tracker.t0 = clockNow();
           var r = gen.next();
+          st.work = tracker.done;
           if (r.done) {
             st.done = true;
             st.result = r.value;
@@ -1176,6 +1181,553 @@
       return tour;
     }
 
+    // ----- the relative frame (Tumble with searches pinned) --------------------
+    //
+    // One to three frame rows are fixed to search directions (row 1 vertical, row
+    // 0 horizontal, row 2 depth) and the rows left free tour the set's strongest
+    // directions (the plain fit's, when the caller passes them) with those
+    // search directions removed; without them, the strongest directions of what
+    // the set holds once the search directions are removed (the remainder),
+    // found by a fit of their own. Everything is linear; nothing here changes
+    // makeTour or guidedTour.
+
+    var RELATIVE_UNIT_TOLERANCE = 1e-3; // a set is unit-length when min and max lengths are this close to 1
+    var RELATIVE_ZERO_LENGTH = 1e-9; // a query no longer than this has no direction
+    var RELATIVE_SAME_DIRECTION = 1e-6; // squared new part below this: the same direction as an earlier search
+    var RELATIVE_PLAIN_KEEP = 1e-3; // a plain direction is kept when this share of its squared length is left
+
+    // Search directions in order, made orthonormal. A zero-length query, one that
+    // points the same way as the directions already pinned, and any after three
+    // pinned are dropped with a reason. The first pinned row is the query's own
+    // unit direction (rounded to float32 once). Never throws for zero, repeated or
+    // parallel queries; D below 3 is a RangeError.
+    function relativeDirections(queries, D) {
+      checkDim(D);
+      if (D < 3) throw new RangeError("relative directions need a dimension of at least three");
+      checkQueries(queries, D);
+      var rows = []; // pinned directions, Float64Array(D) each
+      var pinned = [];
+      var dropped = [];
+      for (var qi = 0; qi < queries.length; qi++) {
+        var got = pinDirection(queries[qi], D, rows);
+        if (got.row) {
+          rows.push(got.row);
+          pinned.push({ index: qi, length: got.length });
+        } else {
+          var against = got.reason === "same-direction" ? pinnedIndices(pinned) : [];
+          dropped.push({ index: qi, reason: got.reason, against: against });
+        }
+      }
+      var directions = new Float32Array(rows.length * D);
+      for (var r = 0; r < rows.length; r++) directions.set(rows[r], r * D);
+      return { directions: directions, count: rows.length, pinned: pinned, dropped: dropped };
+    }
+
+    function pinnedIndices(pinned) {
+      return pinned.map(function (pp) {
+        return pp.index;
+      });
+    }
+
+    // One query against the rows already pinned: { row, length } when it gives a
+    // new direction (the row is unit length and orthogonal to `rows`), or
+    // { reason } when it is dropped.
+    function pinDirection(q, D, rows) {
+      var len = Math.sqrt(sqNorm(q, 0, D));
+      if (!above(len, RELATIVE_ZERO_LENGTH)) return { reason: "zero-length" };
+      if (rows.length === 3) return { reason: "no-axis-left" };
+      var v = new Float64Array(D);
+      for (var d = 0; d < D; d++) v[d] = q[d] / len;
+      if (rows.length === 0) return { row: v, length: len };
+      for (var pass = 0; pass < 2; pass++) {
+        for (const p of rows) removeRow(v, 0, p, 0, D);
+      }
+      var nn = sqNorm(v, 0, D);
+      if (!atLeast(nn, RELATIVE_SAME_DIRECTION)) return { reason: "same-direction" };
+      var inv = 1 / Math.sqrt(nn);
+      for (var d2 = 0; d2 < D; d2++) v[d2] *= inv;
+      return { row: v, length: len };
+    }
+
+    function checkQueries(queries, D) {
+      if (!Array.isArray(queries)) throw new TypeError("queries must be an array of query vectors");
+      for (var i = 0; i < queries.length; i++) {
+        if (queries[i]?.length !== D) {
+          throw new TypeError("query " + i + " must have dimension (" + D + ") values");
+        }
+      }
+    }
+
+    // The shortest and longest row lengths and whether both are within
+    // `tolerance` of 1, row by row in double precision.
+    function* unitLengthGen(X, N, D, tolerance, wk) {
+      var min = Infinity;
+      var max = -Infinity;
+      for (var i = 0; i < N; i++) {
+        var l = Math.sqrt(sqNorm(X, i * D, D));
+        if (l < min) min = l;
+        if (l > max) max = l;
+        if (wk.add(D)) yield;
+      }
+      if (N === 0) return { unit: false, min: null, max: null, tolerance: tolerance };
+      var unit = Math.abs(min - 1) < tolerance && Math.abs(max - 1) < tolerance;
+      return { unit: unit, min: min, max: max, tolerance: tolerance };
+    }
+
+    function unitLength(X, N, D, tolerance) {
+      checkData(X, N, D);
+      var tol = tolerance === undefined ? RELATIVE_UNIT_TOLERANCE : tolerance;
+      if (!atLeast(tol, 0) || !Number.isFinite(tol)) throw new RangeError("tolerance must be a finite number >= 0");
+      return runAll(unitLengthGen(X, N, D, tol, NO_PAUSE));
+    }
+
+    // Heights x_i . direction over every row (never a sample): the lowest and the
+    // highest with their row indices (ties to the lower index), and the window's
+    // top, the higher of the search's length and the highest point.
+    function* heightWindowGen(X, N, D, direction, length, wk) {
+      var low = null;
+      var pointHigh = null;
+      var lowest = null;
+      var highest = null;
+      for (var i = 0; i < N; i++) {
+        var o = i * D;
+        var h = 0;
+        for (var d = 0; d < D; d++) h += X[o + d] * direction[d];
+        if (low === null || h < low) {
+          low = h;
+          lowest = i;
+        }
+        if (pointHigh === null || h > pointHigh) {
+          pointHigh = h;
+          highest = i;
+        }
+        if (wk.add(D)) yield;
+      }
+      var high = pointHigh === null ? length : Math.max(length, pointHigh);
+      return { low: low, high: high, pointHigh: pointHigh, lowest: lowest, highest: highest };
+    }
+
+    function checkWindow(direction, length, D) {
+      if (direction?.length !== D) throw new TypeError("heightWindow: direction must have dimension values");
+      var nn = sqNorm(direction, 0, D);
+      if (!atMost(Math.abs(nn - 1), 1e-4)) throw new RangeError("heightWindow: direction must be unit length");
+      if (!atLeast(length, 0) || !Number.isFinite(length)) {
+        throw new RangeError("heightWindow: length must be a finite number >= 0");
+      }
+    }
+
+    function heightWindow(X, N, D, direction, length) {
+      checkData(X, N, D);
+      checkWindow(direction, length, D);
+      return runAll(heightWindowGen(X, N, D, direction, length, NO_PAUSE));
+    }
+
+    // A tour of `rows` (1 to 3) frame rows inside the span of m >= rows
+    // orthonormal basis rows: makeTour's construction with `rows` in place of
+    // three (the same seeded draws, the same arithmetic), so with three rows it
+    // gives makeTour's frames. With m = 1 the single row is constant.
+    function makeTourRows(basis, m, D, rows, opts) {
+      checkDim(D);
+      if (!intAtLeast(rows, 1) || rows > 3) throw new RangeError("a tour of rows needs 1, 2 or 3 rows");
+      if (!intAtLeast(m, rows)) throw new RangeError("a tour of rows needs at least as many directions as rows");
+      if (m > D) throw new RangeError("a tour cannot use more directions than the dimension");
+      if (!basis || basis.length < m * D) throw new TypeError("makeTourRows: basis needs m * dimension values");
+      var o = opts || {};
+      var seed = toSeed(o.seed === undefined ? 0 : o.seed);
+      var speed = o.speed === undefined ? 0.42 : o.speed;
+      var rng = makeRandom(mixSeed(seed, SALT_TOUR));
+      var P = new Float64Array(m * m);
+      rng.fillGauss(P, 0, m * m);
+      orthonormalize(P, m, m);
+      var planes = Math.floor(m / 2);
+      var freq = new Float64Array(planes);
+      for (var h = 0; h < planes; h++) {
+        var mag = speed * (0.55 + 0.9 * rng.next());
+        freq[h] = rng.next() < 0.5 ? -mag : mag;
+      }
+      // E = first `rows` rows of P^T: E[r][c] = P[c][r].
+      var E = new Float64Array(rows * m);
+      for (var r = 0; r < rows; r++) for (var c = 0; c < m; c++) E[r * m + c] = P[c * m + r];
+      var L = new Float64Array(rows * m);
+      var A = new Float64Array(rows * m);
+      var F64 = new Float64Array(rows * D);
+      var basisCopy = new Float32Array(basis.subarray ? basis.subarray(0, m * D) : basis.slice(0, m * D));
+
+      function coefficientsAt(t) {
+        for (var i = 0; i < rows * m; i++) L[i] = E[i];
+        for (var hh = 0; hh < planes; hh++) {
+          var ang = freq[hh] * t;
+          var cs = Math.cos(ang);
+          var sn = Math.sin(ang);
+          var c0 = 2 * hh;
+          for (var rr = 0; rr < rows; rr++) {
+            var x = E[rr * m + c0];
+            var y = E[rr * m + c0 + 1];
+            L[rr * m + c0] = cs * x - sn * y;
+            L[rr * m + c0 + 1] = sn * x + cs * y;
+          }
+        }
+        for (var r2 = 0; r2 < rows; r2++) {
+          for (var c2 = 0; c2 < m; c2++) {
+            var s = 0;
+            for (var q = 0; q < m; q++) s += L[r2 * m + q] * P[q * m + c2];
+            A[r2 * m + c2] = s;
+          }
+        }
+        orthonormalize(A, rows, m);
+      }
+
+      function rowsAt(t, out) {
+        if (typeof t !== "number" || !Number.isFinite(t)) throw new RangeError("time must be a finite number");
+        var F = out || new Float32Array(rows * D);
+        coefficientsAt(t);
+        F64.fill(0);
+        for (var r3 = 0; r3 < rows; r3++) {
+          var orow = r3 * D;
+          for (var j = 0; j < m; j++) {
+            var w = A[r3 * m + j];
+            var ob = j * D;
+            for (var d = 0; d < D; d++) F64[orow + d] += w * basisCopy[ob + d];
+          }
+        }
+        orthonormalize(F64, rows, D);
+        for (var i2 = 0; i2 < rows * D; i2++) F[i2] = F64[i2];
+        orthonormalize(F, rows, D);
+        return F;
+      }
+
+      return {
+        kind: "tour-rows",
+        seed: seed,
+        speed: speed,
+        dimension: D,
+        subspace: m,
+        rows: rows,
+        basis: basisCopy,
+        rowsAt: rowsAt,
+      };
+    }
+
+    // Frame rows the pinned directions go to, in pin order: vertical, horizontal, depth.
+    var PINNED_SLOTS = [1, 0, 2];
+    // Frame rows left free for each number pinned, in row order.
+    var FREE_SLOTS = [null, [0, 2], [2], []];
+
+    // The relative frame as a closed-form function of t: the pinned directions
+    // copied into their rows (never re-orthonormalised against the free rows, so
+    // row 1 dotted with a point is its height to float32 accuracy), the free rows
+    // a tour of rows inside the basis (directions orthogonal to the pinned ones).
+    function makeRelativeTour(directions, count, basis, m, D, opts) {
+      checkDim(D);
+      if (!intAtLeast(count, 1) || count > 3) throw new RangeError("a relative tour needs 1 to 3 pinned directions");
+      checkRows(directions, count, D, "makeRelativeTour");
+      var o = opts || {};
+      var free = 3 - count;
+      var rowsTour = free > 0 ? makeTourRows(basis, m, D, free, o) : null;
+      var pinnedCopy = new Float32Array(directions);
+      var slots = FREE_SLOTS[count];
+      var freeRows = free > 0 ? new Float32Array(free * D) : null;
+
+      function frameAt(t, out) {
+        if (typeof t !== "number" || !Number.isFinite(t)) throw new RangeError("time must be a finite number");
+        var F = out || new Float32Array(3 * D);
+        for (var p = 0; p < count; p++) {
+          F.set(pinnedCopy.subarray(p * D, (p + 1) * D), PINNED_SLOTS[p] * D);
+        }
+        if (rowsTour) {
+          rowsTour.rowsAt(t, freeRows);
+          for (var f = 0; f < free; f++) F.set(freeRows.subarray(f * D, (f + 1) * D), slots[f] * D);
+        }
+        return F;
+      }
+
+      return {
+        kind: "relative-tour",
+        pinned: count,
+        free: free,
+        subspace: rowsTour ? m : 0,
+        seed: toSeed(o.seed === undefined ? 0 : o.seed),
+        speed: o.speed === undefined ? 0.42 : o.speed,
+        dimension: D,
+        frameAt: frameAt,
+      };
+    }
+
+    // Everything the relative view needs from the data, in one computation (see
+    // relativeFit). Arguments are checked here; the directions are found here.
+    function prepareRelativeFit(X, N, D, queries, opts) {
+      checkData(X, N, D);
+      var dirs = relativeDirections(queries, D);
+      var o = opts || {};
+      var pcaOpts = {
+        seed: o.seed,
+        maxIterations: o.maxIterations,
+        tolerance: o.tolerance,
+        oversample: o.oversample,
+      };
+      checkPca(X, N, D, pcaOpts);
+      var S = toInt32(o.sampleRows);
+      var free = 3 - dirs.count;
+      var sub = o.subspace === undefined ? 8 : toInt32(o.subspace);
+      return {
+        dirs: dirs,
+        pcaOpts: pcaOpts,
+        plain: checkPlain(o.plain, D),
+        S: S > 0 && N > S ? S : N,
+        // A subspace below the number of free rows is raised to it (no tour exists otherwise).
+        m: dirs.count === 0 || free === 0 ? 0 : Math.min(Math.max(sub, free), D - dirs.count),
+      };
+    }
+
+    // The plain fit's directions (opts.plain): { directions, count[, dimension] },
+    // the shape principalDirections returns, rows strongest first. null when none.
+    function checkPlain(plain, D) {
+      if (plain === undefined || plain === null) return null;
+      if (!intAtLeast(plain.count, 0)) throw new TypeError("plain: count must be a non-negative integer");
+      if (plain.dimension !== undefined && plain.dimension !== D) {
+        throw new TypeError("plain: the directions must have the set's dimension (" + D + ")");
+      }
+      if (plain.directions?.length === undefined || plain.directions.length < plain.count * D) {
+        throw new TypeError("plain: directions needs count * dimension values");
+      }
+      return { directions: plain.directions, count: plain.count };
+    }
+
+    // The work the preparation counts (for progress only). With plain directions
+    // the remainder block and its fit are skipped (assumed: enough survive).
+    function relativeFitWork(N, D, plan) {
+      var c = plan.dirs.count;
+      var S = plan.S;
+      var m = plan.m;
+      var held = 3 * N * D + S * D * (4 * c + 1 + m);
+      if (plan.plain && m > 0) return held + plan.plain.count * (4 * (c + m) + 4) * D;
+      var fit = m > 0 ? pcaWorkEstimate(S, D, m, plan.pcaOpts) : 0;
+      return held + S * D * (4 * c + 1) + fit + 4 * (c + m) * (c + m) * D;
+    }
+
+    // The fitted row s of S taken at an even stride over N rows (as the sampled fit takes them).
+    function strideRow(s, S, N) {
+      return Math.floor((s * N) / S);
+    }
+
+    // v = (row `src` of X - mean) with the `count` pinned directions removed (twice).
+    function remainderRow(X, src, D, mean, dirs, count, v) {
+      loadRow(X, src * D, D, mean, v);
+      removeSpan(v, 0, dirs, count, D);
+    }
+
+    // The fitted rows' remainders as a float32 block for the fit. `rem` names
+    // what the remainder is taken of: { X, N, D, mean, dirs, count, S } (the
+    // data, its mean, the `count` pinned directions and the S fitted rows).
+    function* remainderBlockGen(rem, wk) {
+      var D = rem.D;
+      var S = rem.S;
+      var Ys = new Float32Array(S * D);
+      var v = new Float64Array(D);
+      for (var s = 0; s < S; s++) {
+        remainderRow(rem.X, strideRow(s, S, rem.N), D, rem.mean, rem.dirs, rem.count, v);
+        for (var d = 0; d < D; d++) Ys[s * D + d] = v[d];
+        if (wk.add((4 * rem.count + 1) * D)) yield;
+      }
+      return Ys;
+    }
+
+    // Exact variances along the basis rows and the remainder's total variance,
+    // over the fitted rows, recomputed in double precision from the data.
+    function* remainderVarianceGen(rem, basis, m, wk) {
+      var D = rem.D;
+      var S = rem.S;
+      var count = rem.count;
+      var v = new Float64Array(D);
+      var sums = new Float64Array(m);
+      var total = 0;
+      for (var s = 0; s < S; s++) {
+        remainderRow(rem.X, strideRow(s, S, rem.N), D, rem.mean, rem.dirs, count, v);
+        total += sqNorm(v, 0, D);
+        for (var k = 0; k < m; k++) {
+          var ok = k * D;
+          var p = 0;
+          for (var d = 0; d < D; d++) p += v[d] * basis[ok + d];
+          sums[k] += p * p;
+        }
+        if (wk.add((4 * count + 1 + m) * D)) yield;
+      }
+      var variances = new Float64Array(m);
+      for (var k2 = 0; k2 < m; k2++) variances[k2] = S > 0 ? sums[k2] / S : 0;
+      return { variances: variances, totalVariance: S > 0 ? total / S : 0 };
+    }
+
+    // The fitted directions made orthogonal to the pinned ones: Gram-Schmidt on
+    // [pinned; fitted], whose fallback completes any direction that collapses.
+    function* orthogonalBasisGen(dirs, count, fitted, m, D, wk) {
+      var B = new Float64Array((count + m) * D);
+      for (var i = 0; i < count * D; i++) B[i] = dirs[i];
+      for (var j = 0; j < m * D; j++) B[count * D + j] = fitted[j];
+      yield* orthonormalizeGen(B, count + m, D, wk);
+      var basis = new Float32Array(m * D);
+      for (var k = 0; k < m * D; k++) basis[k] = B[count * D + k];
+      return basis;
+    }
+
+    // Row j of the plain directions copied into v; returns its squared length.
+    function loadPlainRow(plain, j, D, v) {
+      var oj = j * D;
+      var before = 0;
+      for (var d = 0; d < D; d++) {
+        v[d] = plain.directions[oj + d];
+        before += v[d] * v[d];
+      }
+      return before;
+    }
+
+    // v with the `count` pinned rows of dirs and the `kept` rows of B removed (twice).
+    function removePinnedAndKept(v, dirs, count, B, kept, D) {
+      for (var pass = 0; pass < 2; pass++) {
+        for (var p = 0; p < count; p++) removeRow(v, 0, dirs, p * D, D);
+        for (var k = 0; k < kept; k++) removeRow(v, 0, B, k * D, D);
+      }
+    }
+
+    // The plain directions with the pinned ones removed, in the plain order
+    // (strongest first): each row has the pinned rows and the rows already kept
+    // removed (twice, in double precision, as Gram-Schmidt does) and is kept, made
+    // unit length, when at least RELATIVE_PLAIN_KEEP of its squared length is left;
+    // at most m are kept. Returns { basis: Float32Array(kept * D), kept }.
+    function* plainBasisGen(dirs, count, plain, m, D, wk) {
+      var B = new Float64Array(m * D);
+      var v = new Float64Array(D);
+      var kept = 0;
+      for (var j = 0; j < plain.count && kept < m; j++) {
+        var before = loadPlainRow(plain, j, D, v);
+        removePinnedAndKept(v, dirs, count, B, kept, D);
+        var nn = sqNorm(v, 0, D);
+        if (above(before, 0) && atLeast(nn, RELATIVE_PLAIN_KEEP * before)) {
+          var inv = 1 / Math.sqrt(nn);
+          for (var d2 = 0; d2 < D; d2++) B[kept * D + d2] = v[d2] * inv;
+          kept++;
+        }
+        if (wk.add((4 * (count + kept) + 4) * D)) yield;
+      }
+      var basis = new Float32Array(kept * D);
+      for (var i = 0; i < kept * D; i++) basis[i] = B[i];
+      return { basis: basis, kept: kept };
+    }
+
+    // The full fit of the remainder: its m strongest directions, made orthogonal
+    // to the pinned ones. Returns { basis, method }.
+    function* remainderFitGen(rem, plan, wk) {
+      var Ys = yield* remainderBlockGen(rem, wk);
+      var pca = yield* pcaGen(Ys, plan.S, rem.D, plan.m, plan.pcaOpts, wk, true);
+      Ys = null;
+      var basis = yield* orthogonalBasisGen(rem.dirs, rem.count, pca.directions, plan.m, rem.D, wk);
+      return { basis: basis, method: pca.method + (plan.S < rem.N ? "-sampled" : "") };
+    }
+
+    // relativeFit's result before anything is fitted: the pinned directions and
+    // the unit-length check, with nothing toured.
+    function blankRelativeFit(dirs, unit) {
+      return {
+        directions: dirs.directions,
+        count: dirs.count,
+        pinned: dirs.pinned,
+        dropped: dirs.dropped,
+        basis: null,
+        subspace: 0,
+        share: null,
+        variances: new Float64Array(0),
+        totalVariance: 0,
+        fittedRows: 0,
+        rank: 0,
+        fixed: 0,
+        window: null,
+        unit: unit,
+        method: "none",
+        plain: null,
+      };
+    }
+
+    // The mean of every row, in double precision.
+    function* rowMeanGen(X, N, D, wk) {
+      var mean = new Float64Array(D);
+      for (var i = 0; i < N; i++) {
+        var o = i * D;
+        for (var d = 0; d < D; d++) mean[d] += X[o + d];
+        if (wk.add(D)) yield;
+      }
+      if (N > 0) for (var e = 0; e < D; e++) mean[e] /= N;
+      return mean;
+    }
+
+    // The toured directions written into `result` (basis, subspace, method and
+    // plain): the plain fit's directions when enough of them are left, otherwise
+    // a fit of the remainder.
+    function* relativeBasisGen(rem, plan, result, wk) {
+      var c = rem.count;
+      var m = plan.m;
+      var sampled = rem.S < rem.N;
+      if (m > 0 && plan.plain) {
+        var reused = yield* plainBasisGen(rem.dirs, c, plan.plain, m, rem.D, wk);
+        result.plain = { given: plan.plain.count, kept: reused.kept };
+        if (reused.kept >= 3 - c) {
+          result.basis = reused.basis;
+          result.subspace = reused.kept;
+          result.method = sampled ? "plain-reused-sampled" : "plain-reused";
+        }
+      }
+      if (m > 0 && !result.basis) {
+        var full = yield* remainderFitGen(rem, plan, wk);
+        result.basis = full.basis;
+        result.subspace = m;
+        result.method = (plan.plain ? "fallback-" : "") + full.method;
+      }
+    }
+
+    // The share of the remainder's variance the first `sub` toured directions hold.
+    function heldShare(held, sub) {
+      var s = 0;
+      for (var k = 0; k < sub; k++) s += held.variances[k];
+      return above(held.totalVariance, 0) ? clamp01(s / held.totalVariance) : 0;
+    }
+
+    function* relativeFitGen(X, N, D, plan, wk) {
+      var dirs = plan.dirs;
+      var c = dirs.count;
+      var S = plan.S;
+      var unit = yield* unitLengthGen(X, N, D, RELATIVE_UNIT_TOLERANCE, wk);
+      var result = blankRelativeFit(dirs, unit);
+      if (c === 0) return result;
+      result.window = yield* heightWindowGen(X, N, D, dirs.directions.subarray(0, D), dirs.pinned[0].length, wk);
+      var mean = yield* rowMeanGen(X, N, D, wk);
+      result.fittedRows = S;
+      result.rank = Math.max(0, Math.min(S - 1, D - c));
+      result.fixed = Math.max(0, 3 - c - result.rank);
+      var rem = { X: X, N: N, D: D, mean: mean, dirs: dirs.directions, count: c, S: S };
+      yield* relativeBasisGen(rem, plan, result, wk);
+      var sub = result.subspace;
+      var held = yield* remainderVarianceGen(rem, result.basis, sub, wk);
+      result.variances = held.variances;
+      result.totalVariance = held.totalVariance;
+      if (sub > 0) result.share = heldShare(held, sub);
+      return result;
+    }
+
+    // The search directions, the toured directions and their share of the
+    // remainder, the window along the first pinned direction and the unit-length
+    // check. opts: { seed (0), subspace (8), sampleRows (the fit cap), plain (the
+    // plain fit's directions to reuse), maxIterations, tolerance, oversample }.
+    // Runs makeRelativeFit to the end.
+    function relativeFit(X, N, D, queries, opts) {
+      var plan = prepareRelativeFit(X, N, D, queries, opts);
+      return runAll(relativeFitGen(X, N, D, plan, NO_PAUSE));
+    }
+
+    // The same as a stepper whose result is relativeFit's, bit for bit.
+    function makeRelativeFit(X, N, D, queries, opts) {
+      var plan = prepareRelativeFit(X, N, D, queries, opts);
+      var wk = new Tracker(relativeFitWork(N, D, plan));
+      return genStepper(relativeFitGen(X, N, D, plan, wk), wk);
+    }
+
     // ----- axis swap (Lattice) ------------------------------------------------
 
     // A unit vector orthogonal to the frame's three rows, drawn from rng. When
@@ -1672,6 +2224,16 @@
       makeTour: makeTour,
       guidedTour: guidedTour,
       makeGuidedTour: makeGuidedTour,
+      RELATIVE_UNIT_TOLERANCE: RELATIVE_UNIT_TOLERANCE,
+      RELATIVE_ZERO_LENGTH: RELATIVE_ZERO_LENGTH,
+      RELATIVE_SAME_DIRECTION: RELATIVE_SAME_DIRECTION,
+      relativeDirections: relativeDirections,
+      unitLength: unitLength,
+      heightWindow: heightWindow,
+      makeTourRows: makeTourRows,
+      makeRelativeTour: makeRelativeTour,
+      relativeFit: relativeFit,
+      makeRelativeFit: makeRelativeFit,
       hiddenDirection: hiddenDirection,
       swapAngle: swapAngle,
       swapStep: swapStep,
@@ -2916,7 +3478,7 @@
 //
 // Up to four searches are active together. Given their rankings (the shape
 // ET.search makes, js/api/24-search.md) this module answers what is lit and
-// how strongly under the three lit settings, which points carry the shared
+// how strongly under the four lit settings, which points carry the shared
 // mark, the report for each pair of searches, the point-of-view scale of one
 // search, and the seeded linear view that faces the searches.
 //
@@ -2930,9 +3492,19 @@
 ET.searchSets = (function () {
   var MAX_SEARCHES = 4;
   var LETTERS = Object.freeze(["A", "B", "C", "D"]);
-  var LIT_SETTINGS = Object.freeze(["even", "close", "named"]);
+  var LIT_SETTINGS = Object.freeze(["even", "close", "named", "all"]);
   var DEFAULT_LIT = "even";
   var LIT_THRESHOLD = 0.02;
+  // The setting "all" (everything, results highlighted; deviation d8) draws a point that is
+  // not a result as nearly as the renderer allows as with no search. The renderer's lit
+  // shader multiplies a point's colour by mix(unlitGain, 2.2, l) for a lit value l, at
+  // filter 1 (js/src/30-renderer.js, pointMain): unlitGain is the renderer's default 0.07
+  // (Focus draws with 0.05, where the factor is 0.989 instead of 1), and 2.2 is a result's.
+  // The factor is 1 at LIT_ALL_REST, about 0.4366. The size factor there, mix(0.8, 1.5, l),
+  // is about 1.106.
+  var LIT_UNLIT_GAIN = 0.07;
+  var LIT_FULL_GAIN = 2.2;
+  var LIT_ALL_REST = (1 - LIT_UNLIT_GAIN) / (LIT_FULL_GAIN - LIT_UNLIT_GAIN);
   var CLOSE_REACH = 2.2;
   var CLOSE_POWER = 1.6;
   var FACE_SALT = 0x46414345;
@@ -2991,7 +3563,7 @@ ET.searchSets = (function () {
   // The value one search gives a point at distance d (named results are set apart).
   function searchValue(how, d, isIn, near, reach) {
     if (how === "close") return closeValue(d, near, reach);
-    return how === "even" && isIn ? 1 : 0;
+    return (how === "even" || how === "all") && isIn ? 1 : 0;
   }
 
   function lightNamed(ranking, count, out) {
@@ -3034,6 +3606,9 @@ ET.searchSets = (function () {
       insideCounts: [],
       litCount: 0,
       sharedCount: 0,
+      // The lit value given to every point that is inside no search: LIT_ALL_REST under
+      // "all", 0 under the other settings (where such a point simply keeps what it has).
+      rest: how === "all" ? LIT_ALL_REST : 0,
     };
     for (const search of searches) out.insideCounts.push(lightSearch(search, count, how, out));
     for (var i = 0; i < count; i++) {
@@ -3042,6 +3617,10 @@ ET.searchSets = (function () {
         out.shared[i] = 1;
         out.sharedCount++;
       }
+    }
+    // After the counts, so that they keep counting results and not every point.
+    if (out.rest > 0) {
+      for (var j = 0; j < count; j++) if (out.inside[j] === 0) out.lit[j] = out.rest;
     }
     return out;
   }
@@ -3491,6 +4070,9 @@ ET.searchSets = (function () {
     LETTERS: LETTERS,
     LIT_SETTINGS: LIT_SETTINGS,
     DEFAULT_LIT: DEFAULT_LIT,
+    LIT_UNLIT_GAIN: LIT_UNLIT_GAIN,
+    LIT_FULL_GAIN: LIT_FULL_GAIN,
+    LIT_ALL_REST: LIT_ALL_REST,
     LIT_THRESHOLD: LIT_THRESHOLD,
     CLOSE_REACH: CLOSE_REACH,
     CLOSE_POWER: CLOSE_POWER,
@@ -3528,6 +4110,12 @@ ET.searchSets = (function () {
 //   * Search: setLit() gives per-point lit values and a shared mark, drawn by a second
 //     point program (and, for the wires, a second wire program) only when they apply;
 //     without them the frame is drawn as before.
+//   * Perspective: the draw key perspective (P in s = P / max(0.6, P + z2)) is 3 by default,
+//     drawn by the programs above, unchanged. Any other value is drawn by variant programs
+//     that read it as the uniform uPersp, compiled the first time such a value is drawn.
+//   * Pan (task t17): the draw key pan moves the drawn picture on screen without turning it.
+//     [0, 0] (the default) draws with the original programs, unchanged; any other value is
+//     drawn by the same variant programs, which also read it as the uniform uPan.
 //
 // The API is documented in js/api/30-renderer.md.
 // ---------------------------------------------------------------------------
@@ -3568,7 +4156,18 @@ ET.renderer = (function () {
     // 0 = off. Above 0: the most wire light per pixel, measured where the wires' light lands,
     // that the wires may pile up to; above it the wires' brightness is scaled down (wireDensity).
     wireLoad: 0,
+    // the perspective constant P in s = P / max(0.6, P + z2); larger is flatter. 3 (the default)
+    // draws with the original programs; the relative view uses RELATIVE_PERSPECTIVE.
+    perspective: 3,
+    // [x, y]: a screen-space offset of the whole picture, added after zoom and perspective, in
+    // units of R = min(width, height) * radius (one unit of the picture after zoom and
+    // perspective, so a pan follows the stage when it is resized). Positive x moves the picture
+    // to the right, positive y moves it up. [0, 0] (the default) draws with the original
+    // programs; any other value with the variant programs.
+    pan: Object.freeze([0, 0]),
   });
+
+  var RELATIVE_PERSPECTIVE = 60; // the settled relative view: nearly flat, so heights read true
 
   var WIRE_SAMPLE = 192; // wires sampled (at an even stride) to measure how they pile up
   var WIRE_CELLS = 64; // grid cells across the stage's shorter side for that measure
@@ -3576,6 +4175,7 @@ ET.renderer = (function () {
   // The point program's uniforms (the lit programs add uFilter and uUnlit).
   var POINT_UNIFORMS = ["uPx", "uMinPx", "uFog", "uTime", "uGain", "uDim", "uTwinkle", "uDof", "uFogNear", "uFogWidth"];
   var VIEW_UNIFORMS = ["uX", "uF", "uRot", "uView", "uZoom", "uFocus"];
+  var FLAT_VIEW_UNIFORMS = VIEW_UNIFORMS.concat(["uPersp", "uPan"]); // the variant programs add these
 
   var MAX_ROW_WIDTH = 4096; // preferred texture row width (texels) before widening
   var INT32_MAX = 2147483647;
@@ -3604,6 +4204,12 @@ ET.renderer = (function () {
       pointLit: null, // the point program that reads lit values, compiled on first setLit
       line: null,
       lineLit: null, // the wire program that reads each wire's lit value, compiled with pointLit
+      // the same four programs reading the perspective as uPersp and the pan as uPan, compiled
+      // when first needed
+      pointFlat: null,
+      lineFlat: null,
+      pointLitFlat: null,
+      lineLitFlat: null,
       progLayout: null,
       quadVao: null,
       texX: null,
@@ -3749,7 +4355,13 @@ ET.renderer = (function () {
       .join("\n");
   }
 
-  function shaderSources(lay) {
+  // opts.perspective true: the variant sources whose place() reads the perspective from the
+  // uniform uPersp. Without it the sources are the original ones, with the constant 3. With
+  // opts.pan true as well, place() also adds the uniform uPan after the perspective (the
+  // renderer always compiles its variants with both).
+  function shaderSources(lay, opts) {
+    var flat = !!opts?.perspective;
+    var panned = flat && !!opts?.pan;
     var T = lay.texelsPerPoint;
     var P = lay.pointsPerRow;
     var wireScale = Math.sqrt(lay.dimension / 3).toFixed(4);
@@ -3772,16 +4384,18 @@ ET.renderer = (function () {
       "  dist = sqrt(dd);",
       "  return p;",
       "}",
-      "uniform vec4 uRot; uniform vec2 uView; uniform float uZoom; uniform float uFocus;",
+      "uniform vec4 uRot; uniform vec2 uView; uniform float uZoom; uniform float uFocus;" + (flat ? " uniform float uPersp;" : "") + (panned ? " uniform vec2 uPan;" : ""),
       // place(): turn by yaw and pitch, then a gentle perspective. zf is the depth
       // relative to the focus plane, used for depth of field.
       "vec4 place(vec3 p, out float zf) {",
       "  p *= uZoom;",
       "  float x1 = p.x * uRot.x + p.z * uRot.y, z1 = -p.x * uRot.y + p.z * uRot.x;",
       "  float y2 = p.y * uRot.z - z1 * uRot.w; float z2 = p.y * uRot.w + z1 * uRot.z;",
-      "  float s = 3.0 / max(0.6, 3.0 + z2);",
+      flat ? "  float s = uPersp / max(0.6, uPersp + z2);" : "  float s = 3.0 / max(0.6, 3.0 + z2);",
       "  zf = z2 - uFocus;",
-      "  return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);",
+      panned
+        ? "  return vec4((x1 * s + uPan.x) * uView.x, (y2 * s + uPan.y) * uView.y, 0.0, s);"
+        : "  return vec4(x1 * s * uView.x, y2 * s * uView.y, 0.0, s);",
       "}",
     ].join("\n");
     var pointVertex = head + proj + "\n" + pointMain(false);
@@ -3918,6 +4532,30 @@ ET.renderer = (function () {
 
   // ---------- the screen mapping, in JavaScript (mirrors place() in the shader) ----------
 
+  // The perspective a merged draw state asks for: draw.perspective when it is a positive finite
+  // number, else the default 3. place(), placer() and draw() all read it here, so they agree.
+  function perspectiveOf(s) {
+    var p = s.perspective;
+    return typeof p === "number" && p > 0 && Number.isFinite(p) ? p : DEFAULTS.perspective;
+  }
+
+  // The pan a merged draw state asks for, as [x, y]: draw.pan when it holds two finite numbers,
+  // else [0, 0]. place(), placer() and draw() all read it here, so they agree.
+  var NO_PAN = DEFAULTS.pan;
+  function panOf(s) {
+    var p = s.pan;
+    if (p === NO_PAN || p === null || typeof p !== "object" || p.length !== 2) return NO_PAN;
+    var x = p[0];
+    var y = p[1];
+    return typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y) ? [x, y] : NO_PAN;
+  }
+
+  // True when the variant programs must draw: a perspective other than 3 or a pan other than 0.
+  function needsVariant(s) {
+    var pan = panOf(s);
+    return perspectiveOf(s) !== DEFAULTS.perspective || pan[0] !== 0 || pan[1] !== 0;
+  }
+
   // p: [x, y, z] coordinates along the frame (already centred). Returns canvas pixels
   // (y grows downward), the perspective scale and the depth relative to the focus plane.
   function place(p, state, width, height) {
@@ -3927,6 +4565,8 @@ ET.renderer = (function () {
       cp = Math.cos(s.pitch),
       sp = Math.sin(s.pitch);
     var R = Math.min(width, height) * s.radius;
+    var P = perspectiveOf(s);
+    var pan = panOf(s);
     var x = p[0] * s.zoom,
       y = p[1] * s.zoom,
       z = p[2] * s.zoom;
@@ -3934,8 +4574,8 @@ ET.renderer = (function () {
       z1 = -x * sy + z * cy;
     var y2 = y * cp - z1 * sp,
       z2 = y * sp + z1 * cp;
-    var k = 3 / Math.max(0.6, 3 + z2);
-    return { x: width / 2 + x1 * k * R, y: height / 2 - y2 * k * R, scale: k, depth: z2 - s.focus };
+    var k = P / Math.max(0.6, P + z2);
+    return { x: width / 2 + (x1 * k + pan[0]) * R, y: height / 2 - (y2 * k + pan[1]) * R, scale: k, depth: z2 - s.focus };
   }
 
   // place() for many points under one state: the state is merged once, not per point
@@ -3949,6 +4589,9 @@ ET.renderer = (function () {
       sp = Math.sin(s.pitch);
     var R = Math.min(width, height) * s.radius;
     var zoom = s.zoom;
+    var P = perspectiveOf(s);
+    var panX = panOf(s)[0];
+    var panY = panOf(s)[1];
     return function (p0, p1, p2, out) {
       var x = p0 * zoom,
         y = p1 * zoom,
@@ -3957,9 +4600,9 @@ ET.renderer = (function () {
         z1 = -x * sy + z * cy;
       var y2 = y * cp - z1 * sp,
         z2 = y * sp + z1 * cp;
-      var k = 3 / Math.max(0.6, 3 + z2);
-      out.x = width / 2 + x1 * k * R;
-      out.y = height / 2 - y2 * k * R;
+      var k = P / Math.max(0.6, P + z2);
+      out.x = width / 2 + (x1 * k + panX) * R;
+      out.y = height / 2 - (y2 * k + panY) * R;
       return out;
     };
   }
@@ -4226,7 +4869,7 @@ ET.renderer = (function () {
       if (gpu.progLayout?.texelsPerPoint === lay.texelsPerPoint && gpu.progLayout.pointsPerRow === lay.pointsPerRow) {
         return;
       }
-      for (var key of ["point", "pointLit", "line", "lineLit"]) {
+      for (var key of ["point", "pointLit", "line", "lineLit", "pointFlat", "lineFlat", "pointLitFlat", "lineLitFlat"]) {
         if (gpu[key]) release(gpu[key].program);
         gpu[key] = null;
       }
@@ -4239,6 +4882,31 @@ ET.renderer = (function () {
       gpu.fWidth = lay.texelsPerPoint;
       gpu.fStage = new Float32Array(gpu.fWidth * 4 * 4);
       gpu.texF = floatTexture(gpu.fWidth, 4, gpu.fStage);
+    }
+
+    // The variant programs for a perspective other than 3 or a pan other than 0 (they read both
+    // as uniforms): the point and wire ones, and with
+    // lit true the lit ones too. Each is compiled once per layout, the first time it is needed.
+    function ensureFlat(lit) {
+      var src = null;
+      if (!gpu.pointFlat) {
+        src = shaderSources(gpu.progLayout, { perspective: true, pan: true });
+        gpu.pointFlat = compile(src.pointVertex, src.pointFragment, FLAT_VIEW_UNIFORMS.concat(POINT_UNIFORMS));
+        gpu.lineFlat = compile(src.lineVertex, src.lineFragment, FLAT_VIEW_UNIFORMS.concat(["uGain", "uWireDof"]));
+      }
+      if (lit && !gpu.pointLitFlat) {
+        src = src || shaderSources(gpu.progLayout, { perspective: true, pan: true });
+        gpu.pointLitFlat = compile(
+          src.pointVertexLit,
+          src.pointFragment,
+          FLAT_VIEW_UNIFORMS.concat(POINT_UNIFORMS, ["uFilter", "uUnlit"])
+        );
+        gpu.lineLitFlat = compile(
+          src.lineVertexLit,
+          src.lineFragment,
+          FLAT_VIEW_UNIFORMS.concat(["uGain", "uWireDof", "uFilter", "uUnlit"])
+        );
+      }
     }
 
     // Upload the whole point store (texture and colour buffer) at its capacity.
@@ -4521,6 +5189,8 @@ ET.renderer = (function () {
       gl.uniform2f(p.u.uView, (2 * R) / W, (2 * R) / H);
       gl.uniform1f(p.u.uZoom, s.zoom);
       gl.uniform1f(p.u.uFocus, s.focus);
+      if (p.u.uPersp) gl.uniform1f(p.u.uPersp, perspectiveOf(s)); // the variant programs only
+      if (p.u.uPan) gl.uniform2f(p.u.uPan, panOf(s)[0], panOf(s)[1]); // the same
     }
 
     // True when this frame draws with the lit values: some are set and filter is above 0.
@@ -4533,8 +5203,10 @@ ET.renderer = (function () {
     function drawScene(s, gain, W, H) {
       var R = Math.min(W, H) * s.radius;
       var lit = litApplies(s);
-      if (wires.count && s.wires > 0.02 && gpu.vaoLine) drawWires(s, gain, W, H, R, lit && gpu.vaoLineLit !== null);
+      var flat = needsVariant(s);
+      if (wires.count && s.wires > 0.02 && gpu.vaoLine) drawWires(s, gain, W, H, R, lit && gpu.vaoLineLit !== null, flat);
       var prog = lit ? gpu.pointLit : gpu.point;
+      if (flat) prog = lit ? gpu.pointLitFlat : gpu.pointFlat;
       var pu = prog.u;
       setView(prog, s, W, H, R);
       gl.uniform1f(pu.uPx, s.pointSize);
@@ -4555,9 +5227,11 @@ ET.renderer = (function () {
       gl.drawArrays(gl.POINTS, 0, store.count);
     }
 
-    // The wires. litWires false: the program and calls used before search existed.
-    function drawWires(s, gain, W, H, R, litWires) {
+    // The wires. litWires false: the program and calls used before search existed. flat: the
+    // variant programs that read the perspective and the pan.
+    function drawWires(s, gain, W, H, R, litWires, flat) {
       var prog = litWires ? gpu.lineLit : gpu.line;
+      if (flat) prog = litWires ? gpu.lineLitFlat : gpu.lineFlat;
       setView(prog, s, W, H, R);
       wireScale = s.wireLoad > 0 ? wireCrowding(s, W, H) : 1;
       gl.uniform1f(prog.u.uGain, wireScale === 1 ? gain * s.wires * s.wireGain : gain * s.wires * s.wireGain * wireScale);
@@ -4796,9 +5470,12 @@ ET.renderer = (function () {
         if (disposed || !canvas) return;
         var w = Math.max(1, Math.round(width)),
           h = Math.max(1, Math.round(height));
+        // Wipe only when the size really changed: a resize call at the same size (the page
+        // around the stage changed) must not wipe the accumulated picture.
+        var resized = canvas.width !== w || canvas.height !== h;
         if (canvas.width !== w) canvas.width = w;
         if (canvas.height !== h) canvas.height = h;
-        needClear = true;
+        if (resized) needClear = true;
       },
 
       // Draw one frame. state: see DEFAULTS, plus frame (Float32Array 3 * D) and
@@ -4808,6 +5485,14 @@ ET.renderer = (function () {
         if (!usable()) return false;
         var s = merge(state);
         var hasData = store.count > 0 && gpu.point;
+        if (hasData && needsVariant(s)) {
+          try {
+            ensureFlat(litApplies(s));
+          } catch (e) {
+            failGpu(e);
+            return false;
+          }
+        }
         if (hasData) uploadFrame(s, store.dimension);
         // the target became unusable at this size; fall back for good
         if (hdr && !sizeHdr()) dropHdr();
@@ -4901,6 +5586,7 @@ ET.renderer = (function () {
 
   return {
     DEFAULTS: DEFAULTS,
+    RELATIVE_PERSPECTIVE: RELATIVE_PERSPECTIVE,
     layout: layout,
     shaderSources: shaderSources,
     wireDensity: wireDensity,
@@ -4928,7 +5614,9 @@ ET.renderer = (function () {
 ET.modes = (function () {
   // Members every mode instance must have (see js/api/40-modes.md).
   // Optional members: mark(t) (fix the time of a finished event), face(target,
-  // t, options) (the swing toward the searches) and, for Tumble, refit(t).
+  // t, options) (the swing toward the searches), searchChanged(search, t) (Focus,
+  // and Tumble's relative setting) and, for Tumble, refit(t) and setRelative(settings,
+  // t) (docs/relative-interface.md).
   var INTERFACE = ["enter", "prepare", "isReady", "stateAt", "step", "status", "dataChanged", "describe", "leave"];
   var ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
   var registry = [];
@@ -5899,7 +6587,169 @@ ET.modes = (function () {
     fitRows: 4096, // fit the directions on at most this many rows (shares stay exact)
     centreTau: 0.7, // seconds: the camera glides to the data's mean (the reference's)
     zoomSample: 512, // points used for auto-framing
+    relativeTransition: 1.5, // seconds to turn onto (or off) the relative frame (docs/relative-interface.md)
   };
+
+  // ----- the relative setting (docs/relative-interface.md, "Tumble (t6)") -----
+  //
+  // With the setting on and a search that gives an axis, the frame is pinned:
+  // row 1 to the first search's direction, row 0 to the part of the second the
+  // first does not contain, row 2 to the third's new part (ET.math.relativeFit
+  // and makeRelativeTour). A change of the searches or of the setting is an
+  // event at a fixed time T, like a refit: the fit is prepared in small units
+  // while the view keeps moving, T is fixed by mark(t) (or the first stateAt
+  // after the fit is done), and from T the frame turns onto the new one with
+  // the refit turn over relativeTransition seconds. The centre and zoom glide to
+  // the ruler's window over the same time. Only the searches' letters and query
+  // vectors are read, so the point of view and the reranker never reach the
+  // frame. With the setting off nothing here runs and Tumble is unchanged.
+
+  var RELATIVE_MARGIN = 0.04; // the window's margin above the top and below the bottom (the reference's)
+  var RELATIVE_ORIGIN_MARGIN = 0.06; // with Show the origin, the window reaches at least this far past 0
+  var RELATIVE_FILL = 0.78 / 0.46; // the window fills 78 percent of the stage's shorter side
+  var RELATIVE_ZOOM_CAP = 0.5 / (0.42 * 0.46); // the reference's cap for a narrow stage
+  var RELATIVE_AXES = ["vertical", "horizontal", "depth"];
+  var RELATIVE_ROWS = [1, 0, 2]; // the frame row each pinned direction is, in pin order
+
+  // "A", "A and B", "A, B and C".
+  function joinLetters(letters) {
+    if (letters.length < 2) return letters.join("");
+    return letters.slice(0, -1).join(", ") + " and " + letters.at(-1);
+  }
+
+  // The searches Tumble reads: [{ letter, query: Float32Array(D) }] (copies), in
+  // the order given. Entries without a query of D values are left out.
+  function readQueries(search, D) {
+    var list = [];
+    var given = search && Array.isArray(search.searches) ? search.searches : [];
+    for (var q of given) {
+      var v = q?.query;
+      if (v?.length !== D) continue;
+      list.push({ letter: typeof q.letter === "string" ? q.letter : String(list.length + 1), query: Float32Array.from(v) });
+    }
+    return list;
+  }
+
+  // Two float32 vectors with the same bits.
+  function sameBits(x, y) {
+    if (x.length !== y.length) return false;
+    var a = new Uint32Array(x.buffer, x.byteOffset, x.length);
+    var b = new Uint32Array(y.buffer, y.byteOffset, y.length);
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  // Two lists of searches with the same query bytes in the same order (and,
+  // with `letters`, the same letters).
+  function sameQueries(a, b, letters) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (letters && a[i].letter !== b[i].letter) return false;
+      if (!sameBits(a[i].query, b[i].query)) return false;
+    }
+    return true;
+  }
+
+  // The status line of the relative view (docs/relative-interface.md, "Status strings (t6)").
+  function relativeStatus(turn, settled) {
+    var fit = turn.fit;
+    var letters = fit.pinned.map(function (p) {
+      return turn.list[p.index].letter;
+    });
+    var measure = fit.unit.unit ? "cosine" : "length along the search";
+    var s = "relative to " + joinLetters(letters);
+    if (settled) s += " · vertical = " + measure + " to " + letters[0] + ", exact";
+    else s += " · turning until vertical = " + measure + " to " + letters[0];
+    var share = Math.round((fit.share || 0) * 100) + "%";
+    if (fit.count === 1) {
+      s += " · the other two axes tumble through " + fit.subspace + " directions holding " + share + " of the remaining spread";
+    } else if (fit.count === 2) {
+      s += " · the plane of " + letters[0] + " and " + letters[1] + " is shown exactly";
+      s += " · depth tumbles through " + fit.subspace + " directions holding " + share + " of the remaining spread";
+    } else {
+      s += " · all three axes are pinned: the space of " + joinLetters(letters) + " is shown exactly";
+      s += " · nothing tumbles";
+    }
+    for (var dd of fit.dropped) s += " · " + turn.list[dd.index].letter + " pins no axis";
+    return s;
+  }
+
+  // How far the view is into the relative look at t (0 in the plain view).
+  function mixAt(t, ev) {
+    if (!ev) return 0;
+    var tr = ev.turn;
+    if (t - tr.t0 < tr.duration) return tr.mixFrom + (tr.mixTo - tr.mixFrom) * refitEase((t - tr.t0) / tr.duration);
+    return tr.mixTo;
+  }
+
+  // The draw parameters with the relative look's perspective at t: the key is set while
+  // the mix is above 0 and left out otherwise. Every state Tumble returns goes through
+  // this, a swing's too: a swing may start during the turn back to the plain view, and
+  // the picture must keep flattening out evenly then, as the viewer's pitch does.
+  function withPerspective(draw, t, ev) {
+    var mix = mixAt(t, ev);
+    if (mix > 0) draw.perspective = 3 + (ET.renderer.RELATIVE_PERSPECTIVE - 3) * mix;
+    return draw;
+  }
+
+  // The pinned rows of the frame F written again from the fit's directions, bit for bit.
+  function pinRows(fit, F, D) {
+    for (var k = 0; k < fit.count; k++) {
+      var o = RELATIVE_ROWS[k] * D;
+      for (var d = 0; d < D; d++) F[o + d] = fit.directions[k * D + d];
+    }
+  }
+
+  // Whether the turn's pinned rows are exact at t and are those of the searches in force
+  // then: its fit is shown, the turn onto it has ended (or never moved the pinned rows),
+  // and the searches had not been changed yet (staleFrom, the time of a change whose fit
+  // has not switched in).
+  function settledAt(tr, t) {
+    if (!tr.fit || t >= tr.staleFrom) return false;
+    return tr.exact || t - tr.t0 >= tr.duration;
+  }
+
+  // The parts of state.relative that stay the same for an event.
+  function eventInfo(tr, target) {
+    var fit = tr.fit;
+    var letterOf = function (j) {
+      return tr.list[j].letter;
+    };
+    return {
+      pinned: fit.pinned.map(function (p, k) {
+        return { letter: letterOf(p.index), axis: RELATIVE_AXES[k], length: p.length };
+      }),
+      dropped: fit.dropped.map(function (dd) {
+        return { letter: letterOf(dd.index), reason: dd.reason, against: dd.against.map(letterOf) };
+      }),
+      measure: fit.unit.unit ? "cosine" : "length along the search",
+      unit: { unit: fit.unit.unit, min: fit.unit.min, max: fit.unit.max, tolerance: fit.unit.tolerance },
+      window: { low: target.low, high: target.high, bottom: target.bottom, top: target.top },
+      share: fit.share,
+      subspace: fit.subspace,
+      free: 3 - fit.count,
+      fixed: fit.fixed,
+    };
+  }
+
+  // The status line's tail while points have arrived since the fit shown was made.
+  function newPoints(since) {
+    return since > 0 ? " · before " + M.thousands(since) + " new points" : "";
+  }
+
+  // A stepper task that pumps another stepper one unit per run.
+  function pumpTask(stp, weight) {
+    return {
+      required: true,
+      weight: weight,
+      progress: function () {
+        return stp.progress;
+      },
+      run: function () {
+        return stp.step(0);
+      },
+    };
+  }
 
   function create(options) {
     var opt = {};
@@ -5919,6 +6769,9 @@ ET.modes = (function () {
       refit: refit,
       mark: mark,
       face: face,
+      searchChanged: searchChanged,
+      setRelative: setRelative,
+      setStill: setStill,
       leave: leave,
     };
 
@@ -5947,12 +6800,40 @@ ET.modes = (function () {
     var gen = 0;
     var refitGen = 0;
     var swings = null; // the swings toward the searches (M.makeSwings)
+    // The relative setting. The settings and the searches are kept across enter();
+    // the events and fits belong to one entry.
+    var relOn = false;
+    var showOrigin = false;
+    var queries = []; // the searches last given to searchChanged: [{ letter, query }]
+    // Relative events in time order: { t0, afterSwings, turn, framing, info }.
+    // turn: { t0, tour (null: back to the plain tour), fit, list, ver, count, blend,
+    // duration, mixFrom, mixTo, exact, staleFrom }; framing: { t0, duration, centre,
+    // zoom (shown at t0), target (null: the plain framing) }. A Show the origin change
+    // adds an event that shares the turn in force and starts a new framing.
+    // The events are the view's history and are all kept, so that any earlier time can
+    // be shown again; each holds a few rows of D numbers (its tour, its turn, its
+    // searches and its framing) and never the set: the data a fit was made on is known
+    // by `ver` (the data version, below) and `count` (its rows).
+    var relEvents = [];
+    var relPending = null; // a relative fit started and not yet switched in: { list, ver, count, fit }
+    var relFits = []; // finished fits kept for reuse on the same data: { ver, count, list, fit }
+    var relGen = 0; // a fit of an earlier call that is pumped later does nothing
+    var dataVer = 0; // counts the appends of this entry: which data a relative fit was made on
+    // The viewer's clock is not advancing (paused, or reduced motion): a switch or a framing
+    // change fixed now has no turn (duration 0, recorded in the event). Kept across enter().
+    var still = false;
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Tumble");
       var o = opts || {};
       gen++;
       refitGen++;
+      relGen++;
+      relEvents = [];
+      relPending = null;
+      relFits = [];
+      dataVer = 0;
+      if (queries.some((q) => q.query.length !== s.dimension)) queries = [];
       set = s;
       D = s.dimension;
       seed = o.seed === undefined ? 0 : o.seed;
@@ -5970,7 +6851,16 @@ ET.modes = (function () {
       self.time = 0;
       self.varianceShare = null;
       hold = entry ? entry.frame : M.startFrame(D, seed);
-      out = { t: 0, frame: new Float32Array(3 * D), centre: new Float32Array(D), draw: null, wires: null, status: "", focus: null };
+      out = {
+        t: 0,
+        frame: new Float32Array(3 * D),
+        centre: new Float32Array(D),
+        draw: null,
+        wires: null,
+        status: "",
+        focus: null,
+        relative: null,
+      };
     }
 
     // The fit, in small units: centring (ET.math.makeCentre), then the
@@ -6217,25 +7107,456 @@ ET.modes = (function () {
 
     function stateAt(time) {
       var t = M.checkTime(time);
-      if (!isReady() || empty) return M.holdState(out, hold, entry, t, status(t));
-      if (pending) fixSwitch(t); // no time was given: the first query fixes it
-      out.t = t;
-      var sw = swings.at(t);
-      if (sw && t < sw.U) {
-        var zoom = M.swingState(sw, t, out.frame, out.centre);
-        out.draw = drawFor(out.frame, out.centre, t, zoom);
-        out.draw.zoom = zoom;
-      } else {
-        frameAt(t, out.frame);
-        glide.at(t, out.centre);
-        if (sw) released(sw, t);
-        out.draw = drawFor(out.frame, out.centre, t);
-        if (sw) out.draw.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), out.centre, out.draw.zoom);
+      if (!isReady() || empty) {
+        M.holdState(out, hold, entry, t, status(t));
+        out.relative = relInfo(t);
+        return out;
       }
+      if (pending) fixSwitch(t); // no time was given: the first query fixes it
+      if (relPending?.fit) fixRelative(t); // likewise for a finished relative fit
+      out.t = t;
+      out.draw = composeState(t, out.frame, out.centre);
       out.wires = null;
       out.focus = null;
       out.status = status(t);
+      out.relative = relInfo(t);
       return out;
+    }
+
+    // The frame and centre at t written into `frame` and `centre`; returns the
+    // draw parameters. With no relative event this is plain Tumble's state, the
+    // same arithmetic in the same order: a swing, or the tour (with the turn
+    // back after a swing), the glide and the auto zoom.
+    function composeState(t, frame, centre) {
+      var ev = relAt(t);
+      var sw = swingAt(t, ev);
+      if (sw && t < sw.U) {
+        var zoom = M.swingState(sw, t, frame, centre);
+        var draw = drawFor(frame, centre, t, zoom);
+        draw.zoom = zoom;
+        return withPerspective(draw, t, ev);
+      }
+      viewFrame(t, ev, frame);
+      if (sw) released(sw, t, frame);
+      var dr = viewDraw(t, ev, frame, centre);
+      if (sw) dr.zoom = M.releaseCentreZoom(M.swingEnd(sw), M.swingRelease(sw, t, opt.transition), centre, dr.zoom);
+      return dr;
+    }
+
+    // ----- relative events -----
+
+    function lastRelT() {
+      return relEvents.length ? relEvents.at(-1).t0 : -Infinity;
+    }
+
+    function lastSwingT() {
+      return swings?.list.length ? swings.list.at(-1).T : -Infinity;
+    }
+
+    // The latest relative event at or before t (on a tie the later one), or null.
+    function relAt(t) {
+      for (var i = relEvents.length - 1; i >= 0; i--) if (relEvents[i].t0 <= t) return relEvents[i];
+      return null;
+    }
+
+    // The turn in force (the newest event's), or null before any event.
+    function heading() {
+      return relEvents.length ? relEvents.at(-1).turn : null;
+    }
+
+    // The swing that applies at t: the latest one started by t, unless a relative
+    // event came after it (a switch starts from the swing's frame and replaces it).
+    function swingAt(t, ev) {
+      var sw = swings.at(t);
+      if (sw && ev && sw.index < ev.afterSwings) return null;
+      return sw;
+    }
+
+    function relDuration() {
+      var d = opt.relativeTransition;
+      return d > 0 && Number.isFinite(d) ? d : DEFAULTS.relativeTransition;
+    }
+
+    // The length of a turn or a framing glide fixed now: none while the clock is still.
+    function eventDuration() {
+      return still ? 0 : relDuration();
+    }
+
+    // The frame with the relative events applied (no swing): the plain frame, or
+    // the target of the turn in force (the relative tour or the plain frame),
+    // turned onto from the frame shown at the turn's start.
+    function viewFrame(t, ev, res) {
+      if (!ev) return frameAt(t, res);
+      var tr = ev.turn;
+      if (tr.tour) tr.tour.frameAt(t, res);
+      else frameAt(t, res);
+      if (tr.blend && t - tr.t0 < tr.duration) {
+        applyRefitBlend(tr.blend, 1 - refitEase((t - tr.t0) / tr.duration), res, D);
+        // A turn between two fits of the same searches moves only the free rows.
+        if (tr.exact) pinRows(tr.fit, res, D);
+      }
+      return res;
+    }
+
+    // The centre (written into `centre`) and the draw parameters at t for the
+    // frame given: the plain glide and zoom, or the relative framing, glided
+    // from the values shown at the framing's start.
+    function viewDraw(t, ev, frame, centre) {
+      if (!ev) {
+        glide.at(t, centre);
+        return drawFor(frame, centre, t);
+      }
+      var fr = ev.framing;
+      var draw;
+      if (fr.target) {
+        centre.set(fr.target.centre);
+        draw = drawFor(frame, centre, t, fr.target.zoom);
+        draw.zoom = fr.target.zoom;
+      } else {
+        glide.at(t, centre);
+        draw = drawFor(frame, centre, t);
+      }
+      if (t - fr.t0 < fr.duration) {
+        var e = ET.math.smoothstep((t - fr.t0) / fr.duration);
+        for (var d = 0; d < D; d++) centre[d] = fr.centre[d] + (centre[d] - fr.centre[d]) * e;
+        draw.zoom = fr.zoom + (draw.zoom - fr.zoom) * e;
+      }
+      return withPerspective(draw, t, ev);
+    }
+
+    // The centre and zoom that frame the ruler's window along the vertical search.
+    function framingTarget(fit) {
+      var w = fit.window;
+      var top = w.high + RELATIVE_MARGIN;
+      var bottom = w.low - RELATIVE_MARGIN;
+      if (showOrigin) {
+        bottom = Math.min(bottom, -RELATIVE_ORIGIN_MARGIN);
+        top = Math.max(top, RELATIVE_ORIGIN_MARGIN);
+      }
+      var mid = (top + bottom) / 2;
+      var c = new Float32Array(D);
+      for (var d = 0; d < D; d++) c[d] = mid * fit.directions[d];
+      var zoom = Math.min(RELATIVE_FILL / (top - bottom), RELATIVE_ZOOM_CAP);
+      return { centre: c, zoom: zoom, low: w.low, high: w.high, bottom: bottom, top: top };
+    }
+
+    // The state shown at T (before any event at T is added): { frame, centre, zoom, mix }.
+    function shownAt(T) {
+      var frame = new Float32Array(3 * D);
+      var centre = new Float32Array(D);
+      var draw = composeState(T, frame, centre);
+      return { frame: frame, centre: centre, zoom: draw.zoom, mix: mixAt(T, relAt(T)) };
+    }
+
+    // Whether a switch at T onto `fit` leaves the pinned rows as they are: the view
+    // shown is settled on a fit that pins the same directions (the same searches fitted
+    // again on new data, since a search's direction does not depend on the data). Then
+    // only the free rows, the window and the centre move, and the view stays settled.
+    function keepsPinned(fit, T) {
+      var prev = heading();
+      if (!fit || !prev?.fit || !settledAt(prev, T)) return false;
+      return fit.count === prev.fit.count && sameBits(fit.directions, prev.fit.directions);
+    }
+
+    // A switch at T (never earlier than the previous relative event or swing):
+    // onto the relative tour of the finished fit `p` ({ fit, list, ver, count }), or
+    // back onto the plain tour (p null).
+    function addSwitch(time, p) {
+      var fit = p ? p.fit : null;
+      var T = Math.max(time, lastRelT(), lastSwingT());
+      var exact = keepsPinned(fit, T);
+      var shown = shownAt(T);
+      swings.end(T); // a swing in progress gives way to the switch
+      var tour = fit
+        ? ET.math.makeRelativeTour(fit.directions, fit.count, fit.basis, fit.subspace, D, { seed: seed, speed: opt.speed })
+        : null;
+      var start = tour ? tour.frameAt(T) : frameAt(T, new Float32Array(3 * D));
+      // Already on the new frame (a search that adds no axis): nothing turns.
+      // With the clock still the new view is shown at once: no turn and no glide.
+      var level = sameBits(shown.frame, start);
+      var turn = {
+        t0: T,
+        tour: tour,
+        fit: fit,
+        list: p ? p.list : null,
+        ver: p ? p.ver : dataVer,
+        count: p ? p.count : 0,
+        exact: exact,
+        staleFrom: Infinity,
+        blend: level || still ? null : makeRefitBlend(shown.frame, start, D),
+        duration: level ? 0 : eventDuration(),
+        mixFrom: shown.mix,
+        mixTo: tour ? 1 : 0,
+      };
+      relEvents.push({
+        t0: T,
+        afterSwings: swings.list.length,
+        turn: turn,
+        framing: { t0: T, duration: eventDuration(), centre: shown.centre, zoom: shown.zoom, target: tour ? framingTarget(fit) : null },
+        instant: still,
+        info: null,
+      });
+    }
+
+    // Show the origin changed while the relative view is in force: the centre and
+    // zoom glide from the values shown at T to the new framing; no fit, no turn.
+    function addFraming(time) {
+      var T = Math.max(time, lastRelT(), lastSwingT());
+      var shown = shownAt(T);
+      var turn = heading();
+      relEvents.push({
+        t0: T,
+        afterSwings: swings.list.length,
+        turn: turn,
+        framing: { t0: T, duration: eventDuration(), centre: shown.centre, zoom: shown.zoom, target: framingTarget(turn.fit) },
+        instant: still,
+        info: null,
+      });
+    }
+
+    function fixRelative(time) {
+      var p = relPending;
+      relPending = null;
+      addSwitch(time, p);
+    }
+
+    function cancelRelative() {
+      relGen++;
+      relPending = null;
+    }
+
+    // A finished fit of these searches on the data as it is now, or null.
+    function keptFit(list) {
+      for (var k of relFits) if (k.ver === dataVer && sameQueries(k.list, list, false)) return k;
+      return null;
+    }
+
+    function keepFit(p) {
+      relFits.push({ ver: p.ver, count: p.count, list: p.list, fit: p.fit });
+      if (relFits.length > 4) relFits.shift();
+    }
+
+    // A relative fit of `list` on the current set, as a stepper. First the plain
+    // fit's directions of that same set (the ones the plain tour fits: the same
+    // seed, subspace and rows): kept with the set when the plain tour, a refit or
+    // Lattice has fitted them already, otherwise fitted here (centring, then
+    // ET.math.makePrincipalDirections, one unit per run, exactly as makeGuidedTour
+    // fits them) and kept with the set for the refit that follows. They are the
+    // same bits either way, and are looked for again on every run, so a plain fit
+    // that finishes meanwhile is taken at once. Then one unit of
+    // ET.math.makeRelativeFit per run, given those directions. When it is done the
+    // switch waits for its time (mark, or the first stateAt).
+    function startFit(list) {
+      relGen++;
+      var g = gen;
+      var rg = relGen;
+      var fitSet = set;
+      var rows = fitSet.count > opt.fitRows ? opt.fitRows : undefined;
+      var p = { list: list, ver: dataVer, count: fitSet.count, fit: null };
+      var plain = null;
+      var cen = null;
+      var pcaJob = null;
+      var job = null;
+      relPending = p;
+      function stale() {
+        return g !== gen || rg !== relGen;
+      }
+      // One unit of the plain fit of fitSet; its result (kept with the set) once done.
+      function plainStep() {
+        if (!cen) cen = ET.math.makeCentre(fitSet.vectors, fitSet.count, D);
+        if (!cen.done) {
+          cen.step(0);
+          return null;
+        }
+        if (!pcaJob) {
+          pcaJob = ET.math.makePrincipalDirections(cen.result.data, fitSet.count, D, Math.min(opt.subspace, D), {
+            seed: seed,
+            sampleRows: rows,
+          });
+        }
+        if (!pcaJob.step(0)) return null;
+        M.keepDirections(fitSet, seed, opt.subspace, rows, pcaJob.result);
+        return pcaJob.result;
+      }
+      return M.stepper([
+        {
+          required: true,
+          weight: 8,
+          progress: function () {
+            if (plain) return 1;
+            if (pcaJob) return 0.1 + 0.9 * pcaJob.progress;
+            return cen ? 0.1 * cen.progress : 0;
+          },
+          run: function () {
+            if (stale()) return true;
+            plain = M.fittedDirections(fitSet, seed, opt.subspace, rows) || null;
+            if (!plain) plain = plainStep();
+            if (!plain) return false;
+            cen = null;
+            pcaJob = null;
+            return true;
+          },
+        },
+        {
+          required: true,
+          weight: 1,
+          progress: function () {
+            return job ? job.progress : 0;
+          },
+          run: function () {
+            if (stale()) return true;
+            if (!job) {
+              var qs = list.map(function (q) {
+                return q.query;
+              });
+              job = ET.math.makeRelativeFit(fitSet.vectors, fitSet.count, D, qs, {
+                seed: seed,
+                subspace: opt.subspace,
+                sampleRows: opt.fitRows,
+                plain: plain,
+              });
+            }
+            if (!job.step(0)) return false;
+            p.fit = job.result;
+            keepFit(p);
+            return true;
+          },
+        },
+      ]);
+    }
+
+    // How many directions the searches pin now: none with the setting off, no
+    // set or an empty one.
+    function pinnedCount() {
+      if (!relOn || !set || empty) return 0;
+      return ET.math.relativeDirections(queries.map((q) => q.query), D).count;
+    }
+
+    // Bring what is shown in line with the setting and the searches: start a fit
+    // (returned as a stepper), switch now (a fit kept for the same searches on the
+    // same data, or turning off), or nothing. A fit that is shown or under way for
+    // these searches is kept as it is, also when points have arrived since it was
+    // started: refit() fits it again on the new data (dataChanged).
+    function reconcile(t) {
+      var h = heading();
+      var shownFit = h ? h.fit : null;
+      if (!pinnedCount()) {
+        if (relPending) cancelRelative();
+        if (shownFit) addSwitch(t, null);
+        return null;
+      }
+      if (relPending && sameQueries(relPending.list, queries, true)) return null;
+      if (relPending) cancelRelative();
+      if (shownFit && sameQueries(h.list, queries, true)) {
+        h.staleFrom = Infinity; // the searches are those of the frame shown (again)
+        return null;
+      }
+      var kept = keptFit(queries);
+      if (kept) return switchToKept(kept, t);
+      // Until the new fit switches in, the frame shown is the earlier searches': from
+      // now it is not reported as settled (a letter may name another search by now).
+      if (shownFit) h.staleFrom = Math.min(h.staleFrom, Math.max(t, h.t0));
+      return startFit(queries);
+    }
+
+    // A fit kept for the searches in force: it switches in now (once ready), with no work.
+    function switchToKept(kept, t) {
+      relPending = { list: queries, ver: kept.ver, count: kept.count, fit: kept.fit };
+      if (isReady()) fixRelative(t);
+      return null;
+    }
+
+    // The relative fit that is shown, or under way, was made before points arrived.
+    function relativeBehind() {
+      if (!pinnedCount()) return false;
+      if (relPending) return relPending.ver !== dataVer;
+      var h = heading();
+      return !!h?.fit && h.ver !== dataVer;
+    }
+
+    // Points added since the fit of the turn `tr` was made (0 for the plain view).
+    function sinceFit(tr) {
+      return tr?.fit && set ? set.count - tr.count : 0;
+    }
+
+    // inst.searchChanged(search, t): only the letters and the query vectors are
+    // read. With the setting off the searches are stored and nothing changes.
+    function searchChanged(search, time) {
+      var t = M.checkTime(time === undefined ? self.time : time);
+      var list = set ? readQueries(search, D) : [];
+      var same = sameQueries(list, queries, true);
+      queries = list;
+      if (!relOn || same) return null;
+      return reconcile(t);
+    }
+
+    // inst.setRelative({ relative?, showOrigin? }, t): a missing key keeps its value.
+    function setRelative(settings, time) {
+      var t = M.checkTime(time === undefined ? self.time : time);
+      var s = settings || {};
+      var wasOrigin = showOrigin;
+      if (typeof s.relative === "boolean") relOn = s.relative;
+      if (typeof s.showOrigin === "boolean") showOrigin = s.showOrigin;
+      var before = relEvents.length;
+      var work = reconcile(t);
+      var h = heading();
+      if (showOrigin !== wasOrigin && relEvents.length === before && h?.fit) addFraming(t);
+      return work;
+    }
+
+    // inst.setStill(still): the viewer's clock is (true) or is not (false) standing still.
+    // It changes nothing shown; it decides only whether a switch or a framing change fixed
+    // from now on turns (docs/relative-interface.md, "Motion stopped (t19)").
+    function setStill(value) {
+      still = value === true;
+    }
+
+    // state.relative at t (docs/relative-interface.md): null in the plain view
+    // with the setting off.
+    function relInfo(t) {
+      var ev = isReady() && !empty ? relAt(t) : null;
+      var tr = ev ? ev.turn : null;
+      var turning = !!tr && t - tr.t0 < tr.duration;
+      var mix = mixAt(t, ev);
+      if (!tr?.fit) {
+        if (!relOn && !turning) return null;
+        return {
+          relative: relOn,
+          showOrigin: showOrigin,
+          active: false,
+          settled: false,
+          mix: mix,
+          pinned: [],
+          dropped: [],
+          measure: null,
+          unit: null,
+          window: null,
+          share: null,
+          subspace: 0,
+          free: 3,
+          fixed: 0,
+          searches: [],
+        };
+      }
+      if (!ev.info) ev.info = eventInfo(tr, ev.framing.target);
+      var i = ev.info;
+      return {
+        relative: relOn,
+        showOrigin: showOrigin,
+        active: true,
+        settled: settledAt(tr, t),
+        mix: mix,
+        pinned: i.pinned,
+        dropped: i.dropped,
+        measure: i.measure,
+        unit: i.unit,
+        window: i.window,
+        share: i.share,
+        subspace: i.subspace,
+        free: i.free,
+        fixed: i.fixed,
+        searches: tr.list,
+      };
     }
 
     // After a swing ends at U, Tumble turns back onto its tour from the frame
@@ -6246,26 +7567,32 @@ ET.modes = (function () {
     // tour's mean rate). A blend over `transition` seconds, as on entry, turned up
     // to five times faster than the tour moves (measured). The centre and zoom
     // come back over `transition` (stateAt).
-    function released(sw, t) {
+    function released(sw, t, frame) {
       var c = sw.cache;
       if (!c.turn) {
         var end = M.swingEnd(sw);
-        var raw = frameAt(sw.U, new Float32Array(3 * D));
+        var raw = viewFrame(sw.U, relAt(sw.U), new Float32Array(3 * D));
         c.al = M.alignment(raw, end.frame, D);
         var start = M.applyAlignment(raw, c.al, D);
         c.turn = makeRefitBlend(end.frame, start, D);
         c.turn.duration = refitDuration(c.turn, tours[activeIndex(sw.U)].tour, sw.U);
       }
-      M.applyAlignment(new Float32Array(out.frame), c.al, D, out.frame);
+      M.applyAlignment(new Float32Array(frame), c.al, D, frame);
       var u = (t - sw.U) / c.turn.duration;
-      if (u < 1) applyRefitBlend(c.turn, 1 - refitEase(u), out.frame, D);
+      if (u < 1) applyRefitBlend(c.turn, 1 - refitEase(u), frame, D);
     }
 
     // The swing toward the searches (js/api/40-modes.md, "Facing the searches").
-    // face(null, t) ends a swing in progress at t.
+    // face(null, t) ends a swing in progress at t. With the relative view shown,
+    // or a switch to it waiting, it starts nothing and returns false.
     function face(target, time, options) {
       if (!isReady() || empty) return false;
       if (target === null) return swings.end(time);
+      if (relPending) return false;
+      if (relEvents.length) {
+        if (heading().fit) return false;
+        time = Math.max(M.checkTime(time), lastRelT()); // a swing never starts before a switch
+      }
       return swings.face(target, time, options, function (T) {
         var s = stateAt(T);
         return { frame: new Float32Array(s.frame), centre: new Float32Array(s.centre), zoom: s.draw.zoom };
@@ -6281,13 +7608,13 @@ ET.modes = (function () {
       var t = M.checkTime(time === undefined ? self.time : time);
       if (empty) return M.EMPTY_STATUS;
       if (!isReady()) return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
-      var sw = swings.at(t);
+      var ev = relAt(t);
+      if (ev?.turn.fit) return relativeStatus(ev.turn, settledAt(ev.turn, t)) + newPoints(sinceFit(ev.turn));
+      var sw = swingAt(t, ev);
       if (sw && t < sw.U) return M.swingStatus(sw, "tumbling");
       var cur = tours[activeIndex(t)];
       var s = "tour of " + cur.tour.subspace + " strongest directions · " + (cur.share * 100).toFixed(1) + "% of variance";
-      var since = set.count - cur.count;
-      if (since > 0) s += " · before " + M.thousands(since) + " new points";
-      return s;
+      return s + newPoints(set.count - cur.count);
     }
 
     function snapshot(t) {
@@ -6306,12 +7633,22 @@ ET.modes = (function () {
       if (i.op !== "append" || newSet.dimension !== D || empty || !isReady()) {
         var from = isReady() ? snapshot(t) : entry;
         enter(newSet, { seed: seed, from: from });
-        return M.changed(prepare(), true);
+        var prep = prepare();
+        // With the relative setting on, the searches are kept and fitted on the new
+        // set alongside the preparation; the switch waits for its time as usual.
+        var rel = reconcile(0);
+        return M.changed(rel ? M.stepper([pumpTask(prep, 8), pumpTask(rel, 1)]) : prep, true);
       }
       var old = set;
       set = newSet;
+      dataVer++;
       st = M.stats(newSet, old);
       glide.retarget(t, st.mean);
+      // The relative view in force (or a fit of it under way) is kept as it is, like
+      // the tour: its pinned rows are the searches' directions, which the new points do
+      // not change. Its free rows, window and centre are fitted again by refit(), which
+      // the viewer calls by its quiet and share policy. Fitting here instead would start
+      // over on every append, and under a stream of them would never finish.
       return M.changed(null, false);
     }
 
@@ -6328,7 +7665,7 @@ ET.modes = (function () {
       refitGen++;
       var g = gen;
       var rg = refitGen;
-      return M.stepper(
+      var plain = M.stepper(
         fit(
           function (tour, count, zb) {
             pending = { tour: tour, count: count, zb: zb };
@@ -6339,11 +7676,31 @@ ET.modes = (function () {
           },
         ),
       );
+      // A relative fit made before points arrived is made again after the plain fit,
+      // whose directions it reuses (they are kept with the set); it switches in at
+      // mark(t) or the first stateAt after it is done.
+      if (!relativeBehind()) return plain;
+      return M.stepper([pumpTask(plain, 8), pumpTask(startFit(queries), 1)]);
     }
 
     // Fix the time of a finished event (a refit waiting for its switch).
     function mark(time) {
       if (pending) fixSwitch(M.checkTime(time));
+      if (relPending?.fit && isReady() && !empty) fixRelative(M.checkTime(time));
+    }
+
+    // describe().relative (docs/relative-interface.md).
+    function describeRelative() {
+      var switchAt = relEvents.length ? relEvents.at(-1).t0 : null;
+      var instant = relEvents.length ? relEvents.at(-1).instant : false;
+      var info = relInfo(self.time);
+      if (!info) return { relative: false, showOrigin: showOrigin, active: false, switchAt: switchAt, pending: false };
+      info.switchAt = switchAt;
+      info.instant = instant;
+      info.pointsSinceFit = sinceFit(heading());
+      info.pending = relPending !== null;
+      info.transition = relDuration();
+      return info;
     }
 
     function describe() {
@@ -6365,12 +7722,17 @@ ET.modes = (function () {
         refitPending: refitRunning,
         facing: swings ? swings.describe() : null,
         empty: empty,
+        relative: describeRelative(),
       };
     }
 
     function leave() {
       gen++;
       refitGen++;
+      relGen++;
+      relEvents = [];
+      relPending = null;
+      relFits = [];
       tours = [];
       pending = null;
       set = null;
@@ -8537,6 +9899,7 @@ ET.modes = (function () {
     even: "the results, evenly",
     close: "by closeness: nearer is brighter",
     named: "named results only",
+    all: "everything, results highlighted",
   };
   var SP_PALETTE_DARK = { fg: "#e9eef6", muted: "#8a96ab", line: "#1b2436", accent: "#ffc56b", bg: "#04060b" };
   var SP_PALETTE_LIGHT = { fg: "#1b2130", muted: "#5b6578", line: "#d6dae2", accent: "#a35f00", bg: "#f6f4ee" };
@@ -8679,6 +10042,7 @@ ET.modes = (function () {
   function spLitQualifier(setting) {
     if (setting === "close") return ", nearer ones brighter";
     if (setting === "named") return " (named results only)";
+    if (setting === "all") return " (every other point is shown too)";
     return "";
   }
 
@@ -8735,6 +10099,8 @@ ET.modes = (function () {
     if (where) parts.push(where);
     if (spActive(search)) parts.push("Distances are " + search.measure + ", in every dimension of the data.");
     spSearchNotes(search, parts);
+    var relNote = spRelativeNoteText(search);
+    if (relNote) parts.push(relNote);
     if (search?.unmatched?.length) parts.push("Not found among the loaded points: " + search.unmatched.join(", ") + ".");
     if (ctx.extraLines > 0) {
       parts.push("Only the first four lines are searched; " + spPlural(ctx.extraLines, "line is", "lines are") + " left out.");
@@ -8752,6 +10118,89 @@ ET.modes = (function () {
       parts.push("Focus is already fitted to the results, so Face the searches is off here.");
     }
     parts.push("Where labels on the stage would overlap, the later ones are left out; the lists carry every result.");
+  }
+
+  // ----- the relative view's words (docs/relative-interface.md, "Search panel (t8)") -----
+
+  function spRelative(search) {
+    var rel = search?.relative;
+    return rel && typeof rel === "object" ? rel : null;
+  }
+
+  // The relative view is on in a mode that offers it (the controls say so; absent means yes).
+  function spRelativeOn(search) {
+    var rel = spRelative(search);
+    return !!rel && rel.relative === true && rel.offered !== false;
+  }
+
+  function spLetterList(letters) {
+    var list = Array.isArray(letters) ? letters : [];
+    if (list.length < 2) return list.join("");
+    return list.slice(0, -1).join(", ") + " and " + list.at(-1);
+  }
+
+  function spDroppedText(d) {
+    var letter = d.letter;
+    if (d.reason === "zero-length") return "Search " + letter + " has no direction (its vector has length zero), so it pins no axis.";
+    if (d.reason === "same-direction") {
+      return "Search " + letter + " points the same way as " + spLetterList(d.against) + ", so it adds no axis. It is still lit.";
+    }
+    if (d.reason === "no-axis-left") return "Search " + letter + " is lit but has no axis: the first three searches pin all three.";
+    return "";
+  }
+
+  function spByLetter(a, b) {
+    if (a.letter < b.letter) return -1;
+    if (a.letter > b.letter) return 1;
+    return 0;
+  }
+
+  function spRelativeNoteText(search) {
+    if (!spRelativeOn(search)) return "";
+    var rel = spRelative(search);
+    var out = [];
+    var dropped = Array.isArray(rel.dropped) ? rel.dropped.slice() : [];
+    dropped.sort(spByLetter);
+    dropped.forEach(function (d) {
+      var text = spDroppedText(d);
+      if (text) out.push(text);
+    });
+    if (rel.fixed > 0) {
+      out.push(
+        "This set is too small for the free axes to follow its spread: " +
+          rel.fixed +
+          " of " +
+          rel.free +
+          " are fixed directions, not fitted ones."
+      );
+    }
+    return out.join(" ");
+  }
+
+  // What a result row adds in the relative view: the height along its own search and/or the
+  // plain cosine. `rel` is { measure, height, cosine }, or null.
+  function spRelMeta(rel) {
+    if (!rel || !Number.isFinite(rel.cosine)) return null;
+    var c = rel.cosine.toFixed(3);
+    if (rel.measure === "cosine") return "cosine " + c;
+    return "length along the search " + (Number.isFinite(rel.height) ? rel.height.toFixed(3) : "-") + " · cosine " + c;
+  }
+
+  // One result's relative numbers, from search.relative.searches[j].results[r] (matched by
+  // point index, else by place).
+  function spRelFor(search, q, r, at) {
+    var rel = spRelative(search);
+    if (!rel?.active || !Array.isArray(rel.searches)) return null;
+    var mine = rel.searches.find(function (s) {
+      return s && s.letter === q.letter;
+    });
+    if (!mine || !Array.isArray(mine.results)) return null;
+    var hit = mine.results.find(function (x) {
+      return x && x.index === r.index;
+    });
+    if (!hit) hit = mine.results[at];
+    if (!hit) return null;
+    return { measure: rel.measure, height: hit.height, cosine: hit.cosine };
   }
 
   function spSearchNotes(search, parts) {
@@ -8832,7 +10281,7 @@ ET.modes = (function () {
   }
 
   // The parts of a result's meta line, as the picture and the references show them.
-  function spResultMeta(q, r, distances) {
+  function spResultMeta(q, r, distances, rel) {
     var out = [];
     if (distances) {
       out.push(
@@ -8842,6 +10291,8 @@ ET.modes = (function () {
     }
     if (q.reranker) out.push(spMoveText(r.embeddingRank - r.rank, r.embeddingRank));
     if (q.pointOfView && r.plainRank !== r.embeddingRank) out.push("plain distance had it at " + r.plainRank);
+    var relText = spRelMeta(rel);
+    if (relText) out.push(relText);
     return out;
   }
 
@@ -8951,6 +10402,14 @@ ET.modes = (function () {
   // A theme colour ([r, g, b]) as CSS, or the default when the theme does not give one.
   function spPick(c, d) {
     return Array.isArray(c) ? spHex(c) : d;
+  }
+
+  // A search's colour slot follows its letter (A is 0, B is 1, ...), not its place in the
+  // list, so a search keeps its colour when an earlier one is removed. A letter outside A to D
+  // falls back to the place.
+  function spSlot(q, j) {
+    var at = q && typeof q.letter === "string" ? "ABCD".indexOf(q.letter) : -1;
+    return at >= 0 ? at : j;
   }
 
   // A search's colour for DOM text: the host's custom property, else the default for the stage.
@@ -9143,14 +10602,15 @@ ET.modes = (function () {
     return label;
   }
 
-  function spCheckbox(p, cls, words, key) {
+  function spCheckbox(p, cls, words, key, onChange) {
     var label = spLabelled(p, cls, "");
     var box = spEl(p, "input", "", { width: "15px", height: "15px", margin: "0" });
     box.type = "checkbox";
     label.appendChild(box);
     label.appendChild(p.doc.createTextNode(" " + words));
     spListen(p, box, "change", function () {
-      spSetting(p, key, !!box.checked);
+      if (onChange) onChange(!!box.checked);
+      else spSetting(p, key, !!box.checked);
     });
     return { label: label, input: box };
   }
@@ -9199,9 +10659,34 @@ ET.modes = (function () {
     }
   }
 
+  // A native checkbox that tells the handle about one relative setting.
+  function spRelativeBox(p, cls, words, key, title) {
+    var box = spCheckbox(p, cls, words, key, function (on) {
+      var patch = {};
+      patch[key] = on;
+      if (typeof p.handle.setRelative === "function") p.handle.setRelative(patch);
+    });
+    box.label.title = title;
+    return box;
+  }
+
   function spBuildControls(p) {
     var row = spEl(p, "div", "tumbler-search-controls", { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 22px",
       fontSize: "12px" });
+    p.relative = spRelativeBox(
+      p,
+      "tumbler-search-relative",
+      "Relative",
+      "relative",
+      "One axis is the search itself; height is measured along it. The other axes tumble through what is left."
+    );
+    p.origin = spRelativeBox(
+      p,
+      "tumbler-search-origin",
+      "Show the origin",
+      "showOrigin",
+      "Zoom out to the all-zero vector, or, in the plain view, mark where it falls."
+    );
     p.face = spText(p, "button", "tumbler-search-face", "Face the searches");
     p.face.type = "button";
     spListen(p, p.face, "click", function () {
@@ -9211,6 +10696,7 @@ ET.modes = (function () {
       ["even", SP_LIT_TEXT.even],
       ["close", SP_LIT_TEXT.close],
       ["named", SP_LIT_TEXT.named],
+      ["all", SP_LIT_TEXT.all],
     ]);
     p.lit = lit.input;
     spListen(p, p.lit, "change", function () {
@@ -9238,7 +10724,7 @@ ET.modes = (function () {
       spClear(p);
     });
     p.litLabel = lit.label;
-    [p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
+    [p.relative.label, p.origin.label, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
       row.appendChild(c);
     });
     return row;
@@ -9487,6 +10973,14 @@ ET.modes = (function () {
     var st = search?.settings || {};
     var active = spActive(search);
     p.face.disabled = !active || !search.faceable;
+    // Relative is Tumble's: its two controls are offered there only, and while it is on the
+    // view is fitted by the search itself, so Face the searches is not in the panel.
+    var rel = spRelative(search);
+    spShow(p.relative.label, p.tumble, "inline-flex");
+    spShow(p.origin.label, p.tumble, "inline-flex");
+    p.relative.input.checked = !!rel && rel.relative === true;
+    p.origin.input.checked = !!rel && rel.showOrigin === true;
+    spShow(p.face, !(p.tumble && rel?.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
     spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
     p.distances.input.checked = !!st.distances;
@@ -9563,6 +11057,7 @@ ET.modes = (function () {
       search.searches.map(function (q) {
         return [q.letter, q.text, q.reranker, q.pointOfView, q.insideCount, q.results];
       }),
+      spRelative(search)?.active ? [search.relative.measure, search.relative.searches] : null,
     ]);
   }
 
@@ -9584,10 +11079,10 @@ ET.modes = (function () {
         fontSize: "12px",
         letterSpacing: "0.04em",
         padding: "4px 0",
-        color: spSearchVar(j, p.light),
+        color: spSearchVar(spSlot(q, j), p.light),
       });
       box.appendChild(summary);
-      box.appendChild(spResultList(p, q, j, distances, "grid"));
+      box.appendChild(spResultList(p, q, j, distances, "grid", search));
       p.results.appendChild(box);
     });
   }
@@ -9601,15 +11096,16 @@ ET.modes = (function () {
   }
 
   // One search's ordered list: rank, text, meta (and the gap bar with Distance difference on).
-  function spResultList(p, q, j, distances, layout) {
+  function spResultList(p, q, j, distances, layout, search) {
     var pal = p.pal || SP_PALETTE_DARK;
     var ol = spEl(p, "ol", "tumbler-search-hits", spListStyle(layout));
     var widest = 1e-6;
     q.results.forEach(function (r) {
       widest = Math.max(widest, r.gap);
     });
-    q.results.forEach(function (r) {
-      ol.appendChild(spResultItem(p, q, j, r, { distances: distances, widest: widest, pal: pal, layout: layout }));
+    q.results.forEach(function (r, at) {
+      var rel = spRelFor(search, q, r, at);
+      ol.appendChild(spResultItem(p, q, j, r, { distances: distances, widest: widest, pal: pal, layout: layout, rel: rel }));
     });
     return ol;
   }
@@ -9644,7 +11140,7 @@ ET.modes = (function () {
     li.dataset.id = r.id;
     var rank = spText(p, "span", "tumbler-search-rank", (q.letter || "") + r.rank, {
       fontSize: "12px",
-      color: spSearchVar(j, p.light),
+      color: spSearchVar(spSlot(q, j), p.light),
       fontVariantNumeric: "tabular-nums",
     });
     li.appendChild(rank);
@@ -9657,7 +11153,7 @@ ET.modes = (function () {
         overflowWrap: "anywhere",
       })
     );
-    var meta = spResultMeta(q, r, o.distances);
+    var meta = spResultMeta(q, r, o.distances, o.rel);
     if (meta.length) {
       li.appendChild(
         spText(p, "span", "tumbler-search-meta", meta.join(" · "), {
@@ -9668,7 +11164,7 @@ ET.modes = (function () {
         })
       );
     }
-    if (o.distances) li.appendChild(spGapBar(p, r.gap / o.widest, j, o.pal));
+    if (o.distances) li.appendChild(spGapBar(p, r.gap / o.widest, spSlot(q, j), o.pal));
     return li;
   }
 
@@ -9821,10 +11317,10 @@ ET.modes = (function () {
           padding: "10px 16px 4px",
           fontSize: "12px",
           letterSpacing: "0.04em",
-          color: spSearchVar(j, p.light),
+          color: spSearchVar(spSlot(q, j), p.light),
         })
       );
-      side.appendChild(spResultList(p, q, j, distances, "column"));
+      side.appendChild(spResultList(p, q, j, distances, "column", search));
     });
   }
 
@@ -9930,11 +11426,13 @@ ET.modes = (function () {
   // queued in `queue` so they can be placed letters first, then nearest results first.
   function spDrawSearch(p, ctx, j, qp, q, view) {
     var dpr = view.dpr;
-    var colour = p.colours[j];
+    var colour = p.colours[spSlot(q, j)];
     var n = q.results.length;
     ctx.lineWidth = dpr;
     ctx.strokeStyle = colour;
-    q.results.forEach(function (r, i) {
+    // The relative view draws its own stems, result labels and the searches' names: no links
+    // and no labels here.
+    if (!view.relative) q.results.forEach(function (r, i) {
       if (view.hidden(r.index)) return;
       var rp = view.project(spPointVector(view.set, r.index));
       if (!spFinite(rp)) return;
@@ -9944,7 +11442,7 @@ ET.modes = (function () {
       ctx.moveTo(qp.x, qp.y);
       ctx.lineTo(rp.x, rp.y);
       ctx.stroke();
-      view.queue.push({ q: q, j: j, r: r, rp: rp, qp: qp });
+      view.queue.push({ q: q, j: spSlot(q, j), r: r, rp: rp, qp: qp });
     });
     ctx.globalAlpha = view.filter;
     ctx.lineWidth = 1.5 * dpr;
@@ -10049,6 +11547,7 @@ ET.modes = (function () {
       filter: Math.min(1, filter),
       labels: f.labels !== false,
       focus: p.focus,
+      relative: f.relative === true,
       distances: !!p.search.settings?.distances,
       hidden: typeof f.hidden === "function" ? f.hidden : spNever,
       queue: [],
@@ -10059,7 +11558,13 @@ ET.modes = (function () {
     var f = frame || {};
     var set = spData(p);
     spDataChanged(p, set);
-    if (f.mode) spSetFocus(p, f.mode === "focus");
+    if (f.mode) {
+      spSetFocus(p, f.mode === "focus");
+      if (p.tumble !== (f.mode === "tumble")) {
+        p.tumble = f.mode === "tumble";
+        spRenderControls(p, p.search);
+      }
+    }
     spRenderProvenance(p, p.search);
     var search = p.search;
     var filter = Number(f.filter);
@@ -10079,7 +11584,8 @@ ET.modes = (function () {
       var qp = project(vec);
       if (!spFinite(qp)) return;
       spDrawSearch(p, ctx, j, qp, q, view);
-      letters.push({ qp: qp, j: j, text: view.focus ? q.letter + " query" : q.letter });
+      // In the relative view the overlay puts the letter and name beside the ring (t19).
+      if (!view.relative) letters.push({ qp: qp, j: spSlot(q, j), text: view.focus ? q.letter + " query" : q.letter });
     });
     ctx.globalAlpha = 1;
     ctx.restore?.();
@@ -10098,6 +11604,7 @@ ET.modes = (function () {
       spApplyTheme(p);
     }
     var mode = spMode(p);
+    p.tumble = mode === "tumble";
     if (mode) spSetFocus(p, mode === "focus");
     spSyncInput(p, p.search);
     spRender(p);
@@ -10145,6 +11652,7 @@ ET.modes = (function () {
       search: null,
       open: false,
       focus: false,
+      tumble: false,
       openLists: Object.create(null),
       timer: 0,
       lastSent: "",
@@ -10202,6 +11710,7 @@ ET.modes = (function () {
     summaryText: summaryText,
     usedText: usedText,
     suggest: spSuggest,
+    relativeNoteText: spRelativeNoteText,
     noteText: function (search, ctx) {
       return spNoteParts(search, ctx || {}).join(" ");
     },
@@ -10209,6 +11718,710 @@ ET.modes = (function () {
     resultMeta: spResultMeta,
     thousands: spThousands,
     COLOURS: { dark: SP_DARK.slice(), light: SP_LIGHT.slice(), sharedDark: SP_SHARED_DARK, sharedLight: SP_SHARED_LIGHT },
+  };
+  // ---------- the relative overlay: ruler, ticks, level rings, stems, origin ----------
+  //
+  // Task t7 of the relative-search plan (docs/relative-interface.md, "Overlay (t7)"). Pure
+  // numbers in, a draw list out (build); then the shapes are painted on the 2-D overlay
+  // context (paint) and the texts are put as DOM spans over the stage (placeLabels), because
+  // the viewer draws no text on a canvas. Every position goes through the renderer's CPU
+  // placer with the draw state given to the renderer this frame (its perspective key
+  // included), so the overlay and the points agree.
+  //
+  // Positions in the list are in device pixels of the overlay canvas; placeLabels divides by
+  // the list's dpr to place the spans in CSS pixels.
+
+  var RO_TICK_STEP = 0.1; // a tick and a level ring every 0.1 along the vertical search ...
+  var RO_STEPS_FEWEST = 2; // ... while the ruler is at least this many steps of 0.1 long ...
+  var RO_STEPS_MOST = 12; // ... and at most this many; any other ruler gets a step of its own,
+  var RO_STEPS_OWN = 10; // the smallest of 1, 2 or 5 times a power of ten it is at most this many of
+  var RO_RING_RADIUS = 0.34; // a level ring's radius, in units (the reference's), at a step of 0.1
+  var RO_RING_STEPS = 3.4; // and in tick steps, for a ruler with a step of its own
+  var RO_RING_SEGMENTS = 48; // segments of a level ring (the reference's)
+  var RO_CIRCLE_SEGMENTS = 96; // segments of the unit circle about the origin
+  var RO_FOOT_MARGIN = 0.2; // the ruler starts this far below the window's bottom (not below 0)
+  var RO_TOP_MARGIN = 0.04; // the second ruler runs to max(1, its length) plus this
+  var RO_OWN_DISTANCE = 1e-7; // a named result this close in cosine distance to its search ...
+  var RO_OWN_LENGTH = 1e-6; // ... and this close in length is the search's own point
+  var RO_TEXT_MAX = 28; // a result's text is cut here, as the search panel cuts it
+  var RO_LABEL_POOL = 160; // the most spans placeLabels keeps
+  var RO_CHAR_W = 6.7; // estimated width of one 11 px monospace character, CSS px
+  var RO_LABEL_H = 12; // height of one label box, CSS px
+  var RO_INK = "#ffffff"; // white marks and texts (the reference's), unless input.ink is given
+  var RO_PAPER = "#04060b"; // the text outline (the reference's stage), unless input.paper is given
+  var RO_FIRST_KINDS = ["title", "tick", "cut", "origin", "search"]; // placed before any result
+  var RO_SPANS = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function roEmpty(dpr, paper) {
+    return { segments: [], rings: [], marks: [], texts: [], results: [], ruler: null, dpr: dpr, paper: paper };
+  }
+
+  function roLength(v) {
+    var s = 0;
+    for (var x of v) s += x * x;
+    return Math.sqrt(s);
+  }
+
+  // x . row r of the frame, in double precision.
+  function roRowDot(F, D, r, v, off = 0) {
+    var s = 0;
+    var base = r * D;
+    for (var d = 0; d < D; d++) s += v[off + d] * F[base + d];
+    return s;
+  }
+
+  function roShorten(s, max) {
+    var str = String(s);
+    return str.length > max ? str.slice(0, max - 1) + "…" : str;
+  }
+
+  function roFinite(n) {
+    return typeof n === "number" && Number.isFinite(n);
+  }
+
+  // Everything one build needs about the frame and the screen.
+  function roContext(input) {
+    var D = input.dimension;
+    var F = input.frame;
+    var C = input.centre;
+    var W = input.width;
+    var H = input.height;
+    var view = input.view || {};
+    var cF = [roRowDot(F, D, 0, C), roRowDot(F, D, 1, C), roRowDot(F, D, 2, C)];
+    var put = ET.renderer.placer(view, W, H);
+    var dpr = Number(input.dpr) > 0 ? Number(input.dpr) : 1;
+    return {
+      D: D,
+      F: F,
+      C: C,
+      X: input.vectors,
+      W: W,
+      H: H,
+      view: view,
+      dpr: dpr,
+      cF: cF,
+      ink: typeof input.ink === "string" ? input.ink : RO_INK,
+      // frame coordinates (already centred) to overlay pixels
+      at: function (a, b, c) {
+        return put(a, b, c, { x: 0, y: 0 });
+      },
+    };
+  }
+
+  // A search's direction and its shadow on the frame's rows.
+  function roSearch(cx, s) {
+    var q = s.query;
+    var len = roLength(q);
+    var u = new Float64Array(cx.D);
+    if (len > ET.math.RELATIVE_ZERO_LENGTH) for (var d = 0; d < cx.D; d++) u[d] = q[d] / len;
+    return {
+      letter: s.letter,
+      colour: s.colour,
+      name: typeof s.name === "string" ? s.name : "",
+      query: q,
+      length: len,
+      u: u,
+      f: [roRowDot(cx.F, cx.D, 0, u), roRowDot(cx.F, cx.D, 1, u), roRowDot(cx.F, cx.D, 2, u)],
+    };
+  }
+
+  // The point k units along a search's direction, in overlay pixels.
+  function roAlong(cx, sq, k) {
+    return cx.at(k * sq.f[0] - cx.cF[0], k * sq.f[1] - cx.cF[1], k * sq.f[2] - cx.cF[2]);
+  }
+
+  // A vector of the data's dimension (row i of the block, or a query), in overlay pixels.
+  function roVectorAt(cx, v, o) {
+    var a = roRowDot(cx.F, cx.D, 0, v, o) - cx.cF[0];
+    var b = roRowDot(cx.F, cx.D, 1, v, o) - cx.cF[1];
+    var c = roRowDot(cx.F, cx.D, 2, v, o) - cx.cF[2];
+    return cx.at(a, b, c);
+  }
+
+  // Row i dotted with a unit direction, and row i's length, in double precision.
+  function roHeight(cx, i, u) {
+    var o = i * cx.D;
+    var s = 0;
+    for (var d = 0; d < cx.D; d++) s += cx.X[o + d] * u[d];
+    return s;
+  }
+
+  function roRowLength(cx, i) {
+    var o = i * cx.D;
+    var s = 0;
+    for (var d = 0; d < cx.D; d++) s += cx.X[o + d] * cx.X[o + d];
+    return Math.sqrt(s);
+  }
+
+  // The centre's true length and the part of it the frame shows. Both are the square root of
+  // the squares summed in order (roLength), so the numbers are the same to the last bit
+  // whichever engine runs this.
+  function roOriginNumbers(cx) {
+    return { far: roLength(cx.C), seen: roLength(cx.cF) };
+  }
+
+  // The search's own point: a named result at cosine distance below 1e-7 from a search and
+  // of the same length within 1e-6 sits on that search's marker; it gets no stem and no label.
+  // A row whose length is not a number above zero (an all-zero row, or one holding a value
+  // that is not a number) is no search's own point; nor is any point a zero-length search's.
+  function roIsOwnPoint(cx, i, searches) {
+    var len = roRowLength(cx, i);
+    return (
+      len > 0 &&
+      searches.some(function (s) {
+        return roIsOwnOf(cx, i, len, s);
+      })
+    );
+  }
+
+  function roIsOwnOf(cx, i, len, s) {
+    if (s.length > ET.math.RELATIVE_ZERO_LENGTH) {
+      var cos = roHeight(cx, i, s.u) / len;
+      return 1 - cos < RO_OWN_DISTANCE && Math.abs(len - s.length) < RO_OWN_LENGTH;
+    }
+    return false;
+  }
+
+  // A line from a to b. `style` is { colour, alpha, width, kind } and, for a broken line, dash.
+  function roSegment(list, a, b, style) {
+    list.segments.push({ x0: a.x, y0: a.y, x1: b.x, y1: b.y, colour: style.colour, alpha: style.alpha, width: style.width, dash: style.dash || null, kind: style.kind });
+  }
+
+  // A text at (x, y). `style` is { align, colour, alpha, kind } and, optionally, `extra`: more
+  // keys for the entry (a height, a point's index, a search's letter).
+  function roText(list, x, y, text, style) {
+    var t = { x: x, y: y, text: text, align: style.align, colour: style.colour, alpha: style.alpha, kind: style.kind };
+    var extra = style.extra;
+    if (extra) for (var k in extra) if (Object.hasOwn(extra, k)) t[k] = extra[k];
+    list.texts.push(t);
+  }
+
+  function roOriginMark(list, cx, p, alpha) {
+    var n = roOriginNumbers(cx);
+    list.marks.push({ x: p.x, y: p.y, r: 7 * cx.dpr, colour: cx.ink, alpha: alpha, kind: "origin", far: n.far, seen: n.seen });
+    return n;
+  }
+
+  // ----- the plain view: where the all-zero vector falls, and how far it really is -----
+
+  function roPlain(list, cx) {
+    var p = cx.at(-cx.cF[0], -cx.cF[1], -cx.cF[2]);
+    var n = roOriginMark(list, cx, p, 1);
+    var text = "origin · truly " + n.far.toFixed(2) + " from the centre, " + n.seen.toFixed(2) + " of it visible";
+    roText(list, p.x + 12 * cx.dpr, p.y, text, { align: "left", colour: cx.ink, alpha: 1, kind: "origin" });
+  }
+
+  // ----- the relative view -----
+
+  function roWindow(cx, rel, s0) {
+    var w = rel.window;
+    if (w && roFinite(w.top) && roFinite(w.bottom)) return { top: w.top, bottom: w.bottom };
+    var hw = ET.math.heightWindow(cx.X, cx.X.length / cx.D, cx.D, s0.u, s0.length);
+    var low = hw.low === null ? s0.length : hw.low;
+    return { top: hw.high + 0.04, bottom: low - 0.04 };
+  }
+
+  function roRuler(list, cx, s0, foot, top, alpha) {
+    var a = roAlong(cx, s0, foot);
+    var b = roAlong(cx, s0, top);
+    roSegment(list, a, b, { colour: s0.colour, alpha: alpha, width: cx.dpr, kind: "ruler" });
+    list.ruler = { x0: a.x, y0: a.y, x1: b.x, y1: b.y, from: foot, to: top };
+  }
+
+  // The ticks of a ruler with the reference's step, 0.1: tick k is at k * 0.1, read to one
+  // decimal, and a level ring's radius is 0.34.
+  var RO_TICKS_TENTHS = {
+    step: RO_TICK_STEP,
+    radius: RO_RING_RADIUS,
+    at: function (k) {
+      return k * RO_TICK_STEP;
+    },
+    text: function (s) {
+      return s.toFixed(1);
+    },
+  };
+
+  // The ticks of a ruler with a step of mant * 10^exp (mant is 1, 2 or 5). A tick's height is
+  // read from its decimal form, so it is the nearest number to k * mant * 10^exp (0.6, never
+  // 0.6000000000000001) and its text has the step's decimals and no more.
+  function roTicksOwn(mant, exp) {
+    var step = Number(mant + "e" + exp);
+    var decimals = Math.min(100, Math.max(0, -exp));
+    return {
+      step: step,
+      radius: RO_RING_STEPS * step,
+      at: function (k) {
+        return Number(k * mant + "e" + exp);
+      },
+      text: function (s) {
+        return s.toFixed(decimals);
+      },
+    };
+  }
+
+  // The tick step for a ruler `span` long. 0.1 wherever the ruler is 2 to 12 steps of 0.1
+  // long (every ruler of a unit-length set with a search of length one). A longer or a shorter
+  // ruler (vectors that are not of length one) gets the smallest step of 1, 2 or 5 times a
+  // power of ten that it is at most ten of: more than four steps, at most ten.
+  function roTickScale(span) {
+    var tenths = span / RO_TICK_STEP;
+    if (!roFinite(span) || span <= 0 || (tenths >= RO_STEPS_FEWEST && tenths <= RO_STEPS_MOST)) return RO_TICKS_TENTHS;
+    var exp = Math.floor(Math.log10(span / RO_STEPS_OWN));
+    for (var e = exp - 1; e <= exp + 1; e++) {
+      for (var mant of [1, 2, 5]) {
+        if (span <= RO_STEPS_OWN * Number(mant + "e" + e)) return roTicksOwn(mant, e);
+      }
+    }
+    return roTicksOwn(1, exp + 2);
+  }
+
+  // A level ring: every point at height s, whatever its side.
+  function roLevelRing(list, cx, s0, s, radius, m) {
+    var pts = new Float32Array(2 * (RO_RING_SEGMENTS + 1));
+    var b = s * s0.f[1] - cx.cF[1];
+    for (var j = 0; j <= RO_RING_SEGMENTS; j++) {
+      var th = (j / RO_RING_SEGMENTS) * Math.PI * 2;
+      var q = cx.at(s * s0.f[0] - cx.cF[0] + radius * Math.cos(th), b, s * s0.f[2] - cx.cF[2] + radius * Math.sin(th));
+      pts[2 * j] = q.x;
+      pts[2 * j + 1] = q.y;
+    }
+    list.rings.push({ points: pts, colour: s0.colour, alpha: 0.16 * m, kind: "level", dash: null });
+  }
+
+  function roTicks(list, cx, s0, foot, top, m) {
+    var scale = roTickScale(top - foot);
+    var first = Math.ceil(foot / scale.step - 1e-9);
+    var count = Math.floor(top / scale.step + 1e-6) - first + 1;
+    // counted, so the loop ends whatever the numbers are
+    for (var k = first, n = 0; n < count; k++, n++) {
+      var s = scale.at(k);
+      var p = roAlong(cx, s0, s);
+      roSegment(list, { x: p.x - 4 * cx.dpr, y: p.y }, { x: p.x + 4 * cx.dpr, y: p.y }, { colour: s0.colour, alpha: 0.75 * m, width: cx.dpr, kind: "tick" });
+      roLevelRing(list, cx, s0, s, scale.radius, m);
+      roText(list, p.x - 9 * cx.dpr, p.y, scale.text(s), { align: "right", colour: s0.colour, alpha: 0.75 * m, kind: "tick", extra: { height: s } });
+    }
+  }
+
+  function roUnitCircle(list, cx, m) {
+    var o = ET.renderer.place([-cx.cF[0], -cx.cF[1], -cx.cF[2]], cx.view, cx.W, cx.H);
+    var zoom = roFinite(cx.view.zoom) ? cx.view.zoom : ET.renderer.DEFAULTS.zoom;
+    var radius = roFinite(cx.view.radius) ? cx.view.radius : ET.renderer.DEFAULTS.radius;
+    // every vector has length one, so none can fall outside this circle
+    var r = zoom * Math.min(cx.W, cx.H) * radius * o.scale;
+    var pts = new Float32Array(2 * (RO_CIRCLE_SEGMENTS + 1));
+    for (var j = 0; j <= RO_CIRCLE_SEGMENTS; j++) {
+      var th = (j / RO_CIRCLE_SEGMENTS) * Math.PI * 2;
+      pts[2 * j] = o.x + r * Math.cos(th);
+      pts[2 * j + 1] = o.y + r * Math.sin(th);
+    }
+    list.rings.push({ points: pts, colour: cx.ink, alpha: 0.22 * m, kind: "unit", dash: [3 * cx.dpr, 6 * cx.dpr], radius: r });
+  }
+
+  // Ruler B, in the plane it shares with A, along B's own direction.
+  function roSecondRuler(list, cx, sB, foot, m) {
+    var to = Math.max(1, sB.length) + RO_TOP_MARGIN;
+    roSegment(list, roAlong(cx, sB, foot), roAlong(cx, sB, to), { colour: sB.colour, alpha: 0.55 * m, width: cx.dpr, kind: "ruler2" });
+    for (var k = 1; k <= 9; k++) {
+      var s = k * RO_TICK_STEP;
+      var p = roAlong(cx, sB, s);
+      if (p.y < -20 * cx.dpr || p.y > cx.H + 20 * cx.dpr) continue;
+      list.marks.push({ x: p.x, y: p.y, r: 1.8 * cx.dpr, colour: sB.colour, alpha: 0.8 * m, kind: "dot" });
+      roText(list, p.x + 8 * cx.dpr, p.y + 8 * cx.dpr, s.toFixed(1), { align: "left", colour: sB.colour, alpha: 0.6 * m, kind: "tick", extra: { height: s } });
+    }
+  }
+
+  function roRanks(ranks, many) {
+    if (!Array.isArray(ranks) || !ranks.length) return "";
+    return ranks
+      .map(function (r) {
+        return (many ? r.letter : "") + r.rank + ".";
+      })
+      .join(" ");
+  }
+
+  // What a result is called on the stage: its title when the viewer gives one (a label that
+  // is more than its id), otherwise its text (t19).
+  function roResultName(it) {
+    if (typeof it.title === "string" && it.title !== "") return it.title;
+    return it.text === undefined || it.text === null ? "" : it.text;
+  }
+
+  // [{ranks} ]{title or text}  {heights}[  cosine {c}]
+  function roResultText(cx, it, i, pinnedSearches, unit, many) {
+    var len = roRowLength(cx, i);
+    var heights = pinnedSearches.map(function (s) {
+      return roHeight(cx, i, s.u);
+    });
+    var str = roShorten(roResultName(it), RO_TEXT_MAX) + "  " + heights.map(function (h) {
+      return h.toFixed(2);
+    }).join(" · ");
+    if (!unit) {
+      str += "  cosine " + heights.map(function (h) {
+        return (len > 0 ? h / len : 0).toFixed(2);
+      }).join(" · ");
+    }
+    var ranks = roRanks(it.ranks, many);
+    return (ranks ? ranks + " " : "") + str;
+  }
+
+  // The searches that pin an axis, in the order they pin them.
+  function roPinned(rel, searches) {
+    var pinned = [];
+    for (var pin of rel.pinned) {
+      var found = roByLetter(searches, pin.letter);
+      if (found) pinned.push(found);
+    }
+    return pinned;
+  }
+
+  function roByLetter(searches, letter) {
+    return searches.find(function (s) {
+      return s.letter === letter;
+    });
+  }
+
+  // One named result: its stem to the ruler and, when labels are wanted, its text. `how` is
+  // { s0, m, pinned, unit, many, labels }.
+  function roStem(list, cx, it, i, how) {
+    var s0 = how.s0;
+    var h = roHeight(cx, i, s0.u);
+    var p = roVectorAt(cx, cx.X, i * cx.D);
+    var r = roAlong(cx, s0, h);
+    roSegment(list, p, r, { colour: s0.colour, alpha: 0.42 * how.m, width: cx.dpr, kind: "stem" });
+    list.results.push({ index: i, x: p.x, y: p.y, rulerX: r.x, rulerY: r.y, height: h });
+    if (how.labels) {
+      var right = p.x > cx.W * 0.78;
+      var text = roResultText(cx, it, i, how.pinned, how.unit, how.many);
+      roText(list, p.x + (right ? -9 : 9) * cx.dpr, p.y, text, { align: right ? "right" : "left", colour: cx.ink, alpha: 0.95, kind: "result", extra: { height: h, index: i } });
+    }
+  }
+
+  function roStems(list, cx, input, rel, s0, searches, m) {
+    var how = { s0: s0, m: m, pinned: roPinned(rel, searches), unit: !!rel.unit?.unit, many: searches.length > 1, labels: input.labels };
+    var seen = new Set();
+    var N = cx.X.length / cx.D;
+    for (var it of input.named || []) {
+      var i = it?.index;
+      if (!Number.isInteger(i) || i < 0 || i >= N || seen.has(i)) continue;
+      seen.add(i);
+      if (roIsOwnPoint(cx, i, searches)) continue;
+      roStem(list, cx, it, i, how);
+    }
+  }
+
+  // The reranker saw only the candidates: everything above this mark.
+  function roCut(list, cx, cut, s0, m) {
+    if (!cut || !roFinite(cut.height)) return;
+    var cp = roAlong(cx, s0, cut.height);
+    roSegment(list, { x: cp.x - 150 * cx.dpr, y: cp.y }, { x: cp.x + 150 * cx.dpr, y: cp.y }, { colour: cx.ink, alpha: 0.9 * m, width: cx.dpr, kind: "cut", dash: [4 * cx.dpr, 4 * cx.dpr] });
+    roText(list, cp.x + 156 * cx.dpr, cp.y, cut.sent + " candidates above this line went to the reranker", { align: "left", colour: cx.ink, alpha: 0.85 * m, kind: "cut" });
+  }
+
+  // The origin is marked whenever height 0 is inside the window shown (spec c31); Show the
+  // origin widens the window to include it and, on a unit-length set, adds the unit circle.
+  function roOriginOnRuler(list, cx, rel, s0, span) {
+    var w = span.window;
+    var inside = span.showOrigin || (w.bottom <= 0 && w.top >= 0);
+    if (!inside) return;
+    var m = span.m;
+    var op = roAlong(cx, s0, 0);
+    roOriginMark(list, cx, op, m);
+    roText(list, op.x + 12 * cx.dpr, op.y, "origin (0, 0, … , 0)", { align: "left", colour: cx.ink, alpha: m, kind: "origin" });
+    if (span.showOrigin && rel.unit?.unit === true) roUnitCircle(list, cx, m);
+  }
+
+  // The settled view: the ruler as exact, its ticks and title, the cut-off, the origin, the
+  // second ruler and the stems. `span` is { m, window, showOrigin, foot, top }.
+  function roSettled(list, cx, input, rel, searches, s0, span) {
+    var m = span.m;
+    roRuler(list, cx, s0, span.foot, span.top, 0.55 * m);
+    roTicks(list, cx, s0, span.foot, span.top, m);
+    var tp = roAlong(cx, s0, span.top);
+    roText(list, tp.x - 9 * cx.dpr, tp.y, rel.measure + " to " + s0.letter, { align: "right", colour: s0.colour, alpha: 0.8 * m, kind: "title" });
+    roCut(list, cx, input.cut, s0, m);
+    roOriginOnRuler(list, cx, rel, s0, span);
+    if (rel.pinned.length >= 2) {
+      var sB = roByLetter(searches, rel.pinned[1].letter);
+      if (sB) roSecondRuler(list, cx, sB, span.foot, m);
+    }
+    roStems(list, cx, input, rel, s0, searches, m);
+  }
+
+  // The searches themselves, each at its raw query, with its letter and name beside it
+  // ("A · Rice", the reference's form), placed before any result label (t19).
+  function roSearchMarks(list, cx, searches) {
+    for (var s of searches) {
+      var qp = roVectorAt(cx, s.query, 0);
+      list.marks.push({ x: qp.x, y: qp.y, r: 10 * cx.dpr, colour: s.colour, alpha: 1, kind: "search" });
+      var label = s.name ? s.letter + " · " + roShorten(s.name, RO_TEXT_MAX) : String(s.letter);
+      roText(list, qp.x + 15 * cx.dpr, qp.y + 4 * cx.dpr, label, { align: "left", colour: s.colour, alpha: 1, kind: "search", extra: { letter: s.letter } });
+    }
+  }
+
+  function roRelative(list, cx, input, rel, searches, s0) {
+    var m = Math.min(1, Math.max(0, roFinite(rel.mix) ? rel.mix : 1));
+    var w = roWindow(cx, rel, s0);
+    var showOrigin = !!input.showOrigin;
+    var foot = showOrigin ? 0 : Math.max(0, w.bottom - RO_FOOT_MARGIN);
+    var span = { m: m, window: w, showOrigin: showOrigin, foot: foot, top: w.top };
+    if (rel.settled) {
+      roSettled(list, cx, input, rel, searches, s0, span);
+    } else {
+      // turning: ruler A's line only, faint; it is not drawn as exact
+      roRuler(list, cx, s0, foot, w.top, 0.25 * m);
+    }
+    roSearchMarks(list, cx, searches);
+  }
+
+  // There is a stage to draw on: a width and a height that are numbers above zero.
+  function roSized(input) {
+    return !!input && input.width > 0 && input.height > 0;
+  }
+
+  function roUsable(input) {
+    if (!roSized(input)) return false;
+    var D = input.dimension;
+    if (!Number.isInteger(D) || D < 1) return false;
+    if (!input.frame || input.frame.length < 3 * D || !input.centre || input.centre.length < D) return false;
+    return !!input.vectors && input.vectors.length % D === 0;
+  }
+
+  // The draw list for one frame (docs/relative-interface.md, "ET.relativeOverlay.build").
+  function roBuild(input) {
+    var dpr = Number(input?.dpr) > 0 ? Number(input.dpr) : 1;
+    var list = roEmpty(dpr, typeof input?.paper === "string" ? input.paper : RO_PAPER);
+    if (!roUsable(input)) return list;
+    var cx = roContext(input);
+    var rel = input.relative;
+    if (rel?.active && Array.isArray(rel.pinned) && rel.pinned.length) {
+      var searches = (input.searches || [])
+        .filter(function (s) {
+          return s?.query && s.query.length === cx.D;
+        })
+        .map(function (s) {
+          return roSearch(cx, s);
+        });
+      var s0 = roByLetter(searches, rel.pinned[0].letter);
+      if (s0 && s0.length > ET.math.RELATIVE_ZERO_LENGTH) {
+        roRelative(list, cx, input, rel, searches, s0);
+        return list;
+      }
+    }
+    if (input.showOrigin) roPlain(list, cx);
+    return list;
+  }
+
+  // ----- painting the shapes; the texts are spans (placeLabels) -----
+
+  function roDash(ctx, dash) {
+    if (typeof ctx.setLineDash === "function") ctx.setLineDash(dash || []);
+  }
+
+  function roPaintMark(ctx, mk, dpr) {
+    ctx.globalAlpha = mk.alpha;
+    ctx.beginPath();
+    if (mk.kind === "dot") {
+      ctx.fillStyle = mk.colour;
+      ctx.arc(mk.x, mk.y, mk.r, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    ctx.strokeStyle = mk.colour;
+    ctx.lineWidth = 1.5 * dpr;
+    if (mk.kind === "origin") {
+      ctx.moveTo(mk.x - mk.r, mk.y);
+      ctx.lineTo(mk.x + mk.r, mk.y);
+      ctx.moveTo(mk.x, mk.y - mk.r);
+      ctx.lineTo(mk.x, mk.y + mk.r);
+    } else {
+      ctx.arc(mk.x, mk.y, mk.r, 0, Math.PI * 2);
+    }
+    ctx.stroke();
+  }
+
+  function roPaint(ctx, list) {
+    if (!ctx || !list) return false;
+    var segs = list.segments || [];
+    var rings = list.rings || [];
+    var marks = list.marks || [];
+    if (!segs.length && !rings.length && !marks.length) return false;
+    var dpr = Number(list.dpr) > 0 ? Number(list.dpr) : 1;
+    if (typeof ctx.save === "function") ctx.save();
+    ctx.lineJoin = "round";
+    for (var r of rings) {
+      ctx.globalAlpha = r.alpha;
+      ctx.strokeStyle = r.colour;
+      ctx.lineWidth = dpr;
+      roDash(ctx, r.dash);
+      ctx.beginPath();
+      for (var j = 0; j + 1 < r.points.length; j += 2) {
+        if (j === 0) ctx.moveTo(r.points[0], r.points[1]);
+        else ctx.lineTo(r.points[j], r.points[j + 1]);
+      }
+      ctx.stroke();
+    }
+    for (var s of segs) {
+      ctx.globalAlpha = s.alpha;
+      ctx.strokeStyle = s.colour;
+      ctx.lineWidth = s.width;
+      roDash(ctx, s.dash);
+      ctx.beginPath();
+      ctx.moveTo(s.x0, s.y0);
+      ctx.lineTo(s.x1, s.y1);
+      ctx.stroke();
+    }
+    roDash(ctx, null);
+    for (var mk of marks) roPaintMark(ctx, mk, dpr);
+    ctx.globalAlpha = 1;
+    if (typeof ctx.restore === "function") ctx.restore();
+    return true;
+  }
+
+  // ----- the texts as spans over the stage -----
+
+  function roOutline(bg) {
+    var ring = [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]];
+    return ring
+      .map(function (d) {
+        return (d[0] * 1.5).toFixed(2) + "px " + (d[1] * 1.5).toFixed(2) + "px 0.5px " + bg;
+      })
+      .join(", ");
+  }
+
+  // A label is placed only where it overlaps none already placed.
+  function roFits(boxes, x, y, text, align) {
+    var w = text.length * RO_CHAR_W + 4;
+    var left = x;
+    if (align === "right") left = x - w;
+    else if (align === "center") left = x - w / 2;
+    var box = { l: left, r: left + w, t: y - RO_LABEL_H / 2, b: y + RO_LABEL_H / 2 };
+    for (var o of boxes) {
+      if (box.l < o.r && box.r > o.l && box.t < o.b && box.b > o.t) return false;
+    }
+    boxes.push(box);
+    return true;
+  }
+
+  // Ticks and titles (and the cut-off and origin texts) first, in list order; then results,
+  // nearest the top of the ruler first.
+  function roOrder(texts) {
+    var first = [];
+    var results = [];
+    texts.forEach(function (t, k) {
+      if (RO_FIRST_KINDS.includes(t.kind)) first.push({ t: t, k: k });
+      else results.push({ t: t, k: k });
+    });
+    first.sort(function (a, b) {
+      return RO_FIRST_KINDS.indexOf(a.t.kind) - RO_FIRST_KINDS.indexOf(b.t.kind) || a.k - b.k;
+    });
+    results.sort(function (a, b) {
+      var ha = roFinite(a.t.height) ? a.t.height : -Infinity;
+      var hb = roFinite(b.t.height) ? b.t.height : -Infinity;
+      return hb - ha || a.k - b.k;
+    });
+    return first.concat(results).map(function (e) {
+      return e.t;
+    });
+  }
+
+  function roSpanFor(layer, doc, pool, used) {
+    var rec = pool.spans[used];
+    if (rec) return rec;
+    var el = doc.createElement("span");
+    el.className = "tumbler-relative-label";
+    var st = el.style;
+    st.position = "absolute";
+    st.left = "0";
+    st.top = "0";
+    st.whiteSpace = "nowrap";
+    st.pointerEvents = "none";
+    st.fontSize = "11px";
+    st.fontFamily = "var(--tumbler-font-data, monospace)";
+    layer.appendChild(el);
+    rec = { el: el, text: null, colour: null, outline: null, shown: true };
+    pool.spans.push(rec);
+    return rec;
+  }
+
+  // The spans kept for a layer, made on first use.
+  function roPool(layer) {
+    var pool = RO_SPANS ? RO_SPANS.get(layer) : layer._roPool;
+    if (!pool) {
+      pool = { spans: [] };
+      if (RO_SPANS) RO_SPANS.set(layer, pool);
+      else layer._roPool = pool;
+    }
+    return pool;
+  }
+
+  function roShift(align) {
+    if (align === "right") return "-100%";
+    if (align === "center") return "-50%";
+    return "0";
+  }
+
+  // One span made to show one text at (x, y) in CSS pixels; only what changed is written.
+  function roFill(rec, t, str, x, y, outline) {
+    if (rec.text !== str) {
+      rec.el.textContent = str; // untrusted text is text, never markup
+      rec.text = str;
+    }
+    if (rec.colour !== t.colour) {
+      rec.el.style.color = t.colour;
+      rec.colour = t.colour;
+    }
+    if (rec.outline !== outline) {
+      rec.el.style.textShadow = outline;
+      rec.outline = outline;
+    }
+    rec.el.style.transform = "translate(" + x.toFixed(1) + "px, " + y.toFixed(1) + "px) translate(" + roShift(t.align) + ", -50%)";
+    rec.el.style.opacity = String(Math.round(Math.min(1, Math.max(0, t.alpha)) * 100) / 100);
+    if (!rec.shown) {
+      rec.el.style.display = "";
+      rec.shown = true;
+    }
+  }
+
+  // Places the list's texts, in roOrder's order, and returns how many spans are in use.
+  function roPlaceTexts(layer, list, d, pool) {
+    var used = 0;
+    var dpr = Number(list.dpr) > 0 ? Number(list.dpr) : 1;
+    var outline = roOutline(typeof list.paper === "string" ? list.paper : RO_PAPER);
+    var boxes = [];
+    for (var t of roOrder(list.texts || [])) {
+      if (used >= RO_LABEL_POOL) break;
+      var str = String(t.text);
+      var x = t.x / dpr;
+      var y = t.y / dpr;
+      if (!roFinite(x) || !roFinite(y) || !roFits(boxes, x, y, str, t.align)) continue;
+      roFill(roSpanFor(layer, d, pool, used), t, str, x, y, outline);
+      used++;
+    }
+    return used;
+  }
+
+  function roHideFrom(pool, used) {
+    for (var k = used; k < pool.spans.length; k++) {
+      if (pool.spans[k].shown) {
+        pool.spans[k].el.style.display = "none";
+        pool.spans[k].shown = false;
+      }
+    }
+  }
+
+  function roPlaceLabels(layer, list, doc) {
+    if (!layer) return 0;
+    var d = doc || layer.ownerDocument;
+    var pool = roPool(layer);
+    var used = list && d ? roPlaceTexts(layer, list, d, pool) : 0;
+    roHideFrom(pool, used);
+    return used;
+  }
+
+  ET.relativeOverlay = {
+    build: roBuild,
+    paint: roPaint,
+    placeLabels: roPlaceLabels,
   };
 // ---------------------------------------------------------------------------
 // 50-viewer.js: the public viewer API (task t8).
@@ -10309,6 +12522,9 @@ ET.viewer = (function () {
     searchTop: 20, // reranked candidates kept (3 to searchCandidates)
     searchLit: "even",
     onSearchChange: null,
+    // Tumble's relative settings at mount (docs/relative-interface.md, "Viewer (t9, t10)").
+    relative: false,
+    showOrigin: false,
   };
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
@@ -10319,6 +12535,10 @@ ET.viewer = (function () {
   var STATUS_EVERY = 0.12; // seconds between status-line updates (the reference's)
   var ZOOM_MIN = 0.2;
   var ZOOM_MAX = 12;
+  // The user pan (task t17) is the renderer's draw key pan: [x, y] in units of the stage's
+  // R = min(W, H) * radius (one unit of the picture after zoom and perspective), x to the right
+  // and y up. An arrow key moves the picture by PAN_STEP of those units.
+  var PAN_STEP = 0.1;
   var SPIN = 0.06; // rad/s of yaw while running (the reference's)
   // Heavy work's budget per frame (see "Heavy work" in js/api/50-viewer.md): a share of the
   // measured frame interval, between prepareBudgetMs and BUDGET_CEILING times it; cut to half
@@ -10641,6 +12861,19 @@ ET.viewer = (function () {
     });
     labels.setAttribute("aria-hidden", "true");
     v.labelLayer = labels;
+    // The relative overlay's texts (ruler ticks, title, result labels, origin): DOM spans
+    // placed by ET.relativeOverlay.placeLabels, right after the overlay canvas.
+    var relLabels = make(v, "div", "tumbler-relative-labels", {
+      position: "absolute",
+      left: "0",
+      top: "0",
+      right: "0",
+      bottom: "0",
+      overflow: "hidden",
+      pointerEvents: "none",
+    });
+    relLabels.setAttribute("aria-hidden", "true");
+    v.relLabelLayer = relLabels;
 
     var mast = make(v, "div", "tumbler-masthead", {
       position: "absolute",
@@ -10732,6 +12965,7 @@ ET.viewer = (function () {
 
     stage.appendChild(gl);
     stage.appendChild(overlay);
+    stage.appendChild(relLabels);
     stage.appendChild(labels);
     stage.appendChild(mast);
     stage.appendChild(status);
@@ -10860,7 +13094,7 @@ ET.viewer = (function () {
       fontSize: "12px",
     });
     v.playButton = pillButton(v, "tumbler-play", "Pause");
-    v.zoomResetButton = pillButton(v, "tumbler-zoom-reset", "Reset zoom");
+    v.zoomResetButton = pillButton(v, "tumbler-zoom-reset", "Reset view");
     var speedLabel = make(v, "label", "tumbler-speed", { display: "inline-flex", alignItems: "center", gap: "8px" });
     speedLabel.appendChild(text(v, "span", "", "Speed"));
     var speed = make(v, "input", "", { width: "130px" });
@@ -10889,9 +13123,10 @@ ET.viewer = (function () {
       v,
       "span",
       "tumbler-hint",
-      "Drag to turn. Pinch, or Ctrl + wheel, to zoom; double-click or double-tap resets. Keys 1-" +
+      "Drag to turn; right-drag, Shift + drag or two fingers move. Pinch, or Ctrl + wheel, to zoom; " +
+        "double-click or double-tap resets. Keys 1-" +
         Math.max(1, Math.min(9, defs.length)) +
-        " switch views while the viewer has focus."
+        " switch views and arrows move while the viewer has focus."
     );
     ctl.appendChild(v.playButton);
     ctl.appendChild(v.zoomResetButton);
@@ -10974,6 +13209,9 @@ ET.viewer = (function () {
     for (var i = 0; i < MAX_GROUP_PROPS; i++) {
       t.groups.push(colour("--tumbler-group-" + (i + 1)));
     }
+    // The search colours the relative overlay strokes with (the panel's custom properties).
+    t.searches = [];
+    for (var j = 0; j < SEARCH_DEFAULTS_DARK.length; j++) t.searches.push(colour("--tumbler-search-" + (j + 1)));
     return t;
   }
 
@@ -11079,6 +13317,11 @@ ET.viewer = (function () {
     });
     v.outline = outlineShadow(t.background);
     v.stageFg = fg;
+    v.stageBg = bg;
+    var searchDefaults = t.light ? SEARCH_DEFAULTS_LIGHT : SEARCH_DEFAULTS_DARK;
+    v.searchColours = searchDefaults.map(function (d, j) {
+      return t.searches?.[j] ? cssRgb(t.searches[j]) : d;
+    });
     // The reference's Wander names: the stop in white, its neighbours #c5cddb (the
     // foreground three-eighths of the way to the muted colour). On a light stage the
     // stop takes the foreground, so it stays dark ink.
@@ -11360,6 +13603,7 @@ ET.viewer = (function () {
     var list = v.provList;
     list.replaceChildren();
     v.provView = null;
+    v.provRel = null; // the Relative row goes with the rows; syncRelativeProvenance adds it again
     var set = v.set;
     if (!set) {
       provRow(v, "Data", "none yet");
@@ -11409,6 +13653,7 @@ ET.viewer = (function () {
       (p.synthetic ? " · synthetic" : "") +
       " · a projection is a shadow of the space";
     v.provViewText = v.provView.textContent;
+    syncRelativeProvenance(v);
   }
 
   function refreshViewRow(v) {
@@ -11529,10 +13774,40 @@ ET.viewer = (function () {
       curNeighbours: null,
     };
     v.modeId = id;
+    passStill(v, v.mode); // before the settings, so a switch they cause knows the clock is still
+    passRelative(v, v.mode); // right after it is entered (Tumble keeps the settings)
     paintModeButtons(v);
     refreshViewRow(v);
     v.statusClock = STATUS_EVERY;
     return true;
+  }
+
+  // Hand the viewer's relative settings to a mode that takes them (Tumble's setRelative):
+  // right after it is entered and on every change. A stepper it hands back is pumped with
+  // the mode's own preparation. With both settings off the call changes nothing in Tumble.
+  function passRelative(v, m) {
+    if (!m || typeof m.inst.setRelative !== "function") return;
+    var r;
+    try {
+      r = m.inst.setRelative({ relative: v.rel.relative, showOrigin: v.rel.showOrigin }, m.clock);
+    } catch (err) {
+      // A mode whose setRelative throws keeps its current view.
+      return;
+    }
+    var work = typeof r?.step === "function" ? r : r?.work;
+    if (typeof work?.step === "function") m.jobs.push(work);
+  }
+
+  // Tell a mode that takes it (Tumble's setStill) whether the viewer's clock stands still:
+  // paused, which reduced motion starts in. A relative switch fixed while still has no turn,
+  // so the settled view is shown on the next frame instead of waiting for Play.
+  function passStill(v, m) {
+    if (!m || typeof m.inst.setStill !== "function") return;
+    try {
+      m.inst.setStill(!v.running);
+    } catch (err) {
+      // A mode whose setStill throws keeps turning as it did.
+    }
   }
 
   function leaveSafely(inst) {
@@ -11770,7 +14045,7 @@ ET.viewer = (function () {
     v.set = set;
     v.last = null;
     v.spin = 0;
-    v.drag = { active: false, yaw: 0, pitch: 0, x: 0, y: 0 };
+    v.drag = { active: false, yaw: 0, pitch: 0, x: 0, y: 0, pan: false };
     v.needClear = true;
     v.sinceAppend = Infinity;
     var oldMode = v.mode;
@@ -11921,11 +14196,14 @@ ET.viewer = (function () {
     h = h > 0 ? h : v.stage.clientHeight || 150;
     var dpr = Math.min(Number(v.options.maxPixelRatio) || 2, v.win?.devicePixelRatio || 1);
     if (v.dprCap !== null) dpr = Math.max(1, Math.min(dpr, v.dprCap));
+    var W = Math.max(2, Math.round(w * dpr));
+    var H = Math.max(2, Math.round(h * dpr));
+    // The picture is wiped only when the stage really changed. The root also resizes when the
+    // search panel opens or closes below an unchanged stage; wiping then showed as a flicker.
+    var sameStage = v.W === W && v.H === H && v.dpr === dpr;
     v.dpr = dpr;
     v.cssW = w;
     v.cssH = h;
-    var W = Math.max(2, Math.round(w * dpr));
-    var H = Math.max(2, Math.round(h * dpr));
     v.W = W;
     v.H = H;
     if (v.renderer) v.renderer.resize(W, H);
@@ -11939,7 +14217,10 @@ ET.viewer = (function () {
       rootW = w;
     }
     layoutForWidth(v, rootW || w);
-    v.needClear = true;
+    if (!sameStage) {
+      v.needClear = true;
+      v.pan = clampPan(v, v.pan[0], v.pan[1]); // a smaller stage holds the picture's centre too
+    }
     invalidate(v);
   }
 
@@ -12172,6 +14453,7 @@ ET.viewer = (function () {
     if (!v.reducedMotion || v.running) v.drawTime += dt;
     easeFilter(v, dt);
     v.search.hideUnlit = hidesUnlit(v);
+    syncRelativeLit(v, s);
     var ds = drawState(v, s, dt);
     v.drawSpent = 0;
     if (r && v.rendering) {
@@ -12182,7 +14464,9 @@ ET.viewer = (function () {
     v.needClear = false;
     v.last = s;
     v.lastDraw = ds;
+    noteRelativeChange(v, s);
     drawLabels(v, s, ds);
+    drawRelativeOverlay(v, s, ds);
     drawSearchOverlay(v, s, ds);
     drawStrip(v, s.frame);
     v.statusClock += dt;
@@ -12201,6 +14485,7 @@ ET.viewer = (function () {
     if (r && v.rendering) r.draw({ clear: true, dt: dt });
     v.status.textContent = v.set ? "this view cannot show the data" : "";
     clearLabels(v, 0);
+    clearRelativeOverlay(v);
   }
 
   // A frame on which the mode is ready: note when it first became ready, move the
@@ -12263,13 +14548,16 @@ ET.viewer = (function () {
   function updateStatus(v, m, s, ready) {
     v.statusClock = 0;
     var line = s.status;
+    if (relativeShown(v, s)) line += relativeStatusTail(v, s.relative);
     if (v.userZoom !== 1) line += " · zoom " + v.userZoom.toFixed(1) + "×";
+    if (panned(v)) line += " · moved";
     if (!v.running) line += " · paused";
     if (line !== v.statusText) {
       v.status.textContent = line;
       v.statusText = line;
     }
     refreshViewRow(v);
+    syncRelativeProvenance(v);
     v.root.setAttribute("aria-busy", ready && !m.jobs.length ? "false" : "true");
   }
 
@@ -12280,8 +14568,14 @@ ET.viewer = (function () {
     out.frame = s.frame;
     out.centre = s.centre;
     out.zoom = (d.zoom || 1) * v.userZoom;
+    // The user pan moves the drawn picture (the key is left out at rest, so the draw state is
+    // exactly as before panning existed).
+    if (panned(v)) out.pan = [v.pan[0], v.pan[1]];
     out.yaw = 0.4 + v.drag.yaw + SPIN * v.spin;
-    out.pitch = clamp(0.16 + v.drag.pitch, -1.3, 1.3);
+    // The relative view eases the stage's tilt to level by its mix (0 in the plain view, so
+    // the expression is exactly the plain one there).
+    var relMix = relativeMix(v, s);
+    out.pitch = relMix > 0 ? clamp(0.16 * (1 - relMix) + v.drag.pitch, -1.3, 1.3) : clamp(0.16 + v.drag.pitch, -1.3, 1.3);
     out.pointSize = 6.5 * v.dpr;
     out.time = v.drawTime;
     out.dt = dt;
@@ -12292,6 +14586,10 @@ ET.viewer = (function () {
       out.gain = 0.55;
       out.bloom = 0.3;
     }
+    // The relative view is drawn sharp (deviation d8): by its mix, no depth blur and less
+    // bloom. After the theme's bloom, so that is the value blended from; nothing is touched
+    // at mix 0, so the plain view's draw state is exactly as it was.
+    if (relMix > 0) sharpenRelative(out, relMix);
     // Many full-weight points pile up into a white (or, in ink, black) ball, so the
     // overall brightness comes down as their number goes up.
     var crowd = crowding(v);
@@ -12305,6 +14603,25 @@ ET.viewer = (function () {
     if (v.search.filter > 0) out.filter = v.search.filter;
     out.clear = !!v.needClear;
     return out;
+  }
+
+  // The relative view's depth of field and bloom at mix 1 (deviation d8): a height is read off
+  // a ruler, so no point is blurred by its depth, and the glow is cut so that a crowded cloud
+  // stays separate dots. The reference page draws its relative view this way.
+  var RELATIVE_DEPTH_OF_FIELD = 0;
+  var RELATIVE_BLOOM = 0.2;
+
+  // Blend the two keys of a draw state toward the relative view's by `mix` in (0, 1], from
+  // the value each would otherwise have (the mode's or the theme's, else the renderer's
+  // default). Bloom is never raised: a value already below RELATIVE_BLOOM is kept. Written
+  // so that mix 1 gives the targets exactly. The wires' key (wireDepthOfField) is left alone:
+  // Tumble draws no wires, only the fading ones of a change of view from Lattice.
+  function sharpenRelative(out, mix) {
+    var defaults = ET.renderer.DEFAULTS;
+    var dof = typeof out.depthOfField === "number" ? out.depthOfField : defaults.depthOfField;
+    var bloom = typeof out.bloom === "number" ? out.bloom : defaults.bloom;
+    out.depthOfField = dof * (1 - mix) + RELATIVE_DEPTH_OF_FIELD * mix;
+    out.bloom = bloom * (1 - mix) + Math.min(bloom, RELATIVE_BLOOM) * mix;
   }
 
   // Brightness factor for crowded sets, 1 up to a light load of CROWD_REF. The light
@@ -12849,6 +15166,50 @@ ET.viewer = (function () {
     return v.userZoom;
   }
 
+  // ---------- the user pan ----------
+
+  // Device pixels per pan unit: the renderer's R for this stage (the radius of the draw state
+  // last drawn, which no mode changes, else the renderer's default).
+  function panUnit(v) {
+    var r = v.lastDraw?.radius;
+    var radius = typeof r === "number" && r > 0 ? r : ET.renderer.DEFAULTS.radius;
+    return Math.max(1e-6, Math.min(v.W || 1, v.H || 1) * radius);
+  }
+
+  // The pan clamped so the picture's centre (the point the zoom scales about) stays on the
+  // stage: |x| at most half the stage's width and |y| half its height, in pan units.
+  function clampPan(v, x, y) {
+    var u = panUnit(v);
+    var lx = (v.W || 1) / 2 / u;
+    var ly = (v.H || 1) / 2 / u;
+    return [clamp(x, -lx, lx), clamp(y, -ly, ly)];
+  }
+
+  function panned(v) {
+    return v.pan[0] !== 0 || v.pan[1] !== 0;
+  }
+
+  function setPan(v, x, y) {
+    var ok = typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y);
+    v.pan = ok ? clampPan(v, x, y) : [0, 0];
+    v.statusClock = STATUS_EVERY;
+    invalidate(v);
+    return [v.pan[0], v.pan[1]];
+  }
+
+  // Move the picture by (dx, dy) CSS pixels on screen (y down, as pointer coordinates are).
+  function panByPixels(v, dx, dy) {
+    var u = panUnit(v);
+    setPan(v, v.pan[0] + (dx * v.dpr) / u, v.pan[1] - (dy * v.dpr) / u);
+  }
+
+  // Zoom 1 and no pan: what double-click, double-tap, the 0 key, the Reset view button and the
+  // handle's resetView() and resetZoom() all do.
+  function resetView(v) {
+    setZoom(v, 1);
+    setPan(v, 0, 0);
+  }
+
   function hasFocus(v) {
     var a = v.doc.activeElement;
     return !!a && (a === v.root || (typeof v.root.contains === "function" && v.root.contains(a)));
@@ -12858,6 +15219,7 @@ ET.viewer = (function () {
     run = !!run;
     if (run === v.running) return;
     v.running = run;
+    passStill(v, v.mode);
     v.playButton.textContent = run ? "Pause" : "Play";
     v.playButton.setAttribute("aria-pressed", run ? "false" : "true");
     v.statusClock = STATUS_EVERY;
@@ -12887,17 +15249,32 @@ ET.viewer = (function () {
       return true;
     }
     if (k === "0") {
-      setZoom(v, 1);
+      resetView(v);
+      return true;
+    }
+    var arrow = Object.hasOwn(ARROWS, k) ? ARROWS[k] : null;
+    if (arrow) {
+      setPan(v, v.pan[0] + arrow[0] * PAN_STEP, v.pan[1] + arrow[1] * PAN_STEP);
       return true;
     }
     return false;
   }
+
+  // The arrow keys move the picture the way they point (x right, y up).
+  var ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
 
   // Keys 1-9: the view of that mode button, if there is one.
   function switchByKey(v, idx) {
     if (idx >= v.modeButtons.length) return false;
     setMode(v, v.modeButtons[idx].id);
     return true;
+  }
+
+  // Two fingers on the sky move and zoom the picture; the page must not scroll under them.
+  // One finger still scrolls the page vertically (the stage's touch-action allows it).
+  // A touch-action cannot change once a touch has begun, so the scroll is refused here.
+  function holdPage(e) {
+    if (e.touches?.length >= 2 && e.cancelable !== false && e.preventDefault) e.preventDefault();
   }
 
   function wire(v) {
@@ -12916,6 +15293,12 @@ ET.viewer = (function () {
       }
       return { x: e.clientX - r.left, y: e.clientY - r.top };
     }
+    function pinchMid() {
+      var ids = Object.keys(pointers);
+      var a = pointers[ids[0]];
+      var b = pointers[ids[1]];
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
     function pinchDistance() {
       var ids = Object.keys(pointers);
       if (ids.length < 2) return 0;
@@ -12932,10 +15315,18 @@ ET.viewer = (function () {
       return t === stage || t === v.canvas || t === v.overlay || t === v.labelLayer;
     }
 
+    // The left button turns (with Shift it pans); the right button pans; others do nothing.
     listen(v, stage, "pointerdown", function (e) {
-      if (e.button !== undefined && e.button > 0) return;
+      if (e.button !== undefined && e.button !== 0 && e.button !== 2) return;
       if (!onSky(e)) return;
-      pointers[e.pointerId] = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: now(v) };
+      pointers[e.pointerId] = {
+        x: e.clientX,
+        y: e.clientY,
+        sx: e.clientX,
+        sy: e.clientY,
+        t: now(v),
+        pan: e.button === 2 || !!e.shiftKey, // a pan press is never a Focus click
+      };
       count = Object.keys(pointers).length;
       try {
         if (stage.setPointerCapture) stage.setPointerCapture(e.pointerId);
@@ -12951,9 +15342,11 @@ ET.viewer = (function () {
       }
       if (count >= 2) {
         v.drag.active = false;
-        v.pinch = { d0: pinchDistance() || 1, z0: v.userZoom };
+        var mid = pinchMid();
+        v.pinch = { d0: pinchDistance() || 1, z0: v.userZoom, mx: mid.x, my: mid.y, px: v.pan[0], py: v.pan[1] };
       } else {
         v.drag.active = true;
+        v.drag.pan = e.button === 2 || !!e.shiftKey;
         v.drag.x = e.clientX;
         v.drag.y = e.clientY;
         stage.style.cursor = "grabbing";
@@ -12967,7 +15360,18 @@ ET.viewer = (function () {
         pt.y = e.clientY;
       }
       if (v.pinch && count >= 2) {
+        // the fingers' distance zooms; their midpoint's movement pans
         setZoom(v, v.pinch.z0 * (pinchDistance() / v.pinch.d0));
+        var mid = pinchMid();
+        var u = panUnit(v);
+        setPan(v, v.pinch.px + ((mid.x - v.pinch.mx) * v.dpr) / u, v.pinch.py - ((mid.y - v.pinch.my) * v.dpr) / u);
+        return;
+      }
+      if (v.drag.active && pt && v.drag.pan) {
+        panByPixels(v, e.clientX - v.drag.x, e.clientY - v.drag.y);
+        v.drag.x = e.clientX;
+        v.drag.y = e.clientY;
+        v.hover = null;
         return;
       }
       if (v.drag.active && pt) {
@@ -12991,16 +15395,17 @@ ET.viewer = (function () {
       if (count < 2) v.pinch = null;
       if (count === 0) {
         v.drag.active = false;
+        v.drag.pan = false;
         stage.style.cursor = "grab";
       }
-      if (e.type === "pointerup" && pt) focusClick(v, e, pt, pos(e));
+      if (e.type === "pointerup" && pt && !pt.pan) focusClick(v, e, pt, pos(e));
       // Double tap (touch or pen) resets the zoom; a mouse uses dblclick.
       if (e.type === "pointerup" && pt && e.pointerType && e.pointerType !== "mouse") {
         var moved = Math.abs(e.clientX - pt.sx) + Math.abs(e.clientY - pt.sy);
         var t = now(v);
         if (moved < 12 && t - pt.t < 300) {
           if (lastTap && t - lastTap.t < 350 && Math.abs(e.clientX - lastTap.x) + Math.abs(e.clientY - lastTap.y) < 32) {
-            setZoom(v, 1);
+            resetView(v);
             lastTap = null;
           } else lastTap = { t: t, x: e.clientX, y: e.clientY };
         }
@@ -13016,7 +15421,11 @@ ET.viewer = (function () {
     listen(v, stage, "dblclick", function (e) {
       if (!onSky(e)) return;
       if (e.preventDefault) e.preventDefault();
-      setZoom(v, 1);
+      resetView(v);
+    });
+    // A right-drag pans, so the browser's context menu is not opened over the sky.
+    listen(v, stage, "contextmenu", function (e) {
+      if (onSky(e) && e.preventDefault) e.preventDefault();
     });
     // Wheel zooms only over the stage and only with Ctrl or Cmd held (a trackpad pinch
     // arrives that way) or while the viewer has focus; otherwise the page scrolls.
@@ -13036,6 +15445,11 @@ ET.viewer = (function () {
       { passive: false }
     );
 
+    // Two fingers on the sky move and zoom the picture; the page must not scroll under them
+    // (holdPage).
+    listen(v, stage, "touchstart", holdPage, { passive: false });
+    listen(v, stage, "touchmove", holdPage, { passive: false });
+
     listen(v, v.root, "keydown", function (e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       var target = e.target;
@@ -13053,7 +15467,7 @@ ET.viewer = (function () {
       setRunning(v, !v.running);
     });
     listen(v, v.zoomResetButton, "click", function () {
-      setZoom(v, 1);
+      resetView(v);
     });
     listen(v, v.noticeDismiss, "click", function () {
       clearNotice(v);
@@ -13229,6 +15643,14 @@ ET.viewer = (function () {
       litUploaded: false,
       hideUnlit: false, // Focus's Only results hides unlit points this frame
       panel: null,
+      // The relative view (docs/relative-interface.md, "Viewer (t9, t10)").
+      relActive: false, // the relative view is shown this frame
+      litRelative: false, // the lit values uploaded hold the gradient
+      litHidden: false, // the lit values uploaded hold 0 for the rest under Lit "all" (Only results)
+      relKey: "", // what onSearchChange last saw of the relative view
+      gradient: null, // { shown, values } the gradient for the searches shown
+      heights: null, // { shown, list } heights and cosines of the results shown
+      unit: null, // { set, unit } ET.math.unitLength of the set shown
     };
   }
 
@@ -13541,20 +15963,20 @@ ET.viewer = (function () {
       return;
     }
     var st = v.search.settings;
-    var pov = ET.searchSets.LETTERS.indexOf(st.pointOfView);
+    kept = giveLetters(v, kept);
     run.searches = kept;
     run.set = v.set;
     run.used = {
       k: st.k,
       candidates: st.candidates,
       top: st.top,
-      pointOfView: pov >= 0 && pov < kept.length ? st.pointOfView : null,
+      // With letters by position this is "the letter's position is among the kept".
+      pointOfView: hasLetter(kept, st.pointOfView) ? st.pointOfView : null,
       rerank: st.rerank,
     };
     var counts = { k: st.k, candidates: st.candidates, top: st.top };
     run.left = kept.length;
-    kept.forEach(function (q, j) {
-      q.letter = ET.searchSets.letter(j);
+    kept.forEach(function (q) {
       q.scale = run.used.pointOfView === q.letter ? ET.searchSets.scaleFor(q.query) : null;
       q.reranker = null;
       q.sent = 0;
@@ -13566,6 +15988,89 @@ ET.viewer = (function () {
         if (run.left === 0) startRerank(v, run);
       });
     });
+  }
+
+  // ----- letters (docs/relative-interface.md, "Letters are kept") -----
+
+  function hasLetter(list, letter) {
+    return (
+      letter !== null &&
+      list.some(function (q) {
+        return q.letter === letter;
+      })
+    );
+  }
+
+  // Letters for the kept searches, which come back in letter order. With the Relative
+  // setting off they go by position, as they always have. With it on, an entry that is the
+  // same search as one shown keeps that search's letter, and the others take the lowest
+  // free letters in list order.
+  function giveLetters(v, kept) {
+    var L = ET.searchSets.LETTERS;
+    if (!v.rel.relative) {
+      kept.forEach(function (q, j) {
+        q.letter = ET.searchSets.letter(j);
+      });
+      return kept;
+    }
+    var shown = v.search.shown;
+    var taken = [];
+    kept.forEach(function (q) {
+      var old = shown.find(function (o) {
+        return !taken.includes(o.letter) && sameSearch(o, q);
+      });
+      q.letter = old ? old.letter : null;
+      if (old) taken.push(old.letter);
+    });
+    kept.forEach(function (q) {
+      if (q.letter !== null) return;
+      q.letter = L.find(function (x) {
+        return !taken.includes(x);
+      });
+      taken.push(q.letter);
+    });
+    return kept.slice().sort(function (a, b) {
+      return L.indexOf(a.letter) - L.indexOf(b.letter);
+    });
+  }
+
+  // The same search: same kind, and the same text (a typed search, embedded or matched
+  // among the points), the same point id, or the same vector bytes and model.
+  function sameSearch(a, b) {
+    if (a.kind !== b.kind) return false;
+    if (a.kind === "point") return a.point === b.point;
+    if (a.kind === "vector") return a.model === b.model && sameValues(a.query, b.query);
+    return a.text === b.text;
+  }
+
+  function sameValues(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (var d = 0; d < a.length; d++) if (a[d] !== b[d]) return false;
+    return true;
+  }
+
+  // Letters by position again (the Relative setting is off): the point of view follows
+  // its search. Returns true when a letter changed.
+  function letterByPosition(v) {
+    var s = v.search;
+    var map = {};
+    var changed = false;
+    s.shown.forEach(function (q, j) {
+      var to = ET.searchSets.letter(j);
+      map[q.letter] = to;
+      if (q.letter !== to) changed = true;
+    });
+    if (!changed) return false;
+    s.shown.forEach(function (q, j) {
+      q.letter = ET.searchSets.letter(j);
+    });
+    var pov = s.settings.pointOfView;
+    if (pov !== null) s.settings.pointOfView = Object.hasOwn(map, pov) ? map[pov] : null;
+    if (s.shownUsed && s.shownUsed.pointOfView !== null) {
+      var used = s.shownUsed.pointOfView;
+      s.shownUsed.pointOfView = Object.hasOwn(map, used) ? map[used] : null;
+    }
+    return true;
   }
 
   function rerankOn(v, run) {
@@ -13674,6 +16179,9 @@ ET.viewer = (function () {
     s.code = null;
     s.message = null;
     if (run.kind === "set" && run.used.pointOfView === null) s.settings.pointOfView = null;
+    // Relative turned off while this run worked: its kept letters go back to positions
+    // (with the setting off from the start the letters are positional already).
+    if (!v.rel.relative) letterByPosition(v);
     relight(v);
     s.pairs = run.pairs || [];
     startFacing(v, run.swing);
@@ -13726,6 +16234,22 @@ ET.viewer = (function () {
     uploadLit(v);
   }
 
+  // The first n lit values of the points that are not results (inside 0) set to 0.
+  function hideOutside(lit, inside, n) {
+    var k = Math.min(n, inside.length);
+    for (var h = 0; h < k; h++) if (inside[h] === 0) lit[h] = 0;
+  }
+
+  // The gradient written over the first n lit values that are not above 0 (a value that
+  // is not a number counts as not above 0).
+  function fillGradient(lit, grad, n) {
+    var m = Math.min(n, grad.length);
+    for (var i = 0; i < m; i++) {
+      if (lit[i] > 0) continue;
+      lit[i] = grad[i];
+    }
+  }
+
   function uploadLit(v) {
     var s = v.search;
     var r = v.renderer;
@@ -13735,6 +16259,18 @@ ET.viewer = (function () {
     var shared = new Uint8Array(n);
     lit.set(s.lit.lit.subarray(0, Math.min(n, s.lit.lit.length)));
     shared.set(s.lit.shared.subarray(0, Math.min(n, s.lit.shared.length)));
+    // Lit "all" gives every point that is not a result the constant s.lit.rest (d8). While
+    // Focus's Only results hides the points that are not results, they go up at 0 instead,
+    // which the mode's unlitGain 0 does not draw: Only results wins.
+    var showsRest = s.lit.rest > 0;
+    s.litHidden = showsRest && s.hideUnlit;
+    if (s.litHidden) hideOutside(lit, s.lit.inside, n);
+    // In the relative view, points the searches do not light get the faint gradient; the
+    // lit values above 0 are kept exactly (results follow the Lit setting as without it).
+    // Under Lit "all" there is no gradient: the rest keeps its constant.
+    s.litRelative = s.relActive;
+    var grad = s.relActive && !showsRest ? relativeGradient(v) : null;
+    if (grad) fillGradient(lit, grad, n);
     try {
       r.setLit(lit, shared);
       s.litUploaded = true;
@@ -14013,10 +16549,10 @@ ET.viewer = (function () {
     st.top = ET.search.clampTop(top === null ? st.top : top, st.candidates);
   }
 
+  // A letter of a search shown (with letters by position: one of the first n letters).
   function validPointOfView(v, value) {
     if (value === null) return true;
-    var j = ET.searchSets.LETTERS.indexOf(value);
-    return j >= 0 && j < v.search.shown.length;
+    return ET.searchSets.LETTERS.includes(value) && hasLetter(v.search.shown, value);
   }
 
   function rerankOffered(v) {
@@ -14102,6 +16638,7 @@ ET.viewer = (function () {
       pairs: s.pairs.map(function (p) {
         return pairInfo(v, p);
       }),
+      relative: relativeInfo(v),
     };
   }
 
@@ -14175,7 +16712,11 @@ ET.viewer = (function () {
 
   function pairInfo(v, p) {
     var ids = (v.set || v.search.shownSet).ids;
-    var L = ET.searchSets.letter;
+    // p.a and p.b are positions among the searches shown; each search's own letter names it.
+    var shown = v.search.shown;
+    var L = function (j) {
+      return shown[j] ? shown[j].letter : ET.searchSets.letter(j);
+    };
     return {
       a: L(p.a),
       b: L(p.b),
@@ -14246,6 +16787,9 @@ ET.viewer = (function () {
   function hiddenPoint(v, i) {
     var lit = v.search.lit;
     if (!v.search.hideUnlit || !lit) return false;
+    // Under Lit "all" every point has a lit value above 0; the hidden ones are those inside
+    // no search, exactly the points "the results, evenly" leaves at 0.
+    if (lit.rest > 0) return lit.inside[i] === 0;
     return lit.lit[i] <= 0; // lit values are finite, in [0, 1]
   }
 
@@ -14315,6 +16859,8 @@ ET.viewer = (function () {
       light: !!v.theme?.light,
       labels: v.showLabels,
       mode: v.modeId,
+      // The relative view draws its own stems and result labels; the panel then draws none.
+      relative: relativeShown(v, v.last),
       hidden: function (i) {
         return hiddenPoint(v, i);
       },
@@ -14336,6 +16882,680 @@ ET.viewer = (function () {
       c += x * F[2 * D + d];
     }
     return ET.renderer.place([a, b, c], ds, v.W, v.H);
+  }
+
+  // ----- the relative view (docs/relative-interface.md, "Viewer (t9, t10)") -----
+
+  // The search colours by letter (A to D) when the host sets no --tumbler-search-N: the same
+  // values as the search panel's defaults, so a search's ruler and its ring agree.
+  var SEARCH_DEFAULTS_DARK = ["#ffc56b", "#6be0ff", "#ff8fb3", "#b6ff8a"];
+  var SEARCH_DEFAULTS_LIGHT = ["#a35f00", "#00708a", "#b0245a", "#3d7a00"];
+  // The fade of the relative view: the lit value of a point that is not a result is
+  // RELATIVE_FADE_BASE + RELATIVE_FADE_SCALE * g^2, at one strength (deviation d9). Whether
+  // those points are faded at all is the Lit setting's: "all" shows them in full.
+  var RELATIVE_FADE_BASE = 0.2;
+  var RELATIVE_FADE_SCALE = 0.6;
+  var OWN_POINT_DISTANCE = 1e-7; // a point this close to its search, at its length, is its own
+  var OWN_POINT_LENGTH = 1e-6;
+
+  // The relative view is shown: Tumble's state has at least one axis pinned.
+  function relativeShown(v, st) {
+    return v.modeId === "tumble" && !!st?.relative?.active;
+  }
+
+  // "A", "A and B", "A, B and C".
+  function relLetters(letters) {
+    if (letters.length < 2) return letters.join("");
+    return letters.slice(0, -1).join(", ") + " and " + letters.at(-1);
+  }
+
+  function rowDot(X, o, u, D) {
+    var s = 0;
+    for (var d = 0; d < D; d++) s += X[o + d] * u[d];
+    return s;
+  }
+
+  // A search's unit direction in double precision, or null when its query has no length.
+  function searchDirection(q) {
+    var D = q.query.length;
+    var len = Math.sqrt(rowDot(q.query, 0, q.query, D));
+    if (len > ET.math.RELATIVE_ZERO_LENGTH) {
+      var u = new Float64Array(D);
+      for (var d = 0; d < D; d++) u[d] = q.query[d] / len;
+      return { u: u, length: len };
+    }
+    return null; // also a length that is not a number
+  }
+
+  // The search's own point: at plain cosine distance below OWN_POINT_DISTANCE and of the
+  // search's length (the rule the overlay draws by).
+  function isOwnPoint(set, i, distance, length) {
+    if (distance < OWN_POINT_DISTANCE) {
+      var D = set.dimension;
+      var o = i * D;
+      return Math.abs(Math.sqrt(rowDot(set.vectors, o, set.vectors.subarray(o, o + D), D)) - length) < OWN_POINT_LENGTH;
+    }
+    return false; // also a distance that is not a number
+  }
+
+  // Fills c with each point's plain cosine to the search (1 - dist) and returns the largest
+  // of a point other than the search's own (-Infinity when there is none).
+  function cosineTop(q, set, dist, c) {
+    var N = set.count;
+    var dir = searchDirection(q);
+    var hi = -Infinity;
+    for (var i = 0; i < N; i++) {
+      c[i] = 1 - dist[i];
+      if (c[i] > hi && !(dir && isOwnPoint(set, i, dist[i], dir.length))) hi = c[i];
+    }
+    return hi;
+  }
+
+  // g raised, point by point, to clamp((c - mid) / (hi - mid), 0, 1) where that is larger.
+  function raiseGradient(g, c, mid, hi) {
+    for (var j = 0; j < g.length; j++) {
+      var x = clamp((c[j] - mid) / (hi - mid), 0, 1);
+      if (x > g[j]) g[j] = x;
+    }
+  }
+
+  // The gradient for the searches shown, worked out once per change of the searches or the
+  // data: RELATIVE_FADE_BASE + RELATIVE_FADE_SCALE * g^2, g the largest over the searches of
+  // clamp((c - mid) / (hi - mid), 0, 1) by plain cosine c, mid the median c (index N >> 1
+  // of the ascending sort) and hi the largest c of a point other than the search's own.
+  function relativeGradient(v) {
+    var s = v.search;
+    var set = s.shownSet;
+    if (!s.shown.length || !set) return null;
+    if (s.gradient?.shown === s.shown && s.gradient.set === set) return s.gradient.values;
+    var N = set.count;
+    var g = new Float64Array(N);
+    var c = new Float64Array(N);
+    for (const q of s.shown) {
+      var r = q.ranking;
+      var dist = r.plainDistances || r.distances;
+      var hi = cosineTop(q, set, dist, c);
+      var mid = Float64Array.from(c).sort()[N >> 1];
+      // Nothing is raised unless hi is above mid (so not when either is not a number).
+      if (hi > mid) raiseGradient(g, c, mid, hi);
+    }
+    var values = new Float32Array(N);
+    for (var k = 0; k < N; k++) values[k] = RELATIVE_FADE_BASE + RELATIVE_FADE_SCALE * g[k] * g[k];
+    s.gradient = { shown: s.shown, set: set, values: values };
+    return values;
+  }
+
+  // ET.math.unitLength of the set shown, once per set, and only when somebody reads it
+  // (lazyUnit): a pass over every row, so never on the path of every info().search.
+  function unitOf(v) {
+    var s = v.search;
+    var set = v.set;
+    if (!set) return null;
+    if (s.unit?.set !== set) s.unit = { set: set, unit: ET.math.unitLength(set.vectors, set.count, set.dimension) };
+    return s.unit.unit;
+  }
+
+  function unitCopy(unit) {
+    return unit ? { unit: unit.unit, min: unit.min, max: unit.max, tolerance: unit.tolerance } : null;
+  }
+
+  function measureOf(unit) {
+    if (!unit) return null;
+    return unit.unit ? "cosine" : "length along the search";
+  }
+
+  // In the plain view `measure` and `unit` of info().search.relative come from the
+  // viewer's own check of the set (Tumble reports them only once an axis is pinned). They
+  // are worked out when first read, not when the report is made: the report is made on
+  // every change of the searches and of the data, with Relative off and in every view, and
+  // the check reads every row. Both keys stay listed, in their places, and give the values
+  // for the set shown when they are read (null with no set).
+  function lazyUnit(v, info) {
+    Object.defineProperty(info, "measure", {
+      enumerable: true,
+      configurable: true,
+      get: function () {
+        return measureOf(unitOf(v));
+      },
+    });
+    Object.defineProperty(info, "unit", {
+      enumerable: true,
+      configurable: true,
+      get: function () {
+        return unitCopy(unitOf(v));
+      },
+    });
+    return info;
+  }
+
+  // In the plain view with the setting on, the searches that give no axis (letters), so the
+  // panel can say why nothing is pinned. The same rule Tumble applies to the same list.
+  function plainDropped(v) {
+    var s = v.search;
+    var set = v.set;
+    if (!v.rel.relative || v.modeId !== "tumble" || !s.shown.length || !set || set.dimension < 3) return [];
+    var dirs = ET.math.relativeDirections(
+      s.shown.map(function (q) {
+        return q.query;
+      }),
+      set.dimension
+    );
+    var letterOf = function (j) {
+      return s.shown[j].letter;
+    };
+    return dirs.dropped.map(function (d) {
+      return { letter: letterOf(d.index), reason: d.reason, against: d.against.map(letterOf) };
+    });
+  }
+
+  // Each search's results with their height along it (x . u) and plain cosine, aligned with
+  // info().search.searches[j].results; worked out once per commit.
+  function relativeResults(v) {
+    var s = v.search;
+    var set = s.shownSet;
+    if (!set) return [];
+    if (s.heights?.shown !== s.shown) {
+      var D = set.dimension;
+      s.heights = {
+        shown: s.shown,
+        list: s.shown.map(function (q) {
+          var dir = searchDirection(q);
+          return q.view.hits.map(function (hit) {
+            return {
+              index: hit.index,
+              id: hit.id,
+              height: dir ? rowDot(set.vectors, hit.index * D, dir.u, D) : null,
+              cosine: 1 - hit.plainDistance,
+            };
+          });
+        }),
+      };
+    }
+    // The letter is read from the search each time: the searches are lettered again in
+    // place (letterByPosition) without the list changing, so a kept letter goes stale.
+    return s.heights.list.map(function (results, j) {
+      return {
+        letter: s.shown[j].letter,
+        results: results.map(function (r) {
+          return { ...r };
+        }),
+      };
+    });
+  }
+
+  // Whether the searches the mode's frame was built from (state.relative.searches) are the
+  // ones shown now, by letter and by vector. They differ from the moment a changed search is
+  // committed until its fit switches in: the frame shown is then the earlier searches', and
+  // a letter may name another search by now. A state without the list is taken as current.
+  function relativeCurrent(v, rel) {
+    var list = rel?.searches;
+    if (!Array.isArray(list)) return true;
+    var shown = v.search.shown;
+    if (list.length !== shown.length) return false;
+    return list.every(function (e, j) {
+      return e.letter === shown[j].letter && sameValues(e.query, shown[j].query);
+    });
+  }
+
+  // The parts of info().search.relative that come from the mode's state while the relative
+  // view is shown.
+  function shownRelativeParts(v, st) {
+    return {
+      settled: st.settled === true && relativeCurrent(v, st),
+      pinned: st.pinned.map(function (p) {
+        return { letter: p.letter, axis: p.axis, length: p.length };
+      }),
+      dropped: st.dropped.map(function (d) {
+        return { letter: d.letter, reason: d.reason, against: d.against.slice() };
+      }),
+      free: st.free,
+      fixed: st.fixed,
+      window: st.window ? { ...st.window } : null,
+      share: st.share,
+      subspace: st.subspace,
+      searches: relativeResults(v),
+    };
+  }
+
+  // The same parts in the plain view: nothing pinned, and the searches that give no axis.
+  function plainRelativeParts(v) {
+    return {
+      settled: false,
+      pinned: [],
+      dropped: plainDropped(v),
+      free: 3,
+      fixed: 0,
+      window: null,
+      share: null,
+      subspace: null,
+      searches: [],
+    };
+  }
+
+  // info().search.relative. The mode's state is the one last drawn. While the relative view
+  // is shown the measure and unit are the fit's own (the mode's state carries them). In the
+  // plain view they come from the viewer's own check of the set, made when they are read
+  // (lazyUnit), and dropped names the searches that give no axis.
+  function relativeInfo(v) {
+    var offered = v.modeId === "tumble";
+    var st = offered && v.mode && v.last ? v.last.relative || null : null;
+    var active = !!st?.active;
+    var parts = active ? shownRelativeParts(v, st) : plainRelativeParts(v);
+    var info = {
+      relative: v.rel.relative,
+      showOrigin: v.rel.showOrigin,
+      offered: offered,
+      active: active,
+      settled: parts.settled,
+      measure: active ? st.measure : null,
+      unit: active ? unitCopy(st.unit) : null,
+      pinned: parts.pinned,
+      dropped: parts.dropped,
+      free: parts.free,
+      fixed: parts.fixed,
+      window: parts.window,
+      share: parts.share,
+      subspace: parts.subspace,
+      searches: parts.searches,
+    };
+    return active ? info : lazyUnit(v, info);
+  }
+
+  // The viewer's pieces after the mode's relative status, before its own zoom and paused.
+  function relativeStatusTail(v, rel) {
+    var shown = v.search.shown;
+    var out = "";
+    if (
+      shown.some(function (q) {
+        return !!q.reranker;
+      })
+    ) {
+      out += " · named results chosen and numbered by the reranker";
+    }
+    var pov = shown.find(function (q) {
+      return q.scale;
+    });
+    if (pov) out += " · with " + pov.letter + "'s point of view, rank and height use different measures";
+    if (rel.measure !== "cosine") out += " · ranked by cosine, so rank and height can disagree";
+    return out;
+  }
+
+  function fixed3(x) {
+    return typeof x === "number" && Number.isFinite(x) ? x.toFixed(3) : "?";
+  }
+
+  // The provenance's Relative row: the sentences that apply, in the documented order.
+  function relativeProvenanceText(v, rel) {
+    var L = rel.pinned.map(function (p) {
+      return p.letter;
+    });
+    // The pinned axes are exact only once the turn onto them has ended (state.relative.settled);
+    // during the turn the exactness sentences are left out (the mode's status says it turns).
+    var exact = rel.settled === true;
+    var parts = [];
+    if (exact) parts.push("The vertical axis is exact: height is " + rel.measure + " to " + L[0] + ".");
+    if (exact && L.length >= 2) {
+      parts.push(
+        "The horizontal axis is exact too: it is the part of " +
+          L[1] +
+          " that " +
+          L[0] +
+          " does not contain, so the plane of " +
+          L[0] +
+          " and " +
+          L[1] +
+          " is shown exactly."
+      );
+    }
+    if (exact && L.length >= 3) {
+      parts.push("The depth axis is exact too: all three axes are pinned, so the space of " + relLetters(L) + " is shown exactly and nothing tumbles.");
+    }
+    if (L.length < 3 && rel.subspace > 0) {
+      var axes = L.length === 1 ? "The other two axes" : "The depth axis";
+      var tour = L.length === 1 ? "tour" : "tours";
+      var share = Math.round((rel.share || 0) * 100) + "%";
+      parts.push(
+        axes +
+          " " +
+          tour +
+          " " +
+          rel.subspace +
+          " directions holding " +
+          share +
+          " of the spread the pinned axes leave: sideways position is still a shadow, and points side by side on screen can be far apart."
+      );
+    }
+    var u = rel.unit;
+    if (u?.unit) parts.push("Every vector has length one (within " + u.tolerance + "), which is why height is cosine similarity.");
+    else {
+      parts.push(
+        "The vectors are not all of length one (lengths " +
+          fixed3(u?.min) +
+          " to " +
+          fixed3(u?.max) +
+          "), so height is length along the search, not cosine; results are still ranked by cosine, so rank and height can disagree."
+      );
+    }
+    var pov = v.search.shown.find(function (q) {
+      return q.scale;
+    });
+    if (pov) {
+      parts.push("With " + pov.letter + "'s point of view on, its results are ranked in the scaled measure and height is not: rank and height use different measures.");
+    }
+    return { text: parts.join(" "), letters: relLetters(L) };
+  }
+
+  // The Relative row (after View) and the summary's "relative to" while the relative view
+  // is shown; both are removed otherwise. Called with the status line and after the
+  // provenance is drawn afresh (which removes them).
+  function syncRelativeProvenance(v) {
+    var rel = v.set && relativeShown(v, v.last) ? v.last.relative : null;
+    var want = rel ? relativeProvenanceText(v, rel) : null;
+    var key = want ? want.letters + "\n" + want.text : "";
+    var cur = v.provRel;
+    if (cur?.key === key) return;
+    if (cur) {
+      cur.dt.remove();
+      cur.dd.remove();
+      cur.clause.remove();
+    }
+    v.provRel = null;
+    if (!want || !v.provView) return;
+    var dt = text(v, "dt", "tumbler-provenance-term tumbler-relative-provenance-term", "Relative", {
+      margin: "0",
+      color: cssRgb(v.theme.muted),
+    });
+    var dd = text(v, "dd", "tumbler-provenance-value tumbler-relative-provenance-value", want.text, {
+      margin: "0",
+      color: cssRgb(v.theme.foreground),
+      minWidth: "0",
+    });
+    var clause = text(v, "span", "tumbler-relative-provenance-clause", " · relative to " + want.letters);
+    v.provView.after(dt, dd);
+    v.provSummary.appendChild(clause);
+    v.provRel = { key: key, dt: dt, dd: dd, clause: clause };
+  }
+
+  // Once a frame, before drawing: whether the relative view is shown. When that changes
+  // the lit values go up again, with or without the gradient. So do they when, under Lit
+  // "all", Focus's Only results starts or stops hiding the rest.
+  function syncRelativeLit(v, st) {
+    var s = v.search;
+    var active = relativeShown(v, st);
+    s.relActive = active;
+    if (!s.lit || !s.litUploaded) return;
+    var hidden = s.lit.rest > 0 && s.hideUnlit;
+    if (active !== s.litRelative || hidden !== s.litHidden) uploadLit(v);
+  }
+
+  // Once a frame, after the state is kept: the panel and host hear of a change in what
+  // info().search.relative reports (shown, the pinned and the dropped letters).
+  function noteRelativeChange(v, st) {
+    var s = v.search;
+    var active = relativeShown(v, st);
+    var rel = v.modeId === "tumble" ? st?.relative : null;
+    var key = "";
+    if (rel) {
+      // settled is part of what a host reads (info().search.relative.settled), so the end
+      // of a turn is announced too
+      var turn = "";
+      if (active) turn = rel.settled ? ":settled" : ":turning";
+      key =
+        (active ? "on:" : "off:") +
+        rel.pinned
+          .map(function (p) {
+            return p.letter;
+          })
+          .join("") +
+        ":" +
+        rel.dropped
+          .map(function (d) {
+            return d.letter;
+          })
+          .join("") +
+        turn;
+    }
+    if (key !== s.relKey) {
+      s.relKey = key;
+      searchChanged(v);
+    }
+  }
+
+  // handle.setRelative(patch): synchronous; no ranking is redone, nothing is superseded,
+  // no request is made. onSearchChange fires when a value changes.
+  function setRelative(v, patch) {
+    var cur = v.rel;
+    var next = { relative: cur.relative, showOrigin: cur.showOrigin };
+    if (v.destroyed || !isObj(patch)) return next;
+    try {
+      if (typeof patch.relative === "boolean") next.relative = patch.relative;
+      if (typeof patch.showOrigin === "boolean") next.showOrigin = patch.showOrigin;
+    } catch {
+      // A getter on the host's patch threw: the patch is ignored.
+      return { relative: cur.relative, showOrigin: cur.showOrigin };
+    }
+    if (next.relative === cur.relative && next.showOrigin === cur.showOrigin) return next;
+    v.rel = next;
+    var relettered = !next.relative && letterByPosition(v);
+    passRelative(v, v.mode);
+    if (relettered) notifyModeSearch(v);
+    searchChanged(v);
+    invalidate(v);
+    return { relative: next.relative, showOrigin: next.showOrigin };
+  }
+
+  // What the relative overlay is told about the results (docs/relative-interface.md,
+  // "Drawing (t10)"): `named`, every shown search's results each once, with reranker ranks
+  // only from searches whose reranker answered (none after a failure, a timeout or a search
+  // with no text), and `cut`, the vertical search's cut-off when it was reranked.
+  function relativeOverlayData(v) {
+    var s = v.search;
+    var set = s.shownSet;
+    var named = [];
+    if (!set) return { named: named, cut: null };
+    var byIndex = new Map();
+    s.shown.forEach(function (q) {
+      q.view.hits.forEach(function (hit) {
+        var e = byIndex.get(hit.index);
+        if (!e) {
+          e = { index: hit.index, text: ET.search.pointText(set, hit.index), title: pointTitle(set, hit.index), ranks: [] };
+          byIndex.set(hit.index, e);
+          named.push(e);
+        }
+        if (q.reranker) e.ranks.push({ letter: q.letter, rank: hit.rank });
+      });
+    });
+    var rel = relativeShown(v, v.last) ? v.last.relative : null;
+    var cut = null;
+    var vertical = rel?.pinned.length
+      ? s.shown.find(function (q) {
+          return q.letter === rel.pinned[0].letter;
+        })
+      : null;
+    var dir = vertical?.reranker && vertical.sent > 0 ? searchDirection(vertical) : null;
+    if (dir) {
+      var D = set.dimension;
+      var low = Infinity;
+      vertical.ranking.pool.slice(0, vertical.sent).forEach(function (hit) {
+        low = Math.min(low, rowDot(set.vectors, hit.index * D, dir.u, D));
+      });
+      cut = { height: low, sent: vertical.sent };
+    }
+    return { named: named, cut: cut };
+  }
+
+  // A point's title: its label when that is more than its id (not empty, not blank, not the
+  // id itself), otherwise null. The relative overlay names a result by it (t19).
+  function pointTitle(set, i) {
+    var label = set.points?.[i]?.label;
+    return typeof label === "string" && label !== set.ids[i] && /\S/.test(label) ? label : null;
+  }
+
+  // What a search's marker is called in the relative view (t19): its text as the panel's
+  // summary names it; for a search from a point with a title, the title.
+  function searchName(v, q) {
+    if (q.kind === "point" && v.set) {
+      var i = v.set.ids.indexOf(q.point);
+      var title = i >= 0 ? pointTitle(v.set, i) : null;
+      if (title) return title;
+    }
+    return typeof q.text === "string" ? q.text : "";
+  }
+
+  // ----- drawing the relative view (docs/relative-interface.md, "Drawing (t10)") -----
+
+  // How far the view is into the relative look (flatness and pitch): Tumble's
+  // state.relative.mix, 0 in other modes and in the plain view.
+  function relativeMix(v, st) {
+    if (v.modeId !== "tumble") return 0;
+    var m = st?.relative?.mix;
+    return typeof m === "number" && m > 0 ? Math.min(1, m) : 0;
+  }
+
+  // A search's colour follows its letter (A to D), as the panel colours it.
+  function searchColour(v, q, j) {
+    var at = typeof q.letter === "string" ? "ABCD".indexOf(q.letter) : -1;
+    var list = v.searchColours || SEARCH_DEFAULTS_DARK;
+    return list[at >= 0 ? at : j % list.length];
+  }
+
+  // The overlay's named results and cut-off, worked out again only when the searches, the set
+  // or the vertical search change (not every frame).
+  function overlayDataFor(v, rel) {
+    var s = v.search;
+    var vertical =
+      (rel?.pinned?.length ? rel.pinned[0].letter : "") +
+      ":" +
+      s.shown
+        .map(function (q) {
+          return q.letter;
+        })
+        .join("");
+    var c = v.relOverlayCache;
+    if (c?.shown === s.shown && c.set === s.shownSet && c.vertical === vertical) return c.data;
+    var data = relativeOverlayData(v);
+    v.relOverlayCache = { shown: s.shown, set: s.shownSet, vertical: vertical, data: data };
+    return data;
+  }
+
+  // The searches the overlay is given: every search shown, in letter order. While the frame
+  // shown was built from other searches than those (relativeCurrent), the searches of the
+  // frame come first, so that the ruler is drawn along the direction the frame is really
+  // pinned to; a search of the frame that is no longer shown has no name. The searches shown
+  // now follow, each at its own place.
+  function overlaySearches(v, rel) {
+    var shown = v.search.shown;
+    var mine = shown.map(function (q, j) {
+      return { letter: q.letter, colour: searchColour(v, q, j), query: q.query, name: searchName(v, q) };
+    });
+    if (relativeCurrent(v, rel)) return mine;
+    var framed = rel.searches.map(function (e, j) {
+      var at = shown.findIndex(function (q) {
+        return sameValues(q.query, e.query);
+      });
+      return { letter: e.letter, colour: searchColour(v, e, j), query: e.query, name: at >= 0 ? mine[at].name : "" };
+    });
+    return framed.concat(
+      mine.filter(function (q) {
+        return !rel.searches.some(function (e) {
+          return sameValues(q.query, e.query);
+        });
+      })
+    );
+  }
+
+  // Once a frame, after the names and before the panel's rings: in Tumble, with the relative
+  // view shown or Show the origin on, the overlay's draw list from the mode's state and the
+  // draw state given to the renderer, its shapes painted on the overlay canvas and its texts
+  // placed as spans. Otherwise nothing of it is drawn and its label layer is emptied.
+  function drawRelativeOverlay(v, s, ds) {
+    var shown = relativeShown(v, s);
+    if (!v.set || v.modeId !== "tumble" || !(shown || v.rel.showOrigin)) {
+      clearRelativeOverlay(v);
+      return;
+    }
+    var od = shown ? overlayDataFor(v, s.relative) : { named: [], cut: null };
+    var list = ET.relativeOverlay.build({
+      width: v.W,
+      height: v.H,
+      dpr: v.dpr,
+      view: ds,
+      vectors: v.set.vectors,
+      dimension: v.set.dimension,
+      frame: s.frame,
+      centre: s.centre,
+      relative: shown ? s.relative : null,
+      searches: shown ? overlaySearches(v, s.relative) : [],
+      named: od.named,
+      cut: od.cut,
+      showOrigin: v.rel.showOrigin,
+      labels: v.showLabels,
+      ink: v.stageFg,
+      paper: v.stageBg,
+    });
+    // The panel already rings every query: with the panel mounted the overlay's own search
+    // rings are left out, so no search is ringed twice. Without the panel they are the only
+    // mark at a query and are kept. The letter and name beside each ring ("A · Rice") are the
+    // overlay's in both cases (texts of kind "search"): in the relative view the panel draws
+    // no letter, so each name is drawn once and is placed before any result label (t19).
+    if (typeof v.search.panel?.drawOverlay === "function") {
+      list.marks = list.marks.filter(function (mk) {
+        return mk.kind !== "search";
+      });
+    }
+    var ctx = overlayContext(v);
+    var painted = false;
+    if (ctx) {
+      try {
+        painted = ET.relativeOverlay.paint(ctx, list);
+      } catch (err) {
+        // A 2-D context that throws: the overlay's shapes are not drawn this frame.
+        painted = false;
+      }
+      if (painted) v.overlayDirty = true;
+    }
+    var placed = ET.relativeOverlay.placeLabels(v.relLabelLayer, list, v.doc);
+    v.relativeDrawn = relativeDrawnRecord(v, list, shown && s.relative.settled === true, painted, placed);
+  }
+
+  // The test hook's record of the overlay drawn this frame (handle._viewer.relativeDrawn), in
+  // device pixels of the overlay canvas (divide by dpr for CSS pixels). For each named result
+  // with a stem: its drawn position (x, y), the point on the ruler at its height (rulerX,
+  // rulerY, through the renderer's placer) and where its height falls on the straight line
+  // between the ruler's two ends (mappedX, mappedY).
+  function relativeDrawnRecord(v, list, settled, painted, placed) {
+    var ruler = list.ruler ? { ...list.ruler } : null;
+    var origin = list.marks.find(function (mk) {
+      return mk.kind === "origin";
+    });
+    return {
+      units: "device",
+      dpr: v.dpr,
+      width: v.W,
+      height: v.H,
+      settled: settled,
+      painted: painted,
+      labels: placed,
+      ruler: ruler,
+      origin: origin ? { x: origin.x, y: origin.y, far: origin.far, seen: origin.seen } : null,
+      results: list.results.map(function (r) {
+        var out = { index: r.index, height: r.height, x: r.x, y: r.y, rulerX: r.rulerX, rulerY: r.rulerY, mappedX: null, mappedY: null };
+        if (ruler && ruler.to !== ruler.from) {
+          var f = (r.height - ruler.from) / (ruler.to - ruler.from);
+          out.mappedX = ruler.x0 + f * (ruler.x1 - ruler.x0);
+          out.mappedY = ruler.y0 + f * (ruler.y1 - ruler.y0);
+        }
+        return out;
+      }),
+    };
+  }
+
+  // Nothing of the relative overlay is shown: its spans hidden, the hook's record dropped.
+  // The canvas part goes with the overlay's next clear (it was marked dirty when painted).
+  function clearRelativeOverlay(v) {
+    if (v.relativeDrawn === null) return;
+    if (v.relLabelLayer) ET.relativeOverlay.placeLabels(v.relLabelLayer, null, v.doc);
+    v.relativeDrawn = null;
   }
 
   // ----- Focus: a click on a point searches from it -----
@@ -14426,7 +17646,8 @@ ET.viewer = (function () {
       spin: 0,
       drawTime: 0,
       userZoom: 1,
-      drag: { active: false, yaw: 0, pitch: 0, x: 0, y: 0 },
+      pan: [0, 0], // the user pan, the renderer's draw key pan (see PAN_STEP)
+      drag: { active: false, yaw: 0, pitch: 0, x: 0, y: 0, pan: false },
       pinch: null,
       hover: null,
       needClear: true,
@@ -14446,6 +17667,9 @@ ET.viewer = (function () {
       sampleCoords: new Float64Array(3 * LABEL_SAMPLE),
       placed: { x: 0, y: 0 },
       overlayDirty: false,
+      // The relative overlay drawn this frame, for tests (relativeDrawnRecord); null when none.
+      relativeDrawn: null,
+      relOverlayCache: null,
       listeners: [],
       io: null,
       ro: null,
@@ -14484,6 +17708,12 @@ ET.viewer = (function () {
       lostTime: false,
       paintKey: null,
       themeKey: null,
+      // Tumble's relative settings, kept in every view and with no search.
+      rel: {
+        relative: opts.relative === true,
+        showOrigin: opts.showOrigin === true,
+      },
+      provRel: null, // the provenance's Relative row while the relative view is shown
       search: newSearchState(opts),
     };
     v.timing.mountAt = now(v);
@@ -14649,8 +17879,20 @@ ET.viewer = (function () {
         if (z !== undefined && !v.destroyed) setZoom(v, Number(z) || 1);
         return v.userZoom;
       },
+      // Zoom 1 and no pan (since t17 it resets the pan too, as the button does).
       resetZoom: function () {
-        if (!v.destroyed) setZoom(v, 1);
+        if (!v.destroyed) resetView(v);
+      },
+      // The user pan: read it, or set it with [x, y] (clamped; anything else is [0, 0]).
+      pan: function (p) {
+        if (p !== undefined && !v.destroyed) {
+          var ok = p !== null && typeof p === "object" && p.length === 2;
+          setPan(v, ok ? Number(p[0]) : Number.NaN, ok ? Number(p[1]) : Number.NaN);
+        }
+        return [v.pan[0], v.pan[1]];
+      },
+      resetView: function () {
+        if (!v.destroyed) resetView(v);
       },
       refreshTheme: function () {
         refreshTheme(v);
@@ -14676,6 +17918,13 @@ ET.viewer = (function () {
       },
       setSearchCallbacks: function (cbs) {
         return setSearchCallbacks(v, cbs);
+      },
+      // Relative (docs/relative-interface.md, "Viewer (t9, t10)").
+      setRelative: function (patch) {
+        return setRelative(v, patch);
+      },
+      relativeSettings: function () {
+        return { relative: v.rel.relative, showOrigin: v.rel.showOrigin };
       },
     };
     Object.defineProperty(h, "_viewer", { value: v, enumerable: false });
@@ -14707,6 +17956,21 @@ ET.viewer = (function () {
     safeCssValue: safeCssValue,
     makeProjector: makeProjector,
     SHADOW: SHADOW,
+    PAN_STEP: PAN_STEP,
+    RELATIVE_DEPTH_OF_FIELD: RELATIVE_DEPTH_OF_FIELD,
+    RELATIVE_BLOOM: RELATIVE_BLOOM,
+    RELATIVE_FADE_BASE: RELATIVE_FADE_BASE,
+    RELATIVE_FADE_SCALE: RELATIVE_FADE_SCALE,
+    // Whether point i of a mounted handle is hidden this frame (Focus's Only results).
+    hiddenPoint: function (handle, i) {
+      var v = handle?._viewer;
+      return !!v && !v.destroyed && hiddenPoint(v, i);
+    },
+    // The relative overlay's results and cut-off for a mounted handle (t10 draws them).
+    relativeOverlayData: function (handle) {
+      var v = handle?._viewer;
+      return v && !v.destroyed ? relativeOverlayData(v) : null;
+    },
   };
 })();
 

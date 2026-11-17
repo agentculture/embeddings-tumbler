@@ -33,6 +33,7 @@
     even: "the results, evenly",
     close: "by closeness: nearer is brighter",
     named: "named results only",
+    all: "everything, results highlighted",
   };
   var SP_PALETTE_DARK = { fg: "#e9eef6", muted: "#8a96ab", line: "#1b2436", accent: "#ffc56b", bg: "#04060b" };
   var SP_PALETTE_LIGHT = { fg: "#1b2130", muted: "#5b6578", line: "#d6dae2", accent: "#a35f00", bg: "#f6f4ee" };
@@ -175,6 +176,7 @@
   function spLitQualifier(setting) {
     if (setting === "close") return ", nearer ones brighter";
     if (setting === "named") return " (named results only)";
+    if (setting === "all") return " (every other point is shown too)";
     return "";
   }
 
@@ -231,6 +233,8 @@
     if (where) parts.push(where);
     if (spActive(search)) parts.push("Distances are " + search.measure + ", in every dimension of the data.");
     spSearchNotes(search, parts);
+    var relNote = spRelativeNoteText(search);
+    if (relNote) parts.push(relNote);
     if (search?.unmatched?.length) parts.push("Not found among the loaded points: " + search.unmatched.join(", ") + ".");
     if (ctx.extraLines > 0) {
       parts.push("Only the first four lines are searched; " + spPlural(ctx.extraLines, "line is", "lines are") + " left out.");
@@ -248,6 +252,89 @@
       parts.push("Focus is already fitted to the results, so Face the searches is off here.");
     }
     parts.push("Where labels on the stage would overlap, the later ones are left out; the lists carry every result.");
+  }
+
+  // ----- the relative view's words (docs/relative-interface.md, "Search panel (t8)") -----
+
+  function spRelative(search) {
+    var rel = search?.relative;
+    return rel && typeof rel === "object" ? rel : null;
+  }
+
+  // The relative view is on in a mode that offers it (the controls say so; absent means yes).
+  function spRelativeOn(search) {
+    var rel = spRelative(search);
+    return !!rel && rel.relative === true && rel.offered !== false;
+  }
+
+  function spLetterList(letters) {
+    var list = Array.isArray(letters) ? letters : [];
+    if (list.length < 2) return list.join("");
+    return list.slice(0, -1).join(", ") + " and " + list.at(-1);
+  }
+
+  function spDroppedText(d) {
+    var letter = d.letter;
+    if (d.reason === "zero-length") return "Search " + letter + " has no direction (its vector has length zero), so it pins no axis.";
+    if (d.reason === "same-direction") {
+      return "Search " + letter + " points the same way as " + spLetterList(d.against) + ", so it adds no axis. It is still lit.";
+    }
+    if (d.reason === "no-axis-left") return "Search " + letter + " is lit but has no axis: the first three searches pin all three.";
+    return "";
+  }
+
+  function spByLetter(a, b) {
+    if (a.letter < b.letter) return -1;
+    if (a.letter > b.letter) return 1;
+    return 0;
+  }
+
+  function spRelativeNoteText(search) {
+    if (!spRelativeOn(search)) return "";
+    var rel = spRelative(search);
+    var out = [];
+    var dropped = Array.isArray(rel.dropped) ? rel.dropped.slice() : [];
+    dropped.sort(spByLetter);
+    dropped.forEach(function (d) {
+      var text = spDroppedText(d);
+      if (text) out.push(text);
+    });
+    if (rel.fixed > 0) {
+      out.push(
+        "This set is too small for the free axes to follow its spread: " +
+          rel.fixed +
+          " of " +
+          rel.free +
+          " are fixed directions, not fitted ones."
+      );
+    }
+    return out.join(" ");
+  }
+
+  // What a result row adds in the relative view: the height along its own search and/or the
+  // plain cosine. `rel` is { measure, height, cosine }, or null.
+  function spRelMeta(rel) {
+    if (!rel || !Number.isFinite(rel.cosine)) return null;
+    var c = rel.cosine.toFixed(3);
+    if (rel.measure === "cosine") return "cosine " + c;
+    return "length along the search " + (Number.isFinite(rel.height) ? rel.height.toFixed(3) : "-") + " · cosine " + c;
+  }
+
+  // One result's relative numbers, from search.relative.searches[j].results[r] (matched by
+  // point index, else by place).
+  function spRelFor(search, q, r, at) {
+    var rel = spRelative(search);
+    if (!rel?.active || !Array.isArray(rel.searches)) return null;
+    var mine = rel.searches.find(function (s) {
+      return s && s.letter === q.letter;
+    });
+    if (!mine || !Array.isArray(mine.results)) return null;
+    var hit = mine.results.find(function (x) {
+      return x && x.index === r.index;
+    });
+    if (!hit) hit = mine.results[at];
+    if (!hit) return null;
+    return { measure: rel.measure, height: hit.height, cosine: hit.cosine };
   }
 
   function spSearchNotes(search, parts) {
@@ -328,7 +415,7 @@
   }
 
   // The parts of a result's meta line, as the picture and the references show them.
-  function spResultMeta(q, r, distances) {
+  function spResultMeta(q, r, distances, rel) {
     var out = [];
     if (distances) {
       out.push(
@@ -338,6 +425,8 @@
     }
     if (q.reranker) out.push(spMoveText(r.embeddingRank - r.rank, r.embeddingRank));
     if (q.pointOfView && r.plainRank !== r.embeddingRank) out.push("plain distance had it at " + r.plainRank);
+    var relText = spRelMeta(rel);
+    if (relText) out.push(relText);
     return out;
   }
 
@@ -447,6 +536,14 @@
   // A theme colour ([r, g, b]) as CSS, or the default when the theme does not give one.
   function spPick(c, d) {
     return Array.isArray(c) ? spHex(c) : d;
+  }
+
+  // A search's colour slot follows its letter (A is 0, B is 1, ...), not its place in the
+  // list, so a search keeps its colour when an earlier one is removed. A letter outside A to D
+  // falls back to the place.
+  function spSlot(q, j) {
+    var at = q && typeof q.letter === "string" ? "ABCD".indexOf(q.letter) : -1;
+    return at >= 0 ? at : j;
   }
 
   // A search's colour for DOM text: the host's custom property, else the default for the stage.
@@ -639,14 +736,15 @@
     return label;
   }
 
-  function spCheckbox(p, cls, words, key) {
+  function spCheckbox(p, cls, words, key, onChange) {
     var label = spLabelled(p, cls, "");
     var box = spEl(p, "input", "", { width: "15px", height: "15px", margin: "0" });
     box.type = "checkbox";
     label.appendChild(box);
     label.appendChild(p.doc.createTextNode(" " + words));
     spListen(p, box, "change", function () {
-      spSetting(p, key, !!box.checked);
+      if (onChange) onChange(!!box.checked);
+      else spSetting(p, key, !!box.checked);
     });
     return { label: label, input: box };
   }
@@ -695,9 +793,34 @@
     }
   }
 
+  // A native checkbox that tells the handle about one relative setting.
+  function spRelativeBox(p, cls, words, key, title) {
+    var box = spCheckbox(p, cls, words, key, function (on) {
+      var patch = {};
+      patch[key] = on;
+      if (typeof p.handle.setRelative === "function") p.handle.setRelative(patch);
+    });
+    box.label.title = title;
+    return box;
+  }
+
   function spBuildControls(p) {
     var row = spEl(p, "div", "tumbler-search-controls", { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 22px",
       fontSize: "12px" });
+    p.relative = spRelativeBox(
+      p,
+      "tumbler-search-relative",
+      "Relative",
+      "relative",
+      "One axis is the search itself; height is measured along it. The other axes tumble through what is left."
+    );
+    p.origin = spRelativeBox(
+      p,
+      "tumbler-search-origin",
+      "Show the origin",
+      "showOrigin",
+      "Zoom out to the all-zero vector, or, in the plain view, mark where it falls."
+    );
     p.face = spText(p, "button", "tumbler-search-face", "Face the searches");
     p.face.type = "button";
     spListen(p, p.face, "click", function () {
@@ -707,6 +830,7 @@
       ["even", SP_LIT_TEXT.even],
       ["close", SP_LIT_TEXT.close],
       ["named", SP_LIT_TEXT.named],
+      ["all", SP_LIT_TEXT.all],
     ]);
     p.lit = lit.input;
     spListen(p, p.lit, "change", function () {
@@ -734,7 +858,7 @@
       spClear(p);
     });
     p.litLabel = lit.label;
-    [p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
+    [p.relative.label, p.origin.label, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
       row.appendChild(c);
     });
     return row;
@@ -983,6 +1107,14 @@
     var st = search?.settings || {};
     var active = spActive(search);
     p.face.disabled = !active || !search.faceable;
+    // Relative is Tumble's: its two controls are offered there only, and while it is on the
+    // view is fitted by the search itself, so Face the searches is not in the panel.
+    var rel = spRelative(search);
+    spShow(p.relative.label, p.tumble, "inline-flex");
+    spShow(p.origin.label, p.tumble, "inline-flex");
+    p.relative.input.checked = !!rel && rel.relative === true;
+    p.origin.input.checked = !!rel && rel.showOrigin === true;
+    spShow(p.face, !(p.tumble && rel?.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
     spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
     p.distances.input.checked = !!st.distances;
@@ -1059,6 +1191,7 @@
       search.searches.map(function (q) {
         return [q.letter, q.text, q.reranker, q.pointOfView, q.insideCount, q.results];
       }),
+      spRelative(search)?.active ? [search.relative.measure, search.relative.searches] : null,
     ]);
   }
 
@@ -1080,10 +1213,10 @@
         fontSize: "12px",
         letterSpacing: "0.04em",
         padding: "4px 0",
-        color: spSearchVar(j, p.light),
+        color: spSearchVar(spSlot(q, j), p.light),
       });
       box.appendChild(summary);
-      box.appendChild(spResultList(p, q, j, distances, "grid"));
+      box.appendChild(spResultList(p, q, j, distances, "grid", search));
       p.results.appendChild(box);
     });
   }
@@ -1097,15 +1230,16 @@
   }
 
   // One search's ordered list: rank, text, meta (and the gap bar with Distance difference on).
-  function spResultList(p, q, j, distances, layout) {
+  function spResultList(p, q, j, distances, layout, search) {
     var pal = p.pal || SP_PALETTE_DARK;
     var ol = spEl(p, "ol", "tumbler-search-hits", spListStyle(layout));
     var widest = 1e-6;
     q.results.forEach(function (r) {
       widest = Math.max(widest, r.gap);
     });
-    q.results.forEach(function (r) {
-      ol.appendChild(spResultItem(p, q, j, r, { distances: distances, widest: widest, pal: pal, layout: layout }));
+    q.results.forEach(function (r, at) {
+      var rel = spRelFor(search, q, r, at);
+      ol.appendChild(spResultItem(p, q, j, r, { distances: distances, widest: widest, pal: pal, layout: layout, rel: rel }));
     });
     return ol;
   }
@@ -1140,7 +1274,7 @@
     li.dataset.id = r.id;
     var rank = spText(p, "span", "tumbler-search-rank", (q.letter || "") + r.rank, {
       fontSize: "12px",
-      color: spSearchVar(j, p.light),
+      color: spSearchVar(spSlot(q, j), p.light),
       fontVariantNumeric: "tabular-nums",
     });
     li.appendChild(rank);
@@ -1153,7 +1287,7 @@
         overflowWrap: "anywhere",
       })
     );
-    var meta = spResultMeta(q, r, o.distances);
+    var meta = spResultMeta(q, r, o.distances, o.rel);
     if (meta.length) {
       li.appendChild(
         spText(p, "span", "tumbler-search-meta", meta.join(" · "), {
@@ -1164,7 +1298,7 @@
         })
       );
     }
-    if (o.distances) li.appendChild(spGapBar(p, r.gap / o.widest, j, o.pal));
+    if (o.distances) li.appendChild(spGapBar(p, r.gap / o.widest, spSlot(q, j), o.pal));
     return li;
   }
 
@@ -1317,10 +1451,10 @@
           padding: "10px 16px 4px",
           fontSize: "12px",
           letterSpacing: "0.04em",
-          color: spSearchVar(j, p.light),
+          color: spSearchVar(spSlot(q, j), p.light),
         })
       );
-      side.appendChild(spResultList(p, q, j, distances, "column"));
+      side.appendChild(spResultList(p, q, j, distances, "column", search));
     });
   }
 
@@ -1426,11 +1560,13 @@
   // queued in `queue` so they can be placed letters first, then nearest results first.
   function spDrawSearch(p, ctx, j, qp, q, view) {
     var dpr = view.dpr;
-    var colour = p.colours[j];
+    var colour = p.colours[spSlot(q, j)];
     var n = q.results.length;
     ctx.lineWidth = dpr;
     ctx.strokeStyle = colour;
-    q.results.forEach(function (r, i) {
+    // The relative view draws its own stems, result labels and the searches' names: no links
+    // and no labels here.
+    if (!view.relative) q.results.forEach(function (r, i) {
       if (view.hidden(r.index)) return;
       var rp = view.project(spPointVector(view.set, r.index));
       if (!spFinite(rp)) return;
@@ -1440,7 +1576,7 @@
       ctx.moveTo(qp.x, qp.y);
       ctx.lineTo(rp.x, rp.y);
       ctx.stroke();
-      view.queue.push({ q: q, j: j, r: r, rp: rp, qp: qp });
+      view.queue.push({ q: q, j: spSlot(q, j), r: r, rp: rp, qp: qp });
     });
     ctx.globalAlpha = view.filter;
     ctx.lineWidth = 1.5 * dpr;
@@ -1545,6 +1681,7 @@
       filter: Math.min(1, filter),
       labels: f.labels !== false,
       focus: p.focus,
+      relative: f.relative === true,
       distances: !!p.search.settings?.distances,
       hidden: typeof f.hidden === "function" ? f.hidden : spNever,
       queue: [],
@@ -1555,7 +1692,13 @@
     var f = frame || {};
     var set = spData(p);
     spDataChanged(p, set);
-    if (f.mode) spSetFocus(p, f.mode === "focus");
+    if (f.mode) {
+      spSetFocus(p, f.mode === "focus");
+      if (p.tumble !== (f.mode === "tumble")) {
+        p.tumble = f.mode === "tumble";
+        spRenderControls(p, p.search);
+      }
+    }
     spRenderProvenance(p, p.search);
     var search = p.search;
     var filter = Number(f.filter);
@@ -1575,7 +1718,8 @@
       var qp = project(vec);
       if (!spFinite(qp)) return;
       spDrawSearch(p, ctx, j, qp, q, view);
-      letters.push({ qp: qp, j: j, text: view.focus ? q.letter + " query" : q.letter });
+      // In the relative view the overlay puts the letter and name beside the ring (t19).
+      if (!view.relative) letters.push({ qp: qp, j: spSlot(q, j), text: view.focus ? q.letter + " query" : q.letter });
     });
     ctx.globalAlpha = 1;
     ctx.restore?.();
@@ -1594,6 +1738,7 @@
       spApplyTheme(p);
     }
     var mode = spMode(p);
+    p.tumble = mode === "tumble";
     if (mode) spSetFocus(p, mode === "focus");
     spSyncInput(p, p.search);
     spRender(p);
@@ -1641,6 +1786,7 @@
       search: null,
       open: false,
       focus: false,
+      tumble: false,
       openLists: Object.create(null),
       timer: 0,
       lastSent: "",
@@ -1698,6 +1844,7 @@
     summaryText: summaryText,
     usedText: usedText,
     suggest: spSuggest,
+    relativeNoteText: spRelativeNoteText,
     noteText: function (search, ctx) {
       return spNoteParts(search, ctx || {}).join(" ");
     },

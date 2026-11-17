@@ -554,3 +554,307 @@ test("append ending exactly at a row end does not upload the row after it", () =
   assert.strictEqual(buf.byteLength, 3 * 16);
   checkDrawCounts(r, state, 12, 3);
 });
+
+// ---------- the perspective draw key (relative search, task t3) ----------
+// docs/relative-interface.md, "Renderer (t3): the perspective key".
+
+const crypto = require("node:crypto");
+
+const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
+
+// Every shader source for one layout, joined in key order, hashed.
+function sourcesHash(r, d, n, maxTex, opts) {
+  const src = r.shaderSources(r.layout(d, n, maxTex), opts);
+  return sha(
+    Object.keys(src)
+      .sort()
+      .map((k) => k + "\n" + src[k])
+      .join("\n----\n")
+  );
+}
+
+// place() and placer() over a 13^3 grid of points under four states, every number hashed
+// as float64 bytes. `extra` is merged into every state.
+function placeHash(r, extra) {
+  const states = [
+    {},
+    { zoom: 2.588, pitch: 0 },
+    { zoom: 1.3, yaw: 0.4, pitch: 0.16, radius: 0.5, focus: 0.2 },
+    { zoom: 3, yaw: -1.1, pitch: 0.9 },
+  ];
+  const parts = [];
+  const o = {};
+  for (const base of states) {
+    const st = { ...base, ...extra };
+    const pl = r.placer(st, 640, 480);
+    for (let i = -6; i <= 6; i++) {
+      for (let j = -6; j <= 6; j++) {
+        for (let k = -6; k <= 6; k++) {
+          const p = [i * 0.17, j * 0.13, k * 0.21];
+          const q = r.place(p, st, 640, 480);
+          pl(p[0], p[1], p[2], o);
+          parts.push(q.x, q.y, q.scale, q.depth, o.x, o.y);
+        }
+      }
+    }
+  }
+  return sha(Buffer.from(new Float64Array(parts).buffer));
+}
+
+// Hashes computed from js/src/30-renderer.js as it was before task t3 (commit 1215ee3), by the
+// same two functions above: the shader sources for four layouts and the CPU place/placer numbers.
+const BEFORE_T3 = {
+  src3: "025ca05226d9cd32becc787985d173290fb14c928acca7bf16857ee73cb6fe80",
+  src768: "6eb066a40ecace3bf0bfc31cd3e446cd451111a7364c69fb1119f598c80dea2d",
+  src1024: "21fe93690393775334f6ec3b584adc18d8bd725db4c3e34b192493c907ac1513",
+  src2560: "dd2acb9a7bca80ba35fceed6b8f34bc41954841d62397cebee1a47741afda68f",
+  place: "1204304c4b3072ec159b9f237f9a8b3c128ef97ee9d0eb6cb44bd8b9fa898348",
+};
+
+const LAYOUTS = [
+  ["src3", 3, 10, 16384],
+  ["src768", 768, 999, 16384],
+  ["src1024", 1024, 5000, 8192],
+  ["src2560", 2560, 200, 4096],
+];
+
+test("perspective: the draw key defaults to 3 and the relative value is 60", () => {
+  const r = R();
+  assert.strictEqual(r.DEFAULTS.perspective, 3);
+  assert.strictEqual(r.RELATIVE_PERSPECTIVE, 60);
+});
+
+test("perspective criterion 1: the default shader sources are the strings from before t3", () => {
+  const r = R();
+  for (const [key, d, n, m] of LAYOUTS) {
+    assert.strictEqual(sourcesHash(r, d, n, m), BEFORE_T3[key], key + " (no options)");
+    assert.strictEqual(sourcesHash(r, d, n, m, undefined), BEFORE_T3[key], key + " (undefined)");
+    assert.strictEqual(sourcesHash(r, d, n, m, {}), BEFORE_T3[key], key + " ({})");
+  }
+  // the text the interface page names is still there, word for word
+  const src = r.shaderSources(r.layout(8, 10, 4096));
+  for (const k of ["pointVertex", "pointVertexLit", "lineVertex", "lineVertexLit"]) {
+    assert.ok(src[k].includes("  float s = 3.0 / max(0.6, 3.0 + z2);"), k);
+    assert.ok(!src[k].includes("uPersp"), k);
+  }
+});
+
+test("perspective criterion 1: place and placer with the key absent or 3 give the numbers from before t3", () => {
+  const r = R();
+  assert.strictEqual(placeHash(r, {}), BEFORE_T3.place, "absent");
+  assert.strictEqual(placeHash(r, { perspective: 3 }), BEFORE_T3.place, "3");
+  assert.strictEqual(placeHash(r, { perspective: undefined }), BEFORE_T3.place, "undefined");
+  assert.notStrictEqual(placeHash(r, { perspective: 60 }), BEFORE_T3.place, "60 changes the numbers");
+});
+
+test("perspective: the variant shaders read uPersp in place() and differ from the default in that only", () => {
+  const r = R();
+  const lay = r.layout(8, 10, 4096);
+  const base = r.shaderSources(lay);
+  const flat = r.shaderSources(lay, { perspective: true });
+  for (const k of ["pointVertex", "pointVertexLit", "lineVertex", "lineVertexLit"]) {
+    assert.ok(flat[k].includes("  float s = uPersp / max(0.6, uPersp + z2);"), k);
+    const back = flat[k]
+      .replace("  float s = uPersp / max(0.6, uPersp + z2);", "  float s = 3.0 / max(0.6, 3.0 + z2);")
+      .replace(" uniform float uFocus; uniform float uPersp;", " uniform float uFocus;");
+    assert.strictEqual(back, base[k], k);
+  }
+  for (const k of ["pointFragment", "lineFragment", "quadVertex", "fadeFragment", "toneFragment"]) {
+    assert.strictEqual(flat[k], base[k], k);
+  }
+});
+
+test("perspective: place and placer agree at any value and follow s = P / max(0.6, P + z2)", () => {
+  const r = R();
+  const o = {};
+  for (const P of [3, 10, 33.3, 60]) {
+    const st = { zoom: 1.7, yaw: 0.3, pitch: 0.2, perspective: P };
+    const pl = r.placer(st, 800, 600);
+    for (const p of [
+      [0.2, -0.4, 0.9],
+      [-1, 1, -1],
+      [0.05, 0.6, 2.5],
+    ]) {
+      const q = r.place(p, st, 800, 600);
+      pl(p[0], p[1], p[2], o);
+      assert.strictEqual(o.x, q.x);
+      assert.strictEqual(o.y, q.y);
+    }
+    const flatZ = r.place([0, 0, 0.5], { perspective: P, zoom: 1 }, 100, 100);
+    assert.ok(Math.abs(flatZ.scale - P / Math.max(0.6, P + 0.5)) < 1e-15, "scale at " + P);
+  }
+  // a value that is not a positive finite number reads as the default
+  for (const bad of [0, -5, Number.NaN, Infinity, "60", null]) {
+    assert.strictEqual(placeHash(r, { perspective: bad }), BEFORE_T3.place, String(bad));
+  }
+});
+
+// The point program used at the last POINTS draw, and the vertex shader source attached to it.
+function lastPointProgram(state) {
+  let used = null;
+  let at = null;
+  for (const c of state.calls) {
+    if (c[0] === "useProgram") used = c[1];
+    if (c[0] === "drawArrays" && c[1] === constantFor("POINTS")) at = used;
+  }
+  const vs = state.calls.find((c) => c[0] === "attachShader" && c[1] === at && c[2].type === constantFor("VERTEX_SHADER"));
+  return { program: at, source: vs ? vs[2].source : null };
+}
+
+function uniform1f(state, from, name) {
+  return state.calls.slice(from).filter((c) => c[0] === "uniform1f" && c[1]?.name === name).map((c) => c[2]);
+}
+
+// Calls since `from` with GL objects reduced to their kind, so two renderers compare.
+function callShapes(state, from) {
+  return state.calls.slice(from).map((c) =>
+    c.map((a) => {
+      if (a && typeof a === "object" && "kind" in a && "id" in a) return "<" + a.kind + ">";
+      if (a && typeof a === "object" && "program" in a && "name" in a) return "<uniform " + a.name + ">";
+      if (ArrayBuffer.isView(a)) return "<" + a.constructor.name + " " + a.length + ">";
+      return a;
+    })
+  );
+}
+
+function wiredRig() {
+  const m = created(R());
+  m.r.setData(data(6, 8));
+  m.r.setWires(new Uint32Array([0, 1, 2, 3, 4, 5]));
+  return m;
+}
+
+test("perspective criterion 1: a draw at the default makes exactly the calls of a draw without the key", () => {
+  const a = wiredRig();
+  const b = wiredRig();
+  const shadersBefore = b.state.calls.filter((c) => c[0] === "shaderSource").length;
+  const base = { frame: frameFor(8), time: 0.4, wires: 1 };
+  for (const extra of [{}, { perspective: 3 }, { perspective: undefined }]) {
+    const fa = a.state.calls.length;
+    const fb = b.state.calls.length;
+    a.r.draw(base);
+    b.r.draw({ ...base, ...extra });
+    const one = callShapes(a.state, fa);
+    assert.ok(one.length > 10);
+    assert.deepStrictEqual(callShapes(b.state, fb), one, JSON.stringify(extra));
+  }
+  assert.strictEqual(b.state.calls.filter((c) => c[0] === "shaderSource").length, shadersBefore, "nothing compiled");
+  assert.strictEqual(uniform1f(b.state, 0, "uPersp").length, 0);
+});
+
+test("perspective: at another value the points and wires are drawn by variant programs given uPersp", () => {
+  const { r, state } = wiredRig();
+  const from = state.calls.length;
+  assert.strictEqual(r.draw({ frame: frameFor(8), wires: 1, perspective: 60 }), true);
+  assert.deepStrictEqual(uniform1f(state, from, "uPersp"), [60, 60], "wires then points");
+  assert.match(lastPointProgram(state).source, /float s = uPersp \/ max\(0\.6, uPersp \+ z2\);/);
+  // the variant is compiled once and kept; the next value is just a uniform
+  const shaders = state.calls.filter((c) => c[0] === "shaderSource").length;
+  const from2 = state.calls.length;
+  r.draw({ frame: frameFor(8), wires: 1, perspective: 31.5 });
+  assert.deepStrictEqual(uniform1f(state, from2, "uPersp"), [31.5, 31.5]);
+  assert.strictEqual(state.calls.filter((c) => c[0] === "shaderSource").length, shaders);
+  // back at 3 the original program draws again, with no uPersp
+  const from3 = state.calls.length;
+  r.draw({ frame: frameFor(8), wires: 1 });
+  assert.strictEqual(uniform1f(state, from3, "uPersp").length, 0);
+  assert.match(lastPointProgram(state).source, /float s = 3\.0 \/ max\(0\.6, 3\.0 \+ z2\);/);
+});
+
+test("perspective: with lit values applying, the lit variant programs draw and get uPersp and uFilter", () => {
+  const { r, state } = wiredRig();
+  r.setLit(new Float32Array([1, 0, 0.5, 0, 0, 1]));
+  const from = state.calls.length;
+  r.draw({ frame: frameFor(8), wires: 1, perspective: 60, filter: 1 });
+  assert.deepStrictEqual(uniform1f(state, from, "uPersp"), [60, 60]);
+  assert.deepStrictEqual(uniform1f(state, from, "uFilter"), [1, 1]);
+  const src = lastPointProgram(state).source;
+  assert.match(src, /in float aLit;/);
+  assert.match(src, /uPersp \/ max\(0\.6, uPersp \+ z2\)/);
+});
+
+test("perspective: variants follow a layout change, are freed by dispose, and a compile failure is reported", () => {
+  const { r, state } = wiredRig();
+  r.draw({ frame: frameFor(8), perspective: 60 });
+  r.setData(data(4, 40)); // a different layout: the programs are rebuilt
+  r.draw({ frame: frameFor(40), perspective: 60 });
+  assert.match(lastPointProgram(state).source, /const int TEXELS = 10;/);
+  assert.match(lastPointProgram(state).source, /uPersp/);
+  r.dispose();
+  for (const o of state.live) assert.notStrictEqual(o.kind, "program", "every program freed");
+  const m = wiredRig();
+  m.state.opts.failCompile = true;
+  assert.strictEqual(m.r.draw({ frame: frameFor(8), perspective: 60 }), false);
+  assert.strictEqual(m.r.status().ok, false);
+  assert.match(m.r.status().error, /shader/);
+});
+
+// Criterion 2 (obligation o6): at RELATIVE_PERSPECTIVE, untilted, two points of equal frame
+// height at the two depth ends of the cloud are placed within 2 percent of the ruler's visible
+// length of each other by the CPU place().
+//
+// The depth range, derived from the framing in docs/relative-interface.md ("Centre and zoom"):
+// the zoom is min(RELATIVE_FILL / (top - bottom), RELATIVE_ZOOM_CAP). On the Wikipedia set
+// (999 x 768, embeddinggemma), a search from each of 12 points spread over the set gives
+// low 0.476 .. 0.561 and high 1 (the search's own length), so top - bottom is at most 0.644 and
+// the zoom is always the cap, 0.5 / (0.42 * 0.46) = 2.588: the largest zoom the framing allows.
+// The depth row toured the 8 principal directions of the remainder when this was measured
+// (since then: the set's 8 strongest directions with the search removed, nearly the same span) and
+// the centre lies along the search, so a point's depth is x . r for a unit r in that span. Over
+// 4000 directions per search the widest depth range after zoom was 1.661 (worst error 1.38
+// percent); along the first principal direction alone it was about 1.45. The test uses depth
+// ends of +-0.85 after zoom (width 1.70, above every measured one) and the interface page's
+// rough +-1.0, and puts the two points at the top of the window, where the error is largest.
+function heightError(r, P, zNear, zFar) {
+  const W = 1280;
+  const H = 720;
+  const zoom = 0.5 / (0.42 * 0.46);
+  const top = 1.04;
+  const bottom = 0.44;
+  const c = (top + bottom) / 2; // the centre's height along the search
+  const st = { zoom, yaw: 0, pitch: 0, radius: 0.46, perspective: P };
+  const ruler = Math.abs(r.place([0, top - c, 0], st, W, H).y - r.place([0, bottom - c, 0], st, W, H).y);
+  const near = r.place([0, top - c, zNear / zoom], st, W, H);
+  const far = r.place([0, top - c, zFar / zoom], st, W, H);
+  return Math.abs(near.y - far.y) / ruler;
+}
+
+test("perspective criterion 2: at 60, equal heights at the cloud's two depth ends are within 2 percent of the ruler", () => {
+  const r = R();
+  const P = r.RELATIVE_PERSPECTIVE;
+  const measured = heightError(r, P, -0.85, 0.85);
+  const rough = heightError(r, P, -1, 1);
+  assert.ok(measured < 0.02, "depth +-0.85: " + (100 * measured).toFixed(3) + " percent");
+  assert.ok(rough < 0.02, "depth +-1.0: " + (100 * rough).toFixed(3) + " percent");
+  assert.ok(Math.abs(measured - 0.01417) < 0.0002, "about 1.42 percent, got " + (100 * measured).toFixed(3));
+  assert.ok(Math.abs(rough - 0.01667) < 0.0002, "about 1.67 percent, got " + (100 * rough).toFixed(3));
+  // the same test sees the default perspective's tilt: far outside the limit
+  assert.ok(heightError(r, 3, -0.85, 0.85) > 0.2);
+});
+
+// Criterion 3: the faint similarity gradient reaches the renderer inside the lit values. With
+// filter 0 (no search active, or relative off) or with no lit values set, a lit array holding
+// gradient values draws exactly as a renderer that never had lit values: the same calls, the same
+// program, the same uniforms, so the same pixels.
+test("perspective criterion 3: gradient values in the lit array change nothing with filter 0 or none set", () => {
+  const plainRig = wiredRig();
+  const gradient = wiredRig();
+  const cleared = wiredRig();
+  // results at 1, every other point a faint RELATIVE_GRADIENT * g^2 style value below 0.3
+  gradient.r.setLit(new Float32Array([1, 0.018, 0.21, 0.004, 0.27, 0.1]));
+  cleared.r.setLit(new Float32Array([1, 0.018, 0.21, 0.004, 0.27, 0.1]));
+  cleared.r.setLit(null);
+  const base = { frame: frameFor(8), time: 0.7, wires: 1 };
+  for (const st of [base, { ...base, filter: 0 }, { ...base, filter: 0, perspective: 3 }]) {
+    const f0 = plainRig.state.calls.length;
+    const f1 = gradient.state.calls.length;
+    const f2 = cleared.state.calls.length;
+    plainRig.r.draw(st);
+    gradient.r.draw(st);
+    cleared.r.draw(st);
+    const one = callShapes(plainRig.state, f0);
+    assert.deepStrictEqual(callShapes(gradient.state, f1), one, "gradient set, " + JSON.stringify(st.filter));
+    assert.deepStrictEqual(callShapes(cleared.state, f2), one, "gradient cleared");
+  }
+  assert.strictEqual(uniform1f(gradient.state, 0, "uFilter").length, 0);
+});

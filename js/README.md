@@ -76,3 +76,14 @@ So every call runs the modules afresh and tests do not leak state through
 them, but they run in node's ordinary global context, like the assembled file.
 (The static ban applies to the assembled file, not to this helper.) A test that
 exercises the whole viewer should use `loadAssembled()`.
+
+Coverage of text loaded this way: node's coverage report leaves out a file that is
+gone when the report is written, so the temporary files are counted nowhere. The
+coverage step of CI sets `ET_COVERAGE_DIR=js-coverage-generated`; the helper then
+writes each generated file there (named by a hash of its content and the process
+id), keeps it, and writes a map beside it (`<name>.sources.json`) of which lines
+are which lines of which source file. `scripts/js_coverage.py` adds those hits to
+the `js/src` modules, the assembled file and the shells, and drops the generated
+files' own records. Without the variable nothing differs from the paragraph above.
+A helper that runs a source file's text through `runAsFunction` passes
+`[wholeFile(file, text)]` as the fifth argument so the file is counted.

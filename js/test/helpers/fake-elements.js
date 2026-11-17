@@ -17,7 +17,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { makeFakeDom, FakeElement } = require("./fake-dom.js");
-const { loadAssembled, runAsFunction, ROOT } = require("./load.js");
+const { loadAssembled, runAsFunction, wholeFile, ROOT } = require("./load.js");
 
 const SHELL = path.join(ROOT, "js", "shells", "web-component.js");
 const FIXTURES = path.join(ROOT, "tests", "fixtures", "contract");
@@ -135,7 +135,8 @@ function makeShellEnv(options) {
   // The shell reads its environment only through `globalThis` (its `root`): it runs with
   // `globalThis` bound to the stand-in object above.
   function load() {
-    runAsFunction(fs.readFileSync(opts.file, "utf8"), ["globalThis"], [root], "web-component");
+    const text = fs.readFileSync(opts.file, "utf8");
+    runAsFunction(text, ["globalThis"], [root], "web-component", [wholeFile(opts.file, text)]);
   }
   load();
 

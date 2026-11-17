@@ -223,6 +223,8 @@ def test_the_open_panel_has_the_controls_the_guide_names(walk):
     assert opened["bodyShown"] is True
     assert opened["label"] == "Search: one search per line, up to four"
     assert opened["controls"] == [
+        "Relative",
+        "Show the origin",
         "Face the searches",
         "Lit",
         "Distance difference",
@@ -234,6 +236,7 @@ def test_the_open_panel_has_the_controls_the_guide_names(walk):
         "the results, evenly",
         "by closeness: nearer is brighter",
         "named results only",
+        "everything, results highlighted",  # the fourth option (deviation d8)
     ]
     assert opened["k"] == ["3", "100", "8"]
 

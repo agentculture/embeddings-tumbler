@@ -1,0 +1,138 @@
+{
+  "file": "demo-wikipedia.json",
+  "model": "google/embeddinggemma-2",
+  "dimension": 768,
+  "count": 999,
+  "length_min": 0.9999999718774255,
+  "length_max": 1.0000000165757892,
+  "unit_length": true,
+  "mean_length": 0.7934407703216875,
+  "plain_share": 0.18149765643356536,
+  "subspace": 8,
+  "seed": 7,
+  "searches": [
+    {
+      "search": "Rice",
+      "nearest": [
+        [
+          "Cereal",
+          0.8393
+        ],
+        [
+          "Wheat",
+          0.8163
+        ],
+        [
+          "Maize",
+          0.7568
+        ],
+        [
+          "Bean",
+          0.7542
+        ],
+        [
+          "Bread",
+          0.7376
+        ],
+        [
+          "Vegetable",
+          0.7287
+        ],
+        [
+          "Cattle",
+          0.7265
+        ],
+        [
+          "Potato",
+          0.7186
+        ]
+      ],
+      "cosine_max": 0.8393405605514351,
+      "cosine_median": 0.6331845196551034,
+      "cosine_min": 0.5298637883218943,
+      "remainder_share": 0.1812104444703144
+    },
+    {
+      "search": "Jazz",
+      "nearest": [
+        [
+          "Rock music",
+          0.7777
+        ],
+        [
+          "Dance",
+          0.7621
+        ],
+        [
+          "History of music",
+          0.7531
+        ],
+        [
+          "Pop music",
+          0.7392
+        ],
+        [
+          "Singing",
+          0.7206
+        ],
+        [
+          "Broadcasting",
+          0.72
+        ],
+        [
+          "Rhythm",
+          0.7168
+        ],
+        [
+          "Tradition",
+          0.7167
+        ]
+      ],
+      "cosine_max": 0.7777007310747946,
+      "cosine_median": 0.6272200802977324,
+      "cosine_min": 0.5455801384356284,
+      "remainder_share": 0.18130085145280478
+    },
+    {
+      "search": "Volcano",
+      "nearest": [
+        [
+          "Wind",
+          0.7881
+        ],
+        [
+          "Fossil fuel",
+          0.787
+        ],
+        [
+          "Plate tectonics",
+          0.7807
+        ],
+        [
+          "Internal structure of Earth",
+          0.7717
+        ],
+        [
+          "History of Earth",
+          0.7688
+        ],
+        [
+          "Mountain",
+          0.7631
+        ],
+        [
+          "Earthquake",
+          0.7598
+        ],
+        [
+          "Comet",
+          0.759
+        ]
+      ],
+      "cosine_max": 0.7880635858849869,
+      "cosine_median": 0.6563329011923623,
+      "cosine_min": 0.5500684749941872,
+      "remainder_share": 0.18062990366153928
+    }
+  ]
+}

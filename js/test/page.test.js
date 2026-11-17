@@ -70,7 +70,7 @@ function runPage(search, fetchImpl, extra = {}) {
   const listeners = {};
   const world = {
     els, body, mounted: 0, generated: 0, fetches: [], listeners, updates: [],
-    routeFetches: [], timers: [], mountOptions: [], cleared: [], fills: {},
+    routeFetches: [], replaced: [], timers: [], mountOptions: [], cleared: [], fills: {},
   };
   const handle = {
     update(data) {
@@ -109,7 +109,18 @@ function runPage(search, fetchImpl, extra = {}) {
       pathname: "/index.html",
       protocol: extra.protocol || "http:",
       origin,
+      hash: extra.hash || "",
     },
+    history: extra.noHistory
+      ? undefined
+      : {
+          replaceState(_state, _title, url) {
+            world.replaced.push(url);
+            if (extra.replaceThrows) throw new Error("blocked");
+            const q = String(url).split("#")[0].split("?")[1];
+            window.location.search = q ? "?" + q : "";
+          },
+        },
     EmbeddingsTumbler: api,
     fetch(url, init) {
       if (String(url).endsWith("/_tumbler/search")) {
@@ -675,4 +686,164 @@ test("a viewer that fails to start on the default set is reported plainly", asyn
   const w = await settled(runPage("", demoFetch(), { mountThrows: true }));
   assert.strictEqual(w.body.getAttribute("data-page-state"), "error");
   assert.match(w.els["wait-text"].textContent, /could not start the viewer/);
+});
+
+// ---------- Relative and Show the origin in the address ----------
+
+const search = (relative, showOrigin) => ({ relative: { relative, showOrigin } });
+
+test("relative=1 and origin=1 are passed at mount; absent or other values leave them off", async () => {
+  const on = await settled(runPage("?relative=1&origin=1", demoFetch()));
+  assert.strictEqual(on.mountOptions[0].relative, true);
+  assert.strictEqual(on.mountOptions[0].showOrigin, true);
+  for (const q of ["", "?relative=0&origin=0", "?relative=yes&origin=true", "?relative=&origin="]) {
+    const off = await settled(runPage(q, demoFetch()));
+    assert.strictEqual("relative" in off.mountOptions[0], false, q);
+    assert.strictEqual("showOrigin" in off.mountOptions[0], false, q);
+  }
+});
+
+test("the page asks the viewer to report setting changes, and a change is written to the address", async () => {
+  const w = await settled(runPage("?mode=lattice&seed=7&sample=synthetic", () => Promise.reject(new Error("none"))));
+  const report = w.mountOptions[0].onSearchChange;
+  assert.strictEqual(typeof report, "function");
+  report(search(true, false));
+  assert.deepStrictEqual(w.replaced, ["?mode=lattice&seed=7&sample=synthetic&relative=1"]);
+  report(search(true, true));
+  assert.strictEqual(w.replaced[1], "?mode=lattice&seed=7&sample=synthetic&relative=1&origin=1");
+  report(search(false, true));
+  assert.strictEqual(w.replaced[2], "?mode=lattice&seed=7&sample=synthetic&origin=1");
+});
+
+test("the address round-trips: what is written is read back at the next load", async () => {
+  const first = await settled(runPage("?seed=3", demoFetch()));
+  first.mountOptions[0].onSearchChange(search(true, true));
+  const reopened = await settled(runPage(first.replaced[0], demoFetch()));
+  assert.strictEqual(reopened.mountOptions[0].relative, true);
+  assert.strictEqual(reopened.mountOptions[0].showOrigin, true);
+  assert.strictEqual(reopened.mountOptions[0].seed, 3);
+});
+
+test("turning both off removes them and leaves a bare path; an unchanged setting rewrites nothing", async () => {
+  const w = await settled(runPage("?relative=1&origin=1", demoFetch()));
+  const report = w.mountOptions[0].onSearchChange;
+  report(search(true, true));
+  assert.strictEqual(w.replaced.length, 0);
+  report(search(false, false));
+  assert.deepStrictEqual(w.replaced, ["/index.html"]);
+  report(search(false, false));
+  assert.strictEqual(w.replaced.length, 1);
+});
+
+test("the hash is kept, and search info without the settings changes nothing", async () => {
+  const w = await settled(runPage("", demoFetch(), { hash: "#x" }));
+  const report = w.mountOptions[0].onSearchChange;
+  report({});
+  report(null);
+  report({ relative: { relative: "1", showOrigin: false } });
+  assert.strictEqual(w.replaced.length, 0);
+  report(search(true, false));
+  assert.deepStrictEqual(w.replaced, ["?relative=1#x"]);
+});
+
+test("a page with no history, or one that refuses replaceState, still works", async () => {
+  const a = await settled(runPage("", demoFetch(), { noHistory: true }));
+  a.mountOptions[0].onSearchChange(search(true, false));
+  const b = await settled(runPage("", demoFetch(), { replaceThrows: true }));
+  b.mountOptions[0].onSearchChange(search(true, false));
+  assert.strictEqual(b.body.getAttribute("data-page-state"), "ready");
+});
+
+// t22 (deviation d9): rest= is no parameter of the page any more. An address that still
+// carries it loads as without it, and the parameter is left alone like any other the page
+// does not know.
+test("an old address with rest= loads without error and passes nothing about it at mount", async () => {
+  for (const q of ["?rest=faint", "?relative=1&rest=visible", "?rest=bright", "?rest=loud", "?rest="]) {
+    const w = await settled(runPage(q, demoFetch()));
+    assert.strictEqual(w.body.getAttribute("data-page-state"), "ready", q);
+    assert.strictEqual(w.mountOptions.length, 1, q);
+    assert.ok(!("relativeRest" in w.mountOptions[0]), q);
+    assert.ok(!("rest" in w.mountOptions[0]), q);
+    assert.strictEqual(w.mountOptions[0].relative === true, q.includes("relative=1"), q);
+    assert.strictEqual(w.replaced.length, 0, "loading rewrites nothing: " + q);
+  }
+});
+
+test("rest= in the address is left alone when the settings are written, and is never written by the page", async () => {
+  const w = await settled(runPage("?seed=3&rest=faint", demoFetch()));
+  const report = w.mountOptions[0].onSearchChange;
+  report({ relative: { relative: true, showOrigin: false } });
+  assert.deepStrictEqual(w.replaced, ["?seed=3&rest=faint&relative=1"]);
+  // What a viewer built before d9 reported is not read.
+  report({ relative: { relative: true, showOrigin: true, rest: "visible" } });
+  assert.strictEqual(w.replaced[1], "?seed=3&rest=faint&relative=1&origin=1");
+  const clean = await settled(runPage("?seed=3", demoFetch()));
+  clean.mountOptions[0].onSearchChange({ relative: { relative: true, showOrigin: false, rest: "faint" } });
+  assert.deepStrictEqual(clean.replaced, ["?seed=3&relative=1"]);
+});
+
+// ---------- review of pull request 13, finding 10: only the two settings change ----------
+
+const NONE = () => Promise.reject(new Error("none"));
+
+test("review 10: an address whose settings already say what the viewer reports is not rewritten", async () => {
+  // Each of these would read differently after a round trip through URLSearchParams.
+  const untouched = [
+    "?sample=synthetic&from=sets/a.json&mode=lattice",
+    "?sample=synthetic&note=my%20set+two",
+    "?sample=synthetic&k=1&k=2&",
+    "?sample=synthetic&&flag",
+    "?sample=synthetic&relative=0&origin=no",
+  ];
+  for (const q of untouched) {
+    const w = await settled(runPage(q, NONE, { hash: "#top" }));
+    w.mountOptions[0].onSearchChange(search(false, false));
+    assert.deepStrictEqual(w.replaced, [], q);
+  }
+  const on = await settled(runPage("?sample=synthetic&rel%61tive=1&a=b/c&origin=1", NONE));
+  on.mountOptions[0].onSearchChange(search(true, true));
+  assert.deepStrictEqual(on.replaced, [], "a setting spelled another way is still that setting");
+});
+
+test("review 10: a changed setting changes only its own parameter; the others stay byte for byte", async () => {
+  const q = "?sample=synthetic&from=sets/a.json&note=my%20set+two&k=1&k=2";
+  const w = await settled(runPage(q, NONE, { hash: "#top" }));
+  const report = w.mountOptions[0].onSearchChange;
+  report(search(true, false));
+  assert.deepStrictEqual(w.replaced, [q + "&relative=1#top"]);
+  report(search(true, true));
+  assert.strictEqual(w.replaced[1], q + "&relative=1&origin=1#top");
+  report(search(false, true));
+  assert.strictEqual(w.replaced[2], q + "&origin=1#top");
+  report(search(false, false));
+  assert.strictEqual(w.replaced[3], q + "#top");
+  assert.strictEqual(w.replaced.length, 4);
+});
+
+test("review 10: a trailing &, a repeated or oddly spelled setting", async () => {
+  const cases = [
+    // [address, relative, showOrigin, what is written]
+    ["?sample=synthetic&a=1&", true, false, "?sample=synthetic&a=1&relative=1"],
+    ["?sample=synthetic&relative=1&a=%2F&", false, false, "?sample=synthetic&a=%2F&"],
+    // the first relative is the one read: it says off, so both go and one that says on is added
+    ["?relative=0&sample=synthetic&a=b/c&relative=1", true, false, "?sample=synthetic&a=b/c&relative=1"],
+    // off must hold on the next load: every copy goes
+    ["?relative=1&sample=synthetic&relative=1&x=+", false, false, "?sample=synthetic&x=+"],
+    ["?sample=synthetic&rel%61tive=1&or+igin=1", false, false, "?sample=synthetic&or+igin=1"],
+    ["?sample=synthetic&origin=yes&z=%7e", false, true, "?sample=synthetic&z=%7e&origin=1"],
+    ["?relative=1", false, false, "/index.html"],
+  ];
+  for (const [q, relative, showOrigin, want] of cases) {
+    const w = await settled(runPage(q, NONE));
+    w.mountOptions[0].onSearchChange(search(relative, showOrigin));
+    assert.deepStrictEqual(w.replaced, [want], q);
+    // and what was written is read back as the same settings
+    const again = await settled(runPage(want.startsWith("?") ? want : "", NONE));
+    assert.strictEqual(again.mountOptions[0].relative === true, relative, want);
+    assert.strictEqual(again.mountOptions[0].showOrigin === true, showOrigin, want);
+  }
+});
+
+test("the controls are the viewer's own: the page adds no checkbox of its own", () => {
+  assert.doesNotMatch(CODE, /createElement|type\s*=\s*["']checkbox/);
 });

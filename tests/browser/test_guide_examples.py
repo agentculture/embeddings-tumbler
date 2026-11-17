@@ -35,6 +35,7 @@ POLICY = "default-src 'self'"
 NEEDS = {
     "script": ["embeddings-tumbler.js"],
     "script-search": ["embeddings-tumbler.js"],
+    "script-relative": ["embeddings-tumbler.js"],
     "web-component": ["embeddings-tumbler.js", "web-component.js"],
     "standalone": ["embeddings-tumbler.js", "index.html", "page.css", "page.js"],
 }
@@ -271,5 +272,62 @@ def test_script_form_search_page_searches_through_the_handle(opened):
     _press(page, "clear", "Refused (nothing-to-clear)")
 
     # Nothing left the page: the only requests are the page's own files.
+    assert [r for r in tab.requests if r["method"] != "GET"] == []
+    _clean(base, tab)
+
+
+@pytest.mark.parametrize("example_site", ["script-relative"], indirect=True)
+def test_script_form_relative_page_turns_relative_on_and_reports_it(opened):
+    """The host guide's relative example: mount option, setRelative, info().search.relative."""
+    form, base, page, tab = opened
+    _open(page, base, "/example.html")
+    harness.wait_for_text(page, "#note", "Showing 320 points.", timeout=SLOW)
+    before = page.evaluate(SEARCH)["relative"]
+    assert [before["relative"], before["showOrigin"], before["active"]] == [True, False, False]
+
+    # One search from a point: the first search is the vertical axis. The example's vectors are
+    # not of unit length, so the measure is the length along the search, and the cosine is kept.
+    one = _press(page, "one", "Done: From point", lambda s: s["relative"]["settled"])["relative"]
+    assert [one["active"], one["measure"]] == [True, "length along the search"]
+    assert [(p["letter"], p["axis"]) for p in one["pinned"]] == [("A", "vertical")]
+    assert one["unit"]["unit"] is False
+    first = one["searches"][0]["results"][0]
+    assert first["id"] == "p0007"
+    assert first["cosine"] == pytest.approx(1, abs=1e-6)
+    assert "Vertical axis: length along the search to A, exact." in page.evaluate(
+        _text(page, "#report")
+    )
+
+    # A second search pins the horizontal axis; the first keeps its letter and its axis.
+    # The view stays settled on the first search until the switch, so wait for both to be pinned.
+    two = _press(
+        page,
+        "two",
+        "Done: Add p0100",
+        lambda s: s["relative"]["settled"] and len(s["relative"]["pinned"]) == 2,
+    )["relative"]
+    assert [(p["letter"], p["axis"]) for p in two["pinned"]] == [
+        ("A", "vertical"),
+        ("B", "horizontal"),
+    ]
+
+    # Turning the setting off and on again goes through the handle and sends nothing.
+    # The view turns back onto the plain tour first, so `active` goes false a moment later.
+    off = _press(
+        page,
+        "relative",
+        "Done: Relative on or off",
+        lambda s: not s["relative"]["relative"] and not s["relative"]["active"],
+    )
+    assert off["relative"]["active"] is False
+    on = _press(page, "relative", "Done: Relative on or off", lambda s: s["relative"]["settled"])
+    assert on["relative"]["relative"] is True
+    shown = _press(page, "origin", "Done: Show the origin", lambda s: s["relative"]["showOrigin"])
+    assert shown["relative"]["showOrigin"] is True
+
+    cleared = _press(
+        page, "clear", "Done: Clear.", lambda s: not s["active"] and not s["relative"]["active"]
+    )
+    assert cleared["relative"]["active"] is False
     assert [r for r in tab.requests if r["method"] != "GET"] == []
     _clean(base, tab)

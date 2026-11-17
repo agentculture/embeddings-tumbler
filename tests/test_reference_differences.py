@@ -26,6 +26,18 @@ contradiction, and a failure here, when a line claims the sign-off without a
 date, a name or words, when a recorded line stands beside "not yet recorded",
 when the section says it is recorded without the line, or when it is recorded
 while a difference is still marked open.
+
+The relative part (every ``##`` section whose title starts with "Relative
+search") follows the search part, is laid out the same way and ends with
+"Relative search: sign-off". Its recorded form is two lines, the first saying
+on which page the owner read the wording for vectors that are not of length
+one::
+
+    Mixed-length wording read by the owner on YYYY-MM-DD: <the page and the owner's words>
+    Relative search signed off by the owner on YYYY-MM-DD: <the owner's words>
+
+The relative sign-off may be open; it is checked for the same contradictions as
+the search sign-off, and is refused when recorded without the mixed-length line.
 """
 
 from __future__ import annotations
@@ -53,6 +65,17 @@ SEARCH_CLAIM = re.compile(r"^Search signed off\b.*$", re.MULTILINE)
 DECIDED = re.compile(r"^- \*\*Decided by:\*\* (\w+)", re.MULTILINE)
 DECIDERS = {"owner", "spec", "build", "open"}
 NOT_YET = "not yet recorded"
+RELATIVE = "Relative search"
+RELATIVE_SIGN_OFF = "Relative search: sign-off"
+RELATIVE_SIGNED = re.compile(
+    r"^Relative search signed off by the owner on (\d{4}-\d{2}-\d{2}):(.*)$", re.MULTILINE
+)
+RELATIVE_CLAIM = re.compile(r"^Relative search signed off\b.*$", re.MULTILINE)
+MIXED_READ = re.compile(
+    r"^Mixed-length wording read by the owner on (\d{4}-\d{2}-\d{2}):(.*)$", re.MULTILINE
+)
+MIXED_CLAIM = re.compile(r"^Mixed-length wording read\b.*$", re.MULTILINE)
+RELATIVE_REFERENCE = "tumbler-relative-search.html"
 CLAIMED = ("is **not yet recorded**", "is recorded")
 REFERENCES = (
     "embedding-tumbler-demo.html",
@@ -125,7 +148,7 @@ def test_required_sections_in_order():
     ):
         assert name in titles, name
     # The first comparison ends with its sign-off; the search part follows it.
-    first = [title for title in titles if not title.startswith(SEARCH)]
+    first = [title for title in titles if not title.startswith((SEARCH, RELATIVE))]
     assert first[-1] == "Sign-off"
     assert titles[: len(first)] == first
     assert titles.index("Unintended differences found") < titles.index(
@@ -254,12 +277,14 @@ def test_search_part_follows_the_first_comparison_and_ends_with_its_sign_off():
     titles = [title for title, _ in _sections(_text())]
     search = [title for title in titles if title.startswith(SEARCH)]
     assert len(search) >= 3
-    assert titles[-len(search) :] == search
+    start = titles.index("Sign-off") + 1
+    assert titles[start : start + len(search)] == search
     assert search[-1] == SEARCH_SIGN_OFF
-    assert titles.index("Sign-off") == len(titles) - len(search) - 1
+    # Only the relative part may follow it.
+    assert all(title.startswith(RELATIVE) for title in titles[start + len(search) :])
 
 
-def test_first_sign_off_is_unchanged_by_the_search_part():
+def test_first_sign_off_is_unchanged_by_the_later_parts():
     recorded = SIGNED.findall(_text())
     assert len(recorded) == 1
     assert recorded[0][0] == "2026-11-14"
@@ -421,9 +446,10 @@ def _pairs() -> dict[str, dict[str, str | None]]:
 
 def test_side_by_side_page_offers_each_reference_next_to_the_build():
     pairs = _pairs()
-    assert sorted(pairs) == ["first", "focus", "sky"]
+    assert sorted(pairs) == ["first", "focus", "relative", "sky"]
     shown = [pairs[name]["data-ref"].rsplit("/", 1)[1] for name in ("first", "sky", "focus")]
     assert shown == list(REFERENCES)
+    assert pairs["relative"]["data-ref"].rsplit("/", 1)[1] == RELATIVE_REFERENCE
     for name, attrs in pairs.items():
         for key in ("data-ref", "data-build"):
             assert attrs[key].startswith("/"), f"{name} {key}: not an address on this origin"
@@ -477,3 +503,308 @@ def test_side_by_side_page_loads_nothing_from_elsewhere(name):
     text = (SBS / name).read_text(encoding="utf-8")
     assert "http://" not in text
     assert "https://" not in text
+
+
+# ---------- the relative part ----------
+
+RELATIVE_SECTIONS = (
+    "Relative search: the reference and how it was compared",
+    "Relative search: open questions",
+    "Relative search: compared by numbers",
+    "Relative search: not yet compared",
+    RELATIVE_SIGN_OFF,
+)
+# The differences the plan names, by words of their titles (lower case).
+RELATIVE_NAMED = (
+    "not a relative and plain switch",  # the page's switch against a Tumble setting
+    "a fourth search",  # one and two searches only on the page
+    "lit setting",  # brightness by similarity against Lit plus the gradient
+    "face the searches",  # no Face control on the page
+    "any search with text",  # reranking only for a search from one article
+    "2-d canvas",  # the page's look
+    "own first result",  # whether the search's own point is named
+)
+# The open items, by words of their titles (lower case). Empty: the five questions put to the
+# owner were decided on 2026-11-17 (deviations d5 and d6). An empty set is accepted while the
+# sign-off is open; a recorded sign-off still allows no open item.
+RELATIVE_OPEN: tuple[str, ...] = ()
+RELATIVE_NOT_YET = "is **not yet recorded**"
+
+
+def _relative_sections(text: str) -> list[tuple[str, str]]:
+    return [(title, body) for title, body in _sections(text) if title.startswith(RELATIVE)]
+
+
+def _relative_items(text: str) -> list[tuple[str, str]]:
+    items = []
+    for _, body in _relative_sections(text):
+        for chunk in re.split(r"^### ", body, flags=re.MULTILINE)[1:]:
+            heading, _, rest = chunk.partition("\n")
+            items.append((heading.strip(), rest))
+    return items
+
+
+def _unfenced(text: str, pattern: re.Pattern) -> list[str]:
+    """Every line outside fenced code that matches ``pattern``."""
+    out = []
+    fenced = False
+    for line in text.splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+        elif not fenced and pattern.match(line):
+            out.append(line)
+    return out
+
+
+def _words_after(text: str, found: re.Match) -> str:
+    words = found.group(2).strip()
+    if not words:
+        after = text[found.end() :].strip().splitlines()
+        words = after[0].strip() if after else ""
+    return words
+
+
+def _reopen_last_relative_item(text: str) -> str:
+    """``text`` with the "Decided by" line of the relative part's last item made open."""
+    start = text.index("## " + RELATIVE + ":")
+    end = text.index("## " + RELATIVE_SIGN_OFF)
+    last = None
+    for found in re.finditer(r"^- \*\*Decided by:\*\* .*$", text[start:end], flags=re.MULTILINE):
+        last = found
+    assert last is not None, "no decided item in the relative part"
+    a, b = start + last.start(), start + last.end()
+    return text[:a] + "- **Decided by:** open: not decided." + text[b:]
+
+
+def _check_relative_sign_off(text: str) -> str:
+    """Return "open" or "recorded"; raise AssertionError when the text contradicts itself."""
+    sections = _relative_sections(text)
+    assert sections, "no relative part"
+    title, body = sections[-1]
+    assert title == RELATIVE_SIGN_OFF
+    start = text.index("## " + RELATIVE_SIGN_OFF)
+    claims = _unfenced(text[start:], RELATIVE_CLAIM)
+    mixed_claims = _unfenced(text[start:], MIXED_CLAIM)
+    # A mixed-length line, if there is one, is in the agreed form and carries words.
+    for line in mixed_claims:
+        found = MIXED_READ.match(line)
+        assert found, "a mixed-length line without the agreed name and date"
+        assert _words_after(line, found), "the mixed-length line must say where and carry words"
+    recorded = RELATIVE_SIGNED.search(text, start)
+    still_open = [name for name, rest in _relative_items(text) if _decided(rest) == "open"]
+    if recorded is None:
+        assert not claims, "a relative sign-off line without the agreed name and date"
+        assert NOT_YET in body.lower()
+        return "open"
+    assert len(claims) == 1, "more than one relative sign-off line"
+    assert _words_after(text, recorded), "the relative sign-off line must carry the owner's words"
+    assert NOT_YET not in body.lower()
+    assert not still_open, f"signed off while still open: {still_open}"
+    assert len(mixed_claims) == 1, "signed off without the mixed-length line"
+    mixed = MIXED_READ.search(text, start)
+    assert mixed.group(1) <= recorded.group(1), "the wording was read after the sign-off"
+    return "recorded"
+
+
+def test_relative_part_follows_the_search_part_and_ends_with_its_sign_off():
+    titles = [title for title, _ in _sections(_text())]
+    relative = [title for title in titles if title.startswith(RELATIVE)]
+    assert len(relative) >= len(RELATIVE_SECTIONS)
+    assert titles[-len(relative) :] == relative
+    assert titles[-len(relative) - 1] == SEARCH_SIGN_OFF
+    positions = [relative.index(name) for name in RELATIVE_SECTIONS]
+    assert positions == sorted(positions)
+    assert relative[0] == RELATIVE_SECTIONS[0]
+    assert relative[-1] == RELATIVE_SIGN_OFF
+    # The open questions and the comparison come after every list of differences.
+    assert relative.index("Relative search: open questions") == len(relative) - 4
+
+
+def test_first_two_sign_offs_are_unchanged_by_the_relative_part():
+    text = _text()
+    assert SIGNED.findall(text) == [
+        ("2026-11-14", " confirmed, light -> soft ink is ok, the two others not.")
+    ]
+    assert SEARCH_SIGNED.findall(text) == [("2026-11-15", " Approved")]
+    assert len(_claims(text)) == 1
+
+
+def test_relative_part_names_its_reference_and_both_data_files():
+    body = "\n".join(body for _, body in _relative_sections(_text()))
+    for name in (
+        RELATIVE_REFERENCE,
+        "demo-wikipedia-rerank.json",
+        "demo-wikipedia.json",
+        "demo-wikipedia.f32",
+        "scripts/compare_relative_reference.py",
+        "https://claude.ai/artifact/JtQQjRJ64tUmvTrktBhZu7",
+    ):
+        assert name in body, name
+    assert (ROOT / "docs" / "specs" / "reference" / RELATIVE_REFERENCE).is_file()
+    assert (ROOT / "scripts" / "compare_relative_reference.py").is_file()
+
+
+def test_relative_part_states_the_served_sizes_of_the_committed_files():
+    # The sizes written down for the local-server check are the committed files' sizes.
+    body = dict(_relative_sections(_text()))[RELATIVE_SECTIONS[0]]
+    files = {
+        "tumbler-relative-search.html": ROOT / "docs/specs/reference/tumbler-relative-search.html",
+        "demo-wikipedia.json": ROOT / "embeddings_tumbler/static/demo-wikipedia.json",
+        "demo-wikipedia.f32": ROOT / "embeddings_tumbler/static/demo-wikipedia.f32",
+        "demo-wikipedia-rerank.json": ROOT / "docs/specs/reference/demo-wikipedia-rerank.json",
+    }
+    flat = " ".join(body.split())
+    for name, path in files.items():
+        size = f"{path.stat().st_size:,} bytes"
+        assert re.search(re.escape(name) + r"`?,? ?\(?" + re.escape(size), flat), (name, size)
+
+
+def test_every_relative_difference_has_its_five_lines():
+    items = _relative_items(_text())
+    assert len(items) >= 30
+    for title, rest in items:
+        for line in ("Reference", "Build", "Why"):
+            assert f"- **{line}:**" in rest, f"{title}: {line}"
+        assert "- **Visible on comparable data:**" in rest, title
+        assert _decided(rest) in DECIDERS, title
+
+
+def test_relative_differences_named_in_the_plan_are_listed():
+    titles = " | ".join(title.lower() for title, _ in _relative_items(_text()))
+    for words in RELATIVE_NAMED:
+        assert words in titles, words
+
+
+def test_relative_open_items_say_that_nothing_was_decided():
+    opened = [(t, rest) for t, rest in _relative_items(_text()) if _decided(rest) == "open"]
+    if _check_relative_sign_off(_text()) == "recorded":
+        assert not opened
+        return
+    titles = " | ".join(title.lower() for title, _ in opened)
+    for words in RELATIVE_OPEN:
+        assert words in titles, words
+    for title, rest in opened:
+        decided = rest[DECIDED.search(rest).start() :].lower()
+        assert "not decided" in decided, title
+    # Open items live in the open questions section, and only there.
+    section = dict(_relative_sections(_text()))["Relative search: open questions"]
+    for title, _ in opened:
+        assert f"### {title}" in section, title
+
+
+def test_relative_owner_decisions_point_at_a_record():
+    for title, rest in _relative_items(_text()):
+        if _decided(rest) == "owner":
+            decided = rest[DECIDED.search(rest).start() :]
+            assert re.search(r"2026-11-1[46]|decision", decided), title
+
+
+def test_relative_sign_off_is_open_or_recorded_without_contradiction():
+    assert _check_relative_sign_off(_text()) in {"open", "recorded"}
+
+
+RELATIVE_GOOD = (
+    "Mixed-length wording read by the owner on 2026-11-20: the standalone page, it reads well\n"
+    "Relative search signed off by the owner on 2026-11-20: looks right to me"
+)
+
+
+def _signed_relative_text(lines: str) -> str:
+    """The document with every open relative item decided and ``lines`` as the sign-off."""
+    text = _text()
+    start = text.index("## " + RELATIVE_SIGN_OFF)
+    tail = text[start:].replace(RELATIVE_NOT_YET, "is recorded")
+    text = text[:start] + tail
+    text = re.sub(r"^- \*\*Decided by:\*\* open\b.*$", DECIDED_LINE, text, flags=re.MULTILINE)
+    return text.rstrip("\n") + "\n\n" + lines + "\n"
+
+
+def test_relative_sign_off_check_accepts_a_recorded_pair_of_lines():
+    if RELATIVE_SIGNED.search(_text()):
+        pytest.skip("the real relative sign-off is recorded")
+    assert _check_relative_sign_off(_signed_relative_text(RELATIVE_GOOD)) == "recorded"
+
+
+def _relative_contradiction(case: str) -> str:
+    text = _text()
+    mixed, signed_line = RELATIVE_GOOD.split("\n")
+    signed = _signed_relative_text(RELATIVE_GOOD)
+    start = text.index("## " + RELATIVE_SIGN_OFF)
+    cases = {
+        "recorded beside not yet recorded": text.rstrip("\n") + "\n\n" + RELATIVE_GOOD + "\n",
+        "no words": _signed_relative_text(
+            mixed + "\nRelative search signed off by the owner on 2026-11-20:"
+        ),
+        "no date": _signed_relative_text(
+            mixed + "\nRelative search signed off by the owner: looks right to me"
+        ),
+        "no name": _signed_relative_text(
+            mixed + "\nRelative search signed off on 2026-11-20: looks right to me"
+        ),
+        "claimed without the line": text[:start]
+        + text[start:].replace(RELATIVE_NOT_YET, "is recorded"),
+        # the last item of the relative part marked open again (with no open item left in the
+        # document, the case must make one itself)
+        "signed while an item is open": _reopen_last_relative_item(signed),
+        "two lines": signed + signed_line + "\n",
+        "no mixed-length line": _signed_relative_text(signed_line),
+        "mixed-length line without words": _signed_relative_text(
+            "Mixed-length wording read by the owner on 2026-11-20:\n" + signed_line
+        ),
+        "mixed-length wording read after the sign-off": _signed_relative_text(
+            mixed.replace("2026-11-20", "2026-11-21") + "\n" + signed_line
+        ),
+    }
+    return cases[case]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "recorded beside not yet recorded",
+        "no words",
+        "no date",
+        "no name",
+        "claimed without the line",
+        "signed while an item is open",
+        "two lines",
+        "no mixed-length line",
+        "mixed-length line without words",
+        "mixed-length wording read after the sign-off",
+    ],
+)
+def test_relative_sign_off_check_rejects_a_contradiction(case):
+    if RELATIVE_SIGNED.search(_text()):
+        pytest.skip("the real relative sign-off is recorded")
+    broken = _relative_contradiction(case)
+    assert broken != _text()
+    with pytest.raises(AssertionError):
+        _check_relative_sign_off(broken)
+
+
+def test_the_relative_form_lines_in_the_instruction_are_not_a_recorded_sign_off():
+    form = (
+        "```text\n"
+        "Mixed-length wording read by the owner on YYYY-MM-DD: words\n"
+        "Relative search signed off by the owner on YYYY-MM-DD: words\n"
+        "```"
+    )
+    assert RELATIVE_SIGNED.search(form) is None
+    assert MIXED_READ.search(form) is None
+    assert _unfenced(form, RELATIVE_CLAIM) == []
+    assert _unfenced(form, MIXED_CLAIM) == []
+
+
+def test_side_by_side_relative_pair_uses_the_shipped_pair_and_the_references_search():
+    pairs = _pairs()
+    assert pairs["relative"]["data-ref"] == "/docs/specs/reference/" + RELATIVE_REFERENCE
+    assert pairs["relative"]["data-build"] == "/embeddings_tumbler/static/index.html?relative=1"
+    page = (SBS / "page.js").read_text(encoding="utf-8")
+    assert 'search: "Rice", // the reference\'s own starting search' in page
+    reference = (ROOT / "docs" / "specs" / "reference" / RELATIVE_REFERENCE).read_text(
+        encoding="utf-8"
+    )
+    assert "makeQuery('Rice')" in reference
+    # The reference reads the pair the build ships, from beside itself or from the package.
+    assert "'../../../embeddings_tumbler/static/'" in reference
+    assert "fetch('demo-wikipedia-rerank.json')" in reference

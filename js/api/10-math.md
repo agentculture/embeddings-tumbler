@@ -144,8 +144,14 @@ return a stepper:
   done: boolean,
   progress: number,          // 0..1, an estimate from the work done; 1 when done
   result: null | ...,        // the blocking call's return value once done
+  work: number,              // multiply-adds counted so far (0 before the first step)
 }
 ```
+
+`work` is a property of the computation, not of the clock: it is the same
+however the stepper is pumped, so tests compare the cost of two computations
+with it (`makeRelativeFit` with and without `plain`, for one). `makeRelativeFit`
+returns the same kind of stepper.
 
 The computation is written once (generator functions that pause between small
 pieces of work) and the blocking functions run the same code without pausing,
@@ -235,6 +241,135 @@ the variance". It is not the share of the three directions on screen at one
 instant; that is `varianceShare(Y, N, D, tour.frameAt(t), 3)`, which is never
 more than `varianceShare` (the frame lies inside the subspace). With no
 variance in the data it is `0` and the frames are still orthonormal.
+
+## Relative frames (relative search)
+
+Added for relative search (task t2 of
+`docs/plans/2026-11-16-relative-search-in-the-embedding-viewer.md`; the binding
+interface is `docs/relative-interface.md`, "Maths (t2)"). Pure functions, none
+of which changes `makeTour` or any function above: their output is bit for bit
+what it was. Inputs are finite, and a malformed call throws `RangeError` or
+`TypeError` as elsewhere on this page. A set's rows `X` are `Float32Array(N *
+D)` and queries are `Float32Array(D)` or `Float64Array(D)`.
+
+Constants (non-function members of `ET.math`):
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `RELATIVE_UNIT_TOLERANCE` | `1e-3` | A set is "unit-length" when its shortest and longest vectors are both within this of 1. |
+| `RELATIVE_ZERO_LENGTH` | `1e-9` | A query no longer than this has no direction. |
+| `RELATIVE_SAME_DIRECTION` | `1e-6` | A later search adds no axis when the squared length of its direction that the earlier pinned directions do not contain is below this. |
+
+Functions:
+
+- `relativeDirections(queries, D) -> { directions, count, pinned, dropped }`.
+  Takes the queries in order. A query of length at most `RELATIVE_ZERO_LENGTH`
+  is dropped with reason `"zero-length"`; after three are pinned every later one
+  is dropped with `"no-axis-left"`. Otherwise its unit direction has the pinned
+  directions removed (twice, in double precision), and if what is left has
+  squared length below `RELATIVE_SAME_DIRECTION` it is dropped with
+  `"same-direction"`. Pointing exactly the opposite way leaves nothing as well,
+  so an opposite search is dropped for the same reason: it lies on the same
+  axis. Anything else is made unit length and pinned. `directions` is
+  `Float32Array(count * D)` of orthonormal rows in pin order, `count` is 0 to 3,
+  `pinned` is `[{ index, length }]` (the query's index and its length), and
+  `dropped` is `[{ index, reason, against }]` (`against`: the indices of the
+  pinned queries it was compared with, for `"same-direction"`, else `[]`). It
+  never throws for zero, repeated or parallel queries; `D < 3` is a
+  `RangeError`. **The first pinned row is the first usable query's unit
+  direction**, rounded to float32 once, so a point's height is its dot product
+  with it.
+- `unitLength(X, N, D, tolerance?) -> { unit, min, max, tolerance }`. The
+  shortest and longest row lengths over every row, and whether both are within
+  `tolerance` (default `RELATIVE_UNIT_TOLERANCE`) of 1. With `N` 0:
+  `{ unit: false, min: null, max: null, tolerance }`.
+- `heightWindow(X, N, D, direction, length) -> { low, high, pointHigh, lowest,
+  highest }`. Every row's height `x . direction` (a unit `direction`),
+  over all rows, never a sample. `low` is the lowest height, `pointHigh` the
+  highest, `high` is `max(length, pointHigh)`, and `lowest` and `highest` are the
+  row indices (ties go to the lower index). Heights below zero are kept. With
+  `N` 0, `low` and `pointHigh` are `null` and `high` is `length`.
+- `makeTourRows(basis, m, D, rows, opts?) -> tour`. `makeTour`'s construction
+  with `rows` (1, 2 or 3) frame rows in place of three, inside the span of the
+  `m >= rows` orthonormal `basis` rows. `opts`: `seed` (0), `speed` (0.42).
+  The tour is `{ kind: "tour-rows", seed, speed, dimension, subspace, rows,
+  basis, rowsAt(t, out?) -> Float32Array(rows * D) }`, a closed-form function of
+  `(basis, seed, speed, t)`, so it is the same however time was sliced. With
+  `m` 1 the one row is constant.
+- `makeRelativeTour(directions, count, basis, m, D, opts?) -> tour`. The relative
+  frame as a function of `t`. `directions` and `count` are what
+  `relativeDirections` returned; `basis` and `m` the toured directions (every
+  row orthogonal to every direction). `frameAt(t, out?)` gives
+  `Float32Array(3 * D)`: row 1 is the first direction (vertical); with two or
+  more pinned, row 0 is the second; with three, row 2 is the third; rows not
+  pinned come from `makeTourRows(basis, m, D, 3 - count, opts)`. With three
+  pinned nothing tours and the frame is the same at every `t`. Pinned rows are
+  copied, never re-orthonormalised, so row 1 dotted with a point equals the
+  direct dot product to float32 accuracy. The tour is `{ kind:
+  "relative-tour", pinned, free, subspace, seed, speed, dimension, frameAt }`.
+- `relativeFit(X, N, D, queries, opts?) -> fit` and `makeRelativeFit(...) ->
+  stepper`. Everything the view needs from the data in one computation;
+  `makeRelativeFit` is the same work as a stepper (see "Sliced work") whose
+  `result` equals `relativeFit`'s bit for bit however it is pumped. `opts`:
+  `seed` (0), `subspace` (8), `sampleRows` (the cap on rows used to fit; Tumble
+  passes its own), `plain` (the plain fit's directions to reuse, below), and
+  `maxIterations`, `tolerance`, `oversample`, passed on as for `guidedTour`. The
+  number of toured directions asked for is `m = min(max(subspace, free rows), D -
+  count)` (0 when nothing tours). The unit-length check and the height window
+  (along the first pinned direction, with that query's length) are over **all**
+  rows.
+  - **With `plain`** (`{ directions, count, dimension? }`, the shape
+    `principalDirections` returns: `count` rows of the set's strongest
+    directions, strongest first; a `dimension` other than `D`, a negative or
+    fractional `count`, or fewer than `count * D` values is a `TypeError`), the
+    toured directions are **the set's strongest directions with the search
+    directions removed**. Each plain row in turn, strongest first, has the pinned
+    directions and the rows already kept removed (twice, in double precision, as
+    Gram-Schmidt does); it is kept, made unit length, when at least `1e-3` of its
+    squared length is left (below that more than 99.9 percent of it lay along the
+    searches, and what is left would carry the float32 rounding of the plain row
+    magnified more than thirty times), and at most `m` are kept. The basis rows
+    are in that order, so the tour's opening frame starts from the strongest
+    plain directions. `method` is `"plain-reused"` (`"plain-reused-sampled"`
+    when the share is measured on fewer rows than the set holds). No second fit
+    runs: the work is the passes over the rows for the window, the unit check,
+    the mean and the share, a small fraction of a fit (on the 173-item test
+    fixture 10.6 to 12.4 times fewer multiply-adds; on the 999-item demo set 29
+    to 38 times; measured with the stepper's `work`).
+  - **Fallback.** Without `plain`, or when fewer plain rows survive than there
+    are free rows (`3 - count`), the remainder (the centred rows with the pinned
+    directions removed) is fitted on at most `sampleRows` rows at an even stride,
+    to `m` directions, each made orthogonal to every pinned direction, exactly as
+    before. `method` is then the fit's method, as `principalDirections` reports
+    it (with `-sampled` when sampled), prefixed by `fallback-` when `plain` was
+    given.
+
+```js
+fit = {
+  directions, count, pinned, dropped,   // as relativeDirections
+  basis,                                // Float32Array(subspace * D) of toured directions, or null
+  subspace,                             // m for a full fit; the rows kept (at most m) when reused;
+                                        // 0 when count is 0 or 3
+  share,                                // variance on the basis / the remainder's total variance,
+                                        // over the rows fitted; 0 with no variance; null when nothing tours
+  variances,                            // Float64Array(subspace): the variance along each basis row, in
+                                        // basis order (descending for a full fit; in plain order, not
+                                        // necessarily descending, when reused)
+  totalVariance, fittedRows,            // the remainder's total and the rows it and the share are over
+  rank,                                 // directions the remainder can spread in
+  fixed,                                // free rows that cannot follow any spread (filler)
+  window,                               // heightWindow along the first pinned direction, or null
+  unit,                                 // unitLength over all rows
+  method,                               // "plain-reused[-sampled]", the fit's method, "fallback-" + it, or "none"
+  plain,                                // { given, kept }: plain rows given and kept; null without plain
+}                                       // or when nothing tours
+```
+
+The share is the share **of what remains** once the pinned directions are
+removed, and is measured on the rows fitted, never of the whole set; it is
+exact for whatever directions tour, reused or fitted. Zero queries, repeated
+queries and very small sets each give three orthonormal rows through
+`makeRelativeTour` with a named reason, and none throws.
 
 ## Axis swap (Lattice)
 

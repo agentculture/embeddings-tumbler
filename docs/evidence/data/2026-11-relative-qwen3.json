@@ -1,0 +1,138 @@
+{
+  "file": "wikipedia-qwen3.json",
+  "model": "Qwen/Qwen3-Embedding-0.6B",
+  "dimension": 1024,
+  "count": 999,
+  "length_min": 0.9999999231035148,
+  "length_max": 1.0000000847670416,
+  "unit_length": true,
+  "mean_length": 0.4907016766709931,
+  "plain_share": 0.17801068257006325,
+  "subspace": 8,
+  "seed": 7,
+  "searches": [
+    {
+      "search": "Rice",
+      "nearest": [
+        [
+          "Cereal",
+          0.7173
+        ],
+        [
+          "Wheat",
+          0.6961
+        ],
+        [
+          "Maize",
+          0.5528
+        ],
+        [
+          "Bread",
+          0.5105
+        ],
+        [
+          "Bean",
+          0.4925
+        ],
+        [
+          "Chicken",
+          0.4424
+        ],
+        [
+          "Food",
+          0.4423
+        ],
+        [
+          "Potato",
+          0.4326
+        ]
+      ],
+      "cosine_max": 0.7173227694262382,
+      "cosine_median": 0.24063336349960077,
+      "cosine_min": 0.1049434272198151,
+      "remainder_share": 0.17712517487409085
+    },
+    {
+      "search": "Jazz",
+      "nearest": [
+        [
+          "Rock music",
+          0.6547
+        ],
+        [
+          "Pop music",
+          0.5196
+        ],
+        [
+          "Folk music",
+          0.5003
+        ],
+        [
+          "Music",
+          0.4508
+        ],
+        [
+          "History of music",
+          0.4466
+        ],
+        [
+          "Classical music",
+          0.4448
+        ],
+        [
+          "Orchestra",
+          0.4356
+        ],
+        [
+          "Louis Armstrong",
+          0.4316
+        ]
+      ],
+      "cosine_max": 0.6547143449616248,
+      "cosine_median": 0.21459110121982491,
+      "cosine_min": 0.0750290234604703,
+      "remainder_share": 0.17770621918456783
+    },
+    {
+      "search": "Volcano",
+      "nearest": [
+        [
+          "Earthquake",
+          0.4546
+        ],
+        [
+          "Plate tectonics",
+          0.437
+        ],
+        [
+          "Mountain",
+          0.4356
+        ],
+        [
+          "Venus",
+          0.4147
+        ],
+        [
+          "Lightning",
+          0.4124
+        ],
+        [
+          "Oven",
+          0.4114
+        ],
+        [
+          "Comet",
+          0.4055
+        ],
+        [
+          "Geology",
+          0.4049
+        ]
+      ],
+      "cosine_max": 0.4545932378701527,
+      "cosine_median": 0.2322588879902013,
+      "cosine_min": 0.04889498359599456,
+      "remainder_share": 0.177324172406027
+    }
+  ]
+}
