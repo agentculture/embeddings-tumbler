@@ -30,10 +30,11 @@ build-backend = "hatchling.build"
 packages = ["embeddings_tumbler"]
 
 [tool.hatch.build.targets.sdist]
-# Reference data for a spec's reference page, regenerable with
-# scripts/build_reference_rerank.py; it is not source and is kept out of the sdist so the
-# sdist stays under its size limit (tests/test_packages.py).
-exclude = ["docs/specs/reference/demo-wikipedia-rerank.json"]
+# Kept out of the sdist so it stays under its size limit (tests/test_packages.py); neither
+# is source. The first is reference data for a spec's reference page, regenerable with
+# scripts/build_reference_rerank.py. The second is the working state of the spec and plan
+# tool, whose exports are the files under docs/specs and docs/plans.
+exclude = ["docs/specs/reference/demo-wikipedia-rerank.json", "/.devague"]
 
 [dependency-groups]
 dev = [

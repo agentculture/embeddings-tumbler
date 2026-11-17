@@ -225,6 +225,7 @@ def test_the_open_panel_has_the_controls_the_guide_names(walk):
     assert opened["controls"] == [
         "Relative",
         "Show the origin",
+        "The rest",
         "Face the searches",
         "Lit",
         "Distance difference",
