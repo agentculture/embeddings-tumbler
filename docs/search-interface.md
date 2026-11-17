@@ -52,7 +52,7 @@ the renderer, the modes, the viewer and a new panel, all specified below.
 | Named point | A point that carries something a person can read that is not just its id: its `metadata.text` or its `label` is a string with a character that is not white space and differs from its id (`ET.search.isNamed`). On a real file every point is named; in the built-in sample set 290 of 12,288 are; in a labels-only set none is. |
 | Results, named results | The `k` nearest named points of a search (3 to 100, 8 by default) with no reranker; with the reranker on, the `top` best (3 to `candidates`, 20 by default) of the `candidates` nearest (3 to 100, 50 by default) by the reranker's scores. See "Candidates and top". With no named point in the set every point is a candidate and results show ids; with fewer named points than `k`, the results are all of them. The query itself can come from any point. |
 | Result radius | The distance of a search's farthest named result. A point is inside a search when it is at most that far, named or not. |
-| Lit value | Per point, a number in `[0, 1]`: how strongly the searches light it. Set by the lit setting (`"even"`, `"close"`, `"named"`). |
+| Lit value | Per point, a number in `[0, 1]`: how strongly the searches light it. Set by the lit setting (`"even"`, `"close"`, `"named"`, `"all"`; the fourth is described under "Everything, results highlighted"). |
 | Shared mark | On a point that is lit and inside two or more searches. |
 | Point of view | An option on one chosen search: every dimension scaled by the absolute value of that search's query in that dimension, for its ranking, its shown distances and the fitted picture. |
 | Facing frame | The seeded linear view whose first axes join the centres of the searches (`ET.searchSets.makeFacingFrame`). |
@@ -418,7 +418,7 @@ Additions to `js/api/50-viewer.md`.
 | `searchK` | `8` | Results per search with no reranker, through `ET.search.clampK` (3 to 100). |
 | `searchCandidates` | `50` | Candidates handed to the reranker, through `ET.search.clampCandidates` (3 to 100). |
 | `searchTop` | `20` | Reranked candidates kept, through `ET.search.clampTop` (3 to `searchCandidates`). |
-| `searchLit` | `"even"` | The starting lit setting, through `ET.searchSets.litSetting`. |
+| `searchLit` | `"even"` | The starting lit setting (`"even"`, `"close"`, `"named"` or `"all"`), through `ET.searchSets.litSetting`. |
 | `onSearchChange(search)` | none | Called with `info().search` whenever it changes (a search set, answered, refused, cleared, stale, re-run). Guarded like the other callbacks. |
 
 The callbacks can also be set after mount with `setSearchCallbacks`, which is
@@ -495,7 +495,7 @@ already held (no new `embed` call). `patch` may hold:
 | `k` | 3 to 100 (`clampK`) | `searchK` | re-rank every search |
 | `candidates` | 3 to 100 (`clampCandidates`) | `searchCandidates` | re-rank (and rerank) every search; `top` is cut to it |
 | `top` | 3 to `candidates` (`clampTop`) | `searchTop` | rerank every search |
-| `lit` | `"even"`, `"close"`, `"named"` | `searchLit` | new lit values only |
+| `lit` | `"even"`, `"close"`, `"named"`, `"all"` | `searchLit` | new lit values only |
 | `distances` | boolean | `false` | the Distance difference control: distances on links and in lists (panel only) |
 | `rerank` | boolean | `false` | rerank every search; ignored (stays `false`) with no `rerank` callback or on a labels-only set |
 | `pointOfView` | `"A"` to `"D"` or `null` | `null` | the point-of-view option belongs to this search (re-rank it with its scale, and fit the picture with that scale) |
@@ -1122,6 +1122,75 @@ The slowest single scan unit seen in these runs was 5.6 ms before and 4.2 ms
 after, both single outliers. The pair reports and the facing frame's units are
 counted, not timed, so their pauses fall at the same places on every run.
 
+## Everything, results highlighted (the owner's request, 2026-11-17)
+
+A fourth lit setting, key `"all"`, shown in the Lit menu as `everything,
+results highlighted` and placed last, so the three earlier settings keep their
+places. The default stays `"even"`. It was asked for by the owner while
+comparing the relative view with its reference ("A new option where everything
+is visible and sharp, but the results highlighted") and is recorded as
+deviation d8 of the relative-search plan; it is a setting of search in every
+view, like the other three.
+
+**What it means.** A result (a point inside a search's result radius) is lit at
+1, exactly as under `"even"`. Every other point gets one constant lit value,
+`ET.searchSets.LIT_ALL_REST`, chosen so that the renderer draws it as nearly as
+it can as it draws a point with no search. The renderer is not changed. Its lit
+shader multiplies brightness by `mix(unlitGain, 2.2, l)` at `filter` 1, with
+`unlitGain` 0.07 by default, so the factor is 1 at
+
+```text
+LIT_ALL_REST = (1 - LIT_UNLIT_GAIN) / (LIT_FULL_GAIN - LIT_UNLIT_GAIN)
+             = (1 - 0.07) / (2.2 - 0.07)  =  0.4366...
+```
+
+At that value the size factor `mix(0.8, 1.5, l)` is 1.106, so a point that is
+not a result is drawn about a tenth larger than with no search; the shader
+ties size and brightness to the one lit value, so both cannot be 1 at once, and
+brightness was chosen. A result is 2.2 times as bright and 1.5 times the size.
+
+| What | Under `"all"` |
+|------|---------------|
+| `litValues(...).lit` | 1 for a point inside a radius, `LIT_ALL_REST` for every other point (also for points appended after the ranking, and for every point when no search has a result) |
+| `litValues(...).rest` | `LIT_ALL_REST` (0 under the other three settings): the value given to points inside no search |
+| `litCount`, `sharedCount`, `insideCounts`, `inside`, `shared` | exactly those of `"even"`: they count results, never every point. `litCount` is taken before the constant is written. |
+| The collapsed bar | unchanged: `A rice · 16 points lit` |
+| The note | `16 points lit (every other point is shown too): ...` |
+| The provenance row | `lit: everything, results highlighted` |
+| `info().search.settings.lit` | `"all"` |
+| Reach | `handle.setSearchSettings({ lit: "all" })`, the mount option `searchLit: "all"` and the panel's menu. Lit has no web component attribute and is not in the standalone page's address; none was added. An unknown value still reads as `"even"` at mount and is ignored by `setSearchSettings`. |
+
+**In each view.**
+
+- **Tumble (plain view) and Wander**: points are drawn from the lit values as
+  above. In Wander a lit point's fog is `fog * (1 - l * filter)`, so a point
+  that is not a result keeps 56% of its fog (`1 - 0.4366`): far points are dimmed
+  and shrunk less than with no search (a fully fogged point is drawn at 0.56 of
+  its brightness instead of 0.22). This follows from the shader and was reasoned
+  from it, not measured. Tumble, Lattice and Focus draw with fog 0.
+- **Lattice**: a wire's lit value is the smaller of its two ends', and its
+  brightness factor is `mix(unlitGain, 1, l)`. A wire between two results is at
+  full strength as before; every other wire is at `0.07 + 0.93 x 0.4366 = 0.48`
+  of its strength with no search (0.07 under the other settings). The wires
+  cannot be both as with no search and highlighted between results without a
+  change to the renderer, so they are left to the renderer's rule.
+- **Focus**: Focus draws unlit points with `unlitGain` 0.05, not 0.07, so the
+  brightness factor of a point that is not a result is 0.989 rather than 1; the
+  constant is derived from the renderer's default and is the same in every
+  view. **Only results wins over this setting**: while Focus's Only results
+  hides points, the viewer uploads 0 instead of the constant for every point
+  that is not a result (the mode's `unlitGain` 0 then draws nothing for them),
+  and the hover name, the group-name centres and the click test skip exactly
+  those points (`inside` is 0), which are the points `"even"` would hide.
+  Turning Only results off, or leaving Focus, uploads the constant again.
+- **The relative view** (`docs/relative-interface.md`): results as under
+  `"even"`; every other point gets the constant instead of the gradient of The
+  rest, and the panel disables The rest while this setting is chosen.
+
+`ET.searchSets` gains three constants: `LIT_UNLIT_GAIN` (0.07, checked against
+`ET.renderer.DEFAULTS.unlitGain` by a test), `LIT_FULL_GAIN` (2.2, checked
+against the shader's text) and `LIT_ALL_REST`.
+
 ## Decisions made here
 
 Each choice the spec left open, with its reason:
@@ -1175,3 +1244,8 @@ Each choice the spec left open, with its reason:
     block.
 21. The helper's Python function names are left to t5: no other task calls
     them; the command line and the HTTP exchange are the contract.
+22. Under the lit setting `"all"`, Focus's Only results still hides the points
+    that are not results: a checkbox that says "Only results" is the more
+    specific request, and the two would otherwise contradict each other.
+23. Under `"all"` the counts keep counting results: "16 points lit" names what
+    the search found, not the size of the set.

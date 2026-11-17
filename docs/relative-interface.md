@@ -748,7 +748,7 @@ div.tumbler-search-controls
   label.tumbler-search-relative     input[type=checkbox] "Relative"; in the row always, shown only in Tumble
   label.tumbler-search-origin       input[type=checkbox] "Show the origin"; in the row always, shown only in Tumble
   label.tumbler-search-rest         select "The rest": faint, visible, bright (t19, d6); shown only in Tumble,
-                                    disabled while Relative is off
+                                    disabled while Relative is off or Lit is "all" (t21, d8)
   button.tumbler-search-face        hidden (display none) while Relative is checked in Tumble; shown again when off
   ...                               the existing controls, unchanged
 ```
@@ -772,6 +772,23 @@ div.tumbler-search-controls
   `search.relative.rest`. Decided here: it is disabled, not hidden, while
   Relative is off, so the row does not shift and the setting stays visible
   beside the control it belongs to.
+- **The rest while Lit is "everything, results highlighted" (t21, deviation
+  d8)**: that Lit setting (`"all"`, `docs/search-interface.md`) draws every
+  point that is not a result at its usual brightness, so The rest has nothing
+  to decide. While Relative is on and `search.settings.lit === "all"` the
+  select is disabled, not hidden; it keeps showing the setting, and the
+  label's title (the tooltip, which is how this panel already explains a
+  disabled control, as for Results under the reranker) changes to the sentence
+  in the block below. Any other Lit setting enables it again with its usual
+  title. While Relative is off it is disabled with its usual title, whatever
+  Lit is.
+
+<!-- interface-strings module="45-search-panel.js" task="t21" landed="yes" -->
+```text
+Lit is set to everything, results highlighted: every point that is not a result is drawn at its usual brightness, so this setting does nothing.
+How bright the points that are not results are in the relative view.
+```
+
 - **`frame.relative`**: `panel.drawOverlay(ctx, project, frame)` gets `frame.relative`
   (boolean, true while `search.relative.active` and the mode is Tumble). While
   it is true the panel draws its query rings but **no letters, no links and no
@@ -926,6 +943,17 @@ today's and no rest value is uploaded, whatever the setting. `litCount` and
 `sharedCount` count only the lit values from `litValues`. With Lit set to "by
 closeness" every point is usually lit already, so the rest changes nothing.
 
+**Lit "all" has no gradient (t21, deviation d8).** Under the fourth Lit
+setting, `"all"` ("everything, results highlighted"), `litValues` already
+gives every point that is not a result the constant
+`ET.searchSets.LIT_ALL_REST` (about 0.4366, the lit value at which the
+renderer's brightness factor is 1), which is above 0. The relative view
+uploads those values as they are: no gradient is worked out, the constant is
+the same at every level of the rest, and results are at 1 exactly as under
+`"even"`. `handle.setRelative({ rest })` still keeps the setting (and reports
+it) but uploads nothing; choosing another Lit setting brings the gradient back
+at the level kept. The panel disables The rest meanwhile (above).
+
 ### Status line additions (t9)
 
 The viewer adds to the mode's relative status, in this order, before its own `·
@@ -979,6 +1007,41 @@ With {letter}'s point of view on, its results are ranked in the scaled measure a
 - The test hook (the viewer's existing one) reports, for each named result, its
   drawn position and the height its cosine (unit-length set) or height maps to
   on the ruler (`list.results`), and the ruler's ends (`list.ruler`).
+
+### The relative view is drawn sharp (t21, deviation d8)
+
+The owner compared the build with the reference page on 2026-11-17: "The lit is
+faint in that case for us, and sharp on the demo/reference." The build drew the
+relative view with the renderer's depth blur and glow, in which a crowded cloud
+melts together. So two draw keys follow the relative mix (`mix`: 0 in the plain
+view, 1 once the relative view is settled, the value that eases the pitch):
+
+<!-- interface-names module="50-viewer.js" object="ET.viewer" match="constants" task="t21" prefix="ET.viewer." landed="yes" -->
+```text
+RELATIVE_DEPTH_OF_FIELD
+RELATIVE_BLOOM
+```
+
+| Draw key | At `mix` 0 | At `mix` 1 |
+|----------|------------|------------|
+| `depthOfField` | what the mode's draw state gives (Tumble: 1.1) | `ET.viewer.RELATIVE_DEPTH_OF_FIELD`, 0: no point is blurred or dimmed by its depth |
+| `bloom` | the key is left out on a dark stage (the renderer's default, 0.55); 0.3 on a light stage | `ET.viewer.RELATIVE_BLOOM`, 0.2, or the value at `mix` 0 when that is already lower |
+
+- Between the two, each key is `from * (1 - mix) + to * mix`, where `from` is
+  the value the key would have had in the plain view (the mode's, the light
+  theme's, else the renderer's default). Bloom is never raised: `to` is the
+  smaller of `from` and 0.2. At `mix` 1 the values are exactly 0 and 0.2.
+- At `mix` 0 nothing is touched: a key that was left out stays left out, so
+  the plain view's draw state is bit for bit what it was (o9), with or without
+  a search and with Relative on but no search.
+- The theme's bloom is set first, so a light stage blends from 0.3, not from
+  0.55.
+- `wireDepthOfField` is left alone. Tumble draws no wires; the only wires seen
+  in it are those fading out for about a second after a change of view from
+  Lattice, and they keep their own depth blur for that second.
+- Trails are not changed: 0.17 s as in every view, against the reference's
+  about 0.03 s, and the Trails checkbox is as it was (the owner's decision).
+- Other views are untouched: the mix is 0 outside Tumble.
 
 ## Web component (t11)
 

@@ -33,7 +33,11 @@
     even: "the results, evenly",
     close: "by closeness: nearer is brighter",
     named: "named results only",
+    all: "everything, results highlighted",
   };
+  var SP_REST_TITLE = "How bright the points that are not results are in the relative view.";
+  var SP_REST_ALL =
+    "Lit is set to everything, results highlighted: every point that is not a result is drawn at its usual brightness, so this setting does nothing.";
   var SP_PALETTE_DARK = { fg: "#e9eef6", muted: "#8a96ab", line: "#1b2436", accent: "#ffc56b", bg: "#04060b" };
   var SP_PALETTE_LIGHT = { fg: "#1b2130", muted: "#5b6578", line: "#d6dae2", accent: "#a35f00", bg: "#f6f4ee" };
   // A value that could name a resource is not used. The "r" is written as an escape so that
@@ -175,6 +179,7 @@
   function spLitQualifier(setting) {
     if (setting === "close") return ", nearer ones brighter";
     if (setting === "named") return " (named results only)";
+    if (setting === "all") return " (every other point is shown too)";
     return "";
   }
 
@@ -823,7 +828,7 @@
     ]);
     p.rest = rest.input;
     p.restLabel = rest.label;
-    p.restLabel.title = "How bright the points that are not results are in the relative view.";
+    p.restLabel.title = SP_REST_TITLE;
     p.rest.value = "bright";
     spListen(p, p.rest, "change", function () {
       if (typeof p.handle.setRelative === "function") p.handle.setRelative({ rest: p.rest.value });
@@ -837,6 +842,7 @@
       ["even", SP_LIT_TEXT.even],
       ["close", SP_LIT_TEXT.close],
       ["named", SP_LIT_TEXT.named],
+      ["all", SP_LIT_TEXT.all],
     ]);
     p.lit = lit.input;
     spListen(p, p.lit, "change", function () {
@@ -1121,9 +1127,15 @@
     p.relative.input.checked = !!rel && rel.relative === true;
     p.origin.input.checked = !!rel && rel.showOrigin === true;
     // The rest sits with them in Tumble; it matters only in the relative view, so it is
-    // disabled (not hidden, so the row does not shift) while Relative is off.
+    // disabled (not hidden, so the row does not shift) while Relative is off. It is also
+    // disabled while Lit is "all", which draws the rest at its usual brightness whatever
+    // this says (d8); the title then says why.
     spShow(p.restLabel, p.tumble, "inline-flex");
-    p.rest.disabled = !(rel && rel.relative === true);
+    var relOn = !!rel && rel.relative === true;
+    var restUnused = relOn && st.lit === "all";
+    p.rest.disabled = !relOn || restUnused;
+    var restTitle = restUnused ? SP_REST_ALL : SP_REST_TITLE;
+    if (p.restLabel.title !== restTitle) p.restLabel.title = restTitle;
     if (rel && typeof rel.rest === "string" && p.rest.value !== rel.rest) p.rest.value = rel.rest;
     spShow(p.face, !(p.tumble && rel && rel.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;

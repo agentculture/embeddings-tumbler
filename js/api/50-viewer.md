@@ -89,7 +89,7 @@ All optional.
 | `searchK` | `8` | Search: results per search with no reranker (3 to 100). |
 | `searchCandidates` | `50` | Search: candidates handed to the reranker (3 to 100). |
 | `searchTop` | `20` | Search: reranked candidates kept (3 to `searchCandidates`). |
-| `searchLit` | `"even"` | Search: the starting lit setting (`"even"`, `"close"`, `"named"`). |
+| `searchLit` | `"even"` | Search: the starting lit setting (`"even"`, `"close"`, `"named"`, `"all"`). |
 | `onSearchChange(search)` | none | Search: called with `info().search` whenever it changes. |
 | `relative` | `false` | Relative search: the Relative setting at mount (see "Relative search"). |
 | `showOrigin` | `false` | Relative search: the Show the origin setting at mount. |
@@ -297,6 +297,28 @@ similarity on a set of unit-length vectors), drawn with a ruler. The contract is
   only the lit values the Lit setting gave. With the relative view not shown the
   lit values are exactly as before, whatever the rest. With Lit "by closeness"
   every point is usually lit already, so the rest changes nothing.
+- **Drawn sharp (task t21, deviation d8).** By the relative mix, the draw key
+  `depthOfField` goes from the mode's value (Tumble: 1.1) to
+  `ET.viewer.RELATIVE_DEPTH_OF_FIELD` (0) and `bloom` from its plain value (the
+  key left out on a dark stage, so the renderer's 0.55; 0.3 on a light stage)
+  to `ET.viewer.RELATIVE_BLOOM` (0.2), never upward: `from * (1 - mix) + to *
+  mix`. At mix 0 neither key is touched, so the plain view's draw state is
+  exactly as before, a left-out `bloom` included. `wireDepthOfField` and the
+  trails are not changed. The owner asked for it after comparing with the
+  reference page, whose relative view has no depth blur.
+- **Lit "everything, results highlighted" (`lit: "all"`, task t21, deviation
+  d8).** A fourth lit setting, in every view: results are lit at 1 as under
+  `"even"`, and every other point is uploaded at `ET.searchSets.LIT_ALL_REST`
+  (about 0.4366), where the renderer's brightness factor is 1, so it is drawn
+  about as with no search. `litCount`, `sharedCount` and each search's
+  `insideCount` are those of `"even"`. In the relative view the constant
+  replaces the gradient at every level of the rest (`setRelative({ rest })`
+  keeps the setting and uploads nothing). In Focus, Only results still hides:
+  while it hides, the points that are not results are uploaded at 0 and are
+  skipped by the click, the hover name and the group names. Per view, with the
+  wires and the fog: `docs/search-interface.md`, "Everything, results
+  highlighted". `ET.viewer.hiddenPoint(handle, i)` reports whether point `i` is
+  hidden this frame (for tests).
 - **Status and provenance.** The status line is the mode's relative status
   followed by the viewer's pieces, before its own zoom and paused parts: the words
   `named results chosen and numbered by the reranker` while a shown search was

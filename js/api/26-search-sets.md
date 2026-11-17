@@ -45,9 +45,12 @@ call time.
 |----------|-------|---------|
 | `ET.searchSets.MAX_SEARCHES` | `4` | most searches active at once |
 | `ET.searchSets.LETTERS` | `["A", "B", "C", "D"]` | search letters, by position; frozen |
-| `ET.searchSets.LIT_SETTINGS` | `["even", "close", "named"]` | the lit settings, in menu order; frozen |
+| `ET.searchSets.LIT_SETTINGS` | `["even", "close", "named", "all"]` | the lit settings, in menu order; frozen. `"all"` was added last (2026-11-17, deviation d8 of the relative-search plan), so the earlier three keep their places |
 | `ET.searchSets.DEFAULT_LIT` | `"even"` | the lit setting when none is chosen (the reference's first option) |
 | `ET.searchSets.LIT_THRESHOLD` | `0.02` | a point counts as lit when its lit value is above this (the reference's) |
+| `ET.searchSets.LIT_UNLIT_GAIN` | `0.07` | the renderer's default `unlitGain`: its brightness factor for a lit value of 0 (kept equal to `ET.renderer.DEFAULTS.unlitGain` by a test) |
+| `ET.searchSets.LIT_FULL_GAIN` | `2.2` | the renderer's brightness factor for a lit value of 1 (kept equal to the shader's text by a test) |
+| `ET.searchSets.LIT_ALL_REST` | `(1 - 0.07) / (2.2 - 0.07)`, about `0.4366` | under `"all"`, the lit value of a point that is not a result: where the renderer's brightness factor `mix(unlitGain, 2.2, l)` is 1 |
 | `ET.searchSets.CLOSE_REACH` | `2.2` | "by closeness" fades out at `near + (radius - near) * CLOSE_REACH` (the reference's) |
 | `ET.searchSets.CLOSE_POWER` | `1.6` | the exponent of the closeness fade (the reference's) |
 | `ET.searchSets.FACE_SALT` | `0x46414345` | salt mixed into the view seed for the facing frame's random start (`ET.math.mixSeed`) |
@@ -61,6 +64,9 @@ LETTERS
 LIT_SETTINGS
 DEFAULT_LIT
 LIT_THRESHOLD
+LIT_UNLIT_GAIN
+LIT_FULL_GAIN
+LIT_ALL_REST
 CLOSE_REACH
 CLOSE_POWER
 FACE_SALT
@@ -90,7 +96,7 @@ exists).
 
 `LETTERS[j]`. Throws `RangeError` for `j` outside `0 .. 3` or not an integer.
 
-### `ET.searchSets.litSetting(value) -> "even" | "close" | "named"`
+### `ET.searchSets.litSetting(value) -> "even" | "close" | "named" | "all"`
 
 `value` when it is one of `LIT_SETTINGS`, otherwise `DEFAULT_LIT`. Never throws.
 
@@ -127,8 +133,10 @@ Returns:
   shared: Uint8Array(count),    // 1 where the shared mark is drawn, else 0
   inside: Uint8Array(count),    // how many searches each point is inside (0 to 4)
   insideCounts: number[],       // per search, how many points are inside it
-  litCount,                     // points with lit value above LIT_THRESHOLD
+  litCount,                     // points the searches light above LIT_THRESHOLD (results; see "all")
   sharedCount,                  // points with shared = 1
+  rest,                         // the lit value given to points inside no search: LIT_ALL_REST
+                                // under "all", 0 under the other settings
 }
 ```
 
@@ -144,6 +152,9 @@ radius `radius`, and per point `i`:
   nearest named result and fades to 0 a little beyond the last one.
 - **`"named"`** (named results only): the value is 1 for the search's hits and
   0 for every other point.
+- **`"all"`** (everything, results highlighted): the value is 1 when inside,
+  else 0, as under `"even"`; the constant for the other points is written
+  afterwards (below).
 
 Then for every point: `lit[i]` is the largest value over the searches;
 `inside[i]` counts the searches it is inside; `shared[i]` is 1 when
@@ -151,9 +162,21 @@ Then for every point: `lit[i]` is the largest value over the searches;
 the result radius of two or more searches, as the honesty condition requires;
 under `"named"` that also means it is a named result of one of them.
 
+Under **`"all"`**, after `litCount` and the shared marks have been worked out,
+every point with `inside[i] === 0` gets `lit[i] = LIT_ALL_REST`, and `rest` is
+that constant. So `lit`, `inside`, `shared`, `insideCounts`, `litCount` and
+`sharedCount` describe the same results as under `"even"`, and only the points
+that are not results differ: they are drawn at the brightness they have with no
+search (about a tenth larger, since the renderer ties size to the same value)
+instead of dimmed. That covers points appended after a ranking was made, every
+point when no search has a result, and every point when `searches` is empty. A
+caller that needs "is this point a result" under `"all"` reads `inside`, not
+`lit > 0` (the viewer's Only results does).
+
 A ranking made before an append covers fewer points than `count`: points past
 the end of its `distances` count as not inside it and get 0 from it. With no
-searches, every array is zeros and both counts are 0 (the viewer does not
+searches, every array is zeros (under `"all"`, `lit` is the constant
+everywhere) and both counts are 0 (the viewer does not
 upload that; it clears the renderer's lit buffer instead, see
 `docs/search-interface.md`).
 

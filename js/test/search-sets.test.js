@@ -1,6 +1,6 @@
 "use strict";
 // ET.searchSets (js/src/26-search-sets.js, interface js/api/26-search-sets.md): several
-// searches at once. What is lit and how strongly under the three lit settings, the shared
+// searches at once. What is lit and how strongly under the lit settings (the fourth, all, is in lit-all.test.js), the shared
 // mark, the report for each pair, the point-of-view scale and the seeded facing frame.
 //
 // The rankings here are built by hand in the shape js/api/24-search.md documents (the
@@ -194,7 +194,7 @@ function centreOf(set, query, hits, scale) {
 test("constants are the interface's values, and the lists are frozen", () => {
   assert.strictEqual(S.MAX_SEARCHES, 4);
   assert.deepStrictEqual(S.LETTERS, ["A", "B", "C", "D"]);
-  assert.deepStrictEqual(S.LIT_SETTINGS, ["even", "close", "named"]);
+  assert.deepStrictEqual(S.LIT_SETTINGS, ["even", "close", "named", "all"]);
   assert.ok(Object.isFrozen(S.LETTERS) && Object.isFrozen(S.LIT_SETTINGS));
   assert.strictEqual(S.DEFAULT_LIT, "even");
   assert.strictEqual(S.LIT_THRESHOLD, 0.02);
@@ -212,7 +212,7 @@ test("letter names positions 0 to 3 and refuses anything else", () => {
   }
 });
 
-test("litSetting passes the three settings and turns anything else into the default", () => {
+test("litSetting passes the four settings and turns anything else into the default", () => {
   for (const s of S.LIT_SETTINGS) assert.strictEqual(S.litSetting(s), s);
   for (const bad of [undefined, null, "", "EVEN", 3, {}, "close "]) {
     assert.strictEqual(S.litSetting(bad), "even");

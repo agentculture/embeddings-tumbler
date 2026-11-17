@@ -3,7 +3,7 @@
 //
 // Up to four searches are active together. Given their rankings (the shape
 // ET.search makes, js/api/24-search.md) this module answers what is lit and
-// how strongly under the three lit settings, which points carry the shared
+// how strongly under the four lit settings, which points carry the shared
 // mark, the report for each pair of searches, the point-of-view scale of one
 // search, and the seeded linear view that faces the searches.
 //
@@ -17,9 +17,19 @@
 ET.searchSets = (function () {
   var MAX_SEARCHES = 4;
   var LETTERS = Object.freeze(["A", "B", "C", "D"]);
-  var LIT_SETTINGS = Object.freeze(["even", "close", "named"]);
+  var LIT_SETTINGS = Object.freeze(["even", "close", "named", "all"]);
   var DEFAULT_LIT = "even";
   var LIT_THRESHOLD = 0.02;
+  // The setting "all" (everything, results highlighted; deviation d8) draws a point that is
+  // not a result as nearly as the renderer allows as with no search. The renderer's lit
+  // shader multiplies a point's colour by mix(unlitGain, 2.2, l) for a lit value l, at
+  // filter 1 (js/src/30-renderer.js, pointMain): unlitGain is the renderer's default 0.07
+  // (Focus draws with 0.05, where the factor is 0.989 instead of 1), and 2.2 is a result's.
+  // The factor is 1 at LIT_ALL_REST, about 0.4366. The size factor there, mix(0.8, 1.5, l),
+  // is about 1.106.
+  var LIT_UNLIT_GAIN = 0.07;
+  var LIT_FULL_GAIN = 2.2;
+  var LIT_ALL_REST = (1 - LIT_UNLIT_GAIN) / (LIT_FULL_GAIN - LIT_UNLIT_GAIN);
   var CLOSE_REACH = 2.2;
   var CLOSE_POWER = 1.6;
   var FACE_SALT = 0x46414345;
@@ -78,7 +88,7 @@ ET.searchSets = (function () {
   // The value one search gives a point at distance d (named results are set apart).
   function searchValue(how, d, isIn, near, reach) {
     if (how === "close") return closeValue(d, near, reach);
-    return how === "even" && isIn ? 1 : 0;
+    return (how === "even" || how === "all") && isIn ? 1 : 0;
   }
 
   function lightNamed(ranking, count, out) {
@@ -121,6 +131,9 @@ ET.searchSets = (function () {
       insideCounts: [],
       litCount: 0,
       sharedCount: 0,
+      // The lit value given to every point that is inside no search: LIT_ALL_REST under
+      // "all", 0 under the other settings (where such a point simply keeps what it has).
+      rest: how === "all" ? LIT_ALL_REST : 0,
     };
     for (const search of searches) out.insideCounts.push(lightSearch(search, count, how, out));
     for (var i = 0; i < count; i++) {
@@ -129,6 +142,10 @@ ET.searchSets = (function () {
         out.shared[i] = 1;
         out.sharedCount++;
       }
+    }
+    // After the counts, so that they keep counting results and not every point.
+    if (out.rest > 0) {
+      for (var j = 0; j < count; j++) if (out.inside[j] === 0) out.lit[j] = out.rest;
     }
     return out;
   }
@@ -578,6 +595,9 @@ ET.searchSets = (function () {
     LETTERS: LETTERS,
     LIT_SETTINGS: LIT_SETTINGS,
     DEFAULT_LIT: DEFAULT_LIT,
+    LIT_UNLIT_GAIN: LIT_UNLIT_GAIN,
+    LIT_FULL_GAIN: LIT_FULL_GAIN,
+    LIT_ALL_REST: LIT_ALL_REST,
     LIT_THRESHOLD: LIT_THRESHOLD,
     CLOSE_REACH: CLOSE_REACH,
     CLOSE_POWER: CLOSE_POWER,

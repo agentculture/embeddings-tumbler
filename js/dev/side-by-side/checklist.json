@@ -508,6 +508,10 @@
     {
      "title": "How bright the rest is: faint, visible or bright, bright by default",
      "visible": "yes"
+    },
+    {
+     "title": "A fourth Lit choice: everything, results highlighted",
+     "visible": "yes"
     }
    ]
   },
