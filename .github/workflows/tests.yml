@@ -16,7 +16,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     # A stuck browser test once held this job for half an hour and more; it should fail fast.
-    timeout-minutes: 30
+    # The browser tests under coverage took 21 minutes on one run of the relative-search
+    # branch and more than 26 on the next (the job was cancelled at 30 before the scan),
+    # so the limit leaves room for a slow runner.
+    timeout-minutes: 45
     permissions:
       contents: read
     # Promote SONAR_TOKEN to job env so the SonarCloud step can gate on
