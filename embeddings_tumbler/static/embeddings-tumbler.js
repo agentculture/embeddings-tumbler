@@ -6609,6 +6609,7 @@ ET.modes = (function () {
   var RELATIVE_FILL = 0.78 / 0.46; // the window fills 78 percent of the stage's shorter side
   var RELATIVE_ZOOM_CAP = 0.5 / (0.42 * 0.46); // the reference's cap for a narrow stage
   var RELATIVE_AXES = ["vertical", "horizontal", "depth"];
+  var RELATIVE_ROWS = [1, 0, 2]; // the frame row each pinned direction is, in pin order
 
   // "A", "A and B", "A, B and C".
   function joinLetters(letters) {
@@ -6681,6 +6682,33 @@ ET.modes = (function () {
     return tr.mixTo;
   }
 
+  // The draw parameters with the relative look's perspective at t: the key is set while
+  // the mix is above 0 and left out otherwise. Every state Tumble returns goes through
+  // this, a swing's too: a swing may start during the turn back to the plain view, and
+  // the picture must keep flattening out evenly then, as the viewer's pitch does.
+  function withPerspective(draw, t, ev) {
+    var mix = mixAt(t, ev);
+    if (mix > 0) draw.perspective = 3 + (ET.renderer.RELATIVE_PERSPECTIVE - 3) * mix;
+    return draw;
+  }
+
+  // The pinned rows of the frame F written again from the fit's directions, bit for bit.
+  function pinRows(fit, F, D) {
+    for (var k = 0; k < fit.count; k++) {
+      var o = RELATIVE_ROWS[k] * D;
+      for (var d = 0; d < D; d++) F[o + d] = fit.directions[k * D + d];
+    }
+  }
+
+  // Whether the turn's pinned rows are exact at t and are those of the searches in force
+  // then: its fit is shown, the turn onto it has ended (or never moved the pinned rows),
+  // and the searches had not been changed yet (staleFrom, the time of a change whose fit
+  // has not switched in).
+  function settledAt(tr, t) {
+    if (!tr.fit || t >= tr.staleFrom) return false;
+    return tr.exact || t - tr.t0 >= tr.duration;
+  }
+
   // The parts of state.relative that stay the same for an event.
   function eventInfo(tr, target) {
     var fit = tr.fit;
@@ -6702,6 +6730,11 @@ ET.modes = (function () {
       free: 3 - fit.count,
       fixed: fit.fixed,
     };
+  }
+
+  // The status line's tail while points have arrived since the fit shown was made.
+  function newPoints(since) {
+    return since > 0 ? " · before " + M.thousands(since) + " new points" : "";
   }
 
   // A stepper task that pumps another stepper one unit per run.
@@ -6773,14 +6806,19 @@ ET.modes = (function () {
     var showOrigin = false;
     var queries = []; // the searches last given to searchChanged: [{ letter, query }]
     // Relative events in time order: { t0, afterSwings, turn, framing, info }.
-    // turn: { t0, tour (null: back to the plain tour), fit, list, set, blend,
-    // duration, mixFrom, mixTo }; framing: { t0, duration, centre, zoom (shown at
-    // t0), target (null: the plain framing) }. A Show the origin change adds an
-    // event that shares the turn in force and starts a new framing.
+    // turn: { t0, tour (null: back to the plain tour), fit, list, ver, count, blend,
+    // duration, mixFrom, mixTo, exact, staleFrom }; framing: { t0, duration, centre,
+    // zoom (shown at t0), target (null: the plain framing) }. A Show the origin change
+    // adds an event that shares the turn in force and starts a new framing.
+    // The events are the view's history and are all kept, so that any earlier time can
+    // be shown again; each holds a few rows of D numbers (its tour, its turn, its
+    // searches and its framing) and never the set: the data a fit was made on is known
+    // by `ver` (the data version, below) and `count` (its rows).
     var relEvents = [];
-    var relPending = null; // a relative fit started and not yet switched in: { list, set, fit }
-    var relFits = []; // finished fits kept for reuse on the same set: { set, list, fit }
+    var relPending = null; // a relative fit started and not yet switched in: { list, ver, count, fit }
+    var relFits = []; // finished fits kept for reuse on the same data: { ver, count, list, fit }
     var relGen = 0; // a fit of an earlier call that is pumped later does nothing
+    var dataVer = 0; // counts the appends of this entry: which data a relative fit was made on
     // The viewer's clock is not advancing (paused, or reduced motion): a switch or a framing
     // change fixed now has no turn (duration 0, recorded in the event). Kept across enter().
     var still = false;
@@ -6794,6 +6832,7 @@ ET.modes = (function () {
       relEvents = [];
       relPending = null;
       relFits = [];
+      dataVer = 0;
       if (queries.some((q) => q.query.length !== s.dimension)) queries = [];
       set = s;
       D = s.dimension;
@@ -7095,7 +7134,7 @@ ET.modes = (function () {
         var zoom = M.swingState(sw, t, frame, centre);
         var draw = drawFor(frame, centre, t, zoom);
         draw.zoom = zoom;
-        return draw;
+        return withPerspective(draw, t, ev);
       }
       viewFrame(t, ev, frame);
       if (sw) released(sw, t, frame);
@@ -7151,7 +7190,11 @@ ET.modes = (function () {
       var tr = ev.turn;
       if (tr.tour) tr.tour.frameAt(t, res);
       else frameAt(t, res);
-      if (tr.blend && t - tr.t0 < tr.duration) applyRefitBlend(tr.blend, 1 - refitEase((t - tr.t0) / tr.duration), res, D);
+      if (tr.blend && t - tr.t0 < tr.duration) {
+        applyRefitBlend(tr.blend, 1 - refitEase((t - tr.t0) / tr.duration), res, D);
+        // A turn between two fits of the same searches moves only the free rows.
+        if (tr.exact) pinRows(tr.fit, res, D);
+      }
       return res;
     }
 
@@ -7178,9 +7221,7 @@ ET.modes = (function () {
         for (var d = 0; d < D; d++) centre[d] = fr.centre[d] + (centre[d] - fr.centre[d]) * e;
         draw.zoom = fr.zoom + (draw.zoom - fr.zoom) * e;
       }
-      var mix = mixAt(t, ev);
-      if (mix > 0) draw.perspective = 3 + (ET.renderer.RELATIVE_PERSPECTIVE - 3) * mix;
-      return draw;
+      return withPerspective(draw, t, ev);
     }
 
     // The centre and zoom that frame the ruler's window along the vertical search.
@@ -7207,10 +7248,23 @@ ET.modes = (function () {
       return { frame: frame, centre: centre, zoom: draw.zoom, mix: mixAt(T, relAt(T)) };
     }
 
+    // Whether a switch at T onto `fit` leaves the pinned rows as they are: the view
+    // shown is settled on a fit that pins the same directions (the same searches fitted
+    // again on new data, since a search's direction does not depend on the data). Then
+    // only the free rows, the window and the centre move, and the view stays settled.
+    function keepsPinned(fit, T) {
+      var prev = heading();
+      if (!fit || !prev?.fit || !settledAt(prev, T)) return false;
+      return fit.count === prev.fit.count && sameBits(fit.directions, prev.fit.directions);
+    }
+
     // A switch at T (never earlier than the previous relative event or swing):
-    // onto the relative tour of `fit`, or back onto the plain tour (fit null).
-    function addSwitch(time, fit, list) {
+    // onto the relative tour of the finished fit `p` ({ fit, list, ver, count }), or
+    // back onto the plain tour (p null).
+    function addSwitch(time, p) {
+      var fit = p ? p.fit : null;
       var T = Math.max(time, lastRelT(), lastSwingT());
+      var exact = keepsPinned(fit, T);
       var shown = shownAt(T);
       swings.end(T); // a swing in progress gives way to the switch
       var tour = fit
@@ -7224,8 +7278,11 @@ ET.modes = (function () {
         t0: T,
         tour: tour,
         fit: fit,
-        list: list,
-        set: set,
+        list: p ? p.list : null,
+        ver: p ? p.ver : dataVer,
+        count: p ? p.count : 0,
+        exact: exact,
+        staleFrom: Infinity,
         blend: level || still ? null : makeRefitBlend(shown.frame, start, D),
         duration: level ? 0 : eventDuration(),
         mixFrom: shown.mix,
@@ -7260,7 +7317,7 @@ ET.modes = (function () {
     function fixRelative(time) {
       var p = relPending;
       relPending = null;
-      addSwitch(time, p.fit, p.list);
+      addSwitch(time, p);
     }
 
     function cancelRelative() {
@@ -7268,13 +7325,14 @@ ET.modes = (function () {
       relPending = null;
     }
 
+    // A finished fit of these searches on the data as it is now, or null.
     function keptFit(list) {
-      for (var k of relFits) if (k.set === set && sameQueries(k.list, list, false)) return k.fit;
+      for (var k of relFits) if (k.ver === dataVer && sameQueries(k.list, list, false)) return k;
       return null;
     }
 
-    function keepFit(fitSet, list, fit) {
-      relFits.push({ set: fitSet, list: list, fit: fit });
+    function keepFit(p) {
+      relFits.push({ ver: p.ver, count: p.count, list: p.list, fit: p.fit });
       if (relFits.length > 4) relFits.shift();
     }
 
@@ -7294,7 +7352,7 @@ ET.modes = (function () {
       var rg = relGen;
       var fitSet = set;
       var rows = fitSet.count > opt.fitRows ? opt.fitRows : undefined;
-      var p = { list: list, set: fitSet, fit: null };
+      var p = { list: list, ver: dataVer, count: fitSet.count, fit: null };
       var plain = null;
       var cen = null;
       var pcaJob = null;
@@ -7360,7 +7418,7 @@ ET.modes = (function () {
             }
             if (!job.step(0)) return false;
             p.fit = job.result;
-            keepFit(fitSet, list, job.result);
+            keepFit(p);
             return true;
           },
         },
@@ -7374,27 +7432,51 @@ ET.modes = (function () {
       return ET.math.relativeDirections(queries.map((q) => q.query), D).count;
     }
 
-    // Bring what is shown in line with the setting, the searches and the set:
-    // start a fit (returned as a stepper), switch now (a fit kept for the same
-    // searches on the same set, or turning off), or nothing.
+    // Bring what is shown in line with the setting and the searches: start a fit
+    // (returned as a stepper), switch now (a fit kept for the same searches on the
+    // same data, or turning off), or nothing. A fit that is shown or under way for
+    // these searches is kept as it is, also when points have arrived since it was
+    // started: refit() fits it again on the new data (dataChanged).
     function reconcile(t) {
       var h = heading();
       var shownFit = h ? h.fit : null;
       if (!pinnedCount()) {
         if (relPending) cancelRelative();
-        if (shownFit) addSwitch(t, null, null);
+        if (shownFit) addSwitch(t, null);
         return null;
       }
-      if (relPending?.set === set && sameQueries(relPending.list, queries, true)) return null;
+      if (relPending && sameQueries(relPending.list, queries, true)) return null;
       if (relPending) cancelRelative();
-      if (shownFit && h.set === set && sameQueries(h.list, queries, true)) return null;
-      var kept = keptFit(queries);
-      if (kept) {
-        relPending = { list: queries, set: set, fit: kept };
-        if (isReady()) fixRelative(t);
+      if (shownFit && sameQueries(h.list, queries, true)) {
+        h.staleFrom = Infinity; // the searches are those of the frame shown (again)
         return null;
       }
+      var kept = keptFit(queries);
+      if (kept) return switchToKept(kept, t);
+      // Until the new fit switches in, the frame shown is the earlier searches': from
+      // now it is not reported as settled (a letter may name another search by now).
+      if (shownFit) h.staleFrom = Math.min(h.staleFrom, Math.max(t, h.t0));
       return startFit(queries);
+    }
+
+    // A fit kept for the searches in force: it switches in now (once ready), with no work.
+    function switchToKept(kept, t) {
+      relPending = { list: queries, ver: kept.ver, count: kept.count, fit: kept.fit };
+      if (isReady()) fixRelative(t);
+      return null;
+    }
+
+    // The relative fit that is shown, or under way, was made before points arrived.
+    function relativeBehind() {
+      if (!pinnedCount()) return false;
+      if (relPending) return relPending.ver !== dataVer;
+      var h = heading();
+      return !!h?.fit && h.ver !== dataVer;
+    }
+
+    // Points added since the fit of the turn `tr` was made (0 for the plain view).
+    function sinceFit(tr) {
+      return tr?.fit && set ? set.count - tr.count : 0;
     }
 
     // inst.searchChanged(search, t): only the letters and the query vectors are
@@ -7453,6 +7535,7 @@ ET.modes = (function () {
           subspace: 0,
           free: 3,
           fixed: 0,
+          searches: [],
         };
       }
       if (!ev.info) ev.info = eventInfo(tr, ev.framing.target);
@@ -7461,7 +7544,7 @@ ET.modes = (function () {
         relative: relOn,
         showOrigin: showOrigin,
         active: true,
-        settled: !turning,
+        settled: settledAt(tr, t),
         mix: mix,
         pinned: i.pinned,
         dropped: i.dropped,
@@ -7472,6 +7555,7 @@ ET.modes = (function () {
         subspace: i.subspace,
         free: i.free,
         fixed: i.fixed,
+        searches: tr.list,
       };
     }
 
@@ -7525,14 +7609,12 @@ ET.modes = (function () {
       if (empty) return M.EMPTY_STATUS;
       if (!isReady()) return "finding the strongest directions in " + D + "-d … " + Math.round(progress * 100) + "%";
       var ev = relAt(t);
-      if (ev?.turn.fit) return relativeStatus(ev.turn, t - ev.turn.t0 >= ev.turn.duration);
+      if (ev?.turn.fit) return relativeStatus(ev.turn, settledAt(ev.turn, t)) + newPoints(sinceFit(ev.turn));
       var sw = swingAt(t, ev);
       if (sw && t < sw.U) return M.swingStatus(sw, "tumbling");
       var cur = tours[activeIndex(t)];
       var s = "tour of " + cur.tour.subspace + " strongest directions · " + (cur.share * 100).toFixed(1) + "% of variance";
-      var since = set.count - cur.count;
-      if (since > 0) s += " · before " + M.thousands(since) + " new points";
-      return s;
+      return s + newPoints(set.count - cur.count);
     }
 
     function snapshot(t) {
@@ -7559,11 +7641,15 @@ ET.modes = (function () {
       }
       var old = set;
       set = newSet;
+      dataVer++;
       st = M.stats(newSet, old);
       glide.retarget(t, st.mean);
-      // The relative view in force (or a switch to it waiting) is fitted again on
-      // the new set, the searches kept, and switches in at a recorded time.
-      return M.changed(relOn ? reconcile(t) : null, false);
+      // The relative view in force (or a fit of it under way) is kept as it is, like
+      // the tour: its pinned rows are the searches' directions, which the new points do
+      // not change. Its free rows, window and centre are fitted again by refit(), which
+      // the viewer calls by its quiet and share policy. Fitting here instead would start
+      // over on every append, and under a stream of them would never finish.
+      return M.changed(null, false);
     }
 
     // Fit the directions again on the current data. Returns a stepper. The
@@ -7579,7 +7665,7 @@ ET.modes = (function () {
       refitGen++;
       var g = gen;
       var rg = refitGen;
-      return M.stepper(
+      var plain = M.stepper(
         fit(
           function (tour, count, zb) {
             pending = { tour: tour, count: count, zb: zb };
@@ -7590,6 +7676,11 @@ ET.modes = (function () {
           },
         ),
       );
+      // A relative fit made before points arrived is made again after the plain fit,
+      // whose directions it reuses (they are kept with the set); it switches in at
+      // mark(t) or the first stateAt after it is done.
+      if (!relativeBehind()) return plain;
+      return M.stepper([pumpTask(plain, 8), pumpTask(startFit(queries), 1)]);
     }
 
     // Fix the time of a finished event (a refit waiting for its switch).
@@ -7606,6 +7697,7 @@ ET.modes = (function () {
       if (!info) return { relative: false, showOrigin: showOrigin, active: false, switchAt: switchAt, pending: false };
       info.switchAt = switchAt;
       info.instant = instant;
+      info.pointsSinceFit = sinceFit(heading());
       info.pending = relPending !== null;
       info.transition = relDuration();
       return info;
@@ -16893,13 +16985,47 @@ ET.viewer = (function () {
     return values;
   }
 
-  // ET.math.unitLength of the set shown, once per set.
+  // ET.math.unitLength of the set shown, once per set, and only when somebody reads it
+  // (lazyUnit): a pass over every row, so never on the path of every info().search.
   function unitOf(v) {
     var s = v.search;
     var set = v.set;
     if (!set) return null;
     if (s.unit?.set !== set) s.unit = { set: set, unit: ET.math.unitLength(set.vectors, set.count, set.dimension) };
     return s.unit.unit;
+  }
+
+  function unitCopy(unit) {
+    return unit ? { unit: unit.unit, min: unit.min, max: unit.max, tolerance: unit.tolerance } : null;
+  }
+
+  function measureOf(unit) {
+    if (!unit) return null;
+    return unit.unit ? "cosine" : "length along the search";
+  }
+
+  // In the plain view `measure` and `unit` of info().search.relative come from the
+  // viewer's own check of the set (Tumble reports them only once an axis is pinned). They
+  // are worked out when first read, not when the report is made: the report is made on
+  // every change of the searches and of the data, with Relative off and in every view, and
+  // the check reads every row. Both keys stay listed, in their places, and give the values
+  // for the set shown when they are read (null with no set).
+  function lazyUnit(v, info) {
+    Object.defineProperty(info, "measure", {
+      enumerable: true,
+      configurable: true,
+      get: function () {
+        return measureOf(unitOf(v));
+      },
+    });
+    Object.defineProperty(info, "unit", {
+      enumerable: true,
+      configurable: true,
+      get: function () {
+        return unitCopy(unitOf(v));
+      },
+    });
+    return info;
   }
 
   // In the plain view with the setting on, the searches that give no axis (letters), so the
@@ -16934,27 +17060,40 @@ ET.viewer = (function () {
         shown: s.shown,
         list: s.shown.map(function (q) {
           var dir = searchDirection(q);
-          return {
-            letter: q.letter,
-            results: q.view.hits.map(function (hit) {
-              return {
-                index: hit.index,
-                id: hit.id,
-                height: dir ? rowDot(set.vectors, hit.index * D, dir.u, D) : null,
-                cosine: 1 - hit.plainDistance,
-              };
-            }),
-          };
+          return q.view.hits.map(function (hit) {
+            return {
+              index: hit.index,
+              id: hit.id,
+              height: dir ? rowDot(set.vectors, hit.index * D, dir.u, D) : null,
+              cosine: 1 - hit.plainDistance,
+            };
+          });
         }),
       };
     }
-    return s.heights.list.map(function (e) {
+    // The letter is read from the search each time: the searches are lettered again in
+    // place (letterByPosition) without the list changing, so a kept letter goes stale.
+    return s.heights.list.map(function (results, j) {
       return {
-        letter: e.letter,
-        results: e.results.map(function (r) {
+        letter: s.shown[j].letter,
+        results: results.map(function (r) {
           return { ...r };
         }),
       };
+    });
+  }
+
+  // Whether the searches the mode's frame was built from (state.relative.searches) are the
+  // ones shown now, by letter and by vector. They differ from the moment a changed search is
+  // committed until its fit switches in: the frame shown is then the earlier searches', and
+  // a letter may name another search by now. A state without the list is taken as current.
+  function relativeCurrent(v, rel) {
+    var list = rel?.searches;
+    if (!Array.isArray(list)) return true;
+    var shown = v.search.shown;
+    if (list.length !== shown.length) return false;
+    return list.every(function (e, j) {
+      return e.letter === shown[j].letter && sameValues(e.query, shown[j].query);
     });
   }
 
@@ -16962,8 +17101,7 @@ ET.viewer = (function () {
   // view is shown.
   function shownRelativeParts(v, st) {
     return {
-      settled: st.settled === true,
-      measure: st.measure,
+      settled: st.settled === true && relativeCurrent(v, st),
       pinned: st.pinned.map(function (p) {
         return { letter: p.letter, axis: p.axis, length: p.length };
       }),
@@ -16979,14 +17117,10 @@ ET.viewer = (function () {
     };
   }
 
-  // The same parts in the plain view: the measure from the viewer's own check of the set
-  // (`unit`, null with no set) and the searches that give no axis.
-  function plainRelativeParts(v, unit) {
-    var measure = null;
-    if (unit) measure = unit.unit ? "cosine" : "length along the search";
+  // The same parts in the plain view: nothing pinned, and the searches that give no axis.
+  function plainRelativeParts(v) {
     return {
       settled: false,
-      measure: measure,
       pinned: [],
       dropped: plainDropped(v),
       free: 3,
@@ -16998,23 +17132,23 @@ ET.viewer = (function () {
     };
   }
 
-  // info().search.relative. The mode's state is the one last drawn. In the plain view the
-  // measure and unit come from the viewer's own check of the set (Tumble reports them only
-  // once an axis is pinned), and dropped names the searches that give no axis.
+  // info().search.relative. The mode's state is the one last drawn. While the relative view
+  // is shown the measure and unit are the fit's own (the mode's state carries them). In the
+  // plain view they come from the viewer's own check of the set, made when they are read
+  // (lazyUnit), and dropped names the searches that give no axis.
   function relativeInfo(v) {
     var offered = v.modeId === "tumble";
     var st = offered && v.mode && v.last ? v.last.relative || null : null;
     var active = !!st?.active;
-    var unit = active ? st.unit : unitOf(v);
-    var parts = active ? shownRelativeParts(v, st) : plainRelativeParts(v, unit);
-    return {
+    var parts = active ? shownRelativeParts(v, st) : plainRelativeParts(v);
+    var info = {
       relative: v.rel.relative,
       showOrigin: v.rel.showOrigin,
       offered: offered,
       active: active,
       settled: parts.settled,
-      measure: parts.measure,
-      unit: unit ? { unit: unit.unit, min: unit.min, max: unit.max, tolerance: unit.tolerance } : null,
+      measure: active ? st.measure : null,
+      unit: active ? unitCopy(st.unit) : null,
       pinned: parts.pinned,
       dropped: parts.dropped,
       free: parts.free,
@@ -17024,6 +17158,7 @@ ET.viewer = (function () {
       subspace: parts.subspace,
       searches: parts.searches,
     };
+    return active ? info : lazyUnit(v, info);
   }
 
   // The viewer's pieces after the mode's relative status, before its own zoom and paused.
@@ -17303,6 +17438,32 @@ ET.viewer = (function () {
     return data;
   }
 
+  // The searches the overlay is given: every search shown, in letter order. While the frame
+  // shown was built from other searches than those (relativeCurrent), the searches of the
+  // frame come first, so that the ruler is drawn along the direction the frame is really
+  // pinned to; a search of the frame that is no longer shown has no name. The searches shown
+  // now follow, each at its own place.
+  function overlaySearches(v, rel) {
+    var shown = v.search.shown;
+    var mine = shown.map(function (q, j) {
+      return { letter: q.letter, colour: searchColour(v, q, j), query: q.query, name: searchName(v, q) };
+    });
+    if (relativeCurrent(v, rel)) return mine;
+    var framed = rel.searches.map(function (e, j) {
+      var at = shown.findIndex(function (q) {
+        return sameValues(q.query, e.query);
+      });
+      return { letter: e.letter, colour: searchColour(v, e, j), query: e.query, name: at >= 0 ? mine[at].name : "" };
+    });
+    return framed.concat(
+      mine.filter(function (q) {
+        return !rel.searches.some(function (e) {
+          return sameValues(q.query, e.query);
+        });
+      })
+    );
+  }
+
   // Once a frame, after the names and before the panel's rings: in Tumble, with the relative
   // view shown or Show the origin on, the overlay's draw list from the mode's state and the
   // draw state given to the renderer, its shapes painted on the overlay canvas and its texts
@@ -17324,11 +17485,7 @@ ET.viewer = (function () {
       frame: s.frame,
       centre: s.centre,
       relative: shown ? s.relative : null,
-      searches: shown
-        ? v.search.shown.map(function (q, j) {
-            return { letter: q.letter, colour: searchColour(v, q, j), query: q.query, name: searchName(v, q) };
-          })
-        : [],
+      searches: shown ? overlaySearches(v, s.relative) : [],
       named: od.named,
       cut: od.cut,
       showOrigin: v.rel.showOrigin,
