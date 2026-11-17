@@ -6630,6 +6630,7 @@ ET.modes = (function () {
       face: face,
       searchChanged: searchChanged,
       setRelative: setRelative,
+      setStill: setStill,
       leave: leave,
     };
 
@@ -6672,6 +6673,9 @@ ET.modes = (function () {
     var relPending = null; // a relative fit started and not yet switched in: { list, set, fit }
     var relFits = []; // finished fits kept for reuse on the same set: { set, list, fit }
     var relGen = 0; // a fit of an earlier call that is pumped later does nothing
+    // The viewer's clock is not advancing (paused, or reduced motion): a switch or a framing
+    // change fixed now has no turn (duration 0, recorded in the event). Kept across enter().
+    var still = false;
 
     function enter(s, opts) {
       M.requireDimension(s, 3, "Tumble");
@@ -7026,6 +7030,11 @@ ET.modes = (function () {
       return d > 0 && Number.isFinite(d) ? d : DEFAULTS.relativeTransition;
     }
 
+    // The length of a turn or a framing glide fixed now: none while the clock is still.
+    function eventDuration() {
+      return still ? 0 : relDuration();
+    }
+
     // The frame with the relative events applied (no swing): the plain frame, or
     // the target of the turn in force (the relative tour or the plain frame),
     // turned onto from the frame shown at the turn's start.
@@ -7109,15 +7118,16 @@ ET.modes = (function () {
         : null;
       var start = tour ? tour.frameAt(T) : frameAt(T, new Float32Array(3 * D));
       // Already on the new frame (a search that adds no axis): nothing turns.
-      var still = sameBits(shown.frame, start);
+      // With the clock still the new view is shown at once: no turn and no glide.
+      var level = sameBits(shown.frame, start);
       var turn = {
         t0: T,
         tour: tour,
         fit: fit,
         list: list,
         set: set,
-        blend: still ? null : makeRefitBlend(shown.frame, start, D),
-        duration: still ? 0 : relDuration(),
+        blend: level || still ? null : makeRefitBlend(shown.frame, start, D),
+        duration: level ? 0 : eventDuration(),
         mixFrom: shown.mix,
         mixTo: tour ? 1 : 0,
       };
@@ -7125,7 +7135,8 @@ ET.modes = (function () {
         t0: T,
         afterSwings: swings.list.length,
         turn: turn,
-        framing: { t0: T, duration: relDuration(), centre: shown.centre, zoom: shown.zoom, target: tour ? framingTarget(fit) : null },
+        framing: { t0: T, duration: eventDuration(), centre: shown.centre, zoom: shown.zoom, target: tour ? framingTarget(fit) : null },
+        instant: still,
         info: null,
       });
     }
@@ -7140,7 +7151,8 @@ ET.modes = (function () {
         t0: T,
         afterSwings: swings.list.length,
         turn: turn,
-        framing: { t0: T, duration: relDuration(), centre: shown.centre, zoom: shown.zoom, target: framingTarget(turn.fit) },
+        framing: { t0: T, duration: eventDuration(), centre: shown.centre, zoom: shown.zoom, target: framingTarget(turn.fit) },
+        instant: still,
         info: null,
       });
     }
@@ -7302,6 +7314,13 @@ ET.modes = (function () {
       var h = heading();
       if (showOrigin !== wasOrigin && relEvents.length === before && h?.fit) addFraming(t);
       return work;
+    }
+
+    // inst.setStill(still): the viewer's clock is (true) or is not (false) standing still.
+    // It changes nothing shown; it decides only whether a switch or a framing change fixed
+    // from now on turns (docs/relative-interface.md, "Motion stopped (t19)").
+    function setStill(value) {
+      still = value === true;
     }
 
     // state.relative at t (docs/relative-interface.md): null in the plain view
@@ -7513,9 +7532,11 @@ ET.modes = (function () {
     // describe().relative (docs/relative-interface.md).
     function describeRelative() {
       var switchAt = relEvents.length ? relEvents.at(-1).t0 : null;
+      var instant = relEvents.length ? relEvents.at(-1).instant : false;
       var info = relInfo(self.time);
       if (!info) return { relative: false, showOrigin: showOrigin, active: false, switchAt: switchAt, pending: false };
       info.switchAt = switchAt;
+      info.instant = instant;
       info.pending = relPending !== null;
       info.transition = relDuration();
       return info;
@@ -10499,6 +10520,19 @@ ET.modes = (function () {
       "showOrigin",
       "Zoom out to the all-zero vector, or, in the plain view, mark where it falls."
     );
+    // The rest: how bright the points that are not results are in the relative view (d6).
+    var rest = spSelect(p, "tumbler-search-rest", "The rest", [
+      ["faint", "faint"],
+      ["visible", "visible"],
+      ["bright", "bright"],
+    ]);
+    p.rest = rest.input;
+    p.restLabel = rest.label;
+    p.restLabel.title = "How bright the points that are not results are in the relative view.";
+    p.rest.value = "bright";
+    spListen(p, p.rest, "change", function () {
+      if (typeof p.handle.setRelative === "function") p.handle.setRelative({ rest: p.rest.value });
+    });
     p.face = spText(p, "button", "tumbler-search-face", "Face the searches");
     p.face.type = "button";
     spListen(p, p.face, "click", function () {
@@ -10535,7 +10569,7 @@ ET.modes = (function () {
       spClear(p);
     });
     p.litLabel = lit.label;
-    [p.relative.label, p.origin.label, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
+    [p.relative.label, p.origin.label, p.restLabel, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
       row.appendChild(c);
     });
     return row;
@@ -10791,6 +10825,11 @@ ET.modes = (function () {
     spShow(p.origin.label, p.tumble, "inline-flex");
     p.relative.input.checked = !!rel && rel.relative === true;
     p.origin.input.checked = !!rel && rel.showOrigin === true;
+    // The rest sits with them in Tumble; it matters only in the relative view, so it is
+    // disabled (not hidden, so the row does not shift) while Relative is off.
+    spShow(p.restLabel, p.tumble, "inline-flex");
+    p.rest.disabled = !(rel && rel.relative === true);
+    if (rel && typeof rel.rest === "string" && p.rest.value !== rel.rest) p.rest.value = rel.rest;
     spShow(p.face, !(p.tumble && rel && rel.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
     spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
@@ -11241,7 +11280,8 @@ ET.modes = (function () {
     var n = q.results.length;
     ctx.lineWidth = dpr;
     ctx.strokeStyle = colour;
-    // The relative view draws its own stems and result labels: no links and no labels here.
+    // The relative view draws its own stems, result labels and the searches' names: no links
+    // and no labels here.
     if (!view.relative) q.results.forEach(function (r, i) {
       if (view.hidden(r.index)) return;
       var rp = view.project(spPointVector(view.set, r.index));
@@ -11394,7 +11434,8 @@ ET.modes = (function () {
       var qp = project(vec);
       if (!spFinite(qp)) return;
       spDrawSearch(p, ctx, j, qp, q, view);
-      letters.push({ qp: qp, j: spSlot(q, j), text: view.focus ? q.letter + " query" : q.letter });
+      // In the relative view the overlay puts the letter and name beside the ring (t19).
+      if (!view.relative) letters.push({ qp: qp, j: spSlot(q, j), text: view.focus ? q.letter + " query" : q.letter });
     });
     ctx.globalAlpha = 1;
     ctx.restore?.();
@@ -11623,6 +11664,7 @@ ET.modes = (function () {
     return {
       letter: s.letter,
       colour: s.colour,
+      name: typeof s.name === "string" ? s.name : "",
       query: q,
       length: len,
       u: u,
@@ -11778,13 +11820,20 @@ ET.modes = (function () {
       .join(" ");
   }
 
-  // [{ranks} ]{text}  {heights}[  cosine {c}]
+  // What a result is called on the stage: its title when the viewer gives one (a label that
+  // is more than its id), otherwise its text (t19).
+  function roResultName(it) {
+    if (typeof it.title === "string" && it.title !== "") return it.title;
+    return it.text === undefined || it.text === null ? "" : it.text;
+  }
+
+  // [{ranks} ]{title or text}  {heights}[  cosine {c}]
   function roResultText(cx, it, i, pinnedSearches, unit, many) {
     var len = roRowLength(cx, i);
     var heights = pinnedSearches.map(function (s) {
       return roHeight(cx, i, s.u);
     });
-    var str = roShorten(it.text === undefined || it.text === null ? "" : it.text, RO_TEXT_MAX) + "  " + heights.map(function (h) {
+    var str = roShorten(roResultName(it), RO_TEXT_MAX) + "  " + heights.map(function (h) {
       return h.toFixed(2);
     }).join(" · ");
     if (!unit) {
@@ -11861,10 +11910,13 @@ ET.modes = (function () {
       // turning: ruler A's line only, faint; it is not drawn as exact
       roRuler(list, cx, s0, foot, top, 0.25 * m);
     }
-    // the searches themselves, each at its raw query
+    // the searches themselves, each at its raw query, with its letter and name beside it
+    // ("A · Rice", the reference's form), placed before any result label (t19)
     for (var s of searches) {
       var qp = roVectorAt(cx, s.query, 0);
       list.marks.push({ x: qp.x, y: qp.y, r: 10 * cx.dpr, colour: s.colour, alpha: 1, kind: "search" });
+      var label = s.name ? s.letter + " · " + roShorten(s.name, RO_TEXT_MAX) : String(s.letter);
+      roText(list, qp.x + 15 * cx.dpr, qp.y + 4 * cx.dpr, label, "left", s.colour, 1, "search", { letter: s.letter });
     }
   }
 
@@ -12194,6 +12246,7 @@ ET.viewer = (function () {
     // Tumble's relative settings at mount (docs/relative-interface.md, "Viewer (t9, t10)").
     relative: false,
     showOrigin: false,
+    relativeRest: "bright", // how bright the points that are not results are: faint, visible, bright
   };
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
@@ -13443,6 +13496,7 @@ ET.viewer = (function () {
       curNeighbours: null,
     };
     v.modeId = id;
+    passStill(v, v.mode); // before the settings, so a switch they cause knows the clock is still
     passRelative(v, v.mode); // right after it is entered (Tumble keeps the settings)
     paintModeButtons(v);
     refreshViewRow(v);
@@ -13464,6 +13518,18 @@ ET.viewer = (function () {
     }
     var work = typeof r?.step === "function" ? r : r?.work;
     if (typeof work?.step === "function") m.jobs.push(work);
+  }
+
+  // Tell a mode that takes it (Tumble's setStill) whether the viewer's clock stands still:
+  // paused, which reduced motion starts in. A relative switch fixed while still has no turn,
+  // so the settled view is shown on the next frame instead of waiting for Play.
+  function passStill(v, m) {
+    if (!m || typeof m.inst.setStill !== "function") return;
+    try {
+      m.inst.setStill(!v.running);
+    } catch (err) {
+      // A mode whose setStill throws keeps turning as it did.
+    }
   }
 
   function leaveSafely(inst) {
@@ -14852,6 +14918,7 @@ ET.viewer = (function () {
     run = !!run;
     if (run === v.running) return;
     v.running = run;
+    passStill(v, v.mode);
     v.playButton.textContent = run ? "Pause" : "Play";
     v.playButton.setAttribute("aria-pressed", run ? "false" : "true");
     v.statusClock = STATUS_EVERY;
@@ -16495,7 +16562,18 @@ ET.viewer = (function () {
   // values as the search panel's defaults, so a search's ruler and its ring agree.
   var SEARCH_DEFAULTS_DARK = ["#ffc56b", "#6be0ff", "#ff8fb3", "#b6ff8a"];
   var SEARCH_DEFAULTS_LIGHT = ["#a35f00", "#00708a", "#b0245a", "#3d7a00"];
-  var RELATIVE_GRADIENT = 0.2; // the brightest point that is not a result, as a lit value
+  // The rest: the lit value of a point that is not a result in the relative view, base + scale
+  // * g^2 (deviation d6). "faint" is what was built first; "bright" is the owner's default.
+  var RELATIVE_REST = {
+    faint: { base: 0, scale: 0.2 },
+    visible: { base: 0.08, scale: 0.45 },
+    bright: { base: 0.2, scale: 0.6 },
+  };
+  var RELATIVE_REST_DEFAULT = "bright";
+
+  function restLevel(x) {
+    return typeof x === "string" && Object.hasOwn(RELATIVE_REST, x) ? x : null;
+  }
   var OWN_POINT_DISTANCE = 1e-7; // a point this close to its search, at its length, is its own
   var OWN_POINT_LENGTH = 1e-6;
 
@@ -16535,15 +16613,16 @@ ET.viewer = (function () {
     return Math.abs(Math.sqrt(rowDot(set.vectors, o, set.vectors.subarray(o, o + D), D)) - length) < OWN_POINT_LENGTH;
   }
 
-  // The gradient for the searches shown, worked out once per change of the searches or the
-  // data: RELATIVE_GRADIENT * g^2, g the largest over the searches of
+  // The gradient for the searches shown, worked out once per change of the searches, the
+  // data or the rest setting: base + scale * g^2 (RELATIVE_REST), g the largest over the searches of
   // clamp((c - mid) / (hi - mid), 0, 1) by plain cosine c, mid the median c (index N >> 1
   // of the ascending sort) and hi the largest c of a point other than the search's own.
   function relativeGradient(v) {
     var s = v.search;
     var set = s.shownSet;
     if (!s.shown.length || !set) return null;
-    if (s.gradient?.shown === s.shown && s.gradient.set === set) return s.gradient.values;
+    var rest = v.rel.rest;
+    if (s.gradient?.shown === s.shown && s.gradient.set === set && s.gradient.rest === rest) return s.gradient.values;
     var N = set.count;
     var g = new Float64Array(N);
     var c = new Float64Array(N);
@@ -16564,8 +16643,9 @@ ET.viewer = (function () {
       }
     }
     var values = new Float32Array(N);
-    for (var k = 0; k < N; k++) values[k] = RELATIVE_GRADIENT * g[k] * g[k];
-    s.gradient = { shown: s.shown, set: set, values: values };
+    var level = RELATIVE_REST[rest];
+    for (var k = 0; k < N; k++) values[k] = level.base + level.scale * g[k] * g[k];
+    s.gradient = { shown: s.shown, set: set, rest: rest, values: values };
     return values;
   }
 
@@ -16648,6 +16728,7 @@ ET.viewer = (function () {
     return {
       relative: v.rel.relative,
       showOrigin: v.rel.showOrigin,
+      rest: v.rel.rest,
       offered: offered,
       active: active,
       settled: active && st.settled === true,
@@ -16831,23 +16912,30 @@ ET.viewer = (function () {
   // no request is made. onSearchChange fires when a value changes.
   function setRelative(v, patch) {
     var cur = v.rel;
-    var next = { relative: cur.relative, showOrigin: cur.showOrigin };
+    var next = { relative: cur.relative, showOrigin: cur.showOrigin, rest: cur.rest };
     if (v.destroyed || !isObj(patch)) return next;
     try {
       if (typeof patch.relative === "boolean") next.relative = patch.relative;
       if (typeof patch.showOrigin === "boolean") next.showOrigin = patch.showOrigin;
+      if (restLevel(patch.rest)) next.rest = patch.rest; // an unknown value is ignored
     } catch {
       // A getter on the host's patch threw: the patch is ignored.
-      return { relative: cur.relative, showOrigin: cur.showOrigin };
+      return { relative: cur.relative, showOrigin: cur.showOrigin, rest: cur.rest };
     }
-    if (next.relative === cur.relative && next.showOrigin === cur.showOrigin) return next;
+    var restChanged = next.rest !== cur.rest;
+    if (next.relative === cur.relative && next.showOrigin === cur.showOrigin && !restChanged) return next;
     v.rel = next;
-    var relettered = !next.relative && letterByPosition(v);
-    passRelative(v, v.mode);
-    if (relettered) notifyModeSearch(v);
+    if (next.relative !== cur.relative || next.showOrigin !== cur.showOrigin) {
+      var relettered = !next.relative && letterByPosition(v);
+      passRelative(v, v.mode);
+      if (relettered) notifyModeSearch(v);
+    }
+    // The rest changes only the lit values of the relative view shown; with it not shown
+    // nothing is uploaded.
+    if (restChanged && v.search.lit && v.search.litUploaded && v.search.litRelative) uploadLit(v);
     searchChanged(v);
     invalidate(v);
-    return { relative: next.relative, showOrigin: next.showOrigin };
+    return { relative: next.relative, showOrigin: next.showOrigin, rest: next.rest };
   }
 
   // What the relative overlay is told about the results (docs/relative-interface.md,
@@ -16864,7 +16952,7 @@ ET.viewer = (function () {
       q.view.hits.forEach(function (hit) {
         var e = byIndex.get(hit.index);
         if (!e) {
-          e = { index: hit.index, text: ET.search.pointText(set, hit.index), ranks: [] };
+          e = { index: hit.index, text: ET.search.pointText(set, hit.index), title: pointTitle(set, hit.index), ranks: [] };
           byIndex.set(hit.index, e);
           named.push(e);
         }
@@ -16888,6 +16976,24 @@ ET.viewer = (function () {
       cut = { height: low, sent: vertical.sent };
     }
     return { named: named, cut: cut };
+  }
+
+  // A point's title: its label when that is more than its id (not empty, not blank, not the
+  // id itself), otherwise null. The relative overlay names a result by it (t19).
+  function pointTitle(set, i) {
+    var label = set.points?.[i]?.label;
+    return typeof label === "string" && label !== set.ids[i] && /\S/.test(label) ? label : null;
+  }
+
+  // What a search's marker is called in the relative view (t19): its text as the panel's
+  // summary names it; for a search from a point with a title, the title.
+  function searchName(v, q) {
+    if (q.kind === "point" && v.set) {
+      var i = v.set.ids.indexOf(q.point);
+      var title = i >= 0 ? pointTitle(v.set, i) : null;
+      if (title) return title;
+    }
+    return typeof q.text === "string" ? q.text : "";
   }
 
   // ----- drawing the relative view (docs/relative-interface.md, "Drawing (t10)") -----
@@ -16949,7 +17055,7 @@ ET.viewer = (function () {
       relative: shown ? s.relative : null,
       searches: shown
         ? v.search.shown.map(function (q, j) {
-            return { letter: q.letter, colour: searchColour(v, q, j), query: q.query };
+            return { letter: q.letter, colour: searchColour(v, q, j), query: q.query, name: searchName(v, q) };
           })
         : [],
       named: od.named,
@@ -16959,9 +17065,11 @@ ET.viewer = (function () {
       ink: v.stageFg,
       paper: v.stageBg,
     });
-    // The panel already rings every query (and letters it): with the panel mounted the
-    // overlay's own search markers are left out, so no search is ringed twice. Without the
-    // panel they are the only mark at a query and are kept.
+    // The panel already rings every query: with the panel mounted the overlay's own search
+    // rings are left out, so no search is ringed twice. Without the panel they are the only
+    // mark at a query and are kept. The letter and name beside each ring ("A · Rice") are the
+    // overlay's in both cases (texts of kind "search"): in the relative view the panel draws
+    // no letter, so each name is drawn once and is placed before any result label (t19).
     if (typeof v.search.panel?.drawOverlay === "function") {
       list.marks = list.marks.filter(function (mk) {
         return mk.kind !== "search";
@@ -17173,7 +17281,11 @@ ET.viewer = (function () {
       paintKey: null,
       themeKey: null,
       // Tumble's relative settings, kept in every view and with no search.
-      rel: { relative: opts.relative === true, showOrigin: opts.showOrigin === true },
+      rel: {
+        relative: opts.relative === true,
+        showOrigin: opts.showOrigin === true,
+        rest: restLevel(opts.relativeRest) || RELATIVE_REST_DEFAULT,
+      },
       provRel: null, // the provenance's Relative row while the relative view is shown
       search: newSearchState(opts),
     };
@@ -17385,7 +17497,7 @@ ET.viewer = (function () {
         return setRelative(v, patch);
       },
       relativeSettings: function () {
-        return { relative: v.rel.relative, showOrigin: v.rel.showOrigin };
+        return { relative: v.rel.relative, showOrigin: v.rel.showOrigin, rest: v.rel.rest };
       },
     };
     Object.defineProperty(h, "_viewer", { value: v, enumerable: false });
