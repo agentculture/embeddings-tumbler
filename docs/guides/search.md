@@ -148,7 +148,6 @@ so all of them work from the keyboard.
 | **The text box** | One search per line, up to four. The viewer searches a moment after you stop typing. |
 | **Relative** | Tumble only. Makes the first search the vertical axis, so a point's height is its vector measured along the search. See [Relative search](#relative-search). While it is on, **Face the searches** is not shown. |
 | **Show the origin** | Tumble only. Zooms out to include the all-zero vector, or, in the plain view, marks where it falls. See [Show the origin](#show-the-origin). |
-| **The rest** | Tumble only, and only while Relative is on. How bright the points that are not results are: *faint*, *visible* or *bright* (to begin with). See [What you see, and what it means](#what-you-see-and-what-it-means). It is switched off while Lit is *everything, results highlighted*, which already shows every point. |
 | **Face the searches** | Swings the view so that the searches are spread across the picture, then lets it move on. A new search does this once by itself; the button does it again. It does nothing in Focus, where the view is already fitted to the results. |
 | **Lit** | Which points are lit. *The results, evenly*: every point within the radius, all equally bright. *By closeness: nearer is brighter*: a variable lit power, where the nearest result is lit most strongly and points fade with distance, down to nothing a little beyond the radius. *Named results only*: just the results themselves. *Everything, results highlighted*: the fourth choice, described under the table. |
 | **Distance difference** | Writes the distances out. Each result in the lists shows its distance and how much farther it is than the nearest result, with a small bar, and each line on the picture shows its distance. |
@@ -239,8 +238,7 @@ been tested for the rest of the viewer.
 
 Open the panel in Tumble. Two checkboxes are in the controls row, before the
 other controls: **Relative** and **Show the origin**. Both are off to begin
-with. A menu, **The rest**, follows them; it can be changed once Relative is
-on. They are offered in Tumble only; the setting is remembered in the other
+with. They are offered in Tumble only; the setting is remembered in the other
 views and applies when you come back to Tumble. A page can also start with them
 on (the host guide says how).
 
@@ -324,19 +322,18 @@ the ruler first, so a search's name is never hidden by a result's label. A label
 overlap one already placed is left out. The panel's lists always carry every
 result.
 
-Points that are not results are drawn brighter the closer they are to a search
-in plain cosine. **The rest** says how much: *bright* (to begin with) gives
-every such point some light and the closest ones most; *visible* is dimmer;
-*faint* is a hint only. At every level the results keep the brightness the
-**Lit** setting gives them and stay the brightest. With Lit set to *by
-closeness* every point is usually lit already, so The rest then changes
-nothing.
+Points that are not results are faded, and drawn brighter the closer they are
+to a search in plain cosine: every such point gets some light and the closest
+ones most. The fade has one strength; there is no control for it. The results
+keep the brightness the **Lit** setting gives them and stay the brightest.
+With Lit set to *by closeness* every point is usually lit already, so the
+fade then changes nothing.
 
-With Lit set to *everything, results highlighted* there is no such gradient:
-every point that is not a result is drawn at its usual brightness, the same for
-all of them, and the results are highlighted over that. The rest then has
-nothing to decide, so its menu is switched off (it keeps showing your choice,
-and hovering over it says why) until you pick another Lit setting.
+To see the rest in full instead, set **Lit** to *everything, results
+highlighted*. There is then no such gradient: every point that is not a result
+is drawn at its usual brightness, the same for all of them, and the results
+are highlighted over that. Lit is the one control that chooses between a
+faded rest and a rest shown in full.
 
 **The relative view is drawn sharp.** In the other views a point far in front
 of or behind the middle of the picture is drawn larger and softer, and bright

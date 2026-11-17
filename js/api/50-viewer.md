@@ -93,7 +93,6 @@ All optional.
 | `onSearchChange(search)` | none | Search: called with `info().search` whenever it changes. |
 | `relative` | `false` | Relative search: the Relative setting at mount (see "Relative search"). |
 | `showOrigin` | `false` | Relative search: the Show the origin setting at mount. |
-| `relativeRest` | `"bright"` | Relative search: how bright the points that are not results are, `"faint"`, `"visible"` or `"bright"`; any other value is the default. |
 
 A callback that throws does not break the viewer. Its error is rethrown on a
 later task with `setTimeout`, so it reaches the host's error handling, not
@@ -128,8 +127,8 @@ ours. Without `setTimeout` it goes to `queueMicrotask`, and without that to
 | `searchSettings()` | object | Search: a copy of the settings. |
 | `faceSearches()` | boolean | Search: swing toward the searches again (false in a mode with no `face`, Focus). |
 | `setSearchCallbacks({ embed?, rerank? })` | object | Search: set or remove the callbacks after mount. |
-| `setRelative(patch)` | `{ relative, showOrigin, rest }` | Relative search: change the settings, at once (see "Relative search"). |
-| `relativeSettings()` | `{ relative, showOrigin, rest }` | Relative search: a copy of the settings. |
+| `setRelative(patch)` | `{ relative, showOrigin }` | Relative search: change the settings, at once (see "Relative search"). |
+| `relativeSettings()` | `{ relative, showOrigin }` | Relative search: a copy of the settings. |
 
 `info()` returns `{ mode, paused, broken, suspended, hidden, onScreen, destroyed,
 reducedMotion, time, seed, speed, zoom, ready, preparing, count, dimension,
@@ -217,13 +216,14 @@ similarity on a set of unit-length vectors), drawn with a ruler. The contract is
 `js/api/45-search-panel.md`. The viewer's part:
 
 - **Options.** `relative` and `showOrigin`, booleans, both `false` by default
-  (any value that is not `true` reads as `false`), and `relativeRest`, the rest
-  (below), `"bright"` by default. A viewer mounted without them is exactly as
-  it was before the setting existed, until Relative is turned on.
-- **`handle.setRelative(patch) -> { relative, showOrigin, rest }`.** `patch` is
-  `{ relative?, showOrigin?, rest? }`. `relative` or `showOrigin` that is not a
-  boolean is ignored, as is a `rest` other than `"faint"`, `"visible"` or
-  `"bright"`, and a missing key keeps its value. It is synchronous: no ranking is redone, nothing
+  (any value that is not `true` reads as `false`). A viewer mounted without
+  them is exactly as it was before the setting existed, until Relative is
+  turned on.
+- **`handle.setRelative(patch) -> { relative, showOrigin }`.** `patch` is
+  `{ relative?, showOrigin? }`. `relative` or `showOrigin` that is not a
+  boolean is ignored, as is any other key, and a missing key keeps its value.
+  (A key `rest` and a mount option `relativeRest` existed between tasks t19
+  and t22 and were never released; both are now unknown and ignored.) It is synchronous: no ranking is redone, nothing
   is superseded, no callback of the host's is called, no request is made. It
   returns the settings now in force. `onSearchChange` is called when any value
   changed. The settings are kept in every mode and with no search; they
@@ -242,7 +242,7 @@ similarity on a set of unit-length vectors), drawn with a ruler. The contract is
 
   ```js
   relative: {
-    relative, showOrigin, rest, // the settings
+    relative, showOrigin,   // the settings
     offered,                // the current mode is Tumble (the controls are offered)
     active,                 // offered, and at least one axis is pinned
     settled,                // active, and the turn onto the pinned frame has ended
@@ -286,17 +286,19 @@ similarity on a set of unit-length vectors), drawn with a ruler. The contract is
   true. The mode's preparation keeps being pumped while paused, so a fit
   finishes and applies without Play. With the clock running the turn is as
   before.
-- **Non-results are brightened by closeness: the rest.** With the relative view
-  shown, a point that the Lit setting leaves unlit gets the lit value `base +
-  scale x g^2` at the rest's level: `"faint"` 0 + 0.2 g², `"visible"` 0.08 +
-  0.45 g², `"bright"` 0.2 + 0.6 g² (the default). `g` is, over the shown searches, the largest of `clamp((c - mid) / (hi -
+- **Non-results are brightened by closeness.** With the relative view
+  shown, a point that the Lit setting leaves unlit gets the lit value
+  `ET.viewer.RELATIVE_FADE_BASE + ET.viewer.RELATIVE_FADE_SCALE x g^2`, that
+  is 0.2 + 0.6 g². The fade has this one strength (task t22, deviation d9);
+  the choice between a faded rest and a rest shown in full is the Lit
+  setting's (`"all"`, below). `g` is, over the shown searches, the largest of `clamp((c - mid) / (hi -
   mid), 0, 1)`, with `c` the point's plain cosine to the search, `mid` the median
   cosine over all points and `hi` the highest over all points but the search's
   own. It uses the plain cosine, never the point-of-view one. Results and points
   inside the radius keep their lit values. `litCount` and `sharedCount` count
   only the lit values the Lit setting gave. With the relative view not shown the
-  lit values are exactly as before, whatever the rest. With Lit "by closeness"
-  every point is usually lit already, so the rest changes nothing.
+  lit values are exactly as before. With Lit "by closeness" every point is
+  usually lit already, so the gradient changes nothing.
 - **Drawn sharp (task t21, deviation d8).** By the relative mix, the draw key
   `depthOfField` goes from the mode's value (Tumble: 1.1) to
   `ET.viewer.RELATIVE_DEPTH_OF_FIELD` (0) and `bloom` from its plain value (the
@@ -312,8 +314,7 @@ similarity on a set of unit-length vectors), drawn with a ruler. The contract is
   (about 0.4366), where the renderer's brightness factor is 1, so it is drawn
   about as with no search. `litCount`, `sharedCount` and each search's
   `insideCount` are those of `"even"`. In the relative view the constant
-  replaces the gradient at every level of the rest (`setRelative({ rest })`
-  keeps the setting and uploads nothing). In Focus, Only results still hides:
+  replaces the gradient. In Focus, Only results still hides:
   while it hides, the points that are not results are uploaded at 0 and are
   skipped by the click, the hover name and the group names. Per view, with the
   wires and the fog: `docs/search-interface.md`, "Everything, results

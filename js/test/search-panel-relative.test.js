@@ -135,9 +135,9 @@ test("Relative and Show the origin: first in the controls row, shown in Tumble o
   const kids = row0.children;
   assert.strictEqual(kids[0].className, "tumbler-search-relative");
   assert.strictEqual(kids[1].className, "tumbler-search-origin");
-  // t19 (d6): the rest follows them, then Face the searches
-  assert.strictEqual(kids[2].className, "tumbler-search-rest");
-  assert.strictEqual(kids[3].className, "tumbler-search-face");
+  // t22 (d9): Face the searches and Lit follow them; there is no control between
+  assert.strictEqual(kids[2].className, "tumbler-search-face");
+  assert.strictEqual(kids[3].className, "tumbler-search-lit");
   const rel = t.q(".tumbler-search-relative");
   const org = t.q(".tumbler-search-origin");
   assert.strictEqual(rel.querySelector("input").type, "checkbox");
@@ -430,24 +430,18 @@ test("labels and notes are inserted as text, never as markup", () => {
   assert.strictEqual(t.q(".tumbler-search-text").children.length, 0);
 });
 
-test("t19 (d6): the rest: a select of faint, visible and bright beside Relative, bright by default, disabled while Relative is off", () => {
-  const t = build("tumble");
-  t.panel.update(search({ relative: relState({ relative: false, rest: "bright" }) }, [oneSearch("A", [result(1, 1, "one")])]));
-  const label = t.q(".tumbler-search-rest");
-  assert.match(textOf(label), /^The rest/);
-  assert.strictEqual(label.hidden, false);
-  const sel = label.querySelector("select");
-  assert.deepStrictEqual(sel.children.map((o) => [o.value, textOf(o)]), [["faint", "faint"], ["visible", "visible"], ["bright", "bright"]]);
-  assert.strictEqual(sel.value, "bright");
-  assert.strictEqual(sel.disabled, true, "Relative off: disabled");
-  t.panel.update(search({ relative: relState({ relative: true, rest: "visible" }) }, [oneSearch("A", [result(1, 1, "one")])]));
-  assert.strictEqual(sel.disabled, false);
-  assert.strictEqual(sel.value, "visible", "it reports the setting");
-  sel.value = "faint";
-  sel.dispatchEvent({ type: "change" });
-  assert.deepStrictEqual(t.calls, ["rest=faint"]);
-  // outside Tumble it is hidden with the other two
-  const l = build("lattice");
-  l.panel.update(search({}, [oneSearch("A", [result(1, 1, "one")])]));
-  assert.strictEqual(l.q(".tumbler-search-rest").hidden, true);
+test("t22 (d9): there is no control for the rest, in any view, whatever the search info says", () => {
+  for (const mode of ["tumble", "lattice", "wander", "focus", null]) {
+    const t = build(mode);
+    // "rest" in the info is what a viewer built before d9 reported: it is not read.
+    for (const rest of [undefined, "bright", "faint"]) {
+      for (const relative of [false, true]) {
+        t.panel.update(search({ relative: relState({ relative, rest }) }, [oneSearch("A", [result(1, 1, "one")])]));
+        assert.strictEqual(t.q(".tumbler-search-rest"), null, String(mode));
+        const words = t.q(".tumbler-search-controls").children.map((c) => textOf(c)).join(" | ");
+        assert.doesNotMatch(words, /The rest/);
+      }
+    }
+    assert.deepStrictEqual(t.calls, [], "and nothing was told to the handle");
+  }
 });

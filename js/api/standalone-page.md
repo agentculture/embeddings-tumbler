@@ -28,17 +28,16 @@ demo-wikipedia.json  demo-wikipedia.f32  sample-data.js
 | `seed` | The view seed. Digits (optionally signed, with a decimal part) are read as a number, anything else as a string. Not the data's `provenance.seed`; the provenance block shows both. |
 | `relative` | `relative=1` mounts the viewer with the Relative setting on (see `js/api/50-viewer.md`, "Relative search"). Any other value, or none, is off. |
 | `origin` | `origin=1` mounts it with Show the origin on. Any other value, or none, is off. |
-| `rest` | `rest=faint` or `rest=visible` mounts it with that rest (how bright the points that are not results are in the relative view). `rest=bright`, any other value, or none, is the default, bright. |
 
 Examples: `index.html`, `index.html?sample=synthetic`,
 `index.html?data=sets/atlas.json`,
 `index.html?data=atlas.json&mode=wander&seed=7`,
 `index.html?relative=1&origin=1`.
 
-The page keeps the relative settings in its address. Whenever the viewer reports a change of one (the
-panel's controls, or a host's call to the handle), the page sets or removes `relative=1`,
-`origin=1` and `rest=` (written only when the rest is not the default, bright) with `history.replaceState`, so no history entry is added, and the other parameters
-(`data`, `sample`, `mode`, `seed`) and the hash stay as they are. Copy the address to reopen the same
+The page keeps the two relative settings in its address. Whenever the viewer reports a change of one (the
+panel's controls, or a host's call to the handle), the page sets or removes `relative=1` and
+`origin=1` with `history.replaceState`, so no history entry is added, and the other parameters
+(`data`, `sample`, `mode`, `seed`, and any the page does not know) and the hash stay as they are. Copy the address to reopen the same
 setting. Limit: the link under the notes that switches to the other data set is worked out once, when
 the page loads. It carries the settings the address had then, not one changed afterwards; a change
 made after load is in the address bar but not in that link.

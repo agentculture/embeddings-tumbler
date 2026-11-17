@@ -22,15 +22,15 @@ when this was written, sharp against before: 228 against 852 near-white pixels, 
 
 **Everything, results highlighted.** Chosen in the panel's Lit menu, as a person would. The
 summed light of the stage under it lies between "named results only" (the rest on the gradient
-of The rest = bright) and the same setting drawn with the keys from before the deviation
+the relative view fades it with) and the same setting drawn with the keys from before the deviation
 (measured 8.4, 14.5 and 20.4 million). A result is brighter than a point that is not one where
 the two can be told apart: among points with no other point within 14 px, the light within
 6 px of every such result is well above that of every such other point (measured: at least
 47,692 against at most 24,604). Peak brightness is not used: a result and a point at its usual
 brightness both come close to the top of the scale. With Relative off, the stage under the
 setting carries about the light it carries with no search (measured 28.4 against 24.3
-million), where "the results, evenly" leaves under a sixth of it. The rest menu is disabled
-while the setting is chosen, and the counts do not change.
+million), where "the results, evenly" leaves under a sixth of it. The counts do not change.
+There is no separate menu for the rest (deviation d9 merged it into Lit).
 """
 
 from __future__ import annotations
@@ -96,11 +96,9 @@ POINTS = f"""() => {{
 
 PANEL = """() => {
   const lit = document.querySelector('.tumbler-search-lit select');
-  const rest = document.querySelector('.tumbler-search-rest');
   return { options: [...lit.options].map((o) => [o.value, o.textContent]), lit: lit.value,
-    restDisabled: rest.querySelector('select').disabled,
-    restValue: rest.querySelector('select').value,
-    restHidden: rest.hidden, restTitle: rest.title,
+    litDisabled: lit.disabled,
+    restControl: document.querySelector('.tumbler-search-rest') !== null,
     note: document.querySelector('.tumbler-search-note').textContent };
 }"""
 
@@ -308,14 +306,10 @@ def test_the_lit_menu_has_the_fourth_option_and_it_reaches_the_viewer(seen):
     assert "lit" not in seen["address"]  # Lit is not in the address, as before
 
 
-def test_the_rest_menu_is_disabled_while_lit_shows_everything(seen):
-    even, shown, named = seen["panel_even"], seen["panel_all"], seen["panel_named"]
-    assert even["restDisabled"] is False and named["restDisabled"] is False
-    assert shown["restDisabled"] is True and shown["restHidden"] is False
-    assert shown["restValue"] == "bright"
-    assert shown["restTitle"].startswith("Lit is set to everything, results highlighted")
-    assert even["restTitle"] == named["restTitle"]
-    assert even["restTitle"].startswith("How bright the points that are not results")
+def test_there_is_no_menu_for_the_rest_under_any_lit_setting(seen):
+    for name in ("panel_even", "panel_all", "panel_named"):
+        assert seen[name]["restControl"] is False, name
+        assert seen[name]["litDisabled"] is False, name
 
 
 def test_under_everything_the_rest_is_shown_and_the_sharp_keys_hold_it_down(seen):

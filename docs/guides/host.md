@@ -1225,23 +1225,32 @@ a separate dot and heights can be read off the ruler. It is not a setting and
 there is nothing to pass; the plain view is drawn exactly as before. Trails are
 unchanged.
 
-There are two settings, each on or off, both off to begin with, and a third,
-`rest`, with three levels:
+There are two settings, each on or off, both off to begin with:
 
 | Setting | Meaning |
 |---------|---------|
 | `relative` | Relative itself. It has an effect in Tumble, with at least one search that gives an axis; otherwise Tumble is the plain view. It is kept in every mode, so it is still on when the visitor comes back to Tumble. |
 | `showOrigin` | Show the origin. In the relative view it zooms out to include the all-zero vector. In the plain Tumble view, with or without a search, it marks where the all-zero vector falls, with its true distance from the centre and how much of that distance the picture shows. |
-| `rest` | How bright the points that are not results are in the relative view: `"faint"`, `"visible"` or `"bright"` (the default). It has no effect while the search setting `lit` is `"all"`, which draws those points at their usual brightness (the setting is kept, and the panel's menu is disabled meanwhile). A point the Lit setting leaves unlit gets the lit value `base + scale × g²`, where `g` (0 to 1) says how close it is to the nearest search in plain cosine, from the median to the closest other point: faint is 0 + 0.2 g², visible 0.08 + 0.45 g², bright 0.2 + 0.6 g². Results keep their lit values exactly at every level. It changes nothing outside the relative view. With Lit set to "by closeness" every point is usually lit already, so it then changes nothing. |
+
+How the points that are not results are drawn in the relative view is not a
+relative setting. It follows the search setting `lit` (`setSearchSettings({ lit
+})`, the mount option `searchLit`, the panel's Lit menu). Under `"even"`,
+`"close"` and `"named"` they are faded: a point the Lit setting leaves unlit
+gets the lit value 0.2 + 0.6 g², where `g` (0 to 1) says how close it is to the
+nearest search in plain cosine, from the median to the closest other point.
+Results keep their lit values exactly. With `"close"` every point is usually
+lit already, so the fade then changes nothing. Under `"all"` they are shown in
+full, at their usual brightness, with no gradient. The fade has one strength
+and there is no setting for it.
 
 Each form of the viewer has its own way to set them:
 
 | Form | Off to begin with; turn on | Change later |
 |------|----------------------------|--------------|
-| Script | mount options `relative: true`, `showOrigin: true`, `relativeRest: "faint"` | `viewer.setRelative({ relative, showOrigin, rest })`; read with `viewer.relativeSettings()` |
-| Web component | attributes `relative` and `show-origin` (boolean: present, unless the value is `"false"`, is on), and `relative-rest="faint"` (or `visible`, `bright`; anything else is bright) | the attributes, or the properties `el.relative`, `el.showOrigin` and `el.relativeRest`, which reflect to them |
-| Standalone page | address parameters `relative=1`, `origin=1` (anything else is off) and `rest=faint` or `rest=visible` (anything else is bright) | the panel's controls; the page keeps them in its address, the rest only when it is not bright |
-| Any, with the panel | the panel's two checkboxes, **Relative** and **Show the origin**, and the menu **The rest** (disabled while Relative is off), all offered in Tumble only | the same controls |
+| Script | mount options `relative: true`, `showOrigin: true` | `viewer.setRelative({ relative, showOrigin })`; read with `viewer.relativeSettings()` |
+| Web component | attributes `relative` and `show-origin` (boolean: present, unless the value is `"false"`, is on) | the attributes, or the properties `el.relative` and `el.showOrigin`, which reflect to them |
+| Standalone page | address parameters `relative=1` and `origin=1` (anything else is off) | the panel's controls; the page keeps them in its address |
+| Any, with the panel | the panel's two checkboxes, **Relative** and **Show the origin**, both offered in Tumble only | the same controls |
 
 Three things to know about those, because they are not symmetrical:
 
@@ -1259,11 +1268,11 @@ Three things to know about those, because they are not symmetrical:
   property set early) is passed as a mount option. After that it goes through
   `setRelative`.
 
-`viewer.setRelative(patch)` takes `{ relative?, showOrigin?, rest? }`.
-`relative` or `showOrigin` that is not a boolean is ignored, as is a `rest`
-other than `"faint"`, `"visible"` or `"bright"`, and a key left out keeps its
+`viewer.setRelative(patch)` takes `{ relative?, showOrigin? }`.
+`relative` or `showOrigin` that is not a boolean is ignored, as is any other
+key, and a key left out keeps its
 value. It is synchronous and returns the settings now in force, `{ relative,
-showOrigin, rest }`. It re-ranks nothing, supersedes nothing and calls none of
+showOrigin }`. It re-ranks nothing, supersedes nothing and calls none of
 your callbacks, but `onSearchChange` is called when any value changed, and again when the
 relative view appears or goes, when its pinned or dropped searches change, and
 when a turn ends (`settled` becomes true). After `destroy` it does nothing. Turning Relative on replaces a swing toward the searches that is in
@@ -1291,7 +1300,7 @@ letters back.
 
 | Field | Meaning |
 |-------|---------|
-| `relative`, `showOrigin`, `rest` | The settings. |
+| `relative`, `showOrigin` | The settings. |
 | `offered` | `true` while the mode is Tumble. |
 | `active` | `true` when it is offered and at least one search gives an axis. |
 | `settled` | `true` once the turn onto the pinned frame has ended. Until then the pinned axes are not drawn as exact. |

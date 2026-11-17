@@ -747,8 +747,6 @@ search; it sits beside Relative because both are Tumble's.
 div.tumbler-search-controls
   label.tumbler-search-relative     input[type=checkbox] "Relative"; in the row always, shown only in Tumble
   label.tumbler-search-origin       input[type=checkbox] "Show the origin"; in the row always, shown only in Tumble
-  label.tumbler-search-rest         select "The rest": faint, visible, bright (t19, d6); shown only in Tumble,
-                                    disabled while Relative is off or Lit is "all" (t21, d8)
   button.tumbler-search-face        hidden (display none) while Relative is checked in Tumble; shown again when off
   ...                               the existing controls, unchanged
 ```
@@ -765,29 +763,14 @@ div.tumbler-search-controls
   for a set that is not unit-length.)
 - **Colours follow the letter, not the position**: search B uses
   `--tumbler-search-2` whether or not A is shown (letters are kept, see t9).
-- **The rest (t19, deviation d6)**: a native select labelled `The rest` with
-  the options `faint`, `visible` and `bright` (values the same words), titled
-  `How bright the points that are not results are in the relative view.` A
-  change calls `handle.setRelative({ rest })`; the select follows
-  `search.relative.rest`. Decided here: it is disabled, not hidden, while
-  Relative is off, so the row does not shift and the setting stays visible
-  beside the control it belongs to.
-- **The rest while Lit is "everything, results highlighted" (t21, deviation
-  d8)**: that Lit setting (`"all"`, `docs/search-interface.md`) draws every
-  point that is not a result at its usual brightness, so The rest has nothing
-  to decide. While Relative is on and `search.settings.lit === "all"` the
-  select is disabled, not hidden; it keeps showing the setting, and the
-  label's title (the tooltip, which is how this panel already explains a
-  disabled control, as for Results under the reranker) changes to the sentence
-  in the block below. Any other Lit setting enables it again with its usual
-  title. While Relative is off it is disabled with its usual title, whatever
-  Lit is.
-
-<!-- interface-strings module="45-search-panel.js" task="t21" landed="yes" -->
-```text
-Lit is set to everything, results highlighted: every point that is not a result is drawn at its usual brightness, so this setting does nothing.
-How bright the points that are not results are in the relative view.
-```
+- **No control for the rest (t22, deviation d9).** A select labelled `The
+  rest` (faint, visible, bright) stood here after Show the origin from t19
+  (deviation d6) and was never released. The owner merged it into Lit on
+  2026-11-17: whether the points that are not results are faded or shown in
+  full is the Lit setting's ("everything, results highlighted" shows them in
+  full, `docs/search-interface.md`), and the fade has one strength (below,
+  "The brightness gradient for points that are not results"). The row has no element `.tumbler-search-rest`, and the panel
+  does not read a `rest` key in `search.relative`.
 
 - **`frame.relative`**: `panel.drawOverlay(ctx, project, frame)` gets `frame.relative`
   (boolean, true while `search.relative.active` and the mode is Tumble). While
@@ -840,7 +823,6 @@ t8 lands.
 |--------|---------|---------|
 | `relative` | `false` | The Relative setting at mount. |
 | `showOrigin` | `false` | The Show the origin setting at mount. |
-| `relativeRest` | `"bright"` | The rest at mount: `"faint"`, `"visible"` or `"bright"`; any other value is the default (t19, d6). |
 
 ### Handle methods
 
@@ -850,21 +832,21 @@ setRelative
 relativeSettings
 ```
 
-#### `handle.setRelative(patch) -> { relative, showOrigin, rest }`
+#### `handle.setRelative(patch) -> { relative, showOrigin }`
 
-`patch`: `{ relative?, showOrigin?, rest? }`; `relative` or `showOrigin` that
-is not a boolean is ignored, as is a `rest` that is not `"faint"`,
-`"visible"` or `"bright"`; a missing key keeps its value. Synchronous (no ranking is redone, nothing is
+`patch`: `{ relative?, showOrigin? }`; `relative` or `showOrigin` that
+is not a boolean is ignored, as is any other key (among them `rest`, which
+was a setting from t19 until t22 removed it, deviation d9; the mount option
+`relativeRest` is ignored the same way); a missing key keeps its value. Synchronous (no ranking is redone, nothing is
 superseded, no callback is called, no request is made). The settings are kept
 in every mode and with no search; in Tumble they are passed on with
 `inst.setRelative(settings, clock)` and, when the mode is entered later, right
-after it is entered (with `searchChanged` as for Focus); `rest` is the
-viewer's own and changes only the lit values while the relative view is shown.
+after it is entered (with `searchChanged` as for Focus).
 `onSearchChange` fires when any value changes, and when the relative view appears or goes, its
 pinned or dropped letters change, or a turn ends (`settled` flips). After `destroy` it returns the last settings and
 does nothing.
 
-#### `handle.relativeSettings() -> { relative, showOrigin, rest }`
+#### `handle.relativeSettings() -> { relative, showOrigin }`
 
 A copy of the settings.
 
@@ -874,7 +856,7 @@ A copy of the settings.
 
 ```js
 relative: {
-  relative, showOrigin, rest, // the settings (rest: "faint" | "visible" | "bright", t19)
+  relative, showOrigin,      // the settings
   offered,                   // the current mode is Tumble (the controls are offered)
   active,                    // offered and the mode's state.relative.active
   settled,                   // active and state.relative.settled
@@ -916,43 +898,48 @@ sends the renderer lit values in which:
 - every point whose lit value from `ET.searchSets.litValues` is above 0 keeps
   it exactly (results and points inside the result radius follow the Lit
   setting as today, owner's decision);
-- every other point gets `base + scale * g^2` at the level of the rest
-  setting (`RELATIVE_REST`, below), where `g` is the largest over the shown searches of `clamp((c_i - mid) /
+- every other point gets `base + scale * g^2` at the one strength there is
+  (below), where `g` is the largest over the shown searches of `clamp((c_i - mid) /
   (hi - mid), 0, 1)`, `c_i = 1 - plainDistance_i` (the plain cosine, never the
   point-of-view scaled one), `mid` the median `c` over all points (index
   `N >> 1` of the ascending sort, the reference's `q.mid`) and `hi` the largest
   `c` over all points other than the search's own point (the reference's
-  `q.hi`). Worked out once per change of the searches, the data or the rest,
-  not per frame.
+  `q.hi`). Worked out once per change of the searches or the data, not per
+  frame.
 
-**The rest (t19, deviation d6).** Three levels, as `base + scale * g^2`:
+**The fade has one strength (t22, deviation d9).**
 
-| `rest` | `base` | `scale` | Lit value from g = 0 to g = 1 |
-|--------|--------|---------|-------------------------------|
-| `"faint"` | 0 | 0.2 | 0 to 0.2 (what was built first) |
-| `"visible"` | 0.08 | 0.45 | 0.08 to 0.53 |
-| `"bright"` | 0.2 | 0.6 | 0.2 to 0.8 (the default) |
+<!-- interface-names module="50-viewer.js" object="ET.viewer" match="constants" task="t22" prefix="ET.viewer." landed="yes" -->
+```text
+RELATIVE_FADE_BASE
+RELATIVE_FADE_SCALE
+```
 
-At `filter` 1 a lit value `l` draws at brightness `unlitGain + (2.2 -
-unlitGain) l` against 2.2 for a full result, so the brightest non-result
-reaches `0.07 + 2.13 x 0.2 = 0.50` at "faint", `1.20` at "visible" and `1.77`
-at "bright", and every non-result starts at `0.07`, `0.24` and `0.50`. The
-owner was shown the three live and chose "bright" as the default with a control
-(2026-11-17). With the relative view not shown the lit values are exactly
-today's and no rest value is uploaded, whatever the setting. `litCount` and
-`sharedCount` count only the lit values from `litValues`. With Lit set to "by
-closeness" every point is usually lit already, so the rest changes nothing.
+The lit value of a point that is not a result is `0.2 + 0.6 * g^2`
+(`ET.viewer.RELATIVE_FADE_BASE` 0.2, `ET.viewer.RELATIVE_FADE_SCALE` 0.6): 0.2 at g = 0, 0.8 at
+g = 1. At `filter` 1 a lit value `l` draws at brightness `unlitGain + (2.2 -
+unlitGain) l` against 2.2 for a full result, so the brightest point that is not
+a result reaches `0.07 + 2.13 x 0.8 = 1.77` and every one starts at
+`0.07 + 2.13 x 0.2 = 0.50`. From t19 (deviation d6) to t22 the strength was a
+setting, "The rest", with three levels: faint `0 + 0.2 g^2` (what was built
+first), visible `0.08 + 0.45 g^2` and bright `0.2 + 0.6 g^2`, the default the
+owner chose after seeing the three live (2026-11-17). It was never released.
+On 2026-11-17 the owner merged it into Lit (deviation d9): the strength is the
+former "bright", and the choice between a faded rest and a rest shown in full
+is the Lit setting's. Sliders for the strength may be added later; they are
+not built. With the relative view not shown the lit values are exactly
+today's and no gradient is uploaded. `litCount` and `sharedCount` count only
+the lit values from `litValues`. With Lit set to "by closeness" every point is
+usually lit already, so the gradient changes nothing.
 
 **Lit "all" has no gradient (t21, deviation d8).** Under the fourth Lit
 setting, `"all"` ("everything, results highlighted"), `litValues` already
 gives every point that is not a result the constant
 `ET.searchSets.LIT_ALL_REST` (about 0.4366, the lit value at which the
 renderer's brightness factor is 1), which is above 0. The relative view
-uploads those values as they are: no gradient is worked out, the constant is
-the same at every level of the rest, and results are at 1 exactly as under
-`"even"`. `handle.setRelative({ rest })` still keeps the setting (and reports
-it) but uploads nothing; choosing another Lit setting brings the gradient back
-at the level kept. The panel disables The rest meanwhile (above).
+uploads those values as they are: no gradient is worked out, and results are
+at 1 exactly as under `"even"`. Choosing another Lit setting brings the
+gradient back.
 
 ### Status line additions (t9)
 
@@ -1049,7 +1036,6 @@ RELATIVE_BLOOM
 |-----------|----------|---------|
 | `relative` | `relative` (boolean) | The Relative setting. A boolean attribute: present (any value but `"false"`) is on, absent or `"false"` is off. |
 | `show-origin` | `showOrigin` (boolean) | The Show the origin setting, the same way. |
-| `relative-rest` | `relativeRest` (string) | The rest (t19, d6): `faint`, `visible` or `bright`; absent or any other value reads as `bright`. Setting the property to another value is ignored. |
 
 Setting either before the viewer is mounted passes it as a mount option;
 afterwards the shell calls `handle.setRelative`. A property set reflects to its
@@ -1063,11 +1049,9 @@ showOrigin
 setRelative
 ```
 
-<!-- interface-text file="js/shells/web-component.js" task="t19" landed="yes" -->
-```text
-"relative-rest"
-relativeRest
-```
+The attribute `relative-rest` and the property `relativeRest` (t19, deviation
+d6) were removed by t22 (deviation d9) before any release: the attribute is not
+watched and is not passed on.
 
 ## Standalone page (t12)
 
@@ -1075,24 +1059,20 @@ relativeRest
 |-------------------|---------|
 | `relative=1` | Mount with the Relative setting on (`0` or absent: off). |
 | `origin=1` | Mount with Show the origin on (`0` or absent: off). |
-| `rest=faint`, `rest=visible` | Mount with that rest (t19, d6); `bright`, absent or another value: the default, bright. |
 
 The controls are the panel's (in the viewer the page mounts); the page reads
 the parameters, passes them as mount options, and keeps them in the address
 with `history.replaceState` when `onSearchChange` reports a change of a
-setting, so a view can be reopened; `rest` is written only when it is not the
-default. The other parameters (`mode`, `seed`,
-`data`, `sample`) are kept as they are.
+setting, so a view can be reopened. The other parameters (`mode`, `seed`,
+`data`, `sample`) are kept as they are, and so is any parameter the page does
+not know: `rest=` (t19, deviation d6; removed by t22, deviation d9, before any
+release) is neither read nor written, so an address that still carries it
+loads as without it and keeps it.
 
 <!-- interface-text file="js/page/page.js" task="t12" landed="yes" -->
 ```text
 "relative"
 "origin"
-```
-
-<!-- interface-text file="js/page/page.js" task="t19" landed="yes" -->
-```text
-"rest"
 ```
 
 ## Searches that give no axis
@@ -1191,7 +1171,8 @@ the page's 2-D canvas look):
    approved Rice and Wheat (cosine 0.82) pinning two axes there (o11). 1e-6
    separates a repeated float32 query from any two different articles.
 4. The gradient reaches the renderer in the lit values (no new buffer, no new
-   key); non-results get `0.2 x g^2` by plain cosine. Reason: the lit channel
+   key); non-results get `0.2 + 0.6 x g^2` by plain cosine (`0.2 x g^2` as first
+   built; the strength was raised by deviation d6 and fixed by d9). Reason: the lit channel
    already does exactly this and is already proven unchanged at filter 0.
 5. The perspective key is `draw.perspective`, default 3, relative value 60 (the
    reference's), set by Tumble from `mix`. Reason: the reference's number, and

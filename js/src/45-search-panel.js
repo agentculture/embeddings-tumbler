@@ -35,9 +35,6 @@
     named: "named results only",
     all: "everything, results highlighted",
   };
-  var SP_REST_TITLE = "How bright the points that are not results are in the relative view.";
-  var SP_REST_ALL =
-    "Lit is set to everything, results highlighted: every point that is not a result is drawn at its usual brightness, so this setting does nothing.";
   var SP_PALETTE_DARK = { fg: "#e9eef6", muted: "#8a96ab", line: "#1b2436", accent: "#ffc56b", bg: "#04060b" };
   var SP_PALETTE_LIGHT = { fg: "#1b2130", muted: "#5b6578", line: "#d6dae2", accent: "#a35f00", bg: "#f6f4ee" };
   // A value that could name a resource is not used. The "r" is written as an escape so that
@@ -820,19 +817,6 @@
       "showOrigin",
       "Zoom out to the all-zero vector, or, in the plain view, mark where it falls."
     );
-    // The rest: how bright the points that are not results are in the relative view (d6).
-    var rest = spSelect(p, "tumbler-search-rest", "The rest", [
-      ["faint", "faint"],
-      ["visible", "visible"],
-      ["bright", "bright"],
-    ]);
-    p.rest = rest.input;
-    p.restLabel = rest.label;
-    p.restLabel.title = SP_REST_TITLE;
-    p.rest.value = "bright";
-    spListen(p, p.rest, "change", function () {
-      if (typeof p.handle.setRelative === "function") p.handle.setRelative({ rest: p.rest.value });
-    });
     p.face = spText(p, "button", "tumbler-search-face", "Face the searches");
     p.face.type = "button";
     spListen(p, p.face, "click", function () {
@@ -870,7 +854,7 @@
       spClear(p);
     });
     p.litLabel = lit.label;
-    [p.relative.label, p.origin.label, p.restLabel, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
+    [p.relative.label, p.origin.label, p.face, lit.label, p.rerank.label, p.cand.label, p.top.label, p.distances.label, p.kLabel, pov.label, p.only.label, p.clear].forEach(function (c) {
       row.appendChild(c);
     });
     return row;
@@ -1126,17 +1110,6 @@
     spShow(p.origin.label, p.tumble, "inline-flex");
     p.relative.input.checked = !!rel && rel.relative === true;
     p.origin.input.checked = !!rel && rel.showOrigin === true;
-    // The rest sits with them in Tumble; it matters only in the relative view, so it is
-    // disabled (not hidden, so the row does not shift) while Relative is off. It is also
-    // disabled while Lit is "all", which draws the rest at its usual brightness whatever
-    // this says (d8); the title then says why.
-    spShow(p.restLabel, p.tumble, "inline-flex");
-    var relOn = !!rel && rel.relative === true;
-    var restUnused = relOn && st.lit === "all";
-    p.rest.disabled = !relOn || restUnused;
-    var restTitle = restUnused ? SP_REST_ALL : SP_REST_TITLE;
-    if (p.restLabel.title !== restTitle) p.restLabel.title = restTitle;
-    if (rel && typeof rel.rest === "string" && p.rest.value !== rel.rest) p.rest.value = rel.rest;
     spShow(p.face, !(p.tumble && rel && rel.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
     spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
