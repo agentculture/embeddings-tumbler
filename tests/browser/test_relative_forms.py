@@ -16,8 +16,13 @@ vertical row is Rice's direction (within 1e-6) in all three; the window, the rul
 named results' heights agree between the forms. Pause (the handle in the script form, the
 Pause button in the standalone page) stops the mode's time and every drawn result while the
 viewer keeps drawing, and Resume moves them again. With reduced motion the standalone page
-starts paused and the mode's time stays at 0 after the search; the view turns onto the pinned
-frame only once resumed.
+starts paused and the mode's time stays at 0 after the search; the settled relative view, with
+its exact ruler, is drawn at once without pressing Play (task t19: with the clock still, a change
+has no turn), and stays settled once resumed.
+
+The rest (deviation d6): on the standalone page with ``?relative=1`` and a search, the panel's
+control shows "bright"; choosing "faint" dims the points that are not results, so the stage's
+bright pixels fall, with no page error.
 """
 
 from __future__ import annotations
@@ -123,6 +128,26 @@ def _paused_still(tab: harness.Tab, pause, resume) -> dict:
     return {"first": first, "later": later, "moved": moved}
 
 
+def _stage_light(tab: harness.Tab) -> dict:
+    """With text and overlay hidden, the stage's pixels brighter than the sky: how many, and
+    their summed brightness."""
+    tab.page.wait_for_timeout(200)
+    tab.evaluate(rs.HIDE_LAYERS)
+    png = tab.png("#space canvas.tumbler-canvas", hide_text=True)
+    tab.evaluate(rs.SHOW_LAYERS)
+    width, height, rows = harness.decode_png(png)
+    lit = 0
+    light = 0
+    for y in range(height):
+        row = rows[y]
+        for x in range(width):
+            s = row[3 * x] + row[3 * x + 1] + row[3 * x + 2]
+            if s > 90:
+                lit += 1
+                light += s
+    return {"lit": lit, "light": light}
+
+
 @pytest.fixture(scope="module")
 def folder(tmp_path_factory):
     f = rs.build_folder(tmp_path_factory.mktemp("relative-forms"))
@@ -182,6 +207,32 @@ def forms(browser, webgl, folder):
         finally:
             tab.close()
 
+        tab = harness.Tab(browser, viewport=(1280, 900))
+        try:
+            tab.goto(plain.url("/index.html?relative=1&seed=3"))
+            tab.wait_for(READY, timeout=rs.WAIT, what="the standalone page, the rest")
+            assert tab.evaluate(SEARCH_RICE)
+            rs.settled(tab, 1, "Rice relative, the rest")
+            tab.evaluate(f"() => {rs.H}.pause()")
+            out["rest_shown"] = tab.evaluate(
+                "() => document.querySelector('.tumbler-search-rest select').value"
+            )
+            out["rest_bright"] = _stage_light(tab)
+            tab.page.click(".tumbler-search-bar")  # open the panel, as a person would
+            tab.page.select_option(".tumbler-search-rest select", "faint")
+            out["rest_setting"] = tab.wait_for(
+                f"() => {rs.H}.relativeSettings().rest",
+                lambda r: r == "faint",
+                timeout=rs.WAIT,
+                what="the rest set to faint",
+            )
+            tab.page.wait_for_timeout(300)
+            out["rest_faint"] = _stage_light(tab)
+            out["rest_address"] = tab.evaluate("() => location.search")
+            out["rest_errors"] = tab.console_errors()
+        finally:
+            tab.close()
+
         tab = harness.Tab(browser, viewport=(1280, 900), reduced_motion="reduce")
         try:
             tab.goto(plain.url("/index.html?relative=1&seed=3"))
@@ -191,8 +242,14 @@ def forms(browser, webgl, folder):
             tab.wait_for(
                 f"() => {rs.H}.info().search.relative.active", timeout=rs.WAIT, what="pinned"
             )
-            tab.page.wait_for_timeout(1500)  # the turn takes 1.5 s of mode time, were it running
-            out["reduced_after"] = tab.evaluate(STILL)
+            # t19: no Play pressed; the settled ruler is drawn without it
+            out["reduced_after"] = tab.wait_for(
+                STILL, lambda s: s["settled"], timeout=rs.WAIT, what="settled while paused"
+            )
+            out["reduced_ruler"] = tab.evaluate(
+                f"() => {{ const d = {rs.H}._viewer.relativeDrawn;"
+                " return { ruler: !!d.ruler, results: d.results.length, labels: d.labels }; }"
+            )
             tab.evaluate(f"() => {rs.H}.resume()")
             out["reduced_resumed"] = rs.settled(tab, 1, "Rice relative once resumed")["relative"]
             out["reduced_errors"] = tab.console_errors()
@@ -207,7 +264,7 @@ FORMS = ["script", "component", "page"]
 @pytest.mark.parametrize("form", FORMS)
 def test_each_form_turns_relative_on_and_pins_the_vertical_axis_to_the_search(forms, form):
     f = forms[form]
-    assert f["settings"] == {"relative": True, "showOrigin": False}
+    assert f["settings"] == {"relative": True, "showOrigin": False, "rest": "bright"}  # rest: d6
     rel = f["relative"]
     assert rel["relative"] is True and rel["active"] is True and rel["settled"] is True
     assert [(p["letter"], p["axis"]) for p in rel["pinned"]] == [("A", "vertical")]
@@ -257,6 +314,25 @@ def test_reduced_motion_stops_the_tour(forms):
     assert start["paused"] is True and after["paused"] is True
     assert start["time"] == 0 and after["time"] == 0
     assert after["active"] is True  # the search pins the axis ...
-    assert after["settled"] is False  # ... and the view does not turn while motion is stopped
+    # ... and, with motion stopped, the settled view is shown at once (t19; before t19 it
+    # waited for Play, which this test asserted as settled False)
+    assert after["settled"] is True
     assert forms["reduced_resumed"]["settled"] is True
     assert forms["reduced_errors"] == []
+
+
+def test_reduced_motion_draws_the_settled_ruler_without_play(forms):
+    ruler = forms["reduced_ruler"]
+    assert ruler["ruler"] is True
+    assert ruler["results"] > 0  # stems to the named results: the ruler is drawn as exact
+    assert ruler["labels"] > 0
+
+
+def test_the_rest_control_shows_bright_and_faint_dims_the_stage(forms):
+    assert forms["rest_shown"] == "bright"
+    assert forms["rest_setting"] == "faint"
+    bright, faint = forms["rest_bright"], forms["rest_faint"]
+    assert faint["lit"] < bright["lit"], (bright, faint)
+    assert faint["light"] < bright["light"], (bright, faint)
+    assert "rest=faint" in forms["rest_address"]
+    assert forms["rest_errors"] == []

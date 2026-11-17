@@ -1128,13 +1128,21 @@ What was checked about the reference page itself, on 2026-11-17:
 
 ## Relative search: brightness
 
-### Results follow the Lit setting; other points get a faint gradient
+### Results follow the Lit setting; the rest get a gradient at one of three strengths
 
 - **Reference:** every point is brightened and enlarged by its similarity to the nearest search, squared, from the median similarity (none) to the highest other article (full); results are drawn larger again.
-- **Build:** points the Lit setting lights (the results, and with "by closeness" every point as near as its reach) keep exactly their lit values. Every other point gets 0.2 times the reference's squared measure, by plain cosine, so at most 0.2 of a full result's lit value. Measured in node on the shipped pair with Rice: with Lit "the results, evenly" (the default), 8 points are lit by the setting and 491 others get some gradient, the largest 0.034; with Rice and Wheat, 9 and 611, the largest 0.049; with Lit "by closeness" all 999 points are lit by the setting, so the gradient brightens none.
-- **Why:** the owner decided that results follow the Lit setting exactly and that every other point gets a faint gradient. The strength 0.2 was chosen while building and is listed as open below.
+- **Build:** points the Lit setting lights (the results, and with "by closeness" every point as near as its reach) keep exactly their lit values. Every other point gets the reference's squared measure g², by plain cosine, at the strength the rest setting names (next entry): `base + scale × g²`. Measured in node on the shipped pair with Rice, at the first strength built (0.2 × g², now "faint"): with Lit "the results, evenly" (the default), 8 points are lit by the setting and 491 others get some gradient, the largest 0.034 (so g² at most 0.17); with Rice and Wheat, 9 and 611, the largest 0.049 (g² at most 0.245); with Lit "by closeness" all 999 points are lit by the setting, so the rest setting brightens none.
+- **Why:** the owner decided that results follow the Lit setting exactly and that every other point gets a gradient (2026-11-16); its strength became a setting (next entry).
 - **Visible on comparable data:** yes *(read from the code and measured as values, not seen)*.
-- **Decided by:** owner (2026-11-16, the gradient; its strength is the open question "How strong the gradient is").
+- **Decided by:** owner (2026-11-16, the gradient; 2026-11-17, its strength, recorded as deviation d6).
+
+### How bright the rest is: faint, visible or bright, bright by default
+
+- **Reference:** every point is drawn with a base of 0.3 of a result's brightness plus 0.7 times its lit value (`a = 0.3 + 0.7 × lit`, lit being g² for a point that is not a result), and is enlarged by it; a point that is not a result is then scaled down by the page's crowding factor.
+- **Build:** a setting of the relative view, "The rest", with three levels, as the lit value given to a point that is not a result: "faint" `0 + 0.2 × g²` (what was built first), "visible" `0.08 + 0.45 × g²` and "bright" `0.2 + 0.6 × g²`, the default. Against the reference's `0.3 + 0.7 × g²` (as a share of a result's brightness): "bright" starts at 0.2 where the reference starts at 0.3 and reaches 0.8 where the reference reaches 1.0; "visible" starts at 0.08 and reaches 0.53; "faint" starts at 0 and reaches 0.2. On the shipped pair with Rice (g² at most 0.17, from the measurement above) the brightest point that is not a result gets 0.03 at "faint", 0.16 at "visible" and 0.30 at "bright", where the reference gives it 0.42 before its crowding factor *(worked out from the measured values, not measured again)*. The setting is in the panel beside Relative and Show the origin (disabled while Relative is off), on the handle (`setRelative({ rest })`), as the mount option `relativeRest`, the web component's `relative-rest` attribute and `relativeRest` property, and the page's `rest=` address parameter (written only when it is not "bright"). The renderer turns a lit value into brightness its own way, so these are lit values, not pixels.
+- **Why:** the owner was shown the three levels live and said the brightest is best, "though option toggle is even better".
+- **Visible on comparable data:** yes *(read from the code; the browser test checks that "faint" lights fewer pixels than "bright", nobody has compared the levels with the reference by eye)*.
+- **Decided by:** owner, by the decision of 2026-11-17 (the brightest of three examples as the default, with a control), recorded as deviation d6.
 
 ## Relative search: the ruler, the stems and the labels
 
@@ -1189,10 +1197,26 @@ What was checked about the reference page itself, on 2026-11-17:
 ### Labels that would overlap are left out, in a fixed order
 
 - **Reference:** draws every result's title, its rank and heights, overlapping where results sit close (as they do near the top of the ruler for Rice).
-- **Build:** ruler texts first (the title, the tick numbers, the cut-off text, the origin text), then results from the top of the ruler down; a label that would overlap one already placed is left out. The panel's list carries every result.
+- **Build:** ruler texts first (the title, the tick numbers, the cut-off text, the origin text), then each search's letter and name beside its marker, then results from the top of the ruler down; a label that would overlap one already placed is left out, so a marker's name is never dropped for a result label. The panel's list carries every result.
 - **Why:** the spec leaves the rule for label collisions open; this rule was chosen while building.
 - **Visible on comparable data:** yes *(read from the code; how many labels are placed for Rice was not counted for this document)*.
 - **Decided by:** build.
+
+### Result labels on the ruler show the title, as the reference does
+
+- **Reference:** a result's label on the stage is its title ("Cereal  0.84").
+- **Build:** the same: a named result's label shows the point's title (its label) when it has one that is more than its id ("Cereal  0.84"); a point with no such title shows the start of its text, cut at 28 characters, as before. The numbers after it, the rank in front, the cut and the overlap rule are unchanged, and so are the panel's list, plain search's stage labels, the ranking and what a reranker is sent.
+- **Why:** the owner chose the reference's titles while comparing the two pages.
+- **Visible on comparable data:** no: on the shipped pair both show titles.
+- **Decided by:** owner, by the decision of 2026-11-17, recorded as deviation d5.
+
+### The search's marker carries its letter and name
+
+- **Reference:** the search's marker is labelled with its letter and name in large italic type ("A · Rice").
+- **Build:** the same words beside each marker in the relative view ("A · Rice"): the letter, a middle dot and the search's text as the panel's summary line names it, or for a search from a point with a title, the title; cut at 28 characters, in the search's colour and the viewer's 11 px type, inserted as text. The relative overlay draws it, once, with or without the search panel (the panel then draws only the ring and no letter), and places it before any result label.
+- **Why:** the owner chose the reference's name on the marker while comparing the two pages.
+- **Visible on comparable data:** yes: the type is the viewer's, not the reference's large italic.
+- **Decided by:** owner, by the decision of 2026-11-17, recorded as deviation d5.
 
 ### Marks and texts take their colour from the theme
 
@@ -1290,9 +1314,17 @@ What was checked about the reference page itself, on 2026-11-17:
 
 - **Reference:** letters follow position: removing A of two turns B into A.
 - **Build:** while the Relative setting is on, a search keeps its letter, so B stays B when A is removed and becomes the vertical axis; with the setting off letters follow position, as before.
-- **Why:** the spec requires every search to keep its letter in the relative view; limiting it to the setting keeps every view with Relative off as it was. Whether to keep letters in every view is open below.
+- **Why:** the spec requires every search to keep its letter in the relative view; limiting it to the setting keeps every view with Relative off as it was. Keeping letters in every view is a follow-up (next entry).
 - **Visible on comparable data:** yes, when the first of two searches is removed.
 - **Decided by:** spec.
+
+### Letters are not kept in every view, for now
+
+- **Reference:** letters follow position.
+- **Build:** letters are kept only while the Relative setting is on (see "Letters are kept while Relative is on"); with it off they follow position, as before.
+- **Why:** keeping them everywhere would change the views with Relative off. The owner accepted it as built on 2026-11-17, with keeping letters in every view left as a follow-up.
+- **Visible on comparable data:** yes, when the first of two searches is removed.
+- **Decided by:** owner, by the decision of 2026-11-17, recorded as deviation d5.
 
 ### Turning Relative on replaces a swing in progress
 
@@ -1302,18 +1334,18 @@ What was checked about the reference page itself, on 2026-11-17:
 - **Visible on comparable data:** yes, when Relative is turned on within six seconds of a search.
 - **Decided by:** build.
 
-### With reduced motion the view does not turn until Play
+### With motion stopped, a change is shown at once with no turn
 
 - **Reference:** with reduced motion the tour is paused but the blend onto the pinned frame still runs on wall time, and the page opens already settled.
-- **Build:** with reduced motion the viewer starts paused, and since the turn runs on the view's own time, the view does not turn onto the pinned frame (and the ruler stays faint) until Play is pressed.
-- **Why:** pause and reduced motion stop everything in Tumble. Whether reduced motion should show the settled view at once is open below.
-- **Visible on comparable data:** yes, with reduced motion set.
-- **Decided by:** build.
+- **Build:** while the viewer's clock stands still (reduced motion, which starts paused, or Pause), turning Relative on or off, adding or removing a search and Show the origin take effect at once: the next frame is the settled relative view (or the plain view when turning off) with the ruler exact, and nothing turns. The event records that it had no turn, so the same data, seed, searches, times and elapsed time give the same frame, and a seek to before it shows the earlier view. With the clock running the 1.5 s turn is as before.
+- **Why:** with the clock still the turn waited for Play, so nothing appeared; the owner chose to show the settled view at once.
+- **Visible on comparable data:** yes, with reduced motion set or paused.
+- **Decided by:** owner, by the decision of 2026-11-17, recorded as deviation d5.
 
 ### The panel's checkbox is not written back to the web component's attribute
 
 - **Reference:** not a web component.
-- **Build:** the `relative` and `show-origin` attributes and properties set the viewer's settings; a change made with the panel's own checkboxes is not reflected back to the attribute.
+- **Build:** the `relative`, `show-origin` and `relative-rest` attributes and properties set the viewer's settings; a change made with the panel's own controls is not reflected back to the attribute.
 - **Why:** the shell only forwards; it holds no state of its own *(read from the code)*.
 - **Visible on comparable data:** no: only a host reading the attribute sees it.
 - **Decided by:** build.
@@ -1321,7 +1353,7 @@ What was checked about the reference page itself, on 2026-11-17:
 ### Hosts are told when a turn ends
 
 - **Reference:** has no host.
-- **Build:** `onSearchChange` is also called when the turn onto the pinned frame ends, as `info().search.relative.settled` becomes true.
+- **Build:** `onSearchChange` is also called when the turn onto the pinned frame ends, as `info().search.relative.settled` becomes true; with the clock still, on the frame that shows the settled view at once.
 - **Why:** settled is part of what a host reads.
 - **Visible on comparable data:** no.
 - **Decided by:** build.
@@ -1368,48 +1400,16 @@ What was checked about the reference page itself, on 2026-11-17:
 
 ## Relative search: open questions
 
-These were put to the owner, or noticed while building, and are not decided.
-Each is listed so that it is checked off like the rest.
-
-### Titles or text on the ruler's labels
-
-- **Reference:** a result's label on the stage is its title ("Cereal  0.84").
-- **Build:** the start of the point's text, cut at 28 characters, as plain search labels it ("A cereal is a grass (family…  0.84").
-- **Why:** the overlay labels a point the way the rest of the viewer does; titles would need a rule for data whose labels are not titles.
-- **Visible on comparable data:** yes.
-- **Decided by:** open: not decided.
-
-### How strong the gradient is
-
-- **Reference:** every point is brightened by similarity at full strength.
-- **Build:** 0.2 of the reference's measure for points the Lit setting leaves unlit (see "Results follow the Lit setting; other points get a faint gradient").
-- **Why:** 0.2 keeps the cloud readable by similarity while results stay plainly brighter; chosen while building, to be shown to the owner.
-- **Visible on comparable data:** yes.
-- **Decided by:** open: not decided.
-
-### Whether letters should be kept in every view
-
-- **Reference:** letters follow position.
-- **Build:** letters are kept only while the Relative setting is on (see "Letters are kept while Relative is on").
-- **Why:** keeping them everywhere would change the views with Relative off; left to the owner.
-- **Visible on comparable data:** yes, when the first of two searches is removed.
-- **Decided by:** open: not decided.
-
-### Whether the search marker carries the search's name
-
-- **Reference:** the search's marker is labelled with its letter and name in large italic type ("A · Rice").
-- **Build:** the marker carries only its letter; the name is in the panel.
-- **Why:** the build's marker comes from the search panel, which labels a query with its letter in every view.
-- **Visible on comparable data:** yes.
-- **Decided by:** open: not decided.
-
-### Whether reduced motion shows the settled relative view at once
-
-- **Reference:** opens settled, and still turns under reduced motion.
-- **Build:** does not turn until Play is pressed (see "With reduced motion the view does not turn until Play").
-- **Why:** the build keeps reduced motion's rule that nothing moves; showing the settled frame at once would be a jump, which reduced motion also asks to avoid. Left to the owner.
-- **Visible on comparable data:** yes, with reduced motion set.
-- **Decided by:** open: not decided.
+Nothing here is open now. The five questions put to the owner were decided on
+2026-11-17 and moved to the lists above: titles on the ruler's labels ("Result
+labels on the ruler show the title, as the reference does"), the search's name
+on its marker ("The search's marker carries its letter and name"), the settled
+view at once with motion stopped ("With motion stopped, a change is shown at
+once with no turn") and letters in every view ("Letters are not kept in every
+view, for now"), recorded as deviation d5; and how strong the gradient is ("How
+bright the rest is: faint, visible or bright, bright by default"), recorded as
+deviation d6. A question that comes up later is listed here until it is
+decided.
 
 ## Relative search: compared by numbers
 
@@ -1494,6 +1494,9 @@ Read the same in both pages' code *(read from the code)*:
   well".
 - **The published copy** of the reference page was not compared with the
   committed file; see the first section of this part.
+- **The rest's three levels** were compared with the reference as lit values
+  and formulas, not as pictures; the browser test checks only that "faint"
+  lights fewer and dimmer pixels than "bright".
 
 ## Relative search: sign-off
 

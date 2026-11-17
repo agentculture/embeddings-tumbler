@@ -6,6 +6,7 @@
 //   index.html?data=sets/a.json     a data file from this page's own origin
 //   ...&mode=lattice&seed=7         optional starting mode and view seed
 //   ...&relative=1&origin=1         Relative and Show the origin on (kept in the address)
+//   ...&rest=faint                  the rest in the relative view: faint, visible (bright is the default)
 //
 // With no address the page loads the Wikipedia set from its own folder. When that
 // set cannot be read (a file: page, a host that copied only some files) or the
@@ -34,6 +35,8 @@
   // The default set: a data file pair shipped beside this page (scripts/build_demo_set.py).
   const DEMO_FILE = "demo-wikipedia.json";
   const SYNTHETIC = "synthetic"; // ?sample=synthetic chooses the generated set
+  const REST_LEVELS = ["faint", "visible", "bright"]; // ?rest=: the relative view's rest
+  const REST_DEFAULT = "bright"; // not written to the address
   const ABANDONED = Symbol("abandoned"); // what a load returns when the page moved on
   // The largest records file (the .json) the page reads, judged by its
   // Content-Length before the body is read, and by its length after reading
@@ -128,6 +131,9 @@
     // Relative and Show the origin: "1" is on, anything else (or nothing) is off.
     if (get("relative") === "1") options.relative = true;
     if (get("origin") === "1") options.showOrigin = true;
+    // The rest (how bright the points that are not results are): one of the three levels.
+    const rest = get("rest");
+    if (REST_LEVELS.includes(rest)) options.relativeRest = rest;
     // A data address of only spaces is no address: the default set, as for data=.
     let data = get("data");
     if (data !== null && data.trim() === "") data = null;
@@ -135,8 +141,9 @@
     return { data: data, options: options, synthetic: sample !== null && sample.trim() === SYNTHETIC };
   }
 
-  // Keeps the two settings in the address (replaceState: no new history entry) so a view
-  // can be reopened. Only these two parameters change; the others stay as they are.
+  // Keeps the relative settings in the address (replaceState: no new history entry) so a view
+  // can be reopened. Only these parameters change; the others stay as they are. The rest is
+  // written only when it is not the default.
   function keepSettingsInAddress(search) {
     const settings = search && search.relative;
     if (!settings || typeof settings.relative !== "boolean" || typeof settings.showOrigin !== "boolean") return;
@@ -148,6 +155,8 @@
       else params.delete("relative");
       if (settings.showOrigin) params.set("origin", "1");
       else params.delete("origin");
+      if (REST_LEVELS.includes(settings.rest) && settings.rest !== REST_DEFAULT) params.set("rest", settings.rest);
+      else params.delete("rest");
       const query = params.toString();
       const before = String(window.location.search || "").replace(/^\?/, "");
       if (query === before) return;
@@ -344,6 +353,7 @@
     };
     if (options.relative) opts.relative = true;
     if (options.showOrigin) opts.showOrigin = true;
+    if (options.relativeRest) opts.relativeRest = options.relativeRest;
     if (options.mode) opts.mode = options.mode;
     if (options.seed !== undefined) opts.seed = options.seed;
     if (callbacks.embed) opts.embed = callbacks.embed;

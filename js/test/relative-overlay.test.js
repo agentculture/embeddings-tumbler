@@ -530,7 +530,9 @@ test("not settled: ruler A's line only, faint; no ticks, rings, labels, stems or
   assert.strictEqual(kindCount(list.segments, "ruler2"), 0);
   assert.strictEqual(list.rings.length, 0);
   assert.strictEqual(list.results.length, 0);
-  assert.strictEqual(list.texts.length, 0);
+  // t19: only each search's letter and name beside its marker (the panel no longer letters
+  // the queries in the relative view); no tick, title, result, cut or origin text
+  assert.deepStrictEqual(list.texts.map((t) => t.kind), ["search", "search"]);
   const ruler = list.segments.filter((s) => s.kind === "ruler");
   assert.strictEqual(ruler.length, 1);
   assert.strictEqual(list.segments.length, 1);
@@ -628,4 +630,85 @@ test("build is pure: the same input gives the same list, and it leaves its input
   const e = RO.build(null);
   assert.strictEqual(e.segments.length + e.texts.length, 0);
   assert.strictEqual(RO.build({ ...sc.input, width: 0 }).segments.length, 0);
+});
+
+// ----- t19: titles on the ruler's labels, the search's name on its marker -----
+
+test("t19: a result's label shows its title when given, the start of its text when not", () => {
+  const fx = wiki();
+  const sc = scene(fx, ["Rice"]);
+  const cereal = fx.byLabel.Cereal;
+  const e = sc.input.named.find((n) => n.index === cereal);
+  e.text = "A cereal is any grass cultivated for its edible grain, composed of the endosperm";
+  e.title = "Cereal";
+  const other = sc.input.named.find((n) => n.index !== cereal && n.index !== fx.byLabel.Rice);
+  other.text = "Some long article text that has no title given for it at all";
+  other.title = null;
+  const list = RO.build(sc.input);
+  const h = dotRow(fx.X, cereal, fx.D, sc.u);
+  const t = list.texts.find((x) => x.kind === "result" && x.index === cereal);
+  assert.strictEqual(t.text, "Cereal  " + h.toFixed(2));
+  const o = list.texts.find((x) => x.kind === "result" && x.index === other.index);
+  const ho = dotRow(fx.X, other.index, fx.D, sc.u);
+  assert.strictEqual(o.text, "Some long article text that…  " + ho.toFixed(2));
+  // an empty title falls back to the text; a long title is cut to 28 like the text
+  e.title = "";
+  assert.ok(RO.build(sc.input).texts.find((x) => x.index === cereal).text.startsWith("A cereal is any grass culti…  "));
+  e.title = "A title that is far longer than twenty-eight characters";
+  assert.strictEqual(RO.build(sc.input).texts.find((x) => x.index === cereal).text, "A title that is far longer …  " + h.toFixed(2));
+  // ranks still come first
+  e.title = "Cereal";
+  e.ranks = [{ letter: "A", rank: 2 }];
+  assert.strictEqual(RO.build(sc.input).texts.find((x) => x.index === cereal).text, "2. Cereal  " + h.toFixed(2));
+});
+
+test("t19: each search's marker carries its letter and name, settled and turning; none without a name but the letter", () => {
+  const fx = wiki();
+  for (const settled of [true, false]) {
+    const sc = scene(fx, ["Rice", "Wheat"], { settled, mix: settled ? 1 : 0.5 });
+    sc.input.searches[0].name = "Rice";
+    sc.input.searches[1].name = "a search whose words go on and on past the cut";
+    const list = RO.build(sc.input);
+    const names = list.texts.filter((x) => x.kind === "search");
+    assert.deepStrictEqual(names.map((x) => x.text), ["A · Rice", "B · a search whose words go on …"]);
+    const marks = list.marks.filter((m) => m.kind === "search");
+    names.forEach((n, j) => {
+      assert.strictEqual(n.colour, COLOURS[j]);
+      assert.strictEqual(n.align, "left");
+      near(n.x, marks[j].x + 15 * DPR, 1e-9, "to the right of the ring");
+      near(n.y, marks[j].y + 4 * DPR, 1e-9, "the panel's letter place");
+    });
+  }
+  const sc = scene(fx, ["Rice"]);
+  const bare = RO.build(sc.input).texts.filter((x) => x.kind === "search");
+  assert.deepStrictEqual(bare.map((x) => x.text), ["A"], "no name given: the letter alone");
+  // the plain view has no search names
+  const plain = RO.build({ ...sc.input, relative: null, showOrigin: true });
+  assert.strictEqual(plain.texts.filter((x) => x.kind === "search").length, 0);
+});
+
+test("t19: a marker's name is placed before result labels, so an overlapping result label is left out; markup stays text", () => {
+  const dom = makeFakeDom();
+  const layer = dom.document.createElement("div");
+  const list = { dpr: 1, texts: [
+    { x: 100, y: 100, text: "Cereal  0.84", align: "left", colour: "#fff", alpha: 1, kind: "result", height: 0.99 },
+    { x: 104, y: 102, text: "A · <b>Rice</b>", align: "left", colour: "#f90", alpha: 1, kind: "search" },
+  ] };
+  assert.strictEqual(RO.placeLabels(layer, list, dom.document), 1);
+  assert.strictEqual(layer.children[0].textContent, "A · <b>Rice</b>");
+  assert.strictEqual(layer.children[0].children.length, 0, "markup is text");
+  // on the real build, the name survives whatever results are named near it
+  const fx = wiki();
+  const sc = scene(fx, ["Rice", "Wheat"], { k: 40 });
+  sc.input.searches[0].name = "Rice";
+  sc.input.searches[1].name = "Wheat";
+  const built = RO.build(sc.input);
+  // put a result label right on A's name
+  const a = built.texts.find((x) => x.kind === "search");
+  built.texts.push({ x: a.x, y: a.y, text: "a result label in the way", align: "left", colour: "#fff", alpha: 1, kind: "result", height: 99 });
+  const layer2 = dom.document.createElement("div");
+  RO.placeLabels(layer2, built, dom.document);
+  const shown = layer2.children.filter((c) => c.style.display !== "none").map((c) => c.textContent);
+  assert.ok(shown.includes("A · Rice") && shown.includes("B · Wheat"), "both names shown");
+  assert.ok(!shown.includes("a result label in the way"));
 });

@@ -502,7 +502,11 @@
    "group": "Relative search: brightness",
    "items": [
     {
-     "title": "Results follow the Lit setting; other points get a faint gradient",
+     "title": "Results follow the Lit setting; the rest get a gradient at one of three strengths",
+     "visible": "yes"
+    },
+    {
+     "title": "How bright the rest is: faint, visible or bright, bright by default",
      "visible": "yes"
     }
    ]
@@ -536,6 +540,14 @@
     },
     {
      "title": "Labels that would overlap are left out, in a fixed order",
+     "visible": "yes"
+    },
+    {
+     "title": "Result labels on the ruler show the title, as the reference does",
+     "visible": "no"
+    },
+    {
+     "title": "The search's marker carries its letter and name",
      "visible": "yes"
     },
     {
@@ -597,11 +609,15 @@
      "visible": "yes"
     },
     {
+     "title": "Letters are not kept in every view, for now",
+     "visible": "yes"
+    },
+    {
      "title": "Turning Relative on replaces a swing in progress",
      "visible": "yes"
     },
     {
-     "title": "With reduced motion the view does not turn until Play",
+     "title": "With motion stopped, a change is shown at once with no turn",
      "visible": "yes"
     },
     {
@@ -630,31 +646,6 @@
     },
     {
      "title": "Opening the search panel no longer wipes the picture",
-     "visible": "yes"
-    }
-   ]
-  },
-  {
-   "group": "Relative search: open questions",
-   "items": [
-    {
-     "title": "Titles or text on the ruler's labels",
-     "visible": "yes"
-    },
-    {
-     "title": "How strong the gradient is",
-     "visible": "yes"
-    },
-    {
-     "title": "Whether letters should be kept in every view",
-     "visible": "yes"
-    },
-    {
-     "title": "Whether the search marker carries the search's name",
-     "visible": "yes"
-    },
-    {
-     "title": "Whether reduced motion shows the settled relative view at once",
      "visible": "yes"
     }
    ]

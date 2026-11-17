@@ -754,6 +754,31 @@ test("a page with no history, or one that refuses replaceState, still works", as
   assert.strictEqual(b.body.getAttribute("data-page-state"), "ready");
 });
 
+// t19 (deviation d6): the rest in the address, written only when it is not the default.
+test("rest=faint or rest=visible is passed at mount; bright, absent or another value passes nothing", async () => {
+  for (const level of ["faint", "visible"]) {
+    const w = await settled(runPage("?relative=1&rest=" + level, demoFetch()));
+    assert.strictEqual(w.mountOptions[0].relativeRest, level);
+  }
+  for (const q of ["", "?rest=bright", "?rest=loud", "?rest="]) {
+    const w = await settled(runPage(q, demoFetch()));
+    assert.strictEqual(w.mountOptions[0].relativeRest === undefined || w.mountOptions[0].relativeRest === "bright", true, q);
+  }
+});
+
+test("a change of the rest is written to the address, and the default removes it", async () => {
+  const w = await settled(runPage("?seed=3", demoFetch()));
+  const report = w.mountOptions[0].onSearchChange;
+  report({ relative: { relative: true, showOrigin: false, rest: "bright" } });
+  assert.deepStrictEqual(w.replaced, ["?seed=3&relative=1"]);
+  report({ relative: { relative: true, showOrigin: false, rest: "faint" } });
+  assert.strictEqual(w.replaced[1], "?seed=3&relative=1&rest=faint");
+  const reopened = await settled(runPage(w.replaced[1], demoFetch()));
+  assert.strictEqual(reopened.mountOptions[0].relativeRest, "faint");
+  report({ relative: { relative: true, showOrigin: false, rest: "bright" } });
+  assert.strictEqual(w.replaced[2], "?seed=3&relative=1");
+});
+
 test("the controls are the viewer's own: the page adds no checkbox of its own", () => {
   assert.doesNotMatch(CODE, /createElement|type\s*=\s*["']checkbox/);
 });

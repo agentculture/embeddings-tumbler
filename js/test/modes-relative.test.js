@@ -805,3 +805,153 @@ test("t18: after a replace the relative fit uses the new set's plain directions"
   const want = reusedFit(smaller, ["Rice"], 8);
   assert.ok(Object.is(inst.stateAt(7).relative.share, want.share), "share of the new set's plain directions");
 });
+
+// ---------- t19: with the clock stopped, the relative view is shown at once ----------
+//
+// The viewer tells Tumble that its clock is not advancing (paused, or reduced motion) with
+// inst.setStill(true). A switch or a framing change fixed while still has no turn: the event
+// records duration 0, so the next frame is the settled view (or the plain one when turning
+// off). With setStill(false), or never called, nothing changes, bit for bit.
+
+test("t19: setStill is an optional member, not part of the interface", () => {
+  const inst = ET().modes.create("tumble");
+  assert.strictEqual(typeof inst.setStill, "function");
+  assert.ok(!ET().modes.INTERFACE.includes("setStill"));
+});
+
+test("t19: still, each kind of change takes effect at its time with no turn, settled at once", () => {
+  const fx = wiki();
+  const D = fx.D;
+  const set = setOf(fx);
+  const inst = ready(set, 4);
+  const plain = ready(set, 4);
+  inst.setStill(true);
+  const T0 = 2.0;
+  // Relative on with a search: a fit, then mark (as the viewer marks while paused).
+  inst.setRelative({ relative: true }, 0);
+  const w = inst.searchChanged(searchOf(fx, [["A", "Rice"]]), T0);
+  w.step();
+  inst.mark(T0);
+  let s = inst.stateAt(T0);
+  assert.strictEqual(s.relative.active, true);
+  assert.strictEqual(s.relative.settled, true, "settled at the switch time itself");
+  assert.strictEqual(s.relative.mix, 1);
+  assert.strictEqual(s.draw.perspective, ET().renderer.RELATIVE_PERSPECTIVE);
+  assert.ok(rowGap(s.frame, 1, unit(rowOf(fx, "Rice")), D) <= 1e-6, "row 1 is the search's direction");
+  assert.ok(s.status.includes("vertical = cosine to A, exact"), s.status);
+  assert.strictEqual(inst.describe().relative.instant, true, "the event records that it had no turn");
+  // Before the switch: the plain view, exactly as an instance with no search shows it.
+  assertSameSnap(snap(inst, T0 - 0.01), snap(plain, T0 - 0.01), "seek before the switch");
+  // The framing is the target at once (stateAt hands back one object, so ask again).
+  s = inst.stateAt(T0);
+  const win = s.relative.window;
+  const want = Math.min(0.78 / 0.46 / (win.top - win.bottom), 0.5 / (0.42 * 0.46));
+  assert.ok(Math.abs(s.draw.zoom - want) < 1e-12, "zoom at the target: " + s.draw.zoom);
+
+  // Add a search: B pins the horizontal axis at once.
+  const w2 = inst.searchChanged(searchOf(fx, [["A", "Rice"], ["B", "Wheat"]]), T0);
+  w2.step();
+  inst.mark(T0);
+  s = inst.stateAt(T0);
+  assert.deepStrictEqual(s.relative.pinned.map((p) => p.letter), ["A", "B"]);
+  assert.strictEqual(s.relative.settled, true);
+  assert.ok(planeResidual(s.frame, unit(rowOf(fx, "Wheat")), D) < 1e-5, "B in the plane of rows 0 and 1");
+
+  // Remove A: B is vertical at once.
+  const w3 = inst.searchChanged(searchOf(fx, [["B", "Wheat"]]), T0);
+  w3.step();
+  inst.mark(T0);
+  s = inst.stateAt(T0);
+  assert.deepStrictEqual(s.relative.pinned.map((p) => p.letter), ["B"]);
+  assert.strictEqual(s.relative.settled, true);
+  assert.ok(rowGap(s.frame, 1, unit(rowOf(fx, "Wheat")), D) <= 1e-6, "row 1 is B's direction");
+
+  // Show the origin: the wider window at once.
+  assert.strictEqual(inst.setRelative({ showOrigin: true }, T0), null);
+  s = inst.stateAt(T0);
+  assert.strictEqual(s.relative.window.bottom <= -0.06, true);
+  const win2 = s.relative.window;
+  const want2 = Math.min(0.78 / 0.46 / (win2.top - win2.bottom), 0.5 / (0.42 * 0.46));
+  assert.ok(Math.abs(s.draw.zoom - want2) < 1e-12, "zoom at the wider window: " + s.draw.zoom);
+  inst.setRelative({ showOrigin: false }, T0);
+
+  // Relative off: the plain view at once, plain Tumble bit for bit.
+  assert.strictEqual(inst.setRelative({ relative: false }, T0), null);
+  const off = snap(inst, T0);
+  assert.strictEqual(off.relative, null);
+  assertSameSnap(off, snap(plain, T0), "off at once");
+  // And every later time is plain Tumble.
+  for (const t of [T0 + 0.5, T0 + 3]) assertSameSnap(snap(inst, t), snap(plain, t), "plain after at t=" + t);
+});
+
+test("t19: still, the same changes at the same times give the same frames in two instances; seek reproduces each earlier view", () => {
+  const fx = wiki();
+  const set = setOf(fx);
+  const TIMES = [0, 1, 1.5, 1.6, 2.0, 2.9, 3.0, 3.5, 5, 9];
+  function run() {
+    const inst = ready(set, 6);
+    inst.setStill(true);
+    inst.setRelative({ relative: true }, 0);
+    pumpAndMark(inst, inst.searchChanged(searchOf(fx, [["A", "Rice"]]), 1.5), "one", 1.5, 1.5);
+    pumpAndMark(inst, inst.searchChanged(searchOf(fx, [["A", "Rice"], ["B", "Wheat"]]), 3.0), "units", 3.0, 3.0);
+    return inst;
+  }
+  const a = run();
+  const b = run();
+  for (const t of TIMES) assertSameSnap(snap(a, t), snap(b, t), "two instances at t=" + t);
+  assert.strictEqual(a.stateAt(1.4).relative.active, false, "before the first switch: plain");
+  assert.deepStrictEqual(a.stateAt(2.9).relative.pinned.map((p) => p.letter), ["A"], "between: A only, settled");
+  assert.strictEqual(a.stateAt(2.9).relative.settled, true);
+  assert.deepStrictEqual(a.stateAt(3.0).relative.pinned.map((p) => p.letter), ["A", "B"]);
+});
+
+test("t19: with the clock running (setStill false, or never told) every frame is bit-identical to before", () => {
+  const fx = wiki();
+  const set = setOf(fx);
+  const TIMES = [0, 1, 2.2, 2.5, 3.0, 3.6, 4.5, 6.5, 9.1, 30];
+  function run(still) {
+    const inst = ready(set, 5);
+    if (still !== undefined) inst.setStill(still);
+    inst.setRelative({ relative: true }, 0.5);
+    pumpAndMark(inst, inst.searchChanged(searchOf(fx, [["A", "Rice"]]), 2.0), "one", 2.0, 2.1);
+    pumpAndMark(inst, inst.searchChanged(searchOf(fx, [["A", "Rice"], ["B", "Wheat"]]), 3.2), "one", 3.2, 3.4);
+    inst.setRelative({ showOrigin: true }, 5.0);
+    pumpAndMark(inst, inst.searchChanged(searchOf(fx, [["B", "Wheat"]]), 7.0), "one", 7.0, 7.3);
+    return inst;
+  }
+  const never = run(undefined);
+  const told = run(false);
+  // Told still and then running again before any change: also unchanged.
+  const back = ready(set, 5);
+  back.setStill(true);
+  back.setStill(false);
+  back.setRelative({ relative: true }, 0.5);
+  pumpAndMark(back, back.searchChanged(searchOf(fx, [["A", "Rice"]]), 2.0), "one", 2.0, 2.1);
+  pumpAndMark(back, back.searchChanged(searchOf(fx, [["A", "Rice"], ["B", "Wheat"]]), 3.2), "one", 3.2, 3.4);
+  back.setRelative({ showOrigin: true }, 5.0);
+  pumpAndMark(back, back.searchChanged(searchOf(fx, [["B", "Wheat"]]), 7.0), "one", 7.0, 7.3);
+  for (const t of TIMES) {
+    assertSameSnap(snap(never, t), snap(told, t), "setStill(false) at t=" + t);
+    assertSameSnap(snap(never, t), snap(back, t), "still then running at t=" + t);
+  }
+  assert.strictEqual(never.stateAt(3.4 + TURN / 2).relative.settled, false, "the turn is still there");
+  assert.strictEqual(never.describe().relative.instant, false);
+});
+
+test("t19: a fit finished after the clock starts again turns as usual; still decides at the switch, not the call", () => {
+  const fx = wiki();
+  const set = setOf(fx);
+  const inst = ready(set, 2);
+  inst.setStill(true);
+  inst.setRelative({ relative: true }, 0);
+  const w = inst.searchChanged(searchOf(fx, [["A", "Rice"]]), 1.0);
+  w.step();
+  inst.setStill(false); // Play pressed before the switch time was fixed
+  inst.mark(1.0);
+  assert.strictEqual(inst.stateAt(1.0 + TURN / 2).relative.settled, false, "a turn");
+  const ref = ready(set, 2);
+  ref.setRelative({ relative: true }, 0);
+  ref.searchChanged(searchOf(fx, [["A", "Rice"]]), 1.0).step();
+  ref.mark(1.0);
+  for (const t of [1.0, 1.4, 2.0, 3.0]) assertSameSnap(snap(inst, t), snap(ref, t), "as never still at t=" + t);
+});

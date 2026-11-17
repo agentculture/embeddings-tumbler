@@ -100,6 +100,7 @@ ET.viewer = (function () {
     // Tumble's relative settings at mount (docs/relative-interface.md, "Viewer (t9, t10)").
     relative: false,
     showOrigin: false,
+    relativeRest: "bright", // how bright the points that are not results are: faint, visible, bright
   };
 
   var CROWD_REF = 600; // bright points a view shows at full brightness (see crowding)
@@ -1349,6 +1350,7 @@ ET.viewer = (function () {
       curNeighbours: null,
     };
     v.modeId = id;
+    passStill(v, v.mode); // before the settings, so a switch they cause knows the clock is still
     passRelative(v, v.mode); // right after it is entered (Tumble keeps the settings)
     paintModeButtons(v);
     refreshViewRow(v);
@@ -1370,6 +1372,18 @@ ET.viewer = (function () {
     }
     var work = typeof r?.step === "function" ? r : r?.work;
     if (typeof work?.step === "function") m.jobs.push(work);
+  }
+
+  // Tell a mode that takes it (Tumble's setStill) whether the viewer's clock stands still:
+  // paused, which reduced motion starts in. A relative switch fixed while still has no turn,
+  // so the settled view is shown on the next frame instead of waiting for Play.
+  function passStill(v, m) {
+    if (!m || typeof m.inst.setStill !== "function") return;
+    try {
+      m.inst.setStill(!v.running);
+    } catch (err) {
+      // A mode whose setStill throws keeps turning as it did.
+    }
   }
 
   function leaveSafely(inst) {
@@ -2758,6 +2772,7 @@ ET.viewer = (function () {
     run = !!run;
     if (run === v.running) return;
     v.running = run;
+    passStill(v, v.mode);
     v.playButton.textContent = run ? "Pause" : "Play";
     v.playButton.setAttribute("aria-pressed", run ? "false" : "true");
     v.statusClock = STATUS_EVERY;
@@ -4401,7 +4416,18 @@ ET.viewer = (function () {
   // values as the search panel's defaults, so a search's ruler and its ring agree.
   var SEARCH_DEFAULTS_DARK = ["#ffc56b", "#6be0ff", "#ff8fb3", "#b6ff8a"];
   var SEARCH_DEFAULTS_LIGHT = ["#a35f00", "#00708a", "#b0245a", "#3d7a00"];
-  var RELATIVE_GRADIENT = 0.2; // the brightest point that is not a result, as a lit value
+  // The rest: the lit value of a point that is not a result in the relative view, base + scale
+  // * g^2 (deviation d6). "faint" is what was built first; "bright" is the owner's default.
+  var RELATIVE_REST = {
+    faint: { base: 0, scale: 0.2 },
+    visible: { base: 0.08, scale: 0.45 },
+    bright: { base: 0.2, scale: 0.6 },
+  };
+  var RELATIVE_REST_DEFAULT = "bright";
+
+  function restLevel(x) {
+    return typeof x === "string" && Object.hasOwn(RELATIVE_REST, x) ? x : null;
+  }
   var OWN_POINT_DISTANCE = 1e-7; // a point this close to its search, at its length, is its own
   var OWN_POINT_LENGTH = 1e-6;
 
@@ -4441,15 +4467,16 @@ ET.viewer = (function () {
     return Math.abs(Math.sqrt(rowDot(set.vectors, o, set.vectors.subarray(o, o + D), D)) - length) < OWN_POINT_LENGTH;
   }
 
-  // The gradient for the searches shown, worked out once per change of the searches or the
-  // data: RELATIVE_GRADIENT * g^2, g the largest over the searches of
+  // The gradient for the searches shown, worked out once per change of the searches, the
+  // data or the rest setting: base + scale * g^2 (RELATIVE_REST), g the largest over the searches of
   // clamp((c - mid) / (hi - mid), 0, 1) by plain cosine c, mid the median c (index N >> 1
   // of the ascending sort) and hi the largest c of a point other than the search's own.
   function relativeGradient(v) {
     var s = v.search;
     var set = s.shownSet;
     if (!s.shown.length || !set) return null;
-    if (s.gradient?.shown === s.shown && s.gradient.set === set) return s.gradient.values;
+    var rest = v.rel.rest;
+    if (s.gradient?.shown === s.shown && s.gradient.set === set && s.gradient.rest === rest) return s.gradient.values;
     var N = set.count;
     var g = new Float64Array(N);
     var c = new Float64Array(N);
@@ -4470,8 +4497,9 @@ ET.viewer = (function () {
       }
     }
     var values = new Float32Array(N);
-    for (var k = 0; k < N; k++) values[k] = RELATIVE_GRADIENT * g[k] * g[k];
-    s.gradient = { shown: s.shown, set: set, values: values };
+    var level = RELATIVE_REST[rest];
+    for (var k = 0; k < N; k++) values[k] = level.base + level.scale * g[k] * g[k];
+    s.gradient = { shown: s.shown, set: set, rest: rest, values: values };
     return values;
   }
 
@@ -4554,6 +4582,7 @@ ET.viewer = (function () {
     return {
       relative: v.rel.relative,
       showOrigin: v.rel.showOrigin,
+      rest: v.rel.rest,
       offered: offered,
       active: active,
       settled: active && st.settled === true,
@@ -4737,23 +4766,30 @@ ET.viewer = (function () {
   // no request is made. onSearchChange fires when a value changes.
   function setRelative(v, patch) {
     var cur = v.rel;
-    var next = { relative: cur.relative, showOrigin: cur.showOrigin };
+    var next = { relative: cur.relative, showOrigin: cur.showOrigin, rest: cur.rest };
     if (v.destroyed || !isObj(patch)) return next;
     try {
       if (typeof patch.relative === "boolean") next.relative = patch.relative;
       if (typeof patch.showOrigin === "boolean") next.showOrigin = patch.showOrigin;
+      if (restLevel(patch.rest)) next.rest = patch.rest; // an unknown value is ignored
     } catch {
       // A getter on the host's patch threw: the patch is ignored.
-      return { relative: cur.relative, showOrigin: cur.showOrigin };
+      return { relative: cur.relative, showOrigin: cur.showOrigin, rest: cur.rest };
     }
-    if (next.relative === cur.relative && next.showOrigin === cur.showOrigin) return next;
+    var restChanged = next.rest !== cur.rest;
+    if (next.relative === cur.relative && next.showOrigin === cur.showOrigin && !restChanged) return next;
     v.rel = next;
-    var relettered = !next.relative && letterByPosition(v);
-    passRelative(v, v.mode);
-    if (relettered) notifyModeSearch(v);
+    if (next.relative !== cur.relative || next.showOrigin !== cur.showOrigin) {
+      var relettered = !next.relative && letterByPosition(v);
+      passRelative(v, v.mode);
+      if (relettered) notifyModeSearch(v);
+    }
+    // The rest changes only the lit values of the relative view shown; with it not shown
+    // nothing is uploaded.
+    if (restChanged && v.search.lit && v.search.litUploaded && v.search.litRelative) uploadLit(v);
     searchChanged(v);
     invalidate(v);
-    return { relative: next.relative, showOrigin: next.showOrigin };
+    return { relative: next.relative, showOrigin: next.showOrigin, rest: next.rest };
   }
 
   // What the relative overlay is told about the results (docs/relative-interface.md,
@@ -4770,7 +4806,7 @@ ET.viewer = (function () {
       q.view.hits.forEach(function (hit) {
         var e = byIndex.get(hit.index);
         if (!e) {
-          e = { index: hit.index, text: ET.search.pointText(set, hit.index), ranks: [] };
+          e = { index: hit.index, text: ET.search.pointText(set, hit.index), title: pointTitle(set, hit.index), ranks: [] };
           byIndex.set(hit.index, e);
           named.push(e);
         }
@@ -4794,6 +4830,24 @@ ET.viewer = (function () {
       cut = { height: low, sent: vertical.sent };
     }
     return { named: named, cut: cut };
+  }
+
+  // A point's title: its label when that is more than its id (not empty, not blank, not the
+  // id itself), otherwise null. The relative overlay names a result by it (t19).
+  function pointTitle(set, i) {
+    var label = set.points?.[i]?.label;
+    return typeof label === "string" && label !== set.ids[i] && /\S/.test(label) ? label : null;
+  }
+
+  // What a search's marker is called in the relative view (t19): its text as the panel's
+  // summary names it; for a search from a point with a title, the title.
+  function searchName(v, q) {
+    if (q.kind === "point" && v.set) {
+      var i = v.set.ids.indexOf(q.point);
+      var title = i >= 0 ? pointTitle(v.set, i) : null;
+      if (title) return title;
+    }
+    return typeof q.text === "string" ? q.text : "";
   }
 
   // ----- drawing the relative view (docs/relative-interface.md, "Drawing (t10)") -----
@@ -4855,7 +4909,7 @@ ET.viewer = (function () {
       relative: shown ? s.relative : null,
       searches: shown
         ? v.search.shown.map(function (q, j) {
-            return { letter: q.letter, colour: searchColour(v, q, j), query: q.query };
+            return { letter: q.letter, colour: searchColour(v, q, j), query: q.query, name: searchName(v, q) };
           })
         : [],
       named: od.named,
@@ -4865,9 +4919,11 @@ ET.viewer = (function () {
       ink: v.stageFg,
       paper: v.stageBg,
     });
-    // The panel already rings every query (and letters it): with the panel mounted the
-    // overlay's own search markers are left out, so no search is ringed twice. Without the
-    // panel they are the only mark at a query and are kept.
+    // The panel already rings every query: with the panel mounted the overlay's own search
+    // rings are left out, so no search is ringed twice. Without the panel they are the only
+    // mark at a query and are kept. The letter and name beside each ring ("A · Rice") are the
+    // overlay's in both cases (texts of kind "search"): in the relative view the panel draws
+    // no letter, so each name is drawn once and is placed before any result label (t19).
     if (typeof v.search.panel?.drawOverlay === "function") {
       list.marks = list.marks.filter(function (mk) {
         return mk.kind !== "search";
@@ -5079,7 +5135,11 @@ ET.viewer = (function () {
       paintKey: null,
       themeKey: null,
       // Tumble's relative settings, kept in every view and with no search.
-      rel: { relative: opts.relative === true, showOrigin: opts.showOrigin === true },
+      rel: {
+        relative: opts.relative === true,
+        showOrigin: opts.showOrigin === true,
+        rest: restLevel(opts.relativeRest) || RELATIVE_REST_DEFAULT,
+      },
       provRel: null, // the provenance's Relative row while the relative view is shown
       search: newSearchState(opts),
     };
@@ -5291,7 +5351,7 @@ ET.viewer = (function () {
         return setRelative(v, patch);
       },
       relativeSettings: function () {
-        return { relative: v.rel.relative, showOrigin: v.rel.showOrigin };
+        return { relative: v.rel.relative, showOrigin: v.rel.showOrigin, rest: v.rel.rest };
       },
     };
     Object.defineProperty(h, "_viewer", { value: v, enumerable: false });

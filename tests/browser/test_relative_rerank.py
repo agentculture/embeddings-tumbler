@@ -107,10 +107,19 @@ def expected():
         p = meta["points"][i]
         return (p.get("metadata") or {}).get("text") or p["label"]
 
+    def name(i):
+        # what a result label on the ruler shows (t19): the title when it is more than the
+        # id, otherwise the text (before t19 the text, keyed here by text(i))
+        p = meta["points"][i]
+        label = p.get("label")
+        if isinstance(label, str) and label != p["id"] and label.strip():
+            return label
+        return text(i)
+
     return {
         "kept": kept,
         "embedding_rank": [i + 1 for i in by_score],
-        "rank_of_text": {text(i)[:20]: r + 1 for r, i in enumerate(kept)},
+        "rank_of_text": {name(i)[:20]: r + 1 for r, i in enumerate(kept)},
         "cut": min(heights[i] for i in pool),
         "texts": [text(i)[:20] for i in pool],
     }
@@ -227,7 +236,9 @@ def test_labels_carry_ranks_1_to_top(reranked, expected):
         assert m, f"a result label without a rank: {label!r}"
         rank = int(m.group(1))
         assert 1 <= rank <= TOP, label
-        assert expected["rank_of_text"].get(m.group(2)[:20]) == rank, label
+        # the name ends where the two spaces before the heights begin (a title is short)
+        name = m.group(2).split("  ")[0]
+        assert expected["rank_of_text"].get(name[:20]) == rank, label
 
 
 def test_the_cut_off_is_at_the_lowest_candidates_height(reranked, expected):

@@ -167,7 +167,8 @@ test("relative on with a search: the overlay is painted every frame with the mod
 });
 
 test("while the view turns: settled false, ruler A only, no stems, ticks or exactness in the provenance", async () => {
-  const t = setup({ relative: true });
+  // The clock runs: with it stopped the view is shown at once with no turn (t19).
+  const t = setup({ relative: true, paused: false });
   await ready(t);
   const r = await settle(t.dom, t.h.setSearches([{ point: idOf(t.data, "Rice") }]));
   assert.strictEqual(r.ok, true);
@@ -427,5 +428,221 @@ test("the hook on the mixed-length set: heights are lengths along the search, ti
   for (const r of drawn.results) assert.ok(Math.abs(r.height - dotRow(t.v.set, r.index, u)) < 1e-9);
   assert.ok(relTexts(t.v).includes("length along the search to A"));
   assert.ok(relTexts(t.v).some((x) => x.includes("  cosine ")), "result labels carry the cosine too");
+  t.h.destroy();
+});
+
+// ---------- t19: titles on the ruler's labels, the search's name on its marker ----------
+
+// The visible texts of the panel's own label layer.
+function panelTexts(v) {
+  const layer = v.stage.querySelector(".tumbler-search-labels");
+  return layer ? layer.children.filter((c) => c.style.display !== "none").map((c) => c.textContent) : [];
+}
+
+test("t19: a named result's label on the ruler shows its title; without titles the start of its text", async () => {
+  const t = setup({ relative: true });
+  await ready(t);
+  await searchAndSettle(t, [{ point: idOf(t.data, "Rice") }]);
+  const od = ET.viewer.relativeOverlayData(t.h);
+  const cereal = t.data.points.findIndex((p) => p.label === "Cereal");
+  const e = od.named.find((n) => n.index === cereal);
+  assert.ok(e, "Cereal is a named result");
+  assert.strictEqual(e.title, "Cereal");
+  assert.ok(e.text.length > 40, "its text is the article's start, not its title");
+  const results = t.v.relativeDrawn.results;
+  const u = unitDirection(t.v.search.shown[0].query);
+  const h = dotRow(t.v.set, cereal, u);
+  assert.ok(results.some((r) => r.index === cereal));
+  assert.ok(relTexts(t.v).includes("Cereal  " + h.toFixed(2)), "the title and the height");
+  t.h.destroy();
+  // The same set with no titles: the start of the text, cut to 28, as before.
+  const dom = makeFakeDom();
+  const h2 = api.mount(dom.host(), { seed: 3, mode: "tumble", paused: true, searchPanel: false, relative: true });
+  const data = fixture("wikipedia-subset");
+  const riceId = idOf(data, "Rice");
+  const text = data.points[cereal].metadata.text;
+  // labels that are no more than the id (most) or empty: no title to show
+  data.points.forEach((p, i) => {
+    p.label = i % 2 ? "" : p.id;
+  });
+  h2.update(data);
+  const u2 = { dom, h: h2, v: h2._viewer, data };
+  await ready(u2);
+  await searchAndSettle(u2, [{ point: riceId }]);
+  const od2 = ET.viewer.relativeOverlayData(h2);
+  assert.strictEqual(od2.named.find((n) => n.index === cereal).title, null);
+  const want = (text.length > 28 ? text.slice(0, 27) + "…" : text) + "  " + h.toFixed(2);
+  assert.ok(relTexts(u2.v).includes(want), "the text's start: " + want);
+  // and the panel's list is as it was: the result's text, not the title
+  const res = h2.info().search.searches[0].results.find((r) => r.index === cereal);
+  assert.strictEqual(res.text, text);
+  h2.destroy();
+});
+
+test("t19: each search's letter and name are drawn once beside its marker, with and without the panel", async () => {
+  for (const searchPanel of [true, false]) {
+    const t = setup({ relative: true, searchPanel });
+    await ready(t);
+    await searchAndSettle(t, [{ point: idOf(t.data, "Rice") }, { point: idOf(t.data, "Wheat") }]);
+    t.dom.frames(1);
+    const all = relTexts(t.v).concat(panelTexts(t.v));
+    for (const name of ["A · Rice", "B · Wheat"]) {
+      assert.strictEqual(all.filter((x) => x === name).length, 1, name + " once (panel " + searchPanel + ")");
+    }
+    assert.ok(!all.includes("A") && !all.includes("B"), "no bare letter beside it as well");
+    // a ring per search, once
+    t.dom.frames(0);
+    const calls = overlayCalls(t.v);
+    calls.length = 0;
+    t.dom.frames(1);
+    assert.strictEqual(calls.filter((c) => c[0] === "arc" && c[3] === 10 * t.v.dpr).length, 2, "one ring per search");
+    // off: the panel letters the queries again, and the overlay draws nothing
+    t.h.setRelative({ relative: false });
+    t.dom.frames(3);
+    assert.strictEqual(relTexts(t.v).length, 0);
+    if (searchPanel) assert.ok(panelTexts(t.v).includes("A") && panelTexts(t.v).includes("B"), "letters in the plain view");
+    t.h.destroy();
+  }
+});
+
+test("t19: a search's name is inserted as text, never as markup", async () => {
+  const t = setup({ relative: true, searchPanel: true });
+  await ready(t);
+  const D = t.data.dimension;
+  const rice = t.data.points.findIndex((p) => p.label === "Rice");
+  const vector = Array.from(t.v.set.vectors.subarray(rice * D, rice * D + D));
+  const evil = "<img src=x onerror=alert(1)>";
+  await searchAndSettle(t, [{ vector, model: t.data.model, label: evil }]);
+  t.dom.frames(1);
+  const span = t.v.relLabelLayer.children.find((c) => c.style.display !== "none" && c.textContent.startsWith("A · "));
+  assert.ok(span, "the marker's name is shown");
+  assert.strictEqual(span.textContent, "A · <img src=x onerror=alert(1)>");
+  assert.strictEqual(span.children.length, 0, "markup is text");
+  t.h.destroy();
+});
+
+// ---------- t19: with motion stopped, the relative view is shown at once ----------
+
+// The frame shown now, as bits.
+function frameBits(v) {
+  return Array.from(new Uint32Array(new Float32Array(v.last.frame).buffer)).join(",");
+}
+
+async function stillRun(domOpts, mountOpts) {
+  const seen = [];
+  const t = setup({ relative: true, onSearchChange: (s) => seen.push(s.relative ? { active: s.relative.active, settled: s.relative.settled } : null), ...mountOpts }, "wikipedia-subset", domOpts);
+  await ready(t);
+  assert.strictEqual(t.v.running, false, "the clock stands still");
+  t.h.seek(5);
+  t.dom.frames(2);
+  const record = [];
+  const shot = (what) => {
+    const rel = t.h.info().search.relative;
+    record.push({ what, bits: frameBits(t.v), zoom: t.v.lastDraw.zoom, bottom: rel.window ? rel.window.bottom : null, active: rel.active, settled: rel.settled, pinned: rel.pinned.map((p) => p.letter).join("") });
+  };
+  const changed = async (fn, what) => {
+    seen.length = 0;
+    await fn();
+    await until(t.dom, () => !t.h.info().preparing && !t.v.mode.inst.describe().relative.pending);
+    t.dom.frames(1);
+    assert.strictEqual(t.h.time(), 5, what + ": the clock did not move");
+    shot(what);
+  };
+  // turning Relative on with a search already there: switch Relative off first, search, on
+  t.h.setRelative({ relative: false });
+  await settle(t.dom, t.h.setSearches([{ point: idOf(t.data, "Rice") }]));
+  t.dom.frames(2);
+  shot("plain with a search");
+  await changed(() => t.h.setRelative({ relative: true }), "relative on");
+  assert.ok(seen.some((s) => s && s.active && s.settled), "onSearchChange told the host it is settled");
+  await changed(() => settle(t.dom, t.h.setSearches([{ point: idOf(t.data, "Rice") }, { point: idOf(t.data, "Wheat") }])), "add a search");
+  await changed(() => settle(t.dom, t.h.setSearches([{ point: idOf(t.data, "Wheat") }])), "remove a search");
+  await changed(() => t.h.setRelative({ showOrigin: true }), "show the origin");
+  await changed(() => t.h.setRelative({ relative: false }), "relative off");
+  return { t, record };
+}
+
+for (const variant of [
+  { name: "paused", dom: undefined, mount: { paused: true } },
+  { name: "under reduced motion", dom: { reducedMotion: true }, mount: { paused: null } },
+]) {
+  test("t19: " + variant.name + ", every change shows its settled view on the next frame, with the ruler exact", async () => {
+    const { t, record } = await stillRun(variant.dom, variant.mount);
+    const by = Object.fromEntries(record.map((r) => [r.what, r]));
+    assert.deepStrictEqual([by["plain with a search"].active, by["relative on"].active, by["relative on"].settled], [false, true, true]);
+    assert.strictEqual(by["add a search"].pinned, "AB");
+    assert.strictEqual(by["add a search"].settled, true);
+    assert.strictEqual(by["remove a search"].pinned, "B");
+    assert.strictEqual(by["remove a search"].settled, true);
+    assert.strictEqual(by["show the origin"].settled, true);
+    assert.strictEqual(by["relative off"].active, false);
+    assert.ok(!t.v.relativeDrawn?.ruler, "off: no ruler (Show the origin is still on, so the plain marker stays)");
+    // the view really changed with each step: a new frame, or (Show the origin, which turns
+    // nothing) the wider window and the zoom that frames it
+    const turned = record.filter((r) => r.what !== "show the origin");
+    assert.strictEqual(new Set(turned.map((r) => r.bits)).size, turned.length, "each change gave a new frame");
+    assert.ok(by["show the origin"].bottom <= -0.06, "the window reaches zero at once");
+    assert.ok(by["show the origin"].zoom < by["remove a search"].zoom, "zoomed out at once");
+    // Show the origin again while relative: the window reaches zero at once and is drawn exact
+    t.h.setRelative({ relative: true });
+    t.dom.frames(1);
+    const drawn = t.v.relativeDrawn;
+    assert.strictEqual(drawn.settled, true);
+    assert.strictEqual(drawn.ruler.from, 0, "the ruler from the origin");
+    assert.ok(drawn.origin && drawn.results.length > 0, "origin and stems drawn");
+    assert.strictEqual(t.v.mode.inst.describe().relative.instant, true);
+    // A seek before the changes shows the earlier, plain view.
+    t.h.seek(4);
+    t.dom.frames(1);
+    assert.strictEqual(t.h.info().search.relative.active, false, "before the events: plain");
+    t.h.destroy();
+  });
+}
+
+test("t19: still, two instances given the same changes show the same frames", async () => {
+  const a = await stillRun(undefined, { paused: true });
+  const b = await stillRun(undefined, { paused: true });
+  assert.strictEqual(a.record.length, b.record.length);
+  a.record.forEach((r, k) => assert.ok(r.bits === b.record[k].bits, "frame after " + r.what));
+  a.t.h.destroy();
+  b.t.h.destroy();
+});
+
+test("t19: with the clock running a change still turns, and Pause then a change is at once", async () => {
+  const t = setup({ relative: true, paused: false });
+  await ready(t);
+  await settle(t.dom, t.h.setSearches([{ point: idOf(t.data, "Rice") }]));
+  await until(t.dom, () => t.h.info().search.relative.active && !t.h.info().preparing);
+  assert.strictEqual(t.h.info().search.relative.settled, false, "running: the view turns");
+  assert.strictEqual(t.v.mode.inst.describe().relative.instant, false);
+  t.h.pause();
+  t.dom.frames(1);
+  const c = t.h.time();
+  await settle(t.dom, t.h.setSearches([{ point: idOf(t.data, "Wheat") }]));
+  await until(t.dom, () => !t.h.info().preparing && !t.v.mode.inst.describe().relative.pending);
+  t.dom.frames(1);
+  assert.strictEqual(t.h.time(), c);
+  assert.strictEqual(t.h.info().search.relative.settled, true, "paused: at once");
+  t.h.destroy();
+});
+
+test("t19 (d6): the panel's rest control changes the viewer's setting and reports it", async () => {
+  const t = setup({ relative: true, searchPanel: true });
+  await ready(t);
+  await searchAndSettle(t, [{ point: idOf(t.data, "Rice") }]);
+  const sel = t.v.el.querySelector(".tumbler-search-rest")?.querySelector("select");
+  assert.ok(sel, "the control is in the panel");
+  assert.strictEqual(sel.value, "bright");
+  assert.strictEqual(sel.disabled, false);
+  sel.value = "faint";
+  sel.dispatchEvent({ type: "change" });
+  assert.strictEqual(t.h.relativeSettings().rest, "faint");
+  t.dom.frames(2);
+  t.h.setRelative({ rest: "visible" });
+  t.dom.frames(2);
+  assert.strictEqual(sel.value, "visible", "a change through the handle shows in the control");
+  t.h.setRelative({ relative: false });
+  t.dom.frames(2);
+  assert.strictEqual(sel.disabled, true);
   t.h.destroy();
 });

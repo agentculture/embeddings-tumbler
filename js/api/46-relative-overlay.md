@@ -37,8 +37,8 @@ points agree.
 | `vectors`, `dimension` | The set's block and its dimension `D`. |
 | `frame`, `centre` | The mode state's frame (`Float32Array(3 * D)`) and centre (`Float32Array(D)`) this frame. |
 | `relative` | The mode state's `relative` (`js/api/40-modes.md`), or `null` for the plain view. |
-| `searches` | `[{ letter, colour, query }]`: every search shown, in letter order, with its raw query vector (`D` numbers). |
-| `named` | `[{ index, text, ranks }]`: the named results to label, each point once. `ranks` is `[{ letter, rank }]` from a reranker that answered, and `[]` otherwise. |
+| `searches` | `[{ letter, colour, query, name }]`: every search shown, in letter order, with its raw query vector (`D` numbers) and what its marker is called (`name`, a string; `""` or absent for none). |
+| `named` | `[{ index, text, title, ranks }]`: the named results to label, each point once. `title` is the point's title (its label, when that is more than its id), or `null`; `text` is its text. `ranks` is `[{ letter, rank }]` from a reranker that answered, and `[]` otherwise. |
 | `cut` | `null` or `{ height, sent }`: the reranker's cut-off for the vertical search. `height` is the height of the lowest candidate sent and `sent` how many were sent. |
 | `showOrigin`, `labels` | The viewer's settings. |
 | `ink`, `paper` | Optional CSS colour strings. `ink` is the colour of the origin cross, the unit circle, the cut-off line and the result labels (default `#ffffff`). `paper` is the colour of the outline round every label span (default `#04060b`). The viewer passes the theme's. |
@@ -61,7 +61,8 @@ What it holds:
   to the top of the window. A tick and a level ring every 0.1, each tick
   labelled with the height to one decimal. A title `{measure} to {letter}` at
   the top. One stem for each named result, from the result to the point on the
-  ruler at its height. A marker at each search's raw query. With a second
+  ruler at its height. A marker at each search's raw query, with its letter
+  and name beside it. With a second
   pinned search, a second ruler along that search's own direction, with dots at
   0.1 to 0.9. With `cut`, a dashed line across the ruler at its height with the
   text `{sent} candidates above this line went to the reranker`. The origin
@@ -72,7 +73,7 @@ What it holds:
 - **The relative view, not settled** (while the view turns onto the pinned
   frame): the vertical ruler's line only, faint. No ticks, no rings, no stems,
   no cut-off line, no result labels. The ruler is not drawn as exact while it is
-  not.
+  not. The search markers and their names stay.
 - **The plain view with Show the origin:** the origin cross where the all-zero
   vector falls, with the text `origin · truly {far} from the centre, {seen} of it
   visible`. `far` is the length of the centre vector: the true distance. `seen`
@@ -83,16 +84,23 @@ What it holds:
   from a search and of the same length (within `1e-6`) is that search's own
   point. It sits on the search's marker, so it gets no stem and no label.
 - **Result labels** are in the list only when `labels` is true. A label is
-  `[{ranks} ]{text}  {heights}`: the text cut to 28 characters (ending in `…`
-  when cut), then the result's height along each pinned search with two
+  `[{ranks} ]{text}  {heights}`: the point's `title` when it is a non-empty
+  string, otherwise its `text` (the reference shows titles: "Cereal  0.84"),
+  cut to 28 characters (ending in `…` when cut), then the result's height along each pinned search with two
   decimals, joined by ` · `. Ranks come first when the reranker gave them (`1.`,
   or `A1.` with several searches, joined by a space). On a set that is not of
   unit length, two spaces and `cosine {c}` follow, with the cosine to each
   pinned search, so every label shows both numbers.
 - **Search markers.** `marks` of kind `"search"` ring each search's raw query. The
-  viewer drops them from the list when the search panel is mounted, because the
-  panel already rings every query and letters it; without the panel they are the
-  only mark at a query and are kept.
+  viewer drops these rings from the list when the search panel is mounted,
+  because the panel already rings every query; without the panel they are the
+  only ring at a query and are kept.
+- **The search's name.** In the relative view (settled or turning) one text of
+  kind `"search"` per search, always (with `labels` off too): `{letter} ·
+  {name}`, the reference's "A · Rice", with `name` cut to 28 characters, or the
+  letter alone when `name` is empty; in the search's colour, left-aligned 15 px
+  right of the marker's centre and 4 px below it. The panel draws no letter in
+  the relative view, so the name is drawn once with and without the panel.
 - Every text is data: `text` is whatever the set holds, and it is inserted as
   text, never as markup.
 
@@ -115,8 +123,9 @@ and the unused ones are hidden. `doc` is the document that makes the spans
 (the layer's own when absent).
 
 Labels that would collide are left out. Placing goes in this order: titles,
-ticks, the cut-off and the origin first, then result
-labels, the highest on the ruler first. A label whose box would overlap one
+ticks, the cut-off, the origin and each search's letter and name first, then
+result labels, the highest on the ruler first, so a marker's name is never left
+out for a result label. A label whose box would overlap one
 already placed is left out. The box is estimated from the text's length, not
 measured. The panel's list carries every result, so nothing is lost. Returns the
 number of spans shown (0 with no layer).
