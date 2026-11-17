@@ -112,6 +112,9 @@
     function above(x, min) {
       return x > min;
     }
+    function atMost(x, max) {
+      return x <= max;
+    }
     function intAtLeast(x, min) {
       return x >= min && Math.floor(x) === x;
     }
@@ -1196,45 +1199,44 @@
       var pinned = [];
       var dropped = [];
       for (var qi = 0; qi < queries.length; qi++) {
-        var q = queries[qi];
-        var len = Math.sqrt(sqNorm(q, 0, D));
-        if (!above(len, RELATIVE_ZERO_LENGTH)) {
-          dropped.push({ index: qi, reason: "zero-length", against: [] });
-          continue;
+        var got = pinDirection(queries[qi], D, rows);
+        if (got.row) {
+          rows.push(got.row);
+          pinned.push({ index: qi, length: got.length });
+        } else {
+          var against = got.reason === "same-direction" ? pinnedIndices(pinned) : [];
+          dropped.push({ index: qi, reason: got.reason, against: against });
         }
-        if (rows.length === 3) {
-          dropped.push({ index: qi, reason: "no-axis-left", against: [] });
-          continue;
-        }
-        var v = new Float64Array(D);
-        for (var d = 0; d < D; d++) v[d] = q[d] / len;
-        if (rows.length === 0) {
-          rows.push(v);
-          pinned.push({ index: qi, length: len });
-          continue;
-        }
-        for (var pass = 0; pass < 2; pass++) {
-          for (const p of rows) removeRow(v, 0, p, 0, D);
-        }
-        var nn = sqNorm(v, 0, D);
-        if (!atLeast(nn, RELATIVE_SAME_DIRECTION)) {
-          dropped.push({
-            index: qi,
-            reason: "same-direction",
-            against: pinned.map(function (pp) {
-              return pp.index;
-            }),
-          });
-          continue;
-        }
-        var inv = 1 / Math.sqrt(nn);
-        for (var d2 = 0; d2 < D; d2++) v[d2] *= inv;
-        rows.push(v);
-        pinned.push({ index: qi, length: len });
       }
       var directions = new Float32Array(rows.length * D);
       for (var r = 0; r < rows.length; r++) directions.set(rows[r], r * D);
       return { directions: directions, count: rows.length, pinned: pinned, dropped: dropped };
+    }
+
+    function pinnedIndices(pinned) {
+      return pinned.map(function (pp) {
+        return pp.index;
+      });
+    }
+
+    // One query against the rows already pinned: { row, length } when it gives a
+    // new direction (the row is unit length and orthogonal to `rows`), or
+    // { reason } when it is dropped.
+    function pinDirection(q, D, rows) {
+      var len = Math.sqrt(sqNorm(q, 0, D));
+      if (!above(len, RELATIVE_ZERO_LENGTH)) return { reason: "zero-length" };
+      if (rows.length === 3) return { reason: "no-axis-left" };
+      var v = new Float64Array(D);
+      for (var d = 0; d < D; d++) v[d] = q[d] / len;
+      if (rows.length === 0) return { row: v, length: len };
+      for (var pass = 0; pass < 2; pass++) {
+        for (const p of rows) removeRow(v, 0, p, 0, D);
+      }
+      var nn = sqNorm(v, 0, D);
+      if (!atLeast(nn, RELATIVE_SAME_DIRECTION)) return { reason: "same-direction" };
+      var inv = 1 / Math.sqrt(nn);
+      for (var d2 = 0; d2 < D; d2++) v[d2] *= inv;
+      return { row: v, length: len };
     }
 
     function checkQueries(queries, D) {
@@ -1298,7 +1300,7 @@
     function checkWindow(direction, length, D) {
       if (direction?.length !== D) throw new TypeError("heightWindow: direction must have dimension values");
       var nn = sqNorm(direction, 0, D);
-      if (!(Math.abs(nn - 1) <= 1e-4)) throw new RangeError("heightWindow: direction must be unit length");
+      if (!atMost(Math.abs(nn - 1), 1e-4)) throw new RangeError("heightWindow: direction must be unit length");
       if (!atLeast(length, 0) || !Number.isFinite(length)) {
         throw new RangeError("heightWindow: length must be a finite number >= 0");
       }
@@ -1504,26 +1506,33 @@
       removeSpan(v, 0, dirs, count, D);
     }
 
-    // The fitted rows' remainders as a float32 block for the fit.
-    function* remainderBlockGen(X, N, D, mean, dirs, count, S, wk) {
+    // The fitted rows' remainders as a float32 block for the fit. `rem` names
+    // what the remainder is taken of: { X, N, D, mean, dirs, count, S } (the
+    // data, its mean, the `count` pinned directions and the S fitted rows).
+    function* remainderBlockGen(rem, wk) {
+      var D = rem.D;
+      var S = rem.S;
       var Ys = new Float32Array(S * D);
       var v = new Float64Array(D);
       for (var s = 0; s < S; s++) {
-        remainderRow(X, strideRow(s, S, N), D, mean, dirs, count, v);
+        remainderRow(rem.X, strideRow(s, S, rem.N), D, rem.mean, rem.dirs, rem.count, v);
         for (var d = 0; d < D; d++) Ys[s * D + d] = v[d];
-        if (wk.add((4 * count + 1) * D)) yield;
+        if (wk.add((4 * rem.count + 1) * D)) yield;
       }
       return Ys;
     }
 
     // Exact variances along the basis rows and the remainder's total variance,
     // over the fitted rows, recomputed in double precision from the data.
-    function* remainderVarianceGen(X, N, D, mean, dirs, count, basis, m, S, wk) {
+    function* remainderVarianceGen(rem, basis, m, wk) {
+      var D = rem.D;
+      var S = rem.S;
+      var count = rem.count;
       var v = new Float64Array(D);
       var sums = new Float64Array(m);
       var total = 0;
       for (var s = 0; s < S; s++) {
-        remainderRow(X, strideRow(s, S, N), D, mean, dirs, count, v);
+        remainderRow(rem.X, strideRow(s, S, rem.N), D, rem.mean, rem.dirs, count, v);
         total += sqNorm(v, 0, D);
         for (var k = 0; k < m; k++) {
           var ok = k * D;
@@ -1550,6 +1559,25 @@
       return basis;
     }
 
+    // Row j of the plain directions copied into v; returns its squared length.
+    function loadPlainRow(plain, j, D, v) {
+      var oj = j * D;
+      var before = 0;
+      for (var d = 0; d < D; d++) {
+        v[d] = plain.directions[oj + d];
+        before += v[d] * v[d];
+      }
+      return before;
+    }
+
+    // v with the `count` pinned rows of dirs and the `kept` rows of B removed (twice).
+    function removePinnedAndKept(v, dirs, count, B, kept, D) {
+      for (var pass = 0; pass < 2; pass++) {
+        for (var p = 0; p < count; p++) removeRow(v, 0, dirs, p * D, D);
+        for (var k = 0; k < kept; k++) removeRow(v, 0, B, k * D, D);
+      }
+    }
+
     // The plain directions with the pinned ones removed, in the plain order
     // (strongest first): each row has the pinned rows and the rows already kept
     // removed (twice, in double precision, as Gram-Schmidt does) and is kept, made
@@ -1560,16 +1588,8 @@
       var v = new Float64Array(D);
       var kept = 0;
       for (var j = 0; j < plain.count && kept < m; j++) {
-        var oj = j * D;
-        var before = 0;
-        for (var d = 0; d < D; d++) {
-          v[d] = plain.directions[oj + d];
-          before += v[d] * v[d];
-        }
-        for (var pass = 0; pass < 2; pass++) {
-          for (var p = 0; p < count; p++) removeRow(v, 0, dirs, p * D, D);
-          for (var k = 0; k < kept; k++) removeRow(v, 0, B, k * D, D);
-        }
+        var before = loadPlainRow(plain, j, D, v);
+        removePinnedAndKept(v, dirs, count, B, kept, D);
         var nn = sqNorm(v, 0, D);
         if (above(before, 0) && atLeast(nn, RELATIVE_PLAIN_KEEP * before)) {
           var inv = 1 / Math.sqrt(nn);
@@ -1585,25 +1605,20 @@
 
     // The full fit of the remainder: its m strongest directions, made orthogonal
     // to the pinned ones. Returns { basis, method }.
-    function* remainderFitGen(X, N, D, plan, mean, wk) {
-      var dirs = plan.dirs;
-      var c = dirs.count;
-      var Ys = yield* remainderBlockGen(X, N, D, mean, dirs.directions, c, plan.S, wk);
-      var pca = yield* pcaGen(Ys, plan.S, D, plan.m, plan.pcaOpts, wk, true);
+    function* remainderFitGen(rem, plan, wk) {
+      var Ys = yield* remainderBlockGen(rem, wk);
+      var pca = yield* pcaGen(Ys, plan.S, rem.D, plan.m, plan.pcaOpts, wk, true);
       Ys = null;
-      var basis = yield* orthogonalBasisGen(dirs.directions, c, pca.directions, plan.m, D, wk);
-      return { basis: basis, method: pca.method + (plan.S < N ? "-sampled" : "") };
+      var basis = yield* orthogonalBasisGen(rem.dirs, rem.count, pca.directions, plan.m, rem.D, wk);
+      return { basis: basis, method: pca.method + (plan.S < rem.N ? "-sampled" : "") };
     }
 
-    function* relativeFitGen(X, N, D, plan, wk) {
-      var dirs = plan.dirs;
-      var c = dirs.count;
-      var S = plan.S;
-      var m = plan.m;
-      var unit = yield* unitLengthGen(X, N, D, RELATIVE_UNIT_TOLERANCE, wk);
-      var result = {
+    // relativeFit's result before anything is fitted: the pinned directions and
+    // the unit-length check, with nothing toured.
+    function blankRelativeFit(dirs, unit) {
+      return {
         directions: dirs.directions,
-        count: c,
+        count: dirs.count,
         pinned: dirs.pinned,
         dropped: dirs.dropped,
         basis: null,
@@ -1619,8 +1634,10 @@
         method: "none",
         plain: null,
       };
-      if (c === 0) return result;
-      result.window = yield* heightWindowGen(X, N, D, dirs.directions.subarray(0, D), dirs.pinned[0].length, wk);
+    }
+
+    // The mean of every row, in double precision.
+    function* rowMeanGen(X, N, D, wk) {
       var mean = new Float64Array(D);
       for (var i = 0; i < N; i++) {
         var o = i * D;
@@ -1628,33 +1645,59 @@
         if (wk.add(D)) yield;
       }
       if (N > 0) for (var e = 0; e < D; e++) mean[e] /= N;
-      result.fittedRows = S;
-      result.rank = Math.max(0, Math.min(S - 1, D - c));
-      result.fixed = Math.max(0, 3 - c - result.rank);
+      return mean;
+    }
+
+    // The toured directions written into `result` (basis, subspace, method and
+    // plain): the plain fit's directions when enough of them are left, otherwise
+    // a fit of the remainder.
+    function* relativeBasisGen(rem, plan, result, wk) {
+      var c = rem.count;
+      var m = plan.m;
+      var sampled = rem.S < rem.N;
       if (m > 0 && plan.plain) {
-        var reused = yield* plainBasisGen(dirs.directions, c, plan.plain, m, D, wk);
+        var reused = yield* plainBasisGen(rem.dirs, c, plan.plain, m, rem.D, wk);
         result.plain = { given: plan.plain.count, kept: reused.kept };
         if (reused.kept >= 3 - c) {
           result.basis = reused.basis;
           result.subspace = reused.kept;
-          result.method = "plain-reused" + (S < N ? "-sampled" : "");
+          result.method = sampled ? "plain-reused-sampled" : "plain-reused";
         }
       }
       if (m > 0 && !result.basis) {
-        var full = yield* remainderFitGen(X, N, D, plan, mean, wk);
+        var full = yield* remainderFitGen(rem, plan, wk);
         result.basis = full.basis;
         result.subspace = m;
         result.method = (plan.plain ? "fallback-" : "") + full.method;
       }
+    }
+
+    // The share of the remainder's variance the first `sub` toured directions hold.
+    function heldShare(held, sub) {
+      var s = 0;
+      for (var k = 0; k < sub; k++) s += held.variances[k];
+      return above(held.totalVariance, 0) ? clamp01(s / held.totalVariance) : 0;
+    }
+
+    function* relativeFitGen(X, N, D, plan, wk) {
+      var dirs = plan.dirs;
+      var c = dirs.count;
+      var S = plan.S;
+      var unit = yield* unitLengthGen(X, N, D, RELATIVE_UNIT_TOLERANCE, wk);
+      var result = blankRelativeFit(dirs, unit);
+      if (c === 0) return result;
+      result.window = yield* heightWindowGen(X, N, D, dirs.directions.subarray(0, D), dirs.pinned[0].length, wk);
+      var mean = yield* rowMeanGen(X, N, D, wk);
+      result.fittedRows = S;
+      result.rank = Math.max(0, Math.min(S - 1, D - c));
+      result.fixed = Math.max(0, 3 - c - result.rank);
+      var rem = { X: X, N: N, D: D, mean: mean, dirs: dirs.directions, count: c, S: S };
+      yield* relativeBasisGen(rem, plan, result, wk);
       var sub = result.subspace;
-      var held = yield* remainderVarianceGen(X, N, D, mean, dirs.directions, c, result.basis, sub, S, wk);
+      var held = yield* remainderVarianceGen(rem, result.basis, sub, wk);
       result.variances = held.variances;
       result.totalVariance = held.totalVariance;
-      if (sub > 0) {
-        var s = 0;
-        for (var k = 0; k < sub; k++) s += held.variances[k];
-        result.share = above(held.totalVariance, 0) ? clamp01(s / held.totalVariance) : 0;
-      }
+      if (sub > 0) result.share = heldShare(held, sub);
       return result;
     }
 

@@ -2845,6 +2845,13 @@ ET.viewer = (function () {
     return true;
   }
 
+  // Two fingers on the sky move and zoom the picture; the page must not scroll under them.
+  // One finger still scrolls the page vertically (the stage's touch-action allows it).
+  // A touch-action cannot change once a touch has begun, so the scroll is refused here.
+  function holdPage(e) {
+    if (e.touches?.length >= 2 && e.cancelable !== false && e.preventDefault) e.preventDefault();
+  }
+
   function wire(v) {
     var stage = v.stage;
     var pointers = {};
@@ -3013,12 +3020,8 @@ ET.viewer = (function () {
       { passive: false }
     );
 
-    // Two fingers on the sky move and zoom the picture; the page must not scroll under them.
-    // One finger still scrolls the page vertically (the stage's touch-action allows it).
-    // A touch-action cannot change once a touch has begun, so the scroll is refused here.
-    function holdPage(e) {
-      if (e.touches?.length >= 2 && e.cancelable !== false && e.preventDefault) e.preventDefault();
-    }
+    // Two fingers on the sky move and zoom the picture; the page must not scroll under them
+    // (holdPage).
     listen(v, stage, "touchstart", holdPage, { passive: false });
     listen(v, stage, "touchmove", holdPage, { passive: false });
 
@@ -3806,6 +3809,22 @@ ET.viewer = (function () {
     uploadLit(v);
   }
 
+  // The first n lit values of the points that are not results (inside 0) set to 0.
+  function hideOutside(lit, inside, n) {
+    var k = Math.min(n, inside.length);
+    for (var h = 0; h < k; h++) if (inside[h] === 0) lit[h] = 0;
+  }
+
+  // The gradient written over the first n lit values that are not above 0 (a value that
+  // is not a number counts as not above 0).
+  function fillGradient(lit, grad, n) {
+    var m = Math.min(n, grad.length);
+    for (var i = 0; i < m; i++) {
+      if (lit[i] > 0) continue;
+      lit[i] = grad[i];
+    }
+  }
+
   function uploadLit(v) {
     var s = v.search;
     var r = v.renderer;
@@ -3820,20 +3839,13 @@ ET.viewer = (function () {
     // which the mode's unlitGain 0 does not draw: Only results wins.
     var showsRest = s.lit.rest > 0;
     s.litHidden = showsRest && s.hideUnlit;
-    if (s.litHidden) {
-      var inside = s.lit.inside;
-      var k = Math.min(n, inside.length);
-      for (var h = 0; h < k; h++) if (inside[h] === 0) lit[h] = 0;
-    }
+    if (s.litHidden) hideOutside(lit, s.lit.inside, n);
     // In the relative view, points the searches do not light get the faint gradient; the
     // lit values above 0 are kept exactly (results follow the Lit setting as without it).
     // Under Lit "all" there is no gradient: the rest keeps its constant.
     s.litRelative = s.relActive;
     var grad = s.relActive && !showsRest ? relativeGradient(v) : null;
-    if (grad) {
-      var m = Math.min(n, grad.length);
-      for (var i = 0; i < m; i++) if (!(lit[i] > 0)) lit[i] = grad[i];
-    }
+    if (grad) fillGradient(lit, grad, n);
     try {
       r.setLit(lit, shared);
       s.litUploaded = true;
@@ -4482,19 +4494,44 @@ ET.viewer = (function () {
   function searchDirection(q) {
     var D = q.query.length;
     var len = Math.sqrt(rowDot(q.query, 0, q.query, D));
-    if (!(len > ET.math.RELATIVE_ZERO_LENGTH)) return null;
-    var u = new Float64Array(D);
-    for (var d = 0; d < D; d++) u[d] = q.query[d] / len;
-    return { u: u, length: len };
+    if (len > ET.math.RELATIVE_ZERO_LENGTH) {
+      var u = new Float64Array(D);
+      for (var d = 0; d < D; d++) u[d] = q.query[d] / len;
+      return { u: u, length: len };
+    }
+    return null; // also a length that is not a number
   }
 
   // The search's own point: at plain cosine distance below OWN_POINT_DISTANCE and of the
   // search's length (the rule the overlay draws by).
   function isOwnPoint(set, i, distance, length) {
-    if (!(distance < OWN_POINT_DISTANCE)) return false;
-    var D = set.dimension;
-    var o = i * D;
-    return Math.abs(Math.sqrt(rowDot(set.vectors, o, set.vectors.subarray(o, o + D), D)) - length) < OWN_POINT_LENGTH;
+    if (distance < OWN_POINT_DISTANCE) {
+      var D = set.dimension;
+      var o = i * D;
+      return Math.abs(Math.sqrt(rowDot(set.vectors, o, set.vectors.subarray(o, o + D), D)) - length) < OWN_POINT_LENGTH;
+    }
+    return false; // also a distance that is not a number
+  }
+
+  // Fills c with each point's plain cosine to the search (1 - dist) and returns the largest
+  // of a point other than the search's own (-Infinity when there is none).
+  function cosineTop(q, set, dist, c) {
+    var N = set.count;
+    var dir = searchDirection(q);
+    var hi = -Infinity;
+    for (var i = 0; i < N; i++) {
+      c[i] = 1 - dist[i];
+      if (c[i] > hi && !(dir && isOwnPoint(set, i, dist[i], dir.length))) hi = c[i];
+    }
+    return hi;
+  }
+
+  // g raised, point by point, to clamp((c - mid) / (hi - mid), 0, 1) where that is larger.
+  function raiseGradient(g, c, mid, hi) {
+    for (var j = 0; j < g.length; j++) {
+      var x = clamp((c[j] - mid) / (hi - mid), 0, 1);
+      if (x > g[j]) g[j] = x;
+    }
   }
 
   // The gradient for the searches shown, worked out once per change of the searches or the
@@ -4512,18 +4549,10 @@ ET.viewer = (function () {
     for (const q of s.shown) {
       var r = q.ranking;
       var dist = r.plainDistances || r.distances;
-      var dir = searchDirection(q);
-      var hi = -Infinity;
-      for (var i = 0; i < N; i++) {
-        c[i] = 1 - dist[i];
-        if (c[i] > hi && !(dir && isOwnPoint(set, i, dist[i], dir.length))) hi = c[i];
-      }
+      var hi = cosineTop(q, set, dist, c);
       var mid = Float64Array.from(c).sort()[N >> 1];
-      if (!(hi > mid)) continue;
-      for (var j = 0; j < N; j++) {
-        var x = clamp((c[j] - mid) / (hi - mid), 0, 1);
-        if (x > g[j]) g[j] = x;
-      }
+      // Nothing is raised unless hi is above mid (so not when either is not a number).
+      if (hi > mid) raiseGradient(g, c, mid, hi);
     }
     var values = new Float32Array(N);
     for (var k = 0; k < N; k++) values[k] = RELATIVE_FADE_BASE + RELATIVE_FADE_SCALE * g[k] * g[k];
@@ -4596,6 +4625,46 @@ ET.viewer = (function () {
     });
   }
 
+  // The parts of info().search.relative that come from the mode's state while the relative
+  // view is shown.
+  function shownRelativeParts(v, st) {
+    return {
+      settled: st.settled === true,
+      measure: st.measure,
+      pinned: st.pinned.map(function (p) {
+        return { letter: p.letter, axis: p.axis, length: p.length };
+      }),
+      dropped: st.dropped.map(function (d) {
+        return { letter: d.letter, reason: d.reason, against: d.against.slice() };
+      }),
+      free: st.free,
+      fixed: st.fixed,
+      window: st.window ? { ...st.window } : null,
+      share: st.share,
+      subspace: st.subspace,
+      searches: relativeResults(v),
+    };
+  }
+
+  // The same parts in the plain view: the measure from the viewer's own check of the set
+  // (`unit`, null with no set) and the searches that give no axis.
+  function plainRelativeParts(v, unit) {
+    var measure = null;
+    if (unit) measure = unit.unit ? "cosine" : "length along the search";
+    return {
+      settled: false,
+      measure: measure,
+      pinned: [],
+      dropped: plainDropped(v),
+      free: 3,
+      fixed: 0,
+      window: null,
+      share: null,
+      subspace: null,
+      searches: [],
+    };
+  }
+
   // info().search.relative. The mode's state is the one last drawn. In the plain view the
   // measure and unit come from the viewer's own check of the set (Tumble reports them only
   // once an axis is pinned), and dropped names the searches that give no axis.
@@ -4604,33 +4673,23 @@ ET.viewer = (function () {
     var st = offered && v.mode && v.last ? v.last.relative || null : null;
     var active = !!st?.active;
     var unit = active ? st.unit : unitOf(v);
-    var measure = null;
-    if (active) measure = st.measure;
-    else if (unit) measure = unit.unit ? "cosine" : "length along the search";
+    var parts = active ? shownRelativeParts(v, st) : plainRelativeParts(v, unit);
     return {
       relative: v.rel.relative,
       showOrigin: v.rel.showOrigin,
       offered: offered,
       active: active,
-      settled: active && st.settled === true,
-      measure: measure,
+      settled: parts.settled,
+      measure: parts.measure,
       unit: unit ? { unit: unit.unit, min: unit.min, max: unit.max, tolerance: unit.tolerance } : null,
-      pinned: active
-        ? st.pinned.map(function (p) {
-            return { letter: p.letter, axis: p.axis, length: p.length };
-          })
-        : [],
-      dropped: active
-        ? st.dropped.map(function (d) {
-            return { letter: d.letter, reason: d.reason, against: d.against.slice() };
-          })
-        : plainDropped(v),
-      free: active ? st.free : 3,
-      fixed: active ? st.fixed : 0,
-      window: active && st.window ? { ...st.window } : null,
-      share: active ? st.share : null,
-      subspace: active ? st.subspace : null,
-      searches: active ? relativeResults(v) : [],
+      pinned: parts.pinned,
+      dropped: parts.dropped,
+      free: parts.free,
+      fixed: parts.fixed,
+      window: parts.window,
+      share: parts.share,
+      subspace: parts.subspace,
+      searches: parts.searches,
     };
   }
 
@@ -4769,6 +4828,10 @@ ET.viewer = (function () {
     var rel = v.modeId === "tumble" ? st?.relative : null;
     var key = "";
     if (rel) {
+      // settled is part of what a host reads (info().search.relative.settled), so the end
+      // of a turn is announced too
+      var turn = "";
+      if (active) turn = rel.settled ? ":settled" : ":turning";
       key =
         (active ? "on:" : "off:") +
         rel.pinned
@@ -4782,9 +4845,7 @@ ET.viewer = (function () {
             return d.letter;
           })
           .join("") +
-        // settled is part of what a host reads (info().search.relative.settled), so the end
-        // of a turn is announced too
-        (active ? (rel.settled ? ":settled" : ":turning") : "");
+        turn;
     }
     if (key !== s.relKey) {
       s.relKey = key;
