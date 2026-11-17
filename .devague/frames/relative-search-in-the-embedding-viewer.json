@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-16T17:49:58Z",
-  "updated": "2026-11-17T06:26:29Z",
+  "updated": "2026-11-17T07:00:39Z",
   "claims": [
     {
       "id": "c1",
@@ -771,7 +771,7 @@
         "o11"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l2",
@@ -783,7 +783,7 @@
         "c14"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l3",
@@ -794,7 +794,7 @@
         "docs/specs/reference/tumbler-relative-search.html"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l4",
@@ -806,7 +806,7 @@
         "js/test/search-panel.test.js"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l5",
@@ -818,7 +818,7 @@
         "tests/browser/test_guide_examples.py"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l6",
@@ -829,7 +829,7 @@
         "t21"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l7",
@@ -840,7 +840,7 @@
         "t22"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     }
   ],
   "obligations": [

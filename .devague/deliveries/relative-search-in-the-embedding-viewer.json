@@ -2,7 +2,7 @@
   "plan_slug": "relative-search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-16T22:05:02Z",
-  "updated": "2026-11-17T06:04:07Z",
+  "updated": "2026-11-17T07:00:38Z",
   "deviations": [
     {
       "id": "d1",
@@ -32,7 +32,7 @@
         "c3"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 2
     },
@@ -48,7 +48,7 @@
         "c3"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 3
     },

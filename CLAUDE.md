@@ -67,8 +67,9 @@ measured against the plan, is in
 spec is GitHub issue 11 (directions and neighbours computed when the data file
 is made) `(planned)`.
 
-Relative search is **built on the branch `spec/relative-search`; its release is
-`(planned)`** and no version is claimed for it. It is a setting inside Tumble:
+Relative search is **built on the branch `spec/relative-search` and signed off
+by the owner on 2026-11-17; its release, as 0.13.0 when the branch is merged, is
+`(planned)`**. It is a setting inside Tumble:
 with it on and a search present, the first search's direction becomes the
 vertical axis, so a point's height is its vector measured along the search
 (cosine similarity on unit-length sets), drawn with a ticked ruler; a second
@@ -100,9 +101,12 @@ Deviation d8 (the owner's decision of 2026-11-17) then made the relative view
 sharp (depth of field 0 and bloom 0.2 there, eased by the relative mix, in
 `js/src/50-viewer.js`) and added a fourth Lit setting in every view, `"all"`,
 "everything, results highlighted" (`js/src/26-search-sets.js`, the panel's
-menu; `docs/search-interface.md`, "Everything, results highlighted"). The
-owner's sign-off of the relative part of `docs/reference-differences.md` and the
-release are `(planned)`.
+menu; `docs/search-interface.md`, "Everything, results highlighted").
+Deviation d9 removed a brightness setting for the points that are not results
+("The rest", added and removed within this build, never released): the Lit
+control carries that choice, and sliders for strength are a possible follow-up.
+The owner's sign-off is at the end of `docs/reference-differences.md`; the
+delivery summary is `(planned)`.
 
 What real vectors showed, and what was changed because of it (Lattice's hidden
 directions, brightness of crowded sets), is in

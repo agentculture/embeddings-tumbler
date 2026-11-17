@@ -1511,14 +1511,28 @@ Read the same in both pages' code *(read from the code)*:
 
 ## Relative search: sign-off
 
-The owner's sign-off of this comparison is **not yet recorded**. It is asked
-for once this list is complete, after the owner has looked at the side-by-side
-page and has read the wording for vectors that are not of length one on a page.
+The owner tried the build throughout 2026-11-17 on the built pages (the
+standalone page, the side-by-side page with the reference, the page with a real
+embedder and reranker, and the standalone page loaded with the mixed-length
+test set), first on a Ventuno Arduino Q, then on a Jetson Thor and on an iPhone
+in Chrome. The changes of deviations d5, d8 and d9 came from that. After the
+last of them was on the built standalone page, opened with `relative=1`, the
+owner wrote "Approved" with that page's address, and then: "Both the arduino
+ventuno (Like jetson orin nano) and the iphone".
 
-The agreed form is two lines, each starting at the left margin, the first
-naming the page where the owner read that wording:
+Mixed-length wording read by the owner on 2026-11-17: on the standalone page loaded with the mixed-length test set and Relative on, opened beside the side-by-side page: "Both pages work now And build looks good."
+Relative search signed off by the owner on 2026-11-17: Approved
 
-```text
-Mixed-length wording read by the owner on YYYY-MM-DD: <the page and the owner's words>
-Relative search signed off by the owner on YYYY-MM-DD: <the owner's words>
-```
+What the sign-off was given on, so that it is not read as more than it is:
+
+- The mixed-length line quotes what the owner wrote after opening that page
+  and the side-by-side page. The owner did not quote or comment on the wording
+  itself. Asked afterwards for the two lines of this sign-off, the owner
+  answered "Confirmed and looks good".
+- The approval was given on the built standalone page, on a Ventuno Arduino Q
+  and on an iPhone. The owner did not go through the differences above one by
+  one, and after deviations d8 and d9 the build was not put beside the
+  reference page again.
+- The differences marked as decided while building were told to the owner in
+  summary; the owner chose the ones recorded as deviations d5, d6, d8 and d9
+  and did not object to the others.
