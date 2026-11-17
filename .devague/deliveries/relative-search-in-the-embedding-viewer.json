@@ -2,7 +2,7 @@
   "plan_slug": "relative-search-in-the-embedding-viewer",
   "schema_version": 2,
   "created": "2026-11-16T22:05:02Z",
-  "updated": "2026-11-17T05:41:21Z",
+  "updated": "2026-11-17T06:04:07Z",
   "deviations": [
     {
       "id": "d1",
@@ -132,6 +132,23 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 8
+    },
+    {
+      "id": "d9",
+      "what": "The setting 'The rest' (deviation d6) is removed and its job is carried by the one Lit control: the relative view's fade of the rest has one fixed strength (the brightest of the three, the owner's earlier choice) under the first three Lit options, and the fourth Lit option shows everything. Removed with it: the panel menu, the 'rest' key of setRelative and relativeSettings, the mount option relativeRest, the web component's relative-rest, and the page's rest= parameter; none was released. Sliders for strength are left for later. Built as added task t22.",
+      "task_ref": "t9",
+      "reason": "Owner on 2026-11-17, asked whether to merge The rest into Lit: 'Merging: confirmed. Strength can be sliders we can choose to add now or later'.",
+      "affects": [
+        "t8",
+        "t11",
+        "t12",
+        "t14",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 9
     }
   ],
   "evidence": [],
