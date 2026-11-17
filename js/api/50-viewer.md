@@ -261,8 +261,24 @@ similarity on a set of unit-length vectors), drawn with a ruler. The contract is
   `searches` lines up with `info().search.searches[j].results`: `height` is the
   result's vector dotted with that search's direction, and `cosine` is 1 minus
   its plain distance (never the point-of-view distance). `[]` when not active.
+  Each entry's `letter` is that search's letter as it is now.
   While the setting is on in Tumble but no search gives an axis, `dropped` still
   names the searches that give none.
+  `settled` is also false from the moment a changed search is committed until
+  the mode's fit for it has switched in: until then the frame shown is the
+  earlier searches', the status says `turning until`, the provenance leaves out
+  the exactness sentences, and the overlay draws the ruler's faint line along
+  the direction the frame is really pinned to (the mode's
+  `state.relative.searches`), with no ticks and no stems.
+  `measure` and `unit` are the fit's own while the relative view is shown (of
+  the rows that fit was made on). In the plain view they are accessors: the
+  check of the set (`ET.math.unitLength`, a pass over every row) runs when one
+  of them is first read, once per set, and not when the report is made, so
+  reports made on every append cost nothing for them.
+- **Appends.** With the relative view shown, appended points start no relative
+  fit: the view is kept (the status ends `before {n} new points`), and the
+  refit that follows by `refitQuietSeconds` and `refitShare` fits the plain
+  tour and the relative view again, once.
 - **What is drawn.** In Tumble, with the relative view shown or Show the origin
   on, the viewer builds the overlay's draw list every frame, paints its shapes on
   the overlay canvas and places its texts as spans in

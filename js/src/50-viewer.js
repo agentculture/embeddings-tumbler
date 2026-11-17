@@ -4560,13 +4560,47 @@ ET.viewer = (function () {
     return values;
   }
 
-  // ET.math.unitLength of the set shown, once per set.
+  // ET.math.unitLength of the set shown, once per set, and only when somebody reads it
+  // (lazyUnit): a pass over every row, so never on the path of every info().search.
   function unitOf(v) {
     var s = v.search;
     var set = v.set;
     if (!set) return null;
     if (s.unit?.set !== set) s.unit = { set: set, unit: ET.math.unitLength(set.vectors, set.count, set.dimension) };
     return s.unit.unit;
+  }
+
+  function unitCopy(unit) {
+    return unit ? { unit: unit.unit, min: unit.min, max: unit.max, tolerance: unit.tolerance } : null;
+  }
+
+  function measureOf(unit) {
+    if (!unit) return null;
+    return unit.unit ? "cosine" : "length along the search";
+  }
+
+  // In the plain view `measure` and `unit` of info().search.relative come from the
+  // viewer's own check of the set (Tumble reports them only once an axis is pinned). They
+  // are worked out when first read, not when the report is made: the report is made on
+  // every change of the searches and of the data, with Relative off and in every view, and
+  // the check reads every row. Both keys stay listed, in their places, and give the values
+  // for the set shown when they are read (null with no set).
+  function lazyUnit(v, info) {
+    Object.defineProperty(info, "measure", {
+      enumerable: true,
+      configurable: true,
+      get: function () {
+        return measureOf(unitOf(v));
+      },
+    });
+    Object.defineProperty(info, "unit", {
+      enumerable: true,
+      configurable: true,
+      get: function () {
+        return unitCopy(unitOf(v));
+      },
+    });
+    return info;
   }
 
   // In the plain view with the setting on, the searches that give no axis (letters), so the
@@ -4601,27 +4635,40 @@ ET.viewer = (function () {
         shown: s.shown,
         list: s.shown.map(function (q) {
           var dir = searchDirection(q);
-          return {
-            letter: q.letter,
-            results: q.view.hits.map(function (hit) {
-              return {
-                index: hit.index,
-                id: hit.id,
-                height: dir ? rowDot(set.vectors, hit.index * D, dir.u, D) : null,
-                cosine: 1 - hit.plainDistance,
-              };
-            }),
-          };
+          return q.view.hits.map(function (hit) {
+            return {
+              index: hit.index,
+              id: hit.id,
+              height: dir ? rowDot(set.vectors, hit.index * D, dir.u, D) : null,
+              cosine: 1 - hit.plainDistance,
+            };
+          });
         }),
       };
     }
-    return s.heights.list.map(function (e) {
+    // The letter is read from the search each time: the searches are lettered again in
+    // place (letterByPosition) without the list changing, so a kept letter goes stale.
+    return s.heights.list.map(function (results, j) {
       return {
-        letter: e.letter,
-        results: e.results.map(function (r) {
+        letter: s.shown[j].letter,
+        results: results.map(function (r) {
           return { ...r };
         }),
       };
+    });
+  }
+
+  // Whether the searches the mode's frame was built from (state.relative.searches) are the
+  // ones shown now, by letter and by vector. They differ from the moment a changed search is
+  // committed until its fit switches in: the frame shown is then the earlier searches', and
+  // a letter may name another search by now. A state without the list is taken as current.
+  function relativeCurrent(v, rel) {
+    var list = rel?.searches;
+    if (!Array.isArray(list)) return true;
+    var shown = v.search.shown;
+    if (list.length !== shown.length) return false;
+    return list.every(function (e, j) {
+      return e.letter === shown[j].letter && sameValues(e.query, shown[j].query);
     });
   }
 
@@ -4629,8 +4676,7 @@ ET.viewer = (function () {
   // view is shown.
   function shownRelativeParts(v, st) {
     return {
-      settled: st.settled === true,
-      measure: st.measure,
+      settled: st.settled === true && relativeCurrent(v, st),
       pinned: st.pinned.map(function (p) {
         return { letter: p.letter, axis: p.axis, length: p.length };
       }),
@@ -4646,14 +4692,10 @@ ET.viewer = (function () {
     };
   }
 
-  // The same parts in the plain view: the measure from the viewer's own check of the set
-  // (`unit`, null with no set) and the searches that give no axis.
-  function plainRelativeParts(v, unit) {
-    var measure = null;
-    if (unit) measure = unit.unit ? "cosine" : "length along the search";
+  // The same parts in the plain view: nothing pinned, and the searches that give no axis.
+  function plainRelativeParts(v) {
     return {
       settled: false,
-      measure: measure,
       pinned: [],
       dropped: plainDropped(v),
       free: 3,
@@ -4665,23 +4707,23 @@ ET.viewer = (function () {
     };
   }
 
-  // info().search.relative. The mode's state is the one last drawn. In the plain view the
-  // measure and unit come from the viewer's own check of the set (Tumble reports them only
-  // once an axis is pinned), and dropped names the searches that give no axis.
+  // info().search.relative. The mode's state is the one last drawn. While the relative view
+  // is shown the measure and unit are the fit's own (the mode's state carries them). In the
+  // plain view they come from the viewer's own check of the set, made when they are read
+  // (lazyUnit), and dropped names the searches that give no axis.
   function relativeInfo(v) {
     var offered = v.modeId === "tumble";
     var st = offered && v.mode && v.last ? v.last.relative || null : null;
     var active = !!st?.active;
-    var unit = active ? st.unit : unitOf(v);
-    var parts = active ? shownRelativeParts(v, st) : plainRelativeParts(v, unit);
-    return {
+    var parts = active ? shownRelativeParts(v, st) : plainRelativeParts(v);
+    var info = {
       relative: v.rel.relative,
       showOrigin: v.rel.showOrigin,
       offered: offered,
       active: active,
       settled: parts.settled,
-      measure: parts.measure,
-      unit: unit ? { unit: unit.unit, min: unit.min, max: unit.max, tolerance: unit.tolerance } : null,
+      measure: active ? st.measure : null,
+      unit: active ? unitCopy(st.unit) : null,
       pinned: parts.pinned,
       dropped: parts.dropped,
       free: parts.free,
@@ -4691,6 +4733,7 @@ ET.viewer = (function () {
       subspace: parts.subspace,
       searches: parts.searches,
     };
+    return active ? info : lazyUnit(v, info);
   }
 
   // The viewer's pieces after the mode's relative status, before its own zoom and paused.
@@ -4970,6 +5013,32 @@ ET.viewer = (function () {
     return data;
   }
 
+  // The searches the overlay is given: every search shown, in letter order. While the frame
+  // shown was built from other searches than those (relativeCurrent), the searches of the
+  // frame come first, so that the ruler is drawn along the direction the frame is really
+  // pinned to; a search of the frame that is no longer shown has no name. The searches shown
+  // now follow, each at its own place.
+  function overlaySearches(v, rel) {
+    var shown = v.search.shown;
+    var mine = shown.map(function (q, j) {
+      return { letter: q.letter, colour: searchColour(v, q, j), query: q.query, name: searchName(v, q) };
+    });
+    if (relativeCurrent(v, rel)) return mine;
+    var framed = rel.searches.map(function (e, j) {
+      var at = shown.findIndex(function (q) {
+        return sameValues(q.query, e.query);
+      });
+      return { letter: e.letter, colour: searchColour(v, e, j), query: e.query, name: at >= 0 ? mine[at].name : "" };
+    });
+    return framed.concat(
+      mine.filter(function (q) {
+        return !rel.searches.some(function (e) {
+          return sameValues(q.query, e.query);
+        });
+      })
+    );
+  }
+
   // Once a frame, after the names and before the panel's rings: in Tumble, with the relative
   // view shown or Show the origin on, the overlay's draw list from the mode's state and the
   // draw state given to the renderer, its shapes painted on the overlay canvas and its texts
@@ -4991,11 +5060,7 @@ ET.viewer = (function () {
       frame: s.frame,
       centre: s.centre,
       relative: shown ? s.relative : null,
-      searches: shown
-        ? v.search.shown.map(function (q, j) {
-            return { letter: q.letter, colour: searchColour(v, q, j), query: q.query, name: searchName(v, q) };
-          })
-        : [],
+      searches: shown ? overlaySearches(v, s.relative) : [],
       named: od.named,
       cut: od.cut,
       showOrigin: v.rel.showOrigin,

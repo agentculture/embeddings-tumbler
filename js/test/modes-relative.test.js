@@ -429,9 +429,14 @@ test("criterion 6: dataChanged with relative on matches a fresh instance given t
   inst.mark(0.5);
   const res = inst.dataChanged(full, { op: "append", t: 4 });
   assert.strictEqual(res.restart, false);
-  assert.ok(res.work && typeof res.work.step === "function", "the relative fit runs again on the new set");
+  // Since the review of pull request 13 (finding 6) an append starts no relative fit: the
+  // fit shown is kept, and refit() (the viewer's quiet and share policy) makes it again.
+  assert.ok(!res.work, "an append starts no fit");
+  assert.strictEqual(inst.describe().relative.pending, false);
+  const work = inst.refit();
+  assert.ok(work && typeof work.step === "function", "the relative fit runs again on the new set");
   assert.strictEqual(inst.describe().relative.pending, true);
-  res.work.step();
+  work.step();
   inst.mark(4.2);
   assert.strictEqual(inst.describe().relative.switchAt, 4.2);
   // While the new fit's turn runs the frame stays orthonormal.
@@ -720,8 +725,8 @@ test("t18: after an append the relative fit uses the new set's plain directions,
   inst.searchChanged(searchOf(fx, [["A", "Rice"]]), 0.5).step();
   inst.mark(0.5);
   assert.strictEqual(M.fittedDirections(full, 6, 8, undefined), undefined, "the new set has no plain fit yet");
-  const res = inst.dataChanged(full, { op: "append", t: 4 });
-  res.work.step();
+  inst.dataChanged(full, { op: "append", t: 4 });
+  inst.refit().step(); // the refit makes the relative fit again (finding 6 of the review of pull request 13)
   inst.mark(4.2);
   const s = inst.stateAt(9).relative;
   const want = reusedFit(full, ["Rice"], 6);
