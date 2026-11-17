@@ -257,7 +257,7 @@
   // ----- the relative view's words (docs/relative-interface.md, "Search panel (t8)") -----
 
   function spRelative(search) {
-    var rel = search && search.relative;
+    var rel = search?.relative;
     return rel && typeof rel === "object" ? rel : null;
   }
 
@@ -270,7 +270,7 @@
   function spLetterList(letters) {
     var list = Array.isArray(letters) ? letters : [];
     if (list.length < 2) return list.join("");
-    return list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
+    return list.slice(0, -1).join(", ") + " and " + list.at(-1);
   }
 
   function spDroppedText(d) {
@@ -283,14 +283,18 @@
     return "";
   }
 
+  function spByLetter(a, b) {
+    if (a.letter < b.letter) return -1;
+    if (a.letter > b.letter) return 1;
+    return 0;
+  }
+
   function spRelativeNoteText(search) {
     if (!spRelativeOn(search)) return "";
     var rel = spRelative(search);
     var out = [];
     var dropped = Array.isArray(rel.dropped) ? rel.dropped.slice() : [];
-    dropped.sort(function (a, b) {
-      return a.letter < b.letter ? -1 : a.letter > b.letter ? 1 : 0;
-    });
+    dropped.sort(spByLetter);
     dropped.forEach(function (d) {
       var text = spDroppedText(d);
       if (text) out.push(text);
@@ -320,7 +324,7 @@
   // point index, else by place).
   function spRelFor(search, q, r, at) {
     var rel = spRelative(search);
-    if (!rel || !rel.active || !Array.isArray(rel.searches)) return null;
+    if (!rel?.active || !Array.isArray(rel.searches)) return null;
     var mine = rel.searches.find(function (s) {
       return s && s.letter === q.letter;
     });
@@ -1110,7 +1114,7 @@
     spShow(p.origin.label, p.tumble, "inline-flex");
     p.relative.input.checked = !!rel && rel.relative === true;
     p.origin.input.checked = !!rel && rel.showOrigin === true;
-    spShow(p.face, !(p.tumble && rel && rel.relative === true), "");
+    spShow(p.face, !(p.tumble && rel?.relative === true), "");
     if (st.lit && p.lit.value !== st.lit) p.lit.value = st.lit;
     spRangeValue({ input: p.k, out: p.kOut }, st.k, 0);
     p.distances.input.checked = !!st.distances;

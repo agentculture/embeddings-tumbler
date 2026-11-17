@@ -47,17 +47,24 @@ function loadPair(file) {
 
 const tick = () => new Promise((r) => setImmediate(r));
 
+// One turn of the event loop and one frame at a time, until `done` or `left` runs out. Each
+// step waits for the one before it, so it calls itself instead of looping.
+async function pump(dom, done, left) {
+  if (left <= 0 || done()) return;
+  await tick();
+  dom.frames(1);
+  await pump(dom, done, left - 1);
+}
+
 async function until(dom, done, what, bound = 2000) {
-  for (let i = 0; i < bound && !done(); i++) {
-    await tick();
-    dom.frames(1);
-  }
+  await pump(dom, done, bound);
   await tick();
   if (!done()) fail("the viewer did not reach: " + what);
 }
 
 async function settle(dom, promise, what) {
-  let out;
+  // replaced by the promise's answer before `until` lets this return
+  let out = { ok: false, message: "the viewer gave no answer" };
   let finished = false;
   promise.then((r) => {
     out = r;
@@ -169,7 +176,7 @@ async function main() {
   out.reranked = results(info);
   out.reranker = info.search.searches[0].reranker;
   out.rerankNote = info.search.searches[0].note || "";
-  out.sent = calls.length ? calls[calls.length - 1].candidates : 0;
+  out.sent = calls.length ? calls.at(-1).candidates : 0;
   out.rerankCalls = calls;
   out.unknownCandidates = unknown;
   out.ownScore = ownScore;
@@ -180,4 +187,4 @@ async function main() {
   process.stdout.write(JSON.stringify(out) + "\n");
 }
 
-main().catch((err) => fail("the comparison failed: " + (err && err.message ? err.message : String(err))));
+main().catch((err) => fail("the comparison failed: " + (err?.message ? err.message : String(err))));

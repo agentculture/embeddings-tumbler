@@ -1402,6 +1402,13 @@ copy). The script:
       lines.push(rel.relative ? "No search gives an axis." : "The plain view: the setting is off.");
       return lines.join("\n");
     }
+    describeAxes(rel, lines);
+    describeResults(rel, lines);
+    return lines.join("\n");
+  }
+
+  // The vertical axis, the ruler and what the other two axes show.
+  function describeAxes(rel, lines) {
     const first = rel.pinned[0];
     lines.push("Vertical axis: " + rel.measure + " to " + first.letter +
       (rel.settled ? ", exact." : ", the view is still turning onto it."));
@@ -1412,6 +1419,10 @@ copy). The script:
       lines.push("The other axes tour " + rel.subspace + " directions that hold " +
         Math.round(rel.share * 100) + "% of what remains: sideways position is still a shadow.");
     }
+  }
+
+  // Each search's first three results, with the numbers the relative view draws them by.
+  function describeResults(rel, lines) {
     for (const one of rel.searches) {
       for (const hit of one.results.slice(0, 3)) {
         // height is null for a search that has no direction; cosine is always a number
@@ -1419,7 +1430,6 @@ copy). The script:
           (hit.height === null ? "none" : hit.height.toFixed(2)) + ", cosine " + hit.cosine.toFixed(3));
       }
     }
-    return lines.join("\n");
   }
 
   // ---------- the viewer ----------
